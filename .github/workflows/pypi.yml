@@ -3,6 +3,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:  # allow manual trigger
 
 jobs:
   pypi-publish:
