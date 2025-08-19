@@ -76,3 +76,8 @@ dev = [
     "notebook>=7.3.3",
     "scikit-optimize>=0.10.2",
 ]
+
+# This is a workaround due to https://github.com/astral-sh/uv/issues/9513.
+# When setuptools is fixed, this can be removed. (8/19/2025)
+[tool.setuptools]
+license-files = []
