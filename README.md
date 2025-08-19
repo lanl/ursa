@@ -2,6 +2,9 @@
 
 <img src="./logos/logo.png" alt="URSA Logo" width="200" height="200">
 
+[![PyPI Version][pypi-version]](https://pypi.org/project/ursa-ai/)
+[![PyPI Downloads][total-downloads]](https://pepy.tech/projects/ursa-ai)
+
 The flexible agentic workflow for accelerating scientific tasks. 
 Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
 
@@ -31,8 +34,8 @@ Documentation for each URSA agent:
 - [Hypothesizer Agent](docs/hypothesizer_agent.md)
 
 Documentation for combining agents:
-- [ArXiv -> Execution for Materials](docs/combining_arxiv_and_execution.md )
-- [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md  )
+- [ArXiv -> Execution for Materials](docs/combining_arxiv_and_execution.md)
+- [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md)
 
 # Sandboxing
 The Execution Agent is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
@@ -58,7 +61,12 @@ You have a duty for ensuring that you use URSA responsibly.
       Follow installation instructions
       [here](https://docs.astral.sh/uv/getting-started/installation/)
 
+* [`ruff`](https://docs.astral.sh/ruff/)
+    * An extremely fast Python linter and code formatter, written in Rust.
+    * After installing `uv`, you can install just ruff `uv tool install ruff`
+
 * [`just`](https://github.com/casey/just)
+    * A modern way to save and run project-specific commands
     * After installing `uv`, you can install just with `uv tool install rust-just`
 
 ## Development Team
@@ -75,3 +83,6 @@ Redistribution and use in source and binary forms, with or without modification,
 - *Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.*
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+[pypi-version]: https://img.shields.io/pypi/v/ursa-ai?style=flat-square&label=PyPI
+[total-downloads]: https://img.shields.io/pepy/dt/ursa-ai?style=flat-square&label=downloads&color=blue
