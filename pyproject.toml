@@ -5,9 +5,16 @@ description = "Agents for science at LANL"
 readme = "README.md"
 authors = [
     { name = "Mike Grosskopf", email = "mikegros@lanl.gov" },
+    { name = "Nathan Debardeleben", email = "ndebard@lanl.gov" },
     { name = "Rahul Somasundaram", email = "rsomasundaram@lanl.gov" },
-    { name = "Arthur Lui", email = "alui@lanl.gov" }
+    { name = "Isaac Michaud", email = "imichaud@lanl.gov" },
+    { name = "Avanish Mishra", email = "avanish@lanl.gov" },
+    { name = "Arthur Lui", email = "alui@lanl.gov" },
+    { name = "Russell Bent", email = "rbent@lanl.gov" },
+    { name = "Earl Lawrence", email = "earl@lanl.gov" }
 ]
+license = "BSD-3-Clause"
+license-files = [ "LICENSE" ]
 requires-python = ">=3.10"
 dependencies = [
     "arxiv>=2.2.0,<3.0",
@@ -34,7 +41,6 @@ dependencies = [
 ]
 classifiers = [
     "Operating System :: OS Independent",
-    "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
