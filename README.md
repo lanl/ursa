@@ -86,3 +86,5 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 [pypi-version]: https://img.shields.io/pypi/v/ursa-ai?style=flat-square&label=PyPI
 [total-downloads]: https://img.shields.io/pepy/dt/ursa-ai?style=flat-square&label=downloads&color=blue
+
+
