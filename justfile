@@ -18,3 +18,6 @@ neutron:
 clean-workspaces:
 	rm -rf workspace
 	rm -rf workspace_*/
+
+pre-commit:
+    uv run pre-commit run --all-files

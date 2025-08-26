@@ -1,20 +1,15 @@
-import sqlite3
 import sys
-from pathlib import Path
-import argparse
 
-from langchain_litellm import ChatLiteLLM
+import coolname
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
-from ursa.agents import ExecutionAgent
+from langchain_litellm import ChatLiteLLM
 
 # rich console stuff for beautification
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 
-import coolname
+from ursa.agents import ExecutionAgent
 
 console = Console()  # global console object
 

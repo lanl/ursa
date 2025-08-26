@@ -2,16 +2,17 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from langchain_litellm import ChatLiteLLM
 from langchain_core.messages import HumanMessage
+from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.sqlite import SqliteSaver
-from ursa.agents import ExecutionAgent, PlanningAgent
 
 # rich console stuff for beautification
 from rich import get_console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.text import Text
+
+from ursa.agents import ExecutionAgent, PlanningAgent
 
 console = get_console()  # always returns the same instance
 

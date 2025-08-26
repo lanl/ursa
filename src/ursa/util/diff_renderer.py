@@ -1,5 +1,5 @@
-import re
 import difflib
+import re
 from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, RenderResult

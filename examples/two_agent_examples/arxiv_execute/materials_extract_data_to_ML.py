@@ -1,10 +1,8 @@
-import sys
-
 from langchain_community.callbacks import get_openai_callback
 from langchain_core.messages import HumanMessage
 from langchain_litellm import ChatLiteLLM
-from ursa.agents import ArxivAgent
-from ursa.agents import ExecutionAgent
+
+from ursa.agents import ArxivAgent, ExecutionAgent
 
 
 def main():

@@ -5,17 +5,16 @@ Plans, implements, and benchmarks several techniques to compute the N-th
 Fibonacci number, then explains which approach is the best.
 """
 
-from pathlib import Path
 import sqlite3
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.sqlite import SqliteSaver
-
-from ursa.agents import ExecutionAgent, PlanningAgent
-
 from rich import get_console
 from rich.panel import Panel
+
+from ursa.agents import ExecutionAgent, PlanningAgent
 
 console = get_console()
 

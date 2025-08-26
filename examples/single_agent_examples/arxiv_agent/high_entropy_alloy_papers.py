@@ -3,9 +3,10 @@ import time
 
 sys.path.append("../../.")
 
-from ursa.agents import ArxivAgent
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.callbacks.openai_info import OpenAICallbackHandler
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+from ursa.agents import ArxivAgent
 
 
 def main():

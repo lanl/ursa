@@ -4,7 +4,13 @@ repos:
   rev: v0.12.10
   hooks:
     # Run the linter.
-    # - id: ruff-check
-    #   args: [ --fix ]
+    - id: ruff-check
+      args: [
+        --fix,
+        --select, "I,F401",
+        --extend-per-file-ignores,
+        src/**/__init__.py:F401,
+        --unsafe-fixes
+      ]
     # Run the formatter.
     - id: ruff-format

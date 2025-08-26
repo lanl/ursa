@@ -1,7 +1,6 @@
-import sys
+from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ArxivAgent
-from langchain_litellm import ChatLiteLLM
 
 
 def main():

@@ -1,5 +1,3 @@
-import inspect
-
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from typing import Annotated, Any, List, Optional
@@ -9,7 +7,6 @@ from bs4 import BeautifulSoup
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -19,8 +16,8 @@ from typing_extensions import TypedDict
 
 from ..prompt_library.websearch_prompts import (
     reflection_prompt,
-    websearch_prompt,
     summarize_prompt,
+    websearch_prompt,
 )
 from .base import BaseAgent
 

@@ -17,7 +17,7 @@ If using `uv`, `pre-commit` will be installed in your default (dev)
 environment.
 
 To install the ruff formatting git hook to your local `.git/hooks` folder, run
-in the following in the current directory:
+the following in the current directory:
 
 ```bash
 # If using pip with venv, first activate your environment, then
