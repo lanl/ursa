@@ -3,7 +3,7 @@
 <img src="https://github.com/lanl/ursa/raw/main/logos/logo.png" alt="URSA Logo" width="200" height="200">
 
 [![PyPI Version][pypi-version]](https://pypi.org/project/ursa-ai/)
-[![PyPI Downloads][total-downloads]](https://pepy.tech/projects/ursa-ai)
+[![PyPI Downloads][monthly-downloads]](https://pypistats.org/packages/ursa-ai)
 
 The flexible agentic workflow for accelerating scientific tasks. 
 Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
@@ -85,4 +85,4 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 [pypi-version]: https://img.shields.io/pypi/v/ursa-ai?style=flat-square&label=PyPI
-[total-downloads]: https://img.shields.io/pepy/dt/ursa-ai?style=flat-square&label=downloads&color=blue
+[monthly-downloads]: https://img.shields.io/pypi/dm/ursa-ai?style=flat-square&label=Downloads&color=blue
