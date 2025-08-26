@@ -1,5 +1,5 @@
 ruff := "uvx ruff@0.12.10"
-lint-options := "--extend-fixable=F401 --ignore='D100,W505'"
+lint-options := "--extend-fixable='F401' --ignore='D100,W505'"
 
 help:
     just -l -u
@@ -25,11 +25,14 @@ clean-workspaces:
 lint:
     uv run pre-commit run --all-files
 
+lint-check *flags:
+    {{ ruff }} check {{ lint-options }} {{ flags }}
+
 lint-diff:
-    {{ ruff }} check {{ lint-options }} --diff
+    just lint-check --diff
 
 lint-stats:
-    {{ ruff }} check {{ lint-options }} --statistics
+    just lint-check --statistics
 
 lint-watch:
-    {{ ruff }} check {{ lint-options }} --watch
+    just lint-check --watch
