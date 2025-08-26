@@ -9,7 +9,7 @@ repos:
         --fix,
         --select, "I,F401",
         --extend-per-file-ignores, src/**/__init__.py:F401,
-        # --unsafe-fixes
+        --unsafe-fixes
       ]
     # Run the formatter.
     - id: ruff-format
