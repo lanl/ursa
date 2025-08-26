@@ -21,8 +21,12 @@ clean-workspaces:
 	rm -rf workspace
 	rm -rf workspace_*/
 
-lint:
+precommit:
     uv run pre-commit run --all-files
+
+lint:
+    {{ ruff }} check --fix
+    {{ ruff }} format
 
 lint-check *flags:
     {{ ruff }} check {{ flags }}
