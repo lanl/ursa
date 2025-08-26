@@ -2,7 +2,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List
+from typing import Dict
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate

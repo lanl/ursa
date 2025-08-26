@@ -1,7 +1,4 @@
-import sys
 import time
-
-sys.path.append("../../.")
 
 from langchain_community.callbacks.openai_info import OpenAICallbackHandler
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -34,7 +31,7 @@ def main():
 
     t0 = time.time()
 
-    result = agent.run(
+    agent.run(
         arxiv_search_query="High Entropy Alloys",
         context="Find High entropy alloys suitable for application under extreme conditions. For candidates that you identify, provide the starting structure, crystal structure, lattice parameters, and space group.",
     )

@@ -349,7 +349,7 @@ def main():
     }
     result = (
         code_review_agent.action.invoke(initial_state),
-        {"configurable": {"thread_id": self.thread_id}},
+        {"configurable": {"thread_id": 42}},
     )
     for x in result["messages"]:
         print(x.content)

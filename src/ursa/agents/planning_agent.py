@@ -40,7 +40,7 @@ class PlanningAgent(BaseAgent):
 
     def generation_node(self, state: PlanningState) -> PlanningState:
         messages = state["messages"]
-        if type(messages[0]) == SystemMessage:
+        if isinstance(messages[0], SystemMessage):
             messages[0] = SystemMessage(content=self.planner_prompt)
         else:
             messages = [SystemMessage(content=self.planner_prompt)] + messages

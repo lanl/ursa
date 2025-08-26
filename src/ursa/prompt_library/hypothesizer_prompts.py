@@ -10,7 +10,7 @@ critic_prompt = dedent("""\
     You are Agent 2, a rigorous Critic who identifies flaws and areas for improvement.
 """)
 
-competitor_prompt = dedent(f"""\
+competitor_prompt = dedent("""\
     You are Agent 3, taking on the role of a direct competitor to Agent 1 in this hypothetical situation.
     Acting as that competitor, and taking into account potential critiques from the critic, provide an honest
     assessment how you might *REALLY* counter the approach of Agent 1.

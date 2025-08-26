@@ -96,7 +96,7 @@ class HypothesizerAgent(BaseAgent):
             new_state["visited_sites"] = []
 
         try:
-            if type(raw_search_results) == str:
+            if isinstance(raw_search_results, str):
                 results_list = ast.literal_eval(raw_search_results)
             else:
                 results_list = raw_search_results
@@ -154,7 +154,7 @@ class HypothesizerAgent(BaseAgent):
             new_state["visited_sites"] = []
 
         try:
-            if type(raw_search_results) == str:
+            if isinstance(raw_search_results, str):
                 results_list = ast.literal_eval(raw_search_results)
             else:
                 results_list = raw_search_results
@@ -217,7 +217,7 @@ class HypothesizerAgent(BaseAgent):
             new_state["visited_sites"] = []
 
         try:
-            if type(raw_search_results) == str:
+            if isinstance(raw_search_results, str):
                 results_list = ast.literal_eval(raw_search_results)
             else:
                 results_list = raw_search_results
@@ -589,7 +589,7 @@ if __name__ == "__main__":
         initial_state,
         {
             "recursion_limit": 999999,
-            "configurable": {"thread_id": self.thread_id},
+            "configurable": {"thread_id": 42},
         },
     )
     summary_text = result["summary_report"]

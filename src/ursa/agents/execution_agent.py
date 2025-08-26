@@ -107,7 +107,7 @@ class ExecutionAgent(BaseAgent):
             # note that we've done the symlink now, so don't need to do it later
             new_state["symlinkdir"]["is_linked"] = True
 
-        if type(new_state["messages"][0]) == SystemMessage:
+        if isinstance(new_state["messages"][0], SystemMessage):
             new_state["messages"][0] = SystemMessage(
                 content=self.executor_prompt
             )
@@ -139,7 +139,7 @@ class ExecutionAgent(BaseAgent):
             memories = []
             # Handle looping through the messages
             for x in state["messages"]:
-                if not type(x) == AIMessage:
+                if not isinstance(x, AIMessage):
                     memories.append(x.content)
                 elif not x.tool_calls:
                     memories.append(x.content)
@@ -426,7 +426,7 @@ def edit_code(
 
     if old_code_clean not in content:
         console.print(
-            f"[yellow] ⚠️ 'old_code' not found in file'; no changes made.[/]"
+            "[yellow] ⚠️ 'old_code' not found in file'; no changes made.[/]"
         )
         return f"No changes made to {filename}: 'old_code' not found in file."
 
@@ -483,7 +483,7 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
     index = -1
     message = state["messages"][index]
     # Loop through all the consecutive tool messages in reverse order
-    while type(message) == ToolMessage:
+    while isinstance(message, ToolMessage):
         if "[UNSAFE]" in message.content:
             return "unsafe"
 

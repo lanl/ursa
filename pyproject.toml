@@ -66,10 +66,13 @@ line-length = 80
 
 [tool.ruff.lint]
 ignore = ["D100"]
-extend-select = ["I", "W505"] # "D"
-extend-unsafe-fixes = ["F401"]
+extend-select = ["I", "W505"]  # D (docs)
+extend-unfixable = ["F401"]
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]

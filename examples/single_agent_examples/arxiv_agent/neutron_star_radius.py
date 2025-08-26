@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ArxivAgent
@@ -6,14 +8,15 @@ from ursa.agents import ArxivAgent
 def main():
     llm = ChatLiteLLM(model="openai/o3", max_completion_tokens=20000)
 
+    Path("workspace").mkdir(exist_ok=True)
     agent = ArxivAgent(
         llm=llm,
         summarize=True,
         process_images=True,
         max_results=3,
-        database_path="arxiv_papers_neutron_star",
-        summaries_path="arxiv_summaries_neutron_star",
-        vectorstore_path="arxiv_vectorstores_neutron_star",
+        database_path="workspace/arxiv_papers_neutron_star",
+        summaries_path="workspace/arxiv_summaries_neutron_star",
+        vectorstore_path="workspace/arxiv_vectorstores_neutron_star",
         download_papers=True,
     )
 

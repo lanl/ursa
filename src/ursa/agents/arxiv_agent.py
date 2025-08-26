@@ -23,7 +23,7 @@ from .base import BaseAgent
 
 try:
     from openai import OpenAI
-except:
+except Exception:
     pass
 
 # embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -162,7 +162,7 @@ class ArxivAgent(BaseAgent):
                 full_id = entry.id.split("/abs/")[-1]
                 arxiv_id = full_id.split("/")[-1]
                 title = entry.title.strip()
-                authors = ", ".join(author.name for author in entry.authors)
+                # authors = ", ".join(author.name for author in entry.authors)
                 pdf_url = f"https://arxiv.org/pdf/{full_id}.pdf"
                 pdf_filename = os.path.join(
                     self.database_path, f"{arxiv_id}.pdf"
@@ -313,7 +313,7 @@ class ArxivAgent(BaseAgent):
 
         if "papers" not in state or len(state["papers"]) == 0:
             print(
-                f"No papers retrieved - bad query or network connection to ArXiv?"
+                "No papers retrieved - bad query or network connection to ArXiv?"
             )
             return {**state, "summaries": None}
 

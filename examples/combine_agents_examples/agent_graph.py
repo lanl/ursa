@@ -54,14 +54,6 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 """
 
 
-class State(TypedDict):
-    messages: Annotated[list, add_messages]
-    current_progress: str
-    code_files: list[str]
-    workspace: str
-    arxiv_results: list[str]
-
-
 model = ChatLiteLLM(
     model="openai/o3",
     max_tokens=50000,
@@ -167,7 +159,7 @@ class CombinedAgent(BaseAgent):
             )
         os.makedirs(new_state["workspace"], exist_ok=True)
 
-        if type(new_state["messages"][0]) == SystemMessage:
+        if isinstance(new_state["messages"][0], SystemMessage):
             new_state["messages"][0] = SystemMessage(content=self.runner_prompt)
         else:
             new_state["messages"] = [
@@ -190,7 +182,7 @@ class CombinedAgent(BaseAgent):
         memories = []
         # Handle looping through the messages
         for x in state["messages"]:
-            if not type(x) == AIMessage:
+            if not isinstance(x, AIMessage):
                 memories.append(x.content)
             elif not x.tool_calls:
                 memories.append(x.content)
