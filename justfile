@@ -1,5 +1,4 @@
 ruff := "uvx ruff@0.12.10"
-lint-options := "--extend-fixable='F401' --ignore='D100,W505'"
 
 help:
     just -l -u
@@ -26,7 +25,7 @@ lint:
     uv run pre-commit run --all-files
 
 lint-check *flags:
-    {{ ruff }} check {{ lint-options }} {{ flags }}
+    {{ ruff }} check {{ flags }}
 
 lint-diff:
     just lint-check --diff

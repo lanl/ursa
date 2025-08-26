@@ -65,11 +65,10 @@ enabled = true
 line-length = 80
 
 [tool.ruff.lint]
-ignore = ["D100"]
-extend-select = ["I", "W505"]  # D (docs)
-extend-unfixable = ["F401"]
+extend-select = ["I"]  # W505 (doc-line-too-long); D (pydocstyle)
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
+# extend-unfixable = ["F401"]  # unused imports
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
