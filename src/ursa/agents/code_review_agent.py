@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from typing import Annotated, Literal
 
 from langchain_core.language_models import BaseChatModel
