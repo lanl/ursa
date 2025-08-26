@@ -63,15 +63,12 @@ enabled = true
 
 [tool.ruff]
 line-length = 80
+preview = true
 
 [tool.ruff.lint]
 extend-select = ["I"]  # W505 (doc-line-too-long); D (pydocstyle)
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
-# extend-unfixable = ["F401"]  # unused imports
-
-[tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]

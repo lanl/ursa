@@ -141,9 +141,10 @@ You are a materials-science assistant. Given the following metadata about a mate
         {context}
                 """)
         chain = prompt | self.llm | StrOutputParser()
-        final = chain.invoke(
-            {"summaries": combined, "context": state["context"]}
-        )
+        final = chain.invoke({
+            "summaries": combined,
+            "context": state["context"],
+        })
         return {**state, "final_summary": final}
 
     def _build_graph(self):

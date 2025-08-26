@@ -211,12 +211,10 @@ class ArxivAgent(BaseAgent):
                 except Exception as e:
                     full_text = f"Error loading paper: {e}"
 
-            papers.append(
-                {
-                    "arxiv_id": arxiv_id,
-                    "full_text": full_text,
-                }
-            )
+            papers.append({
+                "arxiv_id": arxiv_id,
+                "full_text": full_text,
+            })
 
         return papers
 
@@ -279,28 +277,23 @@ class ArxivAgent(BaseAgent):
                     )
 
                     if relevant_docs_with_scores:
-                        score = sum(
-                            [s for _, s in relevant_docs_with_scores]
-                        ) / len(relevant_docs_with_scores)
+                        score = sum([
+                            s for _, s in relevant_docs_with_scores
+                        ]) / len(relevant_docs_with_scores)
                         relevancy_scores[i] = abs(1.0 - score)
                     else:
                         relevancy_scores[i] = 0.0
 
-                    retrieved_content = "\n\n".join(
-                        [
-                            doc.page_content
-                            for doc, _ in relevant_docs_with_scores
-                        ]
-                    )
+                    retrieved_content = "\n\n".join([
+                        doc.page_content for doc, _ in relevant_docs_with_scores
+                    ])
                 else:
                     retrieved_content = cleaned_text
 
-                summary = chain.invoke(
-                    {
-                        "retrieved_content": retrieved_content,
-                        "context": state["context"],
-                    }
-                )
+                summary = chain.invoke({
+                    "retrieved_content": retrieved_content,
+                    "context": state["context"],
+                })
 
             except Exception as e:
                 summary = f"Error summarizing paper: {e}"
@@ -376,9 +369,10 @@ class ArxivAgent(BaseAgent):
 
         chain = prompt | self.llm | StrOutputParser()
 
-        final_summary = chain.invoke(
-            {"Summaries": combined, "context": state["context"]}
-        )
+        final_summary = chain.invoke({
+            "Summaries": combined,
+            "context": state["context"],
+        })
 
         with open(self.summaries_path + "/final_summary.txt", "w") as f:
             f.write(final_summary)
@@ -406,9 +400,10 @@ class ArxivAgent(BaseAgent):
         return graph
 
     def run(self, arxiv_search_query: str, context: str) -> str:
-        result = self.graph.invoke(
-            {"query": arxiv_search_query, "context": context}
-        )
+        result = self.graph.invoke({
+            "query": arxiv_search_query,
+            "context": context,
+        })
 
         if self.summarize:
             return result.get("final_summary", "No summary generated.")
