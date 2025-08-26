@@ -12,5 +12,5 @@ jobs:
         with:
           version: "0.12.10"
           args: "--version"
-      - run: ruff check --diff --extend-fixable=F401 --ignore='D100,W505'
-      - run: ruff format --check --diff
+      - run: ruff check --extend-fixable=F401 --ignore='D100,W505'
+      - run: ruff format --check
