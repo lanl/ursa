@@ -5,37 +5,18 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 from mp_api.client import MPRester
-from langchain.schema import Document
 
 import os
-import pymupdf
-import requests
-import feedparser
-from PIL import Image
-from io import BytesIO
-import base64
-from urllib.parse import quote
 from typing_extensions import TypedDict, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import re
 
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END, START
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-
-from openai import OpenAI
 
 from .base import BaseAgent
-
-
-client = OpenAI()
-
-embeddings = OpenAIEmbeddings()
 
 
 class PaperMetadata(TypedDict):
@@ -51,74 +32,6 @@ class PaperState(TypedDict, total=False):
     final_summary: str
 
 
-def describe_image(image: Image.Image) -> str:
-    buffered = BytesIO()
-    image.save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode()
-
-    response = client.chat.completions.create(
-        model="gpt-4-vision-preview",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a scientific assistant who explains plots and scientific diagrams.",
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Describe this scientific image or plot in detail.",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_base64}"
-                        },
-                    },
-                ],
-            },
-        ],
-        max_tokens=500,
-    )
-    return response.choices[0].message.content.strip()
-
-
-def extract_and_describe_images(
-    pdf_path: str, max_images: int = 5
-) -> List[str]:
-    doc = pymupdf.open(pdf_path)
-    descriptions = []
-    image_count = 0
-
-    for page_index in range(len(doc)):
-        if image_count >= max_images:
-            break
-        page = doc[page_index]
-        images = page.get_images(full=True)
-
-        for img_index, img in enumerate(images):
-            if image_count >= max_images:
-                break
-            xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            image = Image.open(BytesIO(image_bytes))
-
-            try:
-                desc = describe_image(image)
-                descriptions.append(
-                    f"Page {page_index + 1}, Image {img_index + 1}: {desc}"
-                )
-            except Exception as e:
-                descriptions.append(
-                    f"Page {page_index + 1}, Image {img_index + 1}: [Error: {e}]"
-                )
-            image_count += 1
-
-    return descriptions
-
-
 def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
 
@@ -131,7 +44,6 @@ class MaterialsProjectAgent(BaseAgent):
         max_results: int = 3,
         database_path: str = "mp_database",
         summaries_path: str = "mp_summaries",
-        vectorstore_path: str = "mp_vectorstores",
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
@@ -139,13 +51,10 @@ class MaterialsProjectAgent(BaseAgent):
         self.max_results = max_results
         self.database_path = database_path
         self.summaries_path = summaries_path
-        self.vectorstore_path = vectorstore_path
 
         os.makedirs(self.database_path, exist_ok=True)
         os.makedirs(self.summaries_path, exist_ok=True)
-        os.makedirs(self.vectorstore_path, exist_ok=True)
 
-        self.embeddings = OpenAIEmbeddings()  # or your preferred embedding
         self.graph = self._build_graph()
 
     def _fetch_node(self, state: Dict) -> Dict:
@@ -175,24 +84,6 @@ class MaterialsProjectAgent(BaseAgent):
 
         return {**state, "materials": mats}
 
-    def _get_or_build_vectorstore(self, text: str, mid: str):
-        """Build or load a Chroma vectorstore for a single material's description."""
-        persist_dir = os.path.join(self.vectorstore_path, mid)
-        if os.path.exists(persist_dir):
-            store = Chroma(
-                persist_directory=persist_dir,
-                embedding_function=self.embeddings,
-            )
-        else:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=500, chunk_overlap=100
-            )
-            docs = splitter.create_documents([text])
-            store = Chroma.from_documents(
-                docs, self.embeddings, persist_directory=persist_dir
-            )
-        return store.as_retriever(search_kwargs={"k": 5})
-
     def _summarize_node(self, state: Dict) -> Dict:
         """Summarize each material via LLM over its metadata."""
         # prompt template
@@ -204,7 +95,6 @@ You are a materials-science assistant. Given the following metadata about a mate
         chain = prompt | self.llm | StrOutputParser()
 
         summaries = [None] * len(state["materials"])
-        relevancy = [0.0] * len(state["materials"])
 
         def process(i, mat):
             mid = mat["material_id"]
