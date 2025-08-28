@@ -26,19 +26,30 @@ class AgentMemory:
     * Requires `langchain-chroma`, and `chromadb`.
     """
 
+    @classmethod
+    def get_db_path(cls, path: Optional[str | Path]) -> Path:
+        match path:
+            case None:
+                return Path.home() / ".cache" / "ursa" / "rag" / "db"
+            case str():
+                return Path(str)
+            case Path():
+                return path
+            case _:
+                raise TypeError(
+                    f"Type of path is `{type(path)}` "
+                    "but `Optional[str | Path]` was expected."
+                )
+
     def __init__(
         self,
         embedding_model,
         path: Optional[str | Path] = None,
         collection_name: str = "agent_memory",
     ) -> None:
-        home_dir = os.path.expanduser("~")
-        self.path = (
-            Path(path) if path else Path(home_dir + "/.cache/ursa/rag/db/")
-        )
+        self.path = self.get_db_path(path)
         self.collection_name = collection_name
         self.path.mkdir(parents=True, exist_ok=True)
-
         self.embeddings = embedding_model
 
         # If a DB already exists, load it; otherwise defer creation until `build_index`.
@@ -164,8 +175,7 @@ def delete_database(path: Optional[str | Path] = None):
         Where the on-disk Chroma DB is for deleting.  If *None*, a folder called
         ``agent_memory_db`` is created in the package’s base directory.
     """
-    home_dir = os.path.expanduser("~")
-    db_path = Path(path) if path else Path(home_dir + "/.cache/ursa/rag/db/")
+    db_path = AgentMemory.get_db_path(path)
     if os.path.exists(db_path):
         shutil.rmtree(db_path)
         print(f"Database: {db_path} has been deleted.")
