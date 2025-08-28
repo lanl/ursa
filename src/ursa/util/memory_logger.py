@@ -32,10 +32,9 @@ class AgentMemory:
         path: Optional[str | Path] = None,
         collection_name: str = "agent_memory",
     ) -> None:
+        home_dir = os.path.expanduser("~")
         self.path = (
-            Path(path)
-            if path
-            else Path(__file__).resolve().parent / "agent_memory_db"
+            Path(path) if path else Path(home_dir + "/.cache/ursa/rag/db/")
         )
         self.collection_name = collection_name
         self.path.mkdir(parents=True, exist_ok=True)
@@ -165,8 +164,8 @@ def delete_database(path: Optional[str | Path] = None):
         Where the on-disk Chroma DB is for deleting.  If *None*, a folder called
         ``agent_memory_db`` is created in the package’s base directory.
     """
-
-    db_path = Path(path) if path else Path("~/.cache/ursa/rag/db/")
+    home_dir = os.path.expanduser("~")
+    db_path = Path(path) if path else Path(home_dir + "/.cache/ursa/rag/db/")
     if os.path.exists(db_path):
         shutil.rmtree(db_path)
         print(f"Database: {db_path} has been deleted.")
