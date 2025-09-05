@@ -15,7 +15,7 @@ llm = ChatOpenAI(model      = model,
 wf = LammpsAgent(
     llm = llm,
     max_potentials=5,
-    max_fix_attempts=10,      
+    max_fix_attempts=15,      
     mpi_procs=8,
     lammps_cmd="lmp_mpi",
     mpirun_cmd="mpirun",
