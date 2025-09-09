@@ -9,13 +9,17 @@ test:
 test-vowels:
 	uv run examples/single_agent_examples/websearch_agent/ten_vowel_city.py
 
-# Test neutron star example with latest dependencies
-neutron-latest:
-    uv run --with=. examples/single_agent_examples/arxiv_agent/neutron_star_radius.py
-
 # Test neutron star example with uv.lock dependencies
-neutron:
-    uv run examples/single_agent_examples/arxiv_agent/neutron_star_radius.py
+neutron *flags:
+    uv run examples/single_agent_examples/arxiv_agent/neutron_star_radius.py {{ flags }}
+
+# Test neutron star example with latest dependencies.
+neutron-latest:
+    just neutron --isolated --resolution=highest
+
+# Test neutron star example with oldest dependencies.
+neutron-lowest:
+    just neutron --isolated --resolution=lowest-direct
 
 clean-workspaces:
 	rm -rf workspace
