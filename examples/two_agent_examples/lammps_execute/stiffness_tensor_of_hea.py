@@ -12,11 +12,14 @@ llm = ChatOpenAI(model      = model,
                 )
 
 
+workspace = "./workspace_stiffness_tensor"
+
 wf = LammpsAgent(
     llm = llm,
     max_potentials=5,
     max_fix_attempts=15,      
     mpi_procs=8,
+    workspace = workspace,
     lammps_cmd="lmp_mpi",
     mpirun_cmd="mpirun",
 )
@@ -34,14 +37,15 @@ if final_lammps_state.get("run_returncode") == 0:
     exe_plan = f"""
     You are part of a larger scientific workflow whose purpose is to accomplish this task: {high_level}
     
-    A LAMMPS simulation has been done and the output is located here: ../log.lammps
+    A LAMMPS simulation has been done and the output is located here in the file log.lammps.
     
     Summarize the contents of this file in a markdown document. Include a plot, if relevent.
     """
     
-    init = {"messages": [HumanMessage(content=exe_plan)]}
-    
-    final_results = executor.action.invoke(init, {"recursion_limit": 10000})
+    executor_config = {"recursion_limit": 999_999}
+        
+    final_results = executor.action.invoke({"messages": [HumanMessage(content=exe_plan)],
+                                            "workspace": workspace,},executor_config,)
     
     for x in final_results["messages"]:
         print(x.content)

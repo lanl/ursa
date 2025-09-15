@@ -1,6 +1,7 @@
 from typing import TypedDict, List, Optional, Any, Dict
 import json
 import subprocess
+import os 
 
 import atomman as am
 import trafilatura
@@ -45,6 +46,7 @@ class LammpsAgent(BaseAgent):
         max_potentials: int = 5,
         max_fix_attempts: int = 10,       
         mpi_procs: int = 8,
+        workspace: str = "./workspace",
         lammps_cmd: str = "lmp_mpi",     
         mpirun_cmd: str = "mpirun",
         tiktoken_model: str = "o3",
@@ -65,6 +67,9 @@ class LammpsAgent(BaseAgent):
                             "kim",                    # OpenKIM models
                             "snap", "quip", "mlip", "pace", "nep"  # ML/ACE families (if available)
                             ]
+
+        self.workspace = workspace
+        os.makedirs(self.workspace, exist_ok=True)
 
         
         super().__init__(llm, **kwargs)
@@ -244,7 +249,7 @@ class LammpsAgent(BaseAgent):
     def _author(self, state: LammpsState) -> LammpsState:
         print("First attempt at writing LAMMPS input file....")
         match = state["matches"][state["chosen_index"]]
-        match.download_files("./")
+        match.download_files(self.workspace)
         text = state["full_texts"][state["chosen_index"]]
         pair_info = match.pair_info()
         authored_json = self.author_chain.invoke({
@@ -254,7 +259,7 @@ class LammpsAgent(BaseAgent):
         })
         script_dict = self._safe_json_loads(authored_json)
         input_script = script_dict["input_script"]
-        with open("in.lammps", "w") as f:
+        with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
             f.write(input_script)
         return {**state, "input_script": input_script}
 
@@ -262,6 +267,7 @@ class LammpsAgent(BaseAgent):
         print ("Running LAMMPS....")
         result = subprocess.run(
             [self.mpirun_cmd, "-np", str(self.mpi_procs), self.lammps_cmd, "-in", "in.lammps"],
+            cwd=self.workspace,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -301,7 +307,7 @@ class LammpsAgent(BaseAgent):
         })
         script_dict = self._safe_json_loads(fixed_json)
         new_input = script_dict["input_script"]
-        with open("in.lammps", "w") as f:
+        with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
             f.write(new_input)
         return {**state, "input_script": new_input, "fix_attempts": state.get("fix_attempts", 0) + 1}
 
