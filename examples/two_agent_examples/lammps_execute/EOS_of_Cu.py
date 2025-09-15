@@ -23,10 +23,10 @@ wf = LammpsAgent(
     mpirun_cmd="mpirun",
 )
 
-high_level="Carry out a LAMMPS simulation of Cu to determine its equation of state."
+simulation_task="Carry out a LAMMPS simulation of Cu to determine its equation of state."
 elements=["Cu"]
 
-final_lammps_state = wf.run(high_level,elements)
+final_lammps_state = wf.run(simulation_task,elements)
 
 if final_lammps_state.get("run_returncode") == 0:
 
@@ -34,7 +34,7 @@ if final_lammps_state.get("run_returncode") == 0:
 
     executor = ExecutionAgent(llm=llm)
     exe_plan = f"""
-    You are part of a larger scientific workflow whose purpose is to accomplish this task: {high_level}
+    You are part of a larger scientific workflow whose purpose is to accomplish this task: {simulation_task}
     
     A LAMMPS simulation has been done and the output is located here in the file log.lammps.
     

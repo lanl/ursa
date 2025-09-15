@@ -16,7 +16,7 @@ from .base import BaseAgent
 
 
 class LammpsState(TypedDict, total=False):
-    high_level: str
+    simulation_task: str
     elements: List[str]
     
     matches: List[Any]
@@ -78,14 +78,14 @@ class LammpsAgent(BaseAgent):
 
         self.summ_chain = (ChatPromptTemplate.from_template(
             "Here is some data about an interatomic potential: {metadata}\n\n"
-            "Briefly summarize why it could be useful for this task: {high_level}."
+            "Briefly summarize why it could be useful for this task: {simulation_task}."
         ) | self.llm | self.str_parser)
 
         
         self.choose_chain = (
             ChatPromptTemplate.from_template(
                 "Here are the summaries of a certain number of interatomic potentials: {summaries_combined}\n\n"
-                "Pick one potential which would be most useful for this task: {high_level}.\n\n"
+                "Pick one potential which would be most useful for this task: {simulation_task}.\n\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n\n"
                 "Use this exact schema:\n"
                 "{{\n"
@@ -100,7 +100,7 @@ class LammpsAgent(BaseAgent):
         
         self.author_chain = (
             ChatPromptTemplate.from_template(
-                "Your task is to write a LAMMPS input file for this purpose: {high_level}.\n"
+                "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
                 "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the ./ directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
@@ -117,7 +117,7 @@ class LammpsAgent(BaseAgent):
         
         self.fix_chain = (
             ChatPromptTemplate.from_template(
-                "You are part of a larger scientific workflow whose purpose is to accomplish this task: {high_level}\n"
+                "You are part of a larger scientific workflow whose purpose is to accomplish this task: {simulation_task}\n"
                 "For this purpose, this input file for LAMMPS was written: {input_script}\n"
                 "However, when running the simulation, an error was raised.\n"
                 "Here is the full stdout message that includes the error message: {err_message}\n"
@@ -219,7 +219,7 @@ class LammpsAgent(BaseAgent):
             lines = md["comments"].split("\n")
             url = lines[1] if len(lines) > 1 else ""
             text = self._fetch_and_trim_text(url) if url else "No metadata available"
-            summary = self.summ_chain.invoke({"metadata": text, "high_level": state["high_level"]})
+            summary = self.summ_chain.invoke({"metadata": text, "simulation_task": state["simulation_task"]})
 
         return {
             **state,
@@ -239,7 +239,7 @@ class LammpsAgent(BaseAgent):
         print ("Choosing one potential for this task...")
         choice = self.choose_chain.invoke({
             "summaries_combined": state["summaries_combined"],
-            "high_level": state["high_level"]
+            "simulation_task": state["simulation_task"]
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
@@ -253,7 +253,7 @@ class LammpsAgent(BaseAgent):
         text = state["full_texts"][state["chosen_index"]]
         pair_info = match.pair_info()
         authored_json = self.author_chain.invoke({
-            "high_level": state["high_level"],
+            "simulation_task": state["simulation_task"],
             "metadata": text,
             "pair_info": pair_info
         })
@@ -299,7 +299,7 @@ class LammpsAgent(BaseAgent):
         err_blob = state.get("run_stdout") 
         
         fixed_json = self.fix_chain.invoke({
-            "high_level": state["high_level"],
+            "simulation_task": state["simulation_task"],
             "input_script": state["input_script"],
             "err_message": err_blob,
             "metadata": text,
@@ -362,6 +362,6 @@ class LammpsAgent(BaseAgent):
         return g
 
     
-    def run(self,high_level,elements):
-        return self.graph.invoke({"high_level": high_level,"elements": elements})
+    def run(self,simulation_task,elements):
+        return self.graph.invoke({"simulation_task": simulation_task,"elements": elements},{"recursion_limit": 999_999})
         
