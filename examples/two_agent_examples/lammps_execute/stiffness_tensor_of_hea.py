@@ -38,7 +38,7 @@ if final_lammps_state.get("run_returncode") == 0:
     exe_plan = f"""
     You are part of a larger scientific workflow whose purpose is to accomplish this task: {simulation_task}
     
-    A LAMMPS simulation has been done and the output is located here in the file log.lammps.
+    A LAMMPS simulation has been done and the output is located in the file 'log.lammps'.
     
     Summarize the contents of this file in a markdown document. Include a plot, if relevent.
     """

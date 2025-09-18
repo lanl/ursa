@@ -102,9 +102,10 @@ class LammpsAgent(BaseAgent):
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
                 "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
-                "Note that all potential files are in the ./ directory.\n"
+                "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
-                "Ensure that all output data is written only to the ./log.lammps file. Do not create any other output file.\n"
+                "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
+                "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
                 "Use this exact schema:\n"
                 "{{\n"
@@ -123,9 +124,10 @@ class LammpsAgent(BaseAgent):
                 "Here is the full stdout message that includes the error message: {err_message}\n"
                 "Your task is to write a new input file that resolves the error.\n"
                 "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
-                "Note that all potential files are in the ./ directory.\n"
+                "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
-                "Ensure that all output data is written only to the ./log.lammps file. Do not create any other output file.\n"
+                "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
+                "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
                 "Use this exact schema:\n"
                 "{{\n"
@@ -244,6 +246,8 @@ class LammpsAgent(BaseAgent):
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
         print (f"Chosen potential #{chosen_index}")
+        print ("Rationale for choosing this potential:")
+        print(choice_dict["rationale"])
         return {**state, "choice_json": choice, "chosen_index": chosen_index}
 
     def _author(self, state: LammpsState) -> LammpsState:
