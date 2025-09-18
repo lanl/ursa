@@ -1,16 +1,14 @@
-from typing import TypedDict, List, Optional, Any, Dict
 import json
+import os
 import subprocess
-import os 
+from typing import Any, Dict, List, Optional, TypedDict
 
 import atomman as am
-import trafilatura
 import tiktoken
-
-from langchain_core.prompts import ChatPromptTemplate
+import trafilatura
 from langchain_core.output_parsers import StrOutputParser
-
-from langgraph.graph import StateGraph, END
+from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph import END, StateGraph
 
 from .base import BaseAgent
 
@@ -18,7 +16,7 @@ from .base import BaseAgent
 class LammpsState(TypedDict, total=False):
     simulation_task: str
     elements: List[str]
-    
+
     matches: List[Any]
     db_message: str
 
@@ -35,8 +33,7 @@ class LammpsState(TypedDict, total=False):
     run_stdout: str
     run_stderr: str
 
-    fix_attempts: int 
-
+    fix_attempts: int
 
 
 class LammpsAgent(BaseAgent):
@@ -44,16 +41,15 @@ class LammpsAgent(BaseAgent):
         self,
         llm,
         max_potentials: int = 5,
-        max_fix_attempts: int = 10,       
+        max_fix_attempts: int = 10,
         mpi_procs: int = 8,
         workspace: str = "./workspace",
-        lammps_cmd: str = "lmp_mpi",     
+        lammps_cmd: str = "lmp_mpi",
         mpirun_cmd: str = "mpirun",
         tiktoken_model: str = "o3",
         max_tokens: int = 200000,
         **kwargs,
     ):
-
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.mpi_procs = mpi_procs
@@ -62,26 +58,36 @@ class LammpsAgent(BaseAgent):
         self.tiktoken_model = tiktoken_model
         self.max_tokens = max_tokens
 
-        self.pair_styles = ["eam", "eam/alloy", "eam/fs",
-                            "meam", "adp",            # classical, HEA-relevant
-                            "kim",                    # OpenKIM models
-                            "snap", "quip", "mlip", "pace", "nep"  # ML/ACE families (if available)
-                            ]
+        self.pair_styles = [
+            "eam",
+            "eam/alloy",
+            "eam/fs",
+            "meam",
+            "adp",  # classical, HEA-relevant
+            "kim",  # OpenKIM models
+            "snap",
+            "quip",
+            "mlip",
+            "pace",
+            "nep",  # ML/ACE families (if available)
+        ]
 
         self.workspace = workspace
         os.makedirs(self.workspace, exist_ok=True)
 
-        
         super().__init__(llm, **kwargs)
-        
+
         self.str_parser = StrOutputParser()
 
-        self.summ_chain = (ChatPromptTemplate.from_template(
-            "Here is some data about an interatomic potential: {metadata}\n\n"
-            "Briefly summarize why it could be useful for this task: {simulation_task}."
-        ) | self.llm | self.str_parser)
+        self.summ_chain = (
+            ChatPromptTemplate.from_template(
+                "Here is some data about an interatomic potential: {metadata}\n\n"
+                "Briefly summarize why it could be useful for this task: {simulation_task}."
+            )
+            | self.llm
+            | self.str_parser
+        )
 
-        
         self.choose_chain = (
             ChatPromptTemplate.from_template(
                 "Here are the summaries of a certain number of interatomic potentials: {summaries_combined}\n\n"
@@ -97,7 +103,7 @@ class LammpsAgent(BaseAgent):
             | self.llm
             | self.str_parser
         )
-        
+
         self.author_chain = (
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
@@ -115,7 +121,7 @@ class LammpsAgent(BaseAgent):
             | self.llm
             | self.str_parser
         )
-        
+
         self.fix_chain = (
             ChatPromptTemplate.from_template(
                 "You are part of a larger scientific workflow whose purpose is to accomplish this task: {simulation_task}\n"
@@ -138,10 +144,7 @@ class LammpsAgent(BaseAgent):
             | self.str_parser
         )
 
-        
         self.graph = self._build_graph().compile()
-
-
 
     @staticmethod
     def _safe_json_loads(s: str) -> Dict[str, Any]:
@@ -177,10 +180,11 @@ class LammpsAgent(BaseAgent):
             pass
         return text
 
-
     def _find_potentials(self, state: LammpsState) -> LammpsState:
         db = am.library.Database(remote=True)
-        matches = db.get_lammps_potentials(pair_style=self.pair_styles, elements=state["elements"])
+        matches = db.get_lammps_potentials(
+            pair_style=self.pair_styles, elements=state["elements"]
+        )
         msg_lines = []
         if not list(matches):
             msg_lines.append("No potentials found for this task in NIST.")
@@ -202,7 +206,7 @@ class LammpsAgent(BaseAgent):
         matches = state.get("matches", [])
         i = state.get("idx", 0)
         if not matches:
-            print ("No potentials found in NIST for this task. Exiting....")
+            print("No potentials found in NIST for this task. Exiting....")
             return "done_no_matches"
         if i < min(self.max_potentials, len(matches)):
             return "summarize_one"
@@ -210,7 +214,7 @@ class LammpsAgent(BaseAgent):
 
     def _summarize_one(self, state: LammpsState) -> LammpsState:
         i = state["idx"]
-        print (f"Summarizing potential #{i}")
+        print(f"Summarizing potential #{i}")
         match = state["matches"][i]
         md = match.metadata()
 
@@ -220,8 +224,15 @@ class LammpsAgent(BaseAgent):
         else:
             lines = md["comments"].split("\n")
             url = lines[1] if len(lines) > 1 else ""
-            text = self._fetch_and_trim_text(url) if url else "No metadata available"
-            summary = self.summ_chain.invoke({"metadata": text, "simulation_task": state["simulation_task"]})
+            text = (
+                self._fetch_and_trim_text(url)
+                if url
+                else "No metadata available"
+            )
+            summary = self.summ_chain.invoke({
+                "metadata": text,
+                "simulation_task": state["simulation_task"],
+            })
 
         return {
             **state,
@@ -238,15 +249,15 @@ class LammpsAgent(BaseAgent):
         return {**state, "summaries_combined": "".join(parts)}
 
     def _choose(self, state: LammpsState) -> LammpsState:
-        print ("Choosing one potential for this task...")
+        print("Choosing one potential for this task...")
         choice = self.choose_chain.invoke({
             "summaries_combined": state["summaries_combined"],
-            "simulation_task": state["simulation_task"]
+            "simulation_task": state["simulation_task"],
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
-        print (f"Chosen potential #{chosen_index}")
-        print ("Rationale for choosing this potential:")
+        print(f"Chosen potential #{chosen_index}")
+        print("Rationale for choosing this potential:")
         print(choice_dict["rationale"])
         return {**state, "choice_json": choice, "chosen_index": chosen_index}
 
@@ -259,7 +270,7 @@ class LammpsAgent(BaseAgent):
         authored_json = self.author_chain.invoke({
             "simulation_task": state["simulation_task"],
             "metadata": text,
-            "pair_info": pair_info
+            "pair_info": pair_info,
         })
         script_dict = self._safe_json_loads(authored_json)
         input_script = script_dict["input_script"]
@@ -268,14 +279,21 @@ class LammpsAgent(BaseAgent):
         return {**state, "input_script": input_script}
 
     def _run_lammps(self, state: LammpsState) -> LammpsState:
-        print ("Running LAMMPS....")
+        print("Running LAMMPS....")
         result = subprocess.run(
-            [self.mpirun_cmd, "-np", str(self.mpi_procs), self.lammps_cmd, "-in", "in.lammps"],
+            [
+                self.mpirun_cmd,
+                "-np",
+                str(self.mpi_procs),
+                self.lammps_cmd,
+                "-in",
+                "in.lammps",
+            ],
             cwd=self.workspace,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            check=False
+            check=False,
         )
         return {
             **state,
@@ -288,35 +306,37 @@ class LammpsAgent(BaseAgent):
         rc = state.get("run_returncode", 0)
         attempts = state.get("fix_attempts", 0)
         if rc == 0:
-            print ("LAMMPS run successful! Exiting...")
+            print("LAMMPS run successful! Exiting...")
             return "done_success"
         if attempts < self.max_fix_attempts:
-            print ("LAMMPS run Failed. Attempting to rewrite input file...")
+            print("LAMMPS run Failed. Attempting to rewrite input file...")
             return "need_fix"
-        print ("LAMMPS run Failed and maximum fix attempts reached. Exiting...")
+        print("LAMMPS run Failed and maximum fix attempts reached. Exiting...")
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
         match = state["matches"][state["chosen_index"]]
         text = state["full_texts"][state["chosen_index"]]
         pair_info = match.pair_info()
-        err_blob = state.get("run_stdout") 
-        
+        err_blob = state.get("run_stdout")
+
         fixed_json = self.fix_chain.invoke({
             "simulation_task": state["simulation_task"],
             "input_script": state["input_script"],
             "err_message": err_blob,
             "metadata": text,
-            "pair_info": pair_info
+            "pair_info": pair_info,
         })
         script_dict = self._safe_json_loads(fixed_json)
         new_input = script_dict["input_script"]
         with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
             f.write(new_input)
-        return {**state, "input_script": new_input, "fix_attempts": state.get("fix_attempts", 0) + 1}
+        return {
+            **state,
+            "input_script": new_input,
+            "fix_attempts": state.get("fix_attempts", 0) + 1,
+        }
 
-
-    
     def _build_graph(self):
         g = StateGraph(LammpsState)
 
@@ -365,7 +385,8 @@ class LammpsAgent(BaseAgent):
         g.add_edge("fix", "run_lammps")
         return g
 
-    
-    def run(self,simulation_task,elements):
-        return self.graph.invoke({"simulation_task": simulation_task,"elements": elements},{"recursion_limit": 999_999})
-        
+    def run(self, simulation_task, elements):
+        return self.graph.invoke(
+            {"simulation_task": simulation_task, "elements": elements},
+            {"recursion_limit": 999_999},
+        )

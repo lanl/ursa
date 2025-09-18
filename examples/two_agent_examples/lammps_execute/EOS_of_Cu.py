@@ -1,36 +1,33 @@
-from ursa.agents import LammpsAgent
-from ursa.agents import ExecutionAgent
-
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from ursa.agents import ExecutionAgent, LammpsAgent
+
 model = "gpt-5"
 
-llm = ChatOpenAI(model      = model,
-                timeout     = None,
-                max_retries =  2
-                )
+llm = ChatOpenAI(model=model, timeout=None, max_retries=2)
 
 workspace = "./workspace_eos_cu"
 
 wf = LammpsAgent(
-    llm = llm,
+    llm=llm,
     max_potentials=2,
-    max_fix_attempts=5,      
+    max_fix_attempts=5,
     mpi_procs=8,
-    workspace = workspace,
+    workspace=workspace,
     lammps_cmd="lmp_mpi",
     mpirun_cmd="mpirun",
 )
 
-simulation_task="Carry out a LAMMPS simulation of Cu to determine its equation of state."
-elements=["Cu"]
+simulation_task = (
+    "Carry out a LAMMPS simulation of Cu to determine its equation of state."
+)
+elements = ["Cu"]
 
-final_lammps_state = wf.run(simulation_task,elements)
+final_lammps_state = wf.run(simulation_task, elements)
 
 if final_lammps_state.get("run_returncode") == 0:
-
-    print ("\nNow handing things off to execution agent.....")
+    print("\nNow handing things off to execution agent.....")
 
     executor = ExecutionAgent(llm=llm)
     exe_plan = f"""
@@ -42,10 +39,14 @@ if final_lammps_state.get("run_returncode") == 0:
     """
 
     executor_config = {"recursion_limit": 999_999}
-        
-    final_results = executor.action.invoke({"messages": [HumanMessage(content=exe_plan)],
-                                            "workspace": workspace,},executor_config,)
-    
+
+    final_results = executor.action.invoke(
+        {
+            "messages": [HumanMessage(content=exe_plan)],
+            "workspace": workspace,
+        },
+        executor_config,
+    )
+
     for x in final_results["messages"]:
         print(x.content)
-
