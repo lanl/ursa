@@ -38,6 +38,8 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=2.0.10,<3.0",
     "langchain-ollama>=0.3.6,<0.4",
     "ddgs>=9.5.5",
+    "atomman>=1.5.2",
+    "trafilatura>=1.6.1",
 ]
 classifiers = [
     "Operating System :: OS Independent",
