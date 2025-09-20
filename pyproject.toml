@@ -19,7 +19,7 @@ requires-python = ">=3.10"
 dependencies = [
     "arxiv>=2.2.0,<3.0",
     "beautifulsoup4>=4.13.4,<5.0",
-    "coolname>=2.2.0,<3.0",
+    "randomname>=0.2.1,<0.3",
     "langchain>=0.3.27,<0.4",
     "langchain-community>=0.3.29,<0.4",
     "langchain-litellm>=0.2.2,<0.3",
