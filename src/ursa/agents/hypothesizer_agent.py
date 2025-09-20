@@ -35,7 +35,7 @@ class HypothesizerState(TypedDict):
     agent1_solution: List[str]  # List to store each iteration of solutions
     agent2_critiques: List[str]  # List to store critiques
     agent3_perspectives: List[str]  # List to store competitor perspectives
-    final_solution: str  # Final refined solution
+    solution: str  # Refined solution
     summary_report: str  # the final summarized report
     visited_sites: List[str]
 
@@ -262,12 +262,10 @@ class HypothesizerAgent(BaseAgent):
         )
         return new_state
 
-    def generate_final_solution(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        """Generate the final, refined solution based on all iterations."""
+    def generate_solution(self, state: HypothesizerState) -> HypothesizerState:
+        """Generate the overall, refined solution based on all iterations."""
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Entering generate_final_solution."
+            f"[iteration {state['current_iteration']} - DEBUG] Entering generate_solution."
         )
         prompt = f"Original question: {state['question']}\n\n"
         prompt += "Evolution of solutions:\n"
@@ -280,23 +278,23 @@ class HypothesizerAgent(BaseAgent):
                 f"Competitor perspective: {state['agent3_perspectives'][i]}\n"
             )
 
-        prompt += "\nBased on this iterative process, provide the final, refined solution."
+        prompt += "\nBased on this iterative process, provide the overall, refined solution."
 
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Generating final solution with LLM..."
+            f"[iteration {state['current_iteration']} - DEBUG] Generating overall solution with LLM..."
         )
-        final_solution = self.llm.invoke(prompt)
+        solution = self.llm.invoke(prompt)
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Final solution obtained. Preview:",
-            final_solution.content[:200],
+            f"[iteration {state['current_iteration']} - DEBUG] Overall solution obtained. Preview:",
+            solution.content[:200],
             "...",
         )
 
         new_state = state.copy()
-        new_state["final_solution"] = final_solution.content
+        new_state["solution"] = solution.content
 
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Exiting generate_final_solution."
+            f"[iteration {state['current_iteration']} - DEBUG] Exiting generate_solution."
         )
         return new_state
 
@@ -363,13 +361,13 @@ class HypothesizerAgent(BaseAgent):
 
             {iteration_details}
 
-            The final solution we arrived at was:
+            The solution we arrived at was:
 
-            {state["final_solution"]}
+            {state["solution"]}
 
             Now produce a valid LaTeX document.  Be sure to use a table of contents.
             It must start with an Executive Summary (that may be multiple pages) which summarizes
-            the entire iterative process.  Following that, we should include the final solution in full,
+            the entire iterative process.  Following that, we should include the solution in full,
             not summarized, but reformatted for appropriate LaTeX.  And then, finally (and this will be
             quite long), we must take all the steps - solutions, critiques, and competitor perspectives
             and *NOT SUMMARIZE THEM* but merely reformat them for the reader.  This will be in an Appendix
@@ -387,7 +385,7 @@ class HypothesizerAgent(BaseAgent):
         """
 
         # Now produce a valid LaTeX document that nicely summarizes this entire iterative process.
-        # It must include the final solution in full, not summarized, but reformatted for appropriate
+        # It must include the overall solution in full, not summarized, but reformatted for appropriate
         # LaTeX. The summarization is for the other steps.
 
         all_visited_sites = state.get("visited_sites", [])
@@ -455,7 +453,7 @@ class HypothesizerAgent(BaseAgent):
         self.graph.add_node("agent2", self.agent2_critique)
         self.graph.add_node("agent3", self.agent3_competitor_perspective)
         self.graph.add_node("increment_iteration", self.increment_iteration)
-        self.graph.add_node("finalize", self.generate_final_solution)
+        self.graph.add_node("finalize", self.generate_solution)
         self.graph.add_node("print_sites", self.print_visited_sites)
         self.graph.add_node(
             "summarize_as_latex", self.summarize_process_as_latex
@@ -497,7 +495,7 @@ class HypothesizerAgent(BaseAgent):
             agent1_solution=[],
             agent2_critiques=[],
             agent3_perspectives=[],
-            final_solution="",
+            solution="",
         )
         # Run the graph
         result = self.action.invoke(
@@ -507,7 +505,7 @@ class HypothesizerAgent(BaseAgent):
                 "configurable": {"thread_id": self.thread_id},
             },
         )
-        return result["final_solution"]
+        return result["solution"]
 
 
 def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
@@ -580,7 +578,7 @@ if __name__ == "__main__":
         agent1_solution=[],
         agent2_critiques=[],
         agent3_perspectives=[],
-        final_solution="",
+        solution="",
     )
 
     print("[DEBUG] Invoking the graph...")
@@ -596,9 +594,9 @@ if __name__ == "__main__":
 
     print("[DEBUG] Graph invocation complete.")
 
-    # Print the final solution
-    print("Final Solution:")
-    print(result["final_solution"])
+    # Print the overall solution
+    print("Overall Solution:")
+    print(result["solution"])
 
     # print("Summarized Report:")
     # print(summary_text)

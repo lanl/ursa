@@ -1,7 +1,7 @@
 import os
 from typing import Annotated, Literal
 
-import coolname
+import randomname
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -153,7 +153,7 @@ class CombinedAgent(BaseAgent):
     def runner(self, state: State) -> State:
         new_state = state.copy()
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = coolname.generate_slug(2)
+            new_state["workspace"] = randomname.get_name()
             print(
                 f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
             )
