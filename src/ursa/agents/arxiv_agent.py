@@ -156,8 +156,29 @@ class ArxivAgent(BaseAgent):
         if self.download_papers:
             encoded_query = quote(query)
             url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results={self.max_results}"
-            feed = feedparser.parse(url)
+            #            print(f"URL is {url}") # if verbose
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
 
+                feed = feedparser.parse(response.content)
+                #                print(f"parsed response status is {feed.status}") # if verbose
+                if feed.bozo:
+                    raise Exception("Feed from arXiv looks like garbage =(")
+            except requests.exceptions.Timeout:
+                print("Request timed out while fetching papers.")
+            except requests.exceptions.RequestException as e:
+                print(f"Request error encountered while fetching papers: {e}")
+            except ValueError as ve:
+                print(f"Value error occurred while fetching papers: {ve}")
+            except Exception as e:
+                print(
+                    f"An unexpected error occurred while fetching papers: {e}"
+                )
+
+            # https://lanlprod.servicenowservices.com/sp?id=kb_article_view&sysparm_article=KB0016195 - pem bundle linked here
+
+            # what to do if we get here and no entries resulted?
             for i, entry in enumerate(feed.entries):
                 full_id = entry.id.split("/abs/")[-1]
                 arxiv_id = full_id.split("/")[-1]
