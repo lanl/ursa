@@ -4,6 +4,10 @@
 
 This module implements a human-in-the-loop (HITL) interface for the URSA agent framework, allowing users to directly interact with different specialized AI agents through a command-line interface. The system maintains context between agent interactions and provides persistent storage for agent states.
 
+The file can be run with:
+
+`python /path/to/hitl_basic.py`
+
 ### Setup and Initialization
 
 1. Creates a workspace directory for storing agent data and checkpoints
