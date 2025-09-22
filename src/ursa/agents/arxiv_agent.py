@@ -157,12 +157,14 @@ class ArxivAgent(BaseAgent):
             encoded_query = quote(query)
             url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results={self.max_results}"
             #            print(f"URL is {url}") # if verbose
+            entries = []
             try:
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
 
                 feed = feedparser.parse(response.content)
                 #                print(f"parsed response status is {feed.status}") # if verbose
+                entries = feed.entries
                 if feed.bozo:
                     raise Exception("Feed from arXiv looks like garbage =(")
             except requests.exceptions.Timeout:
@@ -176,10 +178,7 @@ class ArxivAgent(BaseAgent):
                     f"An unexpected error occurred while fetching papers: {e}"
                 )
 
-            # https://lanlprod.servicenowservices.com/sp?id=kb_article_view&sysparm_article=KB0016195 - pem bundle linked here
-
-            # what to do if we get here and no entries resulted?
-            for i, entry in enumerate(feed.entries):
+            for i, entry in enumerate(entries):
                 full_id = entry.id.split("/abs/")[-1]
                 arxiv_id = full_id.split("/")[-1]
                 title = entry.title.strip()
