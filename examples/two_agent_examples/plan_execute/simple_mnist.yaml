@@ -1,0 +1,56 @@
+project: simple_mnist
+
+# omit if not needed
+# this is where you might link in a local dataset you want the agents
+# to have access to, or a program (simulation, executable, etc) or
+# libraries you have locally that you want the agent to use.
+# to be clear, you'd then tell the agent (below) that it has
+# access to the files you describe in 'dest' in the symlink
+# below.
+# symlink:
+#  source: ./some-destination-directory
+#  dest: the-directory-name-symlinked-for-this-instance-to-see
+
+models:
+  choices:
+    - openai/gpt-5
+    - openai/o3
+    - openai/o3-mini
+  default: openai/gpt-5
+
+problem: |
+  TITLE: MNIST Simple Project
+
+  Organize the project like this: 
+  project/
+    data/               
+    src/             
+    outputs/
+      figures/      
+      tables/      
+    models/        
+    README.md     
+  Task 1:
+    * Get the MNIST dataset
+    * Perform some basic EDA, save EDA plots in the 'figures' directory
+  Task 2:
+    * Create a train/validate/test split dataset and store the data in
+      the 'data' directory
+  Task 3:
+    * Build a simple linear regression model as a baseline
+    * Fit the model and save results in 'outputs/tables' directory as a CSV
+  Task 4:
+    * Implement a tiny CNN for this dataset
+    * Build a dataloader based on earlier task for train/val/test split
+    * Train the model, logging train/val loss and accuracy in 'outputs/tables'
+    * Generate plots for loss and accuracy, save to 'figures'
+    * Save the model as a '.pth' in 'models' dir
+  Task 5:
+    This task is about test and evaluation
+    * Generate a confusion matrix and save in 'figures'
+    * Show a grid of 32 misclassifications with (true,pred) pairs
+  Task 6:
+    * Write a summary report in '.tex', compile it into a PDF with 'xelatex'
+    * Make sure the report includes some of the figures
+    * Create the 'README.md' to explain the project, how to reproduce the
+      results, etc.
