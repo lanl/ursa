@@ -32,7 +32,9 @@ class AgentMemory:
             case None:
                 return Path.home() / ".cache" / "ursa" / "rag" / "db"
             case str():
-                return Path(str)
+                return Path(
+                    path
+                )  ### was return Path(str), which fails type check in python 3.13
             case Path():
                 return path
             case _:
