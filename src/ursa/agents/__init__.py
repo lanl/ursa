@@ -9,6 +9,8 @@ from .execution_agent import ExecutionAgent as ExecutionAgent
 from .execution_agent import ExecutionState as ExecutionState
 from .hypothesizer_agent import HypothesizerAgent as HypothesizerAgent
 from .hypothesizer_agent import HypothesizerState as HypothesizerState
+from .lammps_agent import LammpsAgent as LammpsAgent
+from .lammps_agent import LammpsState as LammpsState
 from .mp_agent import MaterialsProjectAgent as MaterialsProjectAgent
 from .planning_agent import PlanningAgent as PlanningAgent
 from .planning_agent import PlanningState as PlanningState

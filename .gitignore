@@ -12,6 +12,7 @@ dist/
 wheels/
 *.egg-info
 *.sql
+.ipynb_checkpoints/
 
 # Virtual environments
 .venv/

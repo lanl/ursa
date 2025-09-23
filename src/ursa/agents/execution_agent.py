@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 
-import coolname
+import randomname
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
@@ -75,7 +75,7 @@ class ExecutionAgent(BaseAgent):
     def query_executor(self, state: ExecutionState) -> ExecutionState:
         new_state = state.copy()
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = coolname.generate_slug(2)
+            new_state["workspace"] = randomname.get_name()
             print(
                 f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
             )
