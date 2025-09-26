@@ -10,7 +10,8 @@ import litellm
 import truststore
 import yaml
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
+from langchain_community.chat_models import ChatOllama
+
 
 # rich console stuff for beautification
 from rich import get_console
@@ -40,14 +41,10 @@ def main(model_name: str, config: Any):
         # workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
         symlinkdict = getattr(cfg, "symlink", {}) or None
 
-        model = ChatLiteLLM(
+        model = ChatOllama(
             model=model_name,
-            max_tokens=10000,
-            max_retries=2,
-            model_kwargs={
-                # "reasoning": {"effort": "high"},
-            },
-            # temperature=0.2,
+            timeout=1800,
+            base_url="http://127.0.0.1:11434"
         )
 
         # 4. Choose a fun emoji based on the model family (swap / extend as you add more)
