@@ -17,3 +17,4 @@ from .planning_agent import PlanningState as PlanningState
 from .recall_agent import RecallAgent as RecallAgent
 from .websearch_agent import WebSearchAgent as WebSearchAgent
 from .websearch_agent import WebSearchState as WebSearchState
+from .computation_tool_agent import ComputationToolAgent as ComputationToolAgent
