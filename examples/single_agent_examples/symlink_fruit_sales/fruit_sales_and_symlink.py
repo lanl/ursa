@@ -1,6 +1,6 @@
 import sys
 
-import coolname
+import randomname
 from langchain_core.messages import HumanMessage
 from langchain_litellm import ChatLiteLLM
 
@@ -33,7 +33,7 @@ lines around bars and any other additions you think are interesting.
 """
 )
 
-workspace = f"fruit_sales_{coolname.generate_slug(2)}"
+workspace = f"fruit_sales_{randomname.get_name()}"
 workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
 
 
