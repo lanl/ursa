@@ -1,7 +1,6 @@
 import base64
 import os
 import re
-import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from urllib.parse import quote
@@ -9,8 +8,6 @@ from urllib.parse import quote
 import feedparser
 import pymupdf
 import requests
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -20,14 +17,12 @@ from tqdm import tqdm
 from typing_extensions import List, TypedDict
 
 from .base import BaseAgent
+from .rag_agent import RAGAgent
 
 try:
     from openai import OpenAI
 except Exception:
     pass
-
-# embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-# embeddings = OpenAIEmbeddings()
 
 
 class PaperMetadata(TypedDict):
@@ -242,27 +237,6 @@ class ArxivAgent(BaseAgent):
         papers = self._fetch_papers(state["query"])
         return {**state, "papers": papers}
 
-    def _get_or_build_vectorstore(self, paper_text: str, arxiv_id: str):
-        os.makedirs(self.vectorstore_path, exist_ok=True)
-
-        persist_directory = os.path.join(self.vectorstore_path, arxiv_id)
-
-        if os.path.exists(persist_directory):
-            vectorstore = Chroma(
-                persist_directory=persist_directory,
-                embedding_function=self.rag_embedding,
-            )
-        else:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000, chunk_overlap=200
-            )
-            docs = splitter.create_documents([paper_text])
-            vectorstore = Chroma.from_documents(
-                docs, self.rag_embedding, persist_directory=persist_directory
-            )
-
-        return vectorstore.as_retriever(search_kwargs={"k": 5})
-
     def _summarize_node(self, state: PaperState) -> PaperState:
         prompt = ChatPromptTemplate.from_template("""
         You are a scientific assistant responsible for summarizing extracts from research papers, in the context of the following task: {context}
@@ -285,33 +259,8 @@ class ArxivAgent(BaseAgent):
 
             try:
                 cleaned_text = remove_surrogates(paper["full_text"])
-                if self.rag_embedding:
-                    retriever = self._get_or_build_vectorstore(
-                        cleaned_text, arxiv_id
-                    )
-
-                    relevant_docs_with_scores = (
-                        retriever.vectorstore.similarity_search_with_score(
-                            state["context"], k=5
-                        )
-                    )
-
-                    if relevant_docs_with_scores:
-                        score = sum([
-                            s for _, s in relevant_docs_with_scores
-                        ]) / len(relevant_docs_with_scores)
-                        relevancy_scores[i] = abs(1.0 - score)
-                    else:
-                        relevancy_scores[i] = 0.0
-
-                    retrieved_content = "\n\n".join([
-                        doc.page_content for doc, _ in relevant_docs_with_scores
-                    ])
-                else:
-                    retrieved_content = cleaned_text
-
                 summary = chain.invoke({
-                    "retrieved_content": retrieved_content,
+                    "retrieved_content": cleaned_text,
                     "context": state["context"],
                 })
 
@@ -346,14 +295,17 @@ class ArxivAgent(BaseAgent):
                 i, result = future.result()
                 summaries[i] = result
 
-        if self.rag_embedding:
-            print(f"\nMax Relevancy Score: {max(relevancy_scores)}")
-            print(f"Min Relevancy Score: {min(relevancy_scores)}")
-            print(
-                f"Median Relevancy Score: {statistics.median(relevancy_scores)}\n"
-            )
-
         return {**state, "summaries": summaries}
+
+    def _rag_node(self, state: PaperState) -> PaperState:
+        new_state = state.copy()
+        rag_agent = RAGAgent(
+            llm=self.llm,
+            embedding=self.rag_embedding,
+            database_path=self.database_path,
+        )
+        new_state["final_summary"] = rag_agent.run(context=state["context"])
+        return new_state
 
     def _aggregate_node(self, state: PaperState) -> PaperState:
         summaries = state["summaries"]
@@ -404,13 +356,20 @@ class ArxivAgent(BaseAgent):
         builder.add_node("fetch_papers", self._fetch_node)
 
         if self.summarize:
-            builder.add_node("summarize_each", self._summarize_node)
-            builder.add_node("aggregate", self._aggregate_node)
+            if self.rag_embedding:
+                builder.add_node("rag_summarize", self._rag_node)
 
-            builder.set_entry_point("fetch_papers")
-            builder.add_edge("fetch_papers", "summarize_each")
-            builder.add_edge("summarize_each", "aggregate")
-            builder.set_finish_point("aggregate")
+                builder.set_entry_point("fetch_papers")
+                builder.add_edge("fetch_papers", "rag_summarize")
+                builder.set_finish_point("rag_summarize")
+            else:
+                builder.add_node("summarize_each", self._summarize_node)
+                builder.add_node("aggregate", self._aggregate_node)
+
+                builder.set_entry_point("fetch_papers")
+                builder.add_edge("fetch_papers", "summarize_each")
+                builder.add_edge("summarize_each", "aggregate")
+                builder.set_finish_point("aggregate")
 
         else:
             builder.set_entry_point("fetch_papers")
