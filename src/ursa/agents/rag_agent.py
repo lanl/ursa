@@ -66,6 +66,7 @@ class RAGAgent(BaseAgent):
         return Chroma(
             persist_directory=self.vectorstore_path,
             embedding_function=self.embedding,
+            collection_metadata={"hnsw:space": "cosine"},
         )
 
     def _paper_exists_in_vectorstore(self, doc_id: str) -> bool:
@@ -181,9 +182,10 @@ class RAGAgent(BaseAgent):
 
         # 2) One retrieval over the global DB with the task context
         try:
-            results = self.vectorstore.similarity_search_with_score(
+            results = self.vectorstore.similarity_search_with_relevance_scores(
                 state["context"], k=self.return_k
             )
+            relevance_scores = [score for _, score in results]
         except Exception as e:
             print(f"RAG failed due to: {e}")
             return {**state, "summary": ""}
@@ -194,13 +196,6 @@ class RAGAgent(BaseAgent):
             if aid and aid not in source_ids_list:
                 source_ids_list.append(aid)
         source_ids = ", ".join(source_ids_list)
-
-        # Compute a simple similarity-based quality score
-        relevancy_scores = []
-        if results:
-            distances = [score for _, score in results]
-            sims = [1.0 / (1.0 + d) for d in distances]  # map distance -> [0,1)
-            relevancy_scores = sims
 
         retrieved_content = (
             "\n\n".join(doc.page_content for doc, _ in results)
@@ -223,11 +218,11 @@ class RAGAgent(BaseAgent):
             f.write(rag_summary)
 
         # Diagnostics
-        if relevancy_scores:
-            print(f"\nMax Relevancy Score: {max(relevancy_scores):.4f}")
-            print(f"Min Relevancy Score: {min(relevancy_scores):.4f}")
+        if relevance_scores:
+            print(f"\nMax Relevance Score: {max(relevance_scores):.4f}")
+            print(f"Min Relevance Score: {min(relevance_scores):.4f}")
             print(
-                f"Median Relevancy Score: {statistics.median(relevancy_scores):.4f}\n"
+                f"Median Relevance Score: {statistics.median(relevance_scores):.4f}\n"
             )
         else:
             print("\nNo RAG results retrieved (score list empty).\n")
@@ -239,7 +234,7 @@ class RAGAgent(BaseAgent):
             "rag_metadata": {
                 "k": self.return_k,
                 "num_results": len(results),
-                "relevancy_scores": relevancy_scores,
+                "relevance_scores": relevance_scores,
             },
         }
 

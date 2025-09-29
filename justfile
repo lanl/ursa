@@ -3,7 +3,7 @@ ruff := "uvx ruff@0.12.10"
 help:
     just -l -u
 
-test:
+test-bayesopt:
 	uv run examples/single_agent_examples/execution_agent/bayesian_optimization.py
 
 test-vowels:
@@ -43,3 +43,8 @@ lint-stats:
 
 lint-watch:
     just lint-check --watch
+
+test:
+    uv run pytest -s
+
+clean: clean-workspaces
