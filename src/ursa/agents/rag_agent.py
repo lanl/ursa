@@ -6,10 +6,11 @@ from threading import Lock
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.embeddings import Embeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
-from typing_extensions import List, TypedDict
+from typing import List, TypedDict
 
 from .base import BaseAgent
 
@@ -29,13 +30,13 @@ class RAGAgent(BaseAgent):
     def __init__(
         self,
         llm="openai/o3-mini",
-        embedding=None,
+        embedding: Optional[Embeddings] = None,
         return_k: int = 10,
-        chunk_size=1000,
-        chunk_overlap=200,
-        database_path="database",
-        summaries_path="database",
-        vectorstore_path="vectorstore",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        database_path: str = "database",
+        summaries_path: str = "database",
+        vectorstore_path: str = "vectorstore",
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
@@ -53,6 +54,14 @@ class RAGAgent(BaseAgent):
         os.makedirs(self.vectorstore_path, exist_ok=True)
         self.vectorstore = self._open_global_vectorstore()
 
+@property
+def mainfest_path(self) -> str:
+    return os.path.join(self.vectorstore_path, "_ingested_ids.txt")
+    
+@property
+def mainfest_exists(self) -> bool:
+    return os.path.exists(self.manifest_path)
+
     def _open_global_vectorstore(self) -> Chroma:
         return Chroma(
             persist_directory=self.vectorstore_path,
@@ -65,17 +74,13 @@ class RAGAgent(BaseAgent):
             res = col.get(where={"id": doc_id}, limit=1)
             return len(res.get("ids", [])) > 0
         except Exception:
-            manifest_path = os.path.join(
-                self.vectorstore_path, "_ingested_ids.txt"
-            )
-            if not os.path.exists(manifest_path):
+            if not self.manifest_exists:
                 return False
-            with open(manifest_path, "r") as f:
+            with open(self.manifest_path, "r") as f:
                 return any(line.strip() == doc_id for line in f)
 
     def _mark_paper_ingested(self, arxiv_id: str) -> None:
-        manifest_path = os.path.join(self.vectorstore_path, "_ingested_ids.txt")
-        with open(manifest_path, "a") as f:
+        with open(self.manifest_path, "a") as f:
             f.write(f"{arxiv_id}\n")
 
     def _ensure_doc_in_vectorstore(self, paper_text: str, doc_id: str) -> None:
@@ -87,8 +92,7 @@ class RAGAgent(BaseAgent):
         )
         with self._vs_lock:
             if not self._paper_exists_in_vectorstore(doc_id):
-                base = f"{doc_id}::"
-                ids = [f"{base}{i}" for i in range(len(docs))]
+                ids = [f"{doc_id}::{i}" for i, _ in enumerate(docs)]
                 self.vectorstore.add_documents(docs, ids=ids)
                 self._mark_paper_ingested(doc_id)
 
@@ -108,7 +112,7 @@ class RAGAgent(BaseAgent):
             if f.lower().endswith(".pdf")
         ]
 
-        doc_ids = [pdf_filename.split(".pdf")[0] for pdf_filename in pdf_files]
+        doc_ids = [pdf_filename.rsplit(".pdf", 1)[0] for pdf_filename in pdf_files]
         pdf_files = [
             pdf_filename
             for pdf_filename, id in zip(pdf_files, doc_ids)
@@ -137,7 +141,7 @@ class RAGAgent(BaseAgent):
 
     def _ingest_docs(self, state: RAGState) -> RAGState:
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200
+            chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
         )
 
         batch_docs, batch_ids = [], []
@@ -146,8 +150,7 @@ class RAGAgent(BaseAgent):
             docs = splitter.create_documents(
                 [cleaned_text], metadatas=[{"id": id}]
             )
-            base = f"{id}::"
-            ids = [f"{base}{i}" for i in range(len(docs))]
+            ids = [f"{id}::{i}" for i, _ in enumerate(docs)]
             batch_docs.extend(docs)
             batch_ids.extend(ids)
 
@@ -177,7 +180,7 @@ class RAGAgent(BaseAgent):
         # 2) One retrieval over the global DB with the task context
         try:
             results = self.vectorstore.similarity_search_with_score(
-                state["context"], k=5
+                state["context"], k=self.return_k
             )
         except Exception as e:
             print(f"RAG failed due to: {e}")
@@ -232,7 +235,7 @@ class RAGAgent(BaseAgent):
             **state,
             "summary": rag_summary,
             "rag_metadata": {
-                "k": 5,
+                "k": self.return_k,
                 "num_results": len(results),
                 "relevancy_scores": relevancy_scores,
             },
