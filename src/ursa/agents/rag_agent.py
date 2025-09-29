@@ -15,7 +15,7 @@ from langgraph.graph import StateGraph
 from ursa.agents.base import BaseAgent
 
 
-class RagMetadata(TypedDict):
+class RAGMetadata(TypedDict):
     k: int
     num_results: int
     relevance_scores: list[float]
@@ -26,7 +26,7 @@ class RAGState(TypedDict, total=False):
     doc_texts: list[str]
     doc_ids: list[str]
     summary: str
-    rag_metadata: RagMetadata
+    rag_metadata: RAGMetadata
 
 
 def remove_surrogates(text: str) -> str:
