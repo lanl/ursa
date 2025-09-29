@@ -2,7 +2,7 @@ import os
 import re
 import statistics
 from threading import Lock
-from typing import List, TypedDict
+from typing import TypedDict
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -15,11 +15,18 @@ from langgraph.graph import StateGraph
 from ursa.agents.base import BaseAgent
 
 
+class RagMetadata(TypedDict):
+    k: int
+    num_results: int
+    relevance_scores: list[float]
+
+
 class RAGState(TypedDict, total=False):
     context: str
-    doc_texts: List[str]
-    doc_ids: List[str]
+    doc_texts: list[str]
+    doc_ids: list[str]
     summary: str
+    rag_metadata: RagMetadata
 
 
 def remove_surrogates(text: str) -> str:
@@ -147,6 +154,12 @@ class RAGAgent(BaseAgent):
             chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
         )
 
+        if "doc_texts" not in state:
+            raise RuntimeError("Unexpected error: doc_ids not in state!")
+
+        if "doc_ids" not in state:
+            raise RuntimeError("Unexpected error: doc_texts not in state!")
+
         batch_docs, batch_ids = [], []
         for paper, id in zip(state["doc_texts"], state["doc_ids"]):
             cleaned_text = remove_surrogates(paper)
@@ -182,9 +195,13 @@ class RAGAgent(BaseAgent):
 
         # 2) One retrieval over the global DB with the task context
         try:
+            if "context" not in state:
+                raise RuntimeError("Unexpected error: context not in state!")
+
             results = self.vectorstore.similarity_search_with_relevance_scores(
                 state["context"], k=self.return_k
             )
+
             relevance_scores = [score for _, score in results]
         except Exception as e:
             print(f"RAG failed due to: {e}")
@@ -254,7 +271,6 @@ class RAGAgent(BaseAgent):
 
     def run(self, context: str) -> str:
         result = self.graph.invoke({"context": context})
-
         return result.get("summary", "No summary generated.")
 
 
