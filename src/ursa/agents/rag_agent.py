@@ -54,15 +54,13 @@ class RAGAgent(BaseAgent):
         os.makedirs(self.vectorstore_path, exist_ok=True)
         self.vectorstore = self._open_global_vectorstore()
 
+    @property
+    def manifest_path(self) -> str:
+        return os.path.join(self.vectorstore_path, "_ingested_ids.txt")
 
-@property
-def mainfest_path(self) -> str:
-    return os.path.join(self.vectorstore_path, "_ingested_ids.txt")
-
-
-@property
-def mainfest_exists(self) -> bool:
-    return os.path.exists(self.manifest_path)
+    @property
+    def manifest_exists(self) -> bool:
+        return os.path.exists(self.manifest_path)
 
     def _open_global_vectorstore(self) -> Chroma:
         return Chroma(
@@ -191,8 +189,8 @@ def mainfest_exists(self) -> bool:
             return {**state, "summary": ""}
 
         source_ids_list = []
-        for doc, _ in results or []:
-            aid = (doc.metadata or {}).get("id")
+        for doc, _ in results:
+            aid = doc.metadata.get("id")
             if aid and aid not in source_ids_list:
                 source_ids_list.append(aid)
         source_ids = ", ".join(source_ids_list)
