@@ -258,10 +258,12 @@ class RAGAgent(BaseAgent):
         return result.get("summary", "No summary generated.")
 
 
-if __name__ == "__main__":
-    agent = RAGAgent(database_path="workspace/arxiv_papers_neutron_star")
-    result = agent.run(
-        context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
-    )
-
-    print(result)
+# NOTE: Run test in `tests/agents/test_rag_agent/test_rag_agent.py` via:
+#
+# pytest -s tests/agents/test_rag_agent
+#
+# OR
+#
+# uv run pytest -s tests/agents/test_rag_agent
+#
+# NOTE: You may need to `rm -rf workspace/rag-agent` to remove the vectorstore.
