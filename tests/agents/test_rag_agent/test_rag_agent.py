@@ -17,7 +17,7 @@ def test_rag_agent():
         summaries_path=str(summary_dir),
         vectorstore_path=str(vectorstore_dir),
     )
-    _ = agent.run(context=("What is AIBD?"))
+    agent.run(context=("What is AIBD?"))
 
     assert (summary_dir / "RAG_summary.txt").exists()
     assert vectorstore_dir.exists()
