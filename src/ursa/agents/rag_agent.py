@@ -2,7 +2,7 @@ import os
 import re
 import statistics
 from threading import Lock
-from typing import List, Optional, TypedDict
+from typing import List, TypedDict
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -29,8 +29,8 @@ def remove_surrogates(text: str) -> str:
 class RAGAgent(BaseAgent):
     def __init__(
         self,
+        embedding: Embeddings,
         llm="openai/o3-mini",
-        embedding: Optional[Embeddings] = None,
         return_k: int = 10,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,

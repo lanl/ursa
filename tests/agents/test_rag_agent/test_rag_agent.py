@@ -12,8 +12,8 @@ def test_rag_agent():
     summary_file = summary_dir / "RAG_summary.txt"
 
     agent = RAGAgent(
-        database_path="tests/tiny-corpus",
         embedding=OllamaEmbeddings(model="nomic-embed-text"),
+        database_path="tests/tiny-corpus",
         summaries_path=str(summary_dir),
         vectorstore_path=str(vectorstore_dir),
     )
