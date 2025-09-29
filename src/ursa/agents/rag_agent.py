@@ -2,6 +2,7 @@ import os
 import re
 import statistics
 from threading import Lock
+from typing import List, Optional, TypedDict
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -10,9 +11,8 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
-from typing import List, TypedDict
 
-from .base import BaseAgent
+from ursa.agents.base import BaseAgent
 
 
 class RAGState(TypedDict, total=False):
@@ -54,10 +54,12 @@ class RAGAgent(BaseAgent):
         os.makedirs(self.vectorstore_path, exist_ok=True)
         self.vectorstore = self._open_global_vectorstore()
 
+
 @property
 def mainfest_path(self) -> str:
     return os.path.join(self.vectorstore_path, "_ingested_ids.txt")
-    
+
+
 @property
 def mainfest_exists(self) -> bool:
     return os.path.exists(self.manifest_path)
@@ -112,7 +114,9 @@ def mainfest_exists(self) -> bool:
             if f.lower().endswith(".pdf")
         ]
 
-        doc_ids = [pdf_filename.rsplit(".pdf", 1)[0] for pdf_filename in pdf_files]
+        doc_ids = [
+            pdf_filename.rsplit(".pdf", 1)[0] for pdf_filename in pdf_files
+        ]
         pdf_files = [
             pdf_filename
             for pdf_filename, id in zip(pdf_files, doc_ids)
