@@ -1,13 +1,7 @@
-from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Optional
 
 from typer import Typer
-
-from ursa.cli.hitl import HITL, UrsaRepl
-
-# from ursa.cli.hitl import app as hitl_app
-
 
 app = Typer()
 
@@ -30,7 +24,10 @@ def run(
     arxiv_summaries_path: Optional[Path] = None,
     arxiv_vectorstore_path: Optional[Path] = None,
     arxiv_download_papers: bool = True,
+    ssl_verify: bool = True,
 ) -> None:
+    from ursa.cli.hitl import HITL, UrsaRepl
+
     hitl = HITL(
         workspace=workspace,
         llm_model_name=llm_model_name,
@@ -48,12 +45,15 @@ def run(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
+        ssl_verify=ssl_verify,
     )
     UrsaRepl(hitl).run()
 
 
 @app.command()
 def version() -> None:
+    from importlib.metadata import version as get_version
+
     print(get_version("ursa-ai"))
 
 

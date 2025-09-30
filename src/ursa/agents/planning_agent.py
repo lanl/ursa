@@ -3,10 +3,15 @@
 from typing import Annotated, Any, Dict, List, Optional
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+)
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import Field
+from rich.console import Console
 from typing_extensions import TypedDict
 
 from ..prompt_library.planning_prompts import (
@@ -18,7 +23,7 @@ from ..util.parse import extract_json
 from .base import BaseAgent
 
 
-class PlanningState(TypedDict):
+class PlanningState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
     plan_steps: List[Dict[str, Any]] = Field(
         default_factory=list, description="Ordered steps in the solution plan"
@@ -36,61 +41,72 @@ class PlanningAgent(BaseAgent):
         self.planner_prompt = planner_prompt
         self.formalize_prompt = formalize_prompt
         self.reflection_prompt = reflection_prompt
+        self.console = Console()
         self._initialize_agent()
 
     def generation_node(self, state: PlanningState) -> PlanningState:
-        print("PlanningAgent: generating . . .")
-        messages = state["messages"]
-        if isinstance(messages[0], SystemMessage):
-            messages[0] = SystemMessage(content=self.planner_prompt)
-        else:
-            messages = [SystemMessage(content=self.planner_prompt)] + messages
-        return {
-            "messages": [
-                self.llm.invoke(
-                    messages, {"configurable": {"thread_id": self.thread_id}}
-                )
-            ]
-        }
+        # print("PlanningAgent: generating . . .")
+        with self.console.status("PlanningAgent - generating"):
+            messages = state["messages"]
+            if isinstance(messages[0], SystemMessage):
+                messages[0] = SystemMessage(content=self.planner_prompt)
+            else:
+                messages = [
+                    SystemMessage(content=self.planner_prompt)
+                ] + messages
+
+            return {
+                "messages": [
+                    self.llm.invoke(
+                        messages,
+                        {"configurable": {"thread_id": self.thread_id}},
+                    )
+                ]
+            }
 
     def formalize_node(self, state: PlanningState) -> PlanningState:
-        print("PlanningAgent: formalizing . . .")
-        cls_map = {"ai": HumanMessage, "human": AIMessage}
-        translated = [state["messages"][0]] + [
-            cls_map[msg.type](content=msg.content)
-            for msg in state["messages"][1:]
-        ]
-        translated = [SystemMessage(content=self.formalize_prompt)] + translated
-        for _ in range(10):
-            try:
-                res = self.llm.invoke(
-                    translated, {"configurable": {"thread_id": self.thread_id}}
-                )
-                json_out = extract_json(res.content)
-                break
-            except ValueError:
-                translated.append(
-                    HumanMessage(
-                        content="Your response was not valid JSON. Try again."
+        # print("PlanningAgent: formalizing . . .")
+        with self.console.status("PlanningAgent - formalizing"):
+            cls_map = {"ai": HumanMessage, "human": AIMessage}
+            translated = [state["messages"][0]] + [
+                cls_map[msg.type](content=msg.content)
+                for msg in state["messages"][1:]
+            ]
+            translated = [
+                SystemMessage(content=self.formalize_prompt)
+            ] + translated
+            for _ in range(10):
+                try:
+                    res = self.llm.invoke(
+                        translated,
+                        {"configurable": {"thread_id": self.thread_id}},
                     )
-                )
-        return {
-            "messages": [HumanMessage(content=res.content)],
-            "plan_steps": json_out,
-        }
+                    json_out = extract_json(res.content)
+                    break
+                except ValueError:
+                    translated.append(
+                        HumanMessage(
+                            content="Your response was not valid JSON. Try again."
+                        )
+                    )
+            return {
+                "messages": [HumanMessage(content=res.content)],
+                "plan_steps": json_out,
+            }
 
     def reflection_node(self, state: PlanningState) -> PlanningState:
-        print("PlanningAgent: reflecting . . .")
-        cls_map = {"ai": HumanMessage, "human": AIMessage}
-        translated = [state["messages"][0]] + [
-            cls_map[msg.type](content=msg.content)
-            for msg in state["messages"][1:]
-        ]
-        translated = [SystemMessage(content=reflection_prompt)] + translated
-        res = self.llm.invoke(
-            translated, {"configurable": {"thread_id": self.thread_id}}
-        )
-        return {"messages": [HumanMessage(content=res.content)]}
+        # print("PlanningAgent: reflecting . . .")
+        with self.console.status("PlanningAgent - reflecting"):
+            cls_map = {"ai": HumanMessage, "human": AIMessage}
+            translated = [state["messages"][0]] + [
+                cls_map[msg.type](content=msg.content)
+                for msg in state["messages"][1:]
+            ]
+            translated = [SystemMessage(content=reflection_prompt)] + translated
+            res = self.llm.invoke(
+                translated, {"configurable": {"thread_id": self.thread_id}}
+            )
+            return {"messages": [HumanMessage(content=res.content)]}
 
     def _initialize_agent(self):
         self.graph = StateGraph(PlanningState)

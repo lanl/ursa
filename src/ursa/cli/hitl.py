@@ -4,13 +4,17 @@ from cmd import Cmd
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+import httpx
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import SecretStr
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.prompt import Prompt
+from rich.theme import Theme
 from typer import Typer
 
 from ursa.agents import (
@@ -21,14 +25,6 @@ from ursa.agents import (
     WebSearchAgent,
 )
 from ursa.util.memory_logger import AgentMemory
-
-header = """
-Testing a HITL version of URSA. Direct a prompt to either the:
-[Arxiver], [Executor], [Planner], [WebSearcher], [Chatter]
-
-The agent will get your prompt, the output of the last agent (if any), and their previous history.
-when done use the escape indicator [USER DONE].
-"""
 
 app = Typer()
 
@@ -62,6 +58,7 @@ class HITL:
     arxiv_summaries_path: Optional[Path]
     arxiv_vectorstore_path: Optional[Path]
     arxiv_download_papers: bool
+    ssl_verify: bool
 
     def get_path(self, path: Optional[Path], default_subdir: str) -> str:
         if path is None:
@@ -97,12 +94,14 @@ class HITL:
             max_completion_tokens=self.max_completion_tokens,
             base_url=self.llm_base_url,
             api_key=llm_api_secret,
+            http_client=None if self.ssl_verify else httpx.Client(verify=False),
         )
 
         self.embedding = OpenAIEmbeddings(
             model=self.emb_model_name,
             base_url=self.emb_base_url,
             api_key=emb_api_secret,
+            http_client=None if self.ssl_verify else httpx.Client(verify=False),
         )
 
         self.memory = AgentMemory(
@@ -256,7 +255,8 @@ class HITL:
             )
 
         self.update_last_agent_result(chat_output.content)
-        return f"[{self.model.model_name}]:\n {self.last_agent_result}"
+        # return f"[{self.model.model_name}]: {self.last_agent_result}"
+        return f"{self.last_agent_result}"
 
     def run_planner(self, prompt: str) -> str:
         if self.planner_state:
@@ -336,35 +336,31 @@ class HITL:
             )
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
-    # print(header)
-    # while not done:
-    #     user_prompt = input("User query: ")
-    #     if "[USER DONE]" in user_prompt:
-    #         done = True
-    #         break
-
-    #     if "[Planner]" in user_prompt: #         user_prompt = user_prompt.replace("[Planner]", "")
-    #         continue
-
-    #     if "[WebSearcher]" in user_prompt:
-    #         user_prompt = user_prompt.replace("[WebSearcher]", "")
-    #         continue
-
-    #     print("You did not invoke an agent or escape. What are you doing?")
-
 
 class UrsaRepl(Cmd):
+    console = Console(
+        theme=Theme({
+            "success": "green",
+            "error": "bold red",
+            "dim": "grey50",
+            "warn": "yellow",
+            "emph": "bold cyan",
+        })
+    )
+    exit_message: str = "[dim]Exiting ursa..."
+    _help_message: str = "[dim]For help, type: ? or help. Exit with Ctrl+d."
     prompt: str = "ursa> "
-    exit_message: str = "Exiting ursa."
-    _help_message: str = "For help, type: ? or help"
-    console = Console()
 
     def __init__(self, hitl: HITL, **kwargs):
         self.hitl = hitl
         super().__init__(**kwargs)
 
+    def show(self, msg: str, markdown: bool = True, **kwargs):
+        self.console.print(Markdown(msg) if markdown else msg, **kwargs)
+
     def default(self, prompt: str):
-        print(self.hitl.run_chatter(prompt))
+        with self.console.status("Generating response"):
+            self.show(self.hitl.run_chatter(prompt))
 
     def postcmd(self, stop: bool, line: str):
         print()
@@ -372,12 +368,12 @@ class UrsaRepl(Cmd):
 
     def do_exit(self, _):
         """Exit shell."""
-        print(self.exit_message)
+        self.show(self.exit_message, markdown=False)
         return True
 
     def do_EOF(self, _):
         """Exit on Ctrl+D."""
-        print(self.exit_message)
+        self.show(self.exit_message, markdown=False)
         return True
 
     def do_clear(self, arg):
@@ -388,26 +384,30 @@ class UrsaRepl(Cmd):
         """Do nothing when an empty line is entered"""
         pass
 
-    def do_ARVIX(self, prompt: str):
-        print(self.hitl.run_arvix(prompt))
+    def run_agent(self, agent: str, run: Callable[[str], str]):
+        prompt = Prompt.ask(f"Enter your prompt for [cyan bold]{agent}[/]")
+        return run(prompt)
 
-    def do_PLAN(self, prompt: str):
-        print(self.hitl.run_planner(prompt))
+    def do_arxiv(self, _: str):
+        self.show(self.run_agent("Arxiv Agent", self.hitl.run_arvix))
 
-    def do_EXECUTE(self, prompt: str):
-        print(self.hitl.run_executor(prompt))
+    def do_plan(self, _: str):
+        self.show(self.run_agent("Planning Agent", self.hitl.run_planner))
 
-    def do_WEB(self, prompt: str):
-        print(self.hitl.run_websearcher(prompt))
+    def do_execute(self, _: str):
+        self.show(self.run_agent("Execution Agent", self.hitl.run_executor))
 
-    def do_RECALL(self, prompt: str):
-        print(self.hitl.run_rememberer(prompt))
+    def do_web(self, _: str):
+        self.show(self.run_agent("Websearch Agent", self.hitl.run_websearcher))
+
+    def do_recall(self, _: str):
+        self.show(self.run_agent("Recall Agent", self.hitl.run_rememberer))
 
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
         # Print intro only once.
-        print(ursa_banner)
-        print(self._help_message)
+        self.show(f"[magenta]{ursa_banner}", markdown=False)
+        self.show(self._help_message, markdown=False)
 
         while True:
             try:
@@ -417,3 +417,15 @@ class UrsaRepl(Cmd):
                 print(
                     "\n(Interrupted) Press Ctrl+D to exit or continue typing."
                 )
+
+    def do_models(self, _: str):
+        self.show(
+            f"Model: [emph]{self.hitl.model.model_name} "
+            f"[dim]{self.hitl.llm_base_url}",
+            markdown=False,
+        )
+        self.show(
+            f"Model: [emph]{self.hitl.embedding.model} "
+            f"[dim]{self.hitl.emb_base_url}",
+            markdown=False,
+        )
