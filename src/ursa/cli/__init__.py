@@ -1,16 +1,21 @@
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 from rich.console import Console
-from typer import Typer
+from typer import Option, Typer
 
 app = Typer()
 
 
+# TODO: add help
 @app.command()
 def run(
-    workspace: Path = Path(".ursa"),
-    llm_model_name: str = "gpt-5",
+    workspace: Annotated[
+        Path, Option(help="Directory to store ursa ouput")
+    ] = Path(".ursa"),
+    llm_model_name: Annotated[
+        str, Option(help="Name of LLM to use for agent tasks")
+    ] = "gpt-5",
     llm_base_url: str = "https://api.openai.com/v1",
     llm_api_key: Optional[str] = None,
     max_completion_tokens: int = 50000,
