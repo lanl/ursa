@@ -14,7 +14,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import SecretStr
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.prompt import Prompt
 from rich.theme import Theme
 from typer import Typer
 
@@ -375,7 +374,7 @@ class UrsaRepl(Cmd):
         pass
 
     def run_agent(self, agent: str, run: Callable[[str], str]):
-        prompt = Prompt.ask(f"Enter your prompt for [cyan bold]{agent}[/]")
+        prompt = input(f"Enter your prompt for {agent}: ")
         with self.console.status("Generating response"):
             return run(prompt)
 
@@ -423,6 +422,6 @@ class UrsaRepl(Cmd):
 
 
 # TODO:
-# * backspace?
-# * documenting the cli
-# * document for developers
+# - [ ] backspace??? -> just stick with input.
+# - [ ] documenting the cli (see ?)
+# - [ ] document for developers
