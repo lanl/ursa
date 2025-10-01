@@ -1,4 +1,5 @@
 import os
+import platform
 import sqlite3
 from cmd import Cmd
 from dataclasses import dataclass
@@ -111,8 +112,8 @@ class HITL:
         self.last_agent_result = ""
         self.arxiv_state = []
         self.executor_state = {}
-        self.planner_state = None
-        self.websearcher_state = None
+        self.planner_state = {}
+        self.websearcher_state = {}
 
     def update_last_agent_result(self, result: str):
         self.last_agent_result = result
@@ -259,42 +260,30 @@ class HITL:
         return f"{self.last_agent_result}"
 
     def run_planner(self, prompt: str) -> str:
-        if self.planner_state:
-            self.planner_state["messages"].append(
-                HumanMessage(
-                    f"The last agent output was: {self.last_agent_result}\n"
-                    f"The user stated: {prompt}"
-                )
+        self.planner_state.setdefault("messages", [])
+        self.planner_state["messages"].append(
+            HumanMessage(
+                f"The last agent output was: {self.last_agent_result}\n"
+                f"The user stated: {prompt}"
             )
-            self.planner_state = self.planner.action.invoke(
-                self.planner_state,
-                {
-                    "recursion_limit": 999999,
-                    "configurable": {"thread_id": self.planner.thread_id},
-                },
+        )
+        self.planner_state = self.planner.action.invoke(
+            self.planner_state,
+            {
+                "recursion_limit": 999999,
+                "configurable": {"thread_id": self.planner.thread_id},
+            },
+        )
+
+        plan = "\n\n\n".join(
+            f"## {step['id']} -- {step['name']}\n\n"
+            + "\n\n".join(
+                f"* {key}\n    * {value}" for key, value in step.items()
             )
-            self.update_last_agent_result(
-                self.planner_state["messages"][-1].content
-            )
-        else:
-            self.planner_state = {
-                "messages": [
-                    HumanMessage(
-                        f"The last agent output was: {self.last_agent_result}\n"
-                        f"The user stated: {prompt}"
-                    )
-                ]
-            }
-            self.planner_state = self.planner.action.invoke(
-                self.planner_state,
-                {
-                    "recursion_limit": 999999,
-                    "configurable": {"thread_id": self.planner.thread_id},
-                },
-            )
-            self.update_last_agent_result(
-                self.planner_state["messages"][-1].content
-            )
+            for step in self.planner_state["plan_steps"]
+        )
+        # print(plan)
+        self.update_last_agent_result(plan)
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
     def run_websearcher(self, prompt: str) -> str:
@@ -360,7 +349,8 @@ class UrsaRepl(Cmd):
 
     def default(self, prompt: str):
         with self.console.status("Generating response"):
-            self.show(self.hitl.run_chatter(prompt))
+            response = self.hitl.run_chatter(prompt)
+            self.show(response)
 
     def postcmd(self, stop: bool, line: str):
         print()
@@ -378,7 +368,7 @@ class UrsaRepl(Cmd):
 
     def do_clear(self, arg):
         """Clear the screen. Same as pressing Ctrl+L."""
-        os.system("cls" if os.name == "nt" else "clear")
+        os.system("cls" if platform.system() == "Windows" else "clear")
 
     def emptyline(self):
         """Do nothing when an empty line is entered"""
@@ -386,7 +376,8 @@ class UrsaRepl(Cmd):
 
     def run_agent(self, agent: str, run: Callable[[str], str]):
         prompt = Prompt.ask(f"Enter your prompt for [cyan bold]{agent}[/]")
-        return run(prompt)
+        with self.console.status("Generating response"):
+            return run(prompt)
 
     def do_arxiv(self, _: str):
         self.show(self.run_agent("Arxiv Agent", self.hitl.run_arvix))
@@ -429,3 +420,9 @@ class UrsaRepl(Cmd):
             f"[dim]{self.hitl.emb_base_url}",
             markdown=False,
         )
+
+
+# TODO:
+# * backspace?
+# * documenting the cli
+# * document for developers

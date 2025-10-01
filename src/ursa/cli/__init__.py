@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
+from rich.console import Console
 from typer import Typer
 
 app = Typer()
@@ -26,7 +27,9 @@ def run(
     arxiv_download_papers: bool = True,
     ssl_verify: bool = True,
 ) -> None:
-    from ursa.cli.hitl import HITL, UrsaRepl
+    console = Console()
+    with console.status("[grey50]Loading ursa ..."):
+        from ursa.cli.hitl import HITL, UrsaRepl
 
     hitl = HITL(
         workspace=workspace,
