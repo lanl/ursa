@@ -6561,6 +6561,7 @@ dependencies = [
     { name = "rich" },
     { name = "trafilatura", version = "1.6.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "trafilatura", version = "1.6.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -6597,6 +6598,7 @@ requires-dist = [
     { name = "randomname", specifier = ">=0.2.1,<0.3" },
     { name = "rich", specifier = ">=13.9.4,<14.0" },
     { name = "trafilatura", specifier = ">=1.6.1" },
+    { name = "typer", specifier = ">=0.16.1" },
 ]
 
 [package.metadata.requires-dev]

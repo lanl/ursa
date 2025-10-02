@@ -40,6 +40,7 @@ dependencies = [
     "ddgs>=9.5.5",
     "atomman>=1.5.2",
     "trafilatura>=1.6.1",
+    "typer>=0.16.1",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -49,6 +50,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
+
+[project.scripts]
+ursa = "ursa.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"

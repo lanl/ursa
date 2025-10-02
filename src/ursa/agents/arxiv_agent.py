@@ -9,6 +9,7 @@ import feedparser
 import pymupdf
 import requests
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
@@ -120,7 +121,7 @@ def remove_surrogates(text: str) -> str:
 class ArxivAgent(BaseAgent):
     def __init__(
         self,
-        llm="openai/o3-mini",
+        llm: str | BaseChatModel = "openai/o3-mini",
         summarize: bool = True,
         process_images=True,
         max_results: int = 3,

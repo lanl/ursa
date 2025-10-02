@@ -51,3 +51,6 @@ neutron-lowest:
     just neutron --isolated --resolution=lowest-direct
 
 clean: clean-workspaces
+
+test-cli:
+    uv run ursa run
