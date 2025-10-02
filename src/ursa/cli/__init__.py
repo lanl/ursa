@@ -14,23 +14,81 @@ def run(
         Path, Option(help="Directory to store ursa ouput")
     ] = Path(".ursa"),
     llm_model_name: Annotated[
-        str, Option(help="Name of LLM to use for agent tasks")
+        str,
+        Option(
+            help="Name of LLM to use for agent tasks", envvar="URSA_LLM_NAME"
+        ),
     ] = "gpt-5",
-    llm_base_url: str = "https://api.openai.com/v1",
-    llm_api_key: Optional[str] = None,
-    max_completion_tokens: int = 50000,
-    emb_model_name: str = "text-embedding-3-small",
-    emb_base_url: str = "https://api.openai.com/v1",
-    emb_api_key: Optional[str] = None,
-    share_key: bool = False,
-    arxiv_summarize: bool = True,
-    arxiv_process_images: bool = False,
-    arxiv_max_results: int = 10,
-    arxiv_database_path: Optional[Path] = None,
-    arxiv_summaries_path: Optional[Path] = None,
-    arxiv_vectorstore_path: Optional[Path] = None,
-    arxiv_download_papers: bool = True,
-    ssl_verify: bool = True,
+    llm_base_url: Annotated[
+        str, Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL")
+    ] = "https://api.openai.com/v1",
+    llm_api_key: Annotated[
+        Optional[str], Option(help="API key for LLM", envvar="URSA_LLM_API_KEY")
+    ] = None,
+    max_completion_tokens: Annotated[
+        int, Option(help="Maximum tokens for LLM to output")
+    ] = 50000,
+    emb_model_name: Annotated[
+        str, Option(help="Embedding model name", envvar="URSA_EMB_NAME")
+    ] = "text-embedding-3-small",
+    emb_base_url: Annotated[
+        str,
+        Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
+    ] = "https://api.openai.com/v1",
+    emb_api_key: Annotated[
+        Optional[str],
+        Option(help="API key for embedding model", envvar="URSA_EMB_API_KEY"),
+    ] = None,
+    share_key: Annotated[
+        bool,
+        Option(
+            help=(
+                "Whether or not the LLM and embedding model share the same "
+                "API key. If yes, then you can specify only one of them."
+            )
+        ),
+    ] = False,
+    arxiv_summarize: Annotated[
+        bool,
+        Option(
+            help="Whether or not to allow ArxivAgent to summarize response."
+        ),
+    ] = True,
+    arxiv_process_images: Annotated[
+        bool,
+        Option(help="Whether or not to allow ArxivAgent to process images."),
+    ] = False,
+    arxiv_max_results: Annotated[
+        int,
+        Option(
+            help="Maximum number of results for ArxivAgent to retrieve from ArXiv."
+        ),
+    ] = 10,
+    arxiv_database_path: Annotated[
+        Optional[Path],
+        Option(
+            help="Path to download/downloaded ArXiv documents; used by ArxivAgent."
+        ),
+    ] = None,
+    arxiv_summaries_path: Annotated[
+        Optional[Path],
+        Option(help="Path to store ArXiv paper summaries; used by ArxivAgent."),
+    ] = None,
+    arxiv_vectorstore_path: Annotated[
+        Optional[Path],
+        Option(
+            help="Path to store ArXiv paper vector store; used by ArxivAgent."
+        ),
+    ] = None,
+    arxiv_download_papers: Annotated[
+        bool,
+        Option(
+            help="Whether or not to allow ArxivAgent to download ArXiv papers."
+        ),
+    ] = True,
+    ssl_verify: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates.")
+    ] = True,
 ) -> None:
     console = Console()
     with console.status("[grey50]Loading ursa ..."):

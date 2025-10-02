@@ -36,6 +36,18 @@ ursa_banner = """\
 """
 
 
+def make_console():
+    return Console(
+        theme=Theme({
+            "success": "green",
+            "error": "bold red",
+            "dim": "grey50",
+            "warn": "yellow",
+            "emph": "bold cyan",
+        })
+    )
+
+
 def wrap_api_key(api_key: Optional[str]) -> Optional[SecretStr]:
     return None if api_key is None else SecretStr(api_key)
 
@@ -281,7 +293,6 @@ class HITL:
             )
             for step in self.planner_state["plan_steps"]
         )
-        # print(plan)
         self.update_last_agent_result(plan)
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
@@ -326,18 +337,18 @@ class HITL:
 
 
 class UrsaRepl(Cmd):
-    console = Console(
-        theme=Theme({
-            "success": "green",
-            "error": "bold red",
-            "dim": "grey50",
-            "warn": "yellow",
-            "emph": "bold cyan",
-        })
-    )
+    console = make_console()
     exit_message: str = "[dim]Exiting ursa..."
     _help_message: str = "[dim]For help, type: ? or help. Exit with Ctrl+d."
     prompt: str = "ursa> "
+
+    def get_input(self, msg: str, end: str = "", **kwargs):
+        # NOTE: Printing in rich with Prompt somehow gets removed when
+        # backspacing. This is a workaround that captures the print output and
+        # converts it to the proper string format for your terminal.
+        with self.console.capture() as capture:
+            self.console.print(msg, end=end, **kwargs)
+        return input(capture.get())
 
     def __init__(self, hitl: HITL, **kwargs):
         self.hitl = hitl
@@ -355,17 +366,17 @@ class UrsaRepl(Cmd):
         print()
         return stop
 
-    def do_exit(self, _):
+    def do_exit(self, _: str):
         """Exit shell."""
         self.show(self.exit_message, markdown=False)
         return True
 
-    def do_EOF(self, _):
+    def do_EOF(self, _: str):
         """Exit on Ctrl+D."""
         self.show(self.exit_message, markdown=False)
         return True
 
-    def do_clear(self, arg):
+    def do_clear(self, _: str):
         """Clear the screen. Same as pressing Ctrl+L."""
         os.system("cls" if platform.system() == "Windows" else "clear")
 
@@ -374,23 +385,28 @@ class UrsaRepl(Cmd):
         pass
 
     def run_agent(self, agent: str, run: Callable[[str], str]):
-        prompt = input(f"Enter your prompt for {agent}: ")
+        prompt = self.get_input(f"Enter your prompt for [emph]{agent}[/]: ")
         with self.console.status("Generating response"):
             return run(prompt)
 
     def do_arxiv(self, _: str):
+        """Run ArxivAgent"""
         self.show(self.run_agent("Arxiv Agent", self.hitl.run_arvix))
 
     def do_plan(self, _: str):
+        """Run PlanningAgent"""
         self.show(self.run_agent("Planning Agent", self.hitl.run_planner))
 
     def do_execute(self, _: str):
+        """Run ExecutionAgent"""
         self.show(self.run_agent("Execution Agent", self.hitl.run_executor))
 
     def do_web(self, _: str):
+        """Run WebSearchAgent"""
         self.show(self.run_agent("Websearch Agent", self.hitl.run_websearcher))
 
     def do_recall(self, _: str):
+        """Run RecallAgent"""
         self.show(self.run_agent("Recall Agent", self.hitl.run_rememberer))
 
     def run(self):
@@ -409,19 +425,14 @@ class UrsaRepl(Cmd):
                 )
 
     def do_models(self, _: str):
+        """List models and base urls"""
         self.show(
-            f"Model: [emph]{self.hitl.model.model_name} "
+            f"[dim]*[/] LLM: [emph]{self.hitl.model.model_name} "
             f"[dim]{self.hitl.llm_base_url}",
             markdown=False,
         )
         self.show(
-            f"Model: [emph]{self.hitl.embedding.model} "
+            f"[dim]*[/] Embedding Model: [emph]{self.hitl.embedding.model} "
             f"[dim]{self.hitl.emb_base_url}",
             markdown=False,
         )
-
-
-# TODO:
-# - [ ] backspace??? -> just stick with input.
-# - [ ] documenting the cli (see ?)
-# - [ ] document for developers
