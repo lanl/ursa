@@ -1,0 +1,9 @@
+{
+    "variables": {
+        "NumSandwiches": {
+            "0": 20.0,
+            "1": 0.0
+        }
+    },
+    "objective": 60.0
+}
