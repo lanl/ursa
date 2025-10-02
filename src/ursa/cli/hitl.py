@@ -436,3 +436,10 @@ class UrsaRepl(Cmd):
             f"[dim]{self.hitl.emb_base_url}",
             markdown=False,
         )
+
+
+# TODO:
+# * Add option to swap models in REPL
+# * Add option for seed setting via flags
+# * Name change: --llm-model-name -> llm
+# * Name change: --emb-model-name -> emb
