@@ -1,17 +1,7 @@
-# Welcome to MkDocs
+# Universal Research and Scientific Agent (URSA)  
 
-For full documentation visit [mkdocs.org](https://www.mkdocs.org).
+<div style="text-align: center;">
+<img src="https://github.com/lanl/ursa/raw/main/logos/logo.png" alt="URSA Logo" width="200" height="200">
+</div>
 
-## Commands
-
-* `mkdocs new [dir-name]` - Create a new project.
-* `mkdocs serve` - Start the live-reloading docs server.
-* `mkdocs build` - Build the documentation site.
-* `mkdocs -h` - Print help message and exit.
-
-## Project layout
-
-    mkdocs.yml    # The configuration file.
-    docs/
-        index.md  # The documentation homepage.
-        ...       # Other markdown pages, images and other files.
+The flexible agentic workflow for accelerating scientific tasks. Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
