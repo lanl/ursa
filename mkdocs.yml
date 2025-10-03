@@ -3,9 +3,8 @@ repo_url: https://github.com/lanl/ursa
 
 theme:
   name: material
-  custom_dir: logos
-  logo: favicon.png
-  favicon: favicon.png
+  logo: assets/favicon.png
+  favicon: assets/favicon.png
 
 plugins:
   - search
