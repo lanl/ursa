@@ -1,0 +1,42 @@
+site_name: URSA
+repo_url: https://github.com/lanl/ursa
+
+theme:
+  name: material
+  logo: assets/favicon.png
+  favicon: assets/favicon.png
+
+plugins:
+  - search
+  - autorefs
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true  # link back to your code
+            show_submodules: true
+   
+watch:
+  - src
+
+nav:
+  - Home: index.md
+  - Setup: 
+      - chatOllama: chatollama_setup.md
+  - Agents:
+      - arXiv Agent: arxiv_agent.md
+      - Execution Agent: execution_agent.md
+      - Hypothesizer Agent: hypothesizer_agent.md
+      - Planning Agent: planning_agent.md
+      - Web Search Agent: web_search_agent.md
+  - Tutorials:
+     - Combining arXiv agent and execution agent: combining_arxiv_and_execution.md
+     - Human in the Loop: humanInTheLoop_example.md
+     - Neutron Star: combining_arxiv_and_execution_neutronStar.md
+  - API Reference: 
+    - agents: api_reference/agents.md
+    - prompt_library: api_reference/prompt_library.md
+    - tools: api_reference/tools.md
+    - util: api_reference/util.md
+

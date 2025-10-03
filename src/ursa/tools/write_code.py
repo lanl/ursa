@@ -4,7 +4,7 @@ from langchain_core.tools import tool
 
 
 @tool
-def write_python(code: str, filename: str, workspace_dir: str):
+def write_python(code: str, filename: str, workspace_dir: str) -> str:
     """
     Writes code to a file in the given workspace.
 
