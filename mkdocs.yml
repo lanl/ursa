@@ -1,0 +1,22 @@
+site_name: URSA
+repo_url: https://github.com/you/your-project
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - autorefs
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true  # link back to your code
+            # (You can tweak things like members_order, show_signature, etc., later)
+
+nav:
+  - Home: index.md
+  - Agents:
+      - Execution Agent: execution_agent.md
+  - Reference: reference.md
+

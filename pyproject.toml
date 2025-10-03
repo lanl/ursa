@@ -84,3 +84,9 @@ dev = [
     "pytest>=8.4.2",
     "scikit-optimize>=0.10.2",
 ]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-autorefs>=1.4.3",
+    "mkdocs-material>=9.6.21",
+    "mkdocstrings-python>=1.18.2",
+]
