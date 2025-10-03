@@ -2,7 +2,7 @@ import json
 import re
 
 
-def extract_json(text: str):
+def extract_json(text: str) -> list[dict]:
     """
     Extract a JSON object or array from text that might contain markdown or other content.
 

@@ -270,7 +270,9 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]):
 
 
 @tool
-def write_file(code: str, filename: str, state: Annotated[dict, InjectedState]):
+def write_file(
+    code: str, filename: str, state: Annotated[dict, InjectedState]
+) -> str:
     """
     Writes text to a file in the given workspace as requested.
 
