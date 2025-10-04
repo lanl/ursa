@@ -3,7 +3,7 @@ import os
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Mapping, Optional
 
 import randomname
 from langchain_community.tools import (
@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
-from litellm import ContentPolicyViolationError
+from litellm.exceptions import ContentPolicyViolationError
 
 # Rich
 from rich import get_console
@@ -115,8 +115,7 @@ class ExecutionAgent(BaseAgent):
             ] + state["messages"]
         try:
             response = self.llm.invoke(
-                new_state["messages"],
-                {"configurable": {"thread_id": self.thread_id}},
+                new_state["messages"], self.build_config(tags=["agent"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
@@ -129,7 +128,7 @@ class ExecutionAgent(BaseAgent):
         messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
         try:
             response = self.llm.invoke(
-                messages, {"configurable": {"thread_id": self.thread_id}}
+                messages, self.build_config(tags=["summarize"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", messages[-1].content)
@@ -185,7 +184,8 @@ class ExecutionAgent(BaseAgent):
                         "Assume commands to run/install python and Julia files are safe because "
                         "the files are from a trusted source. "
                         f"Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}"
-                    )
+                    ),
+                    self.build_config(tags=["safety_check"]),
                 )
 
                 if "[NO]" in safety_check.content:
@@ -225,10 +225,20 @@ class ExecutionAgent(BaseAgent):
     def _initialize_agent(self):
         self.graph = StateGraph(ExecutionState)
 
-        self.graph.add_node("agent", self.query_executor)
-        self.graph.add_node("action", self.tool_node)
-        self.graph.add_node("summarize", self.summarize)
-        self.graph.add_node("safety_check", self.safety_check)
+        self.graph.add_node(
+            "agent", self._wrap_node(self.query_executor, "agent", "execution")
+        )
+        self.graph.add_node(
+            "action", self._wrap_node(self.tool_node, "action", "execution")
+        )
+        self.graph.add_node(
+            "summarize",
+            self._wrap_node(self.summarize, "summarize", "execution"),
+        )
+        self.graph.add_node(
+            "safety_check",
+            self._wrap_node(self.safety_check, "safety_check", "execution"),
+        )
 
         # Set the entrypoint as `agent`
         # This means that this node is the first one called
@@ -236,36 +246,35 @@ class ExecutionAgent(BaseAgent):
 
         self.graph.add_conditional_edges(
             "agent",
-            should_continue,
-            {
-                "continue": "safety_check",
-                "summarize": "summarize",
-            },
+            self._wrap_cond(should_continue, "should_continue", "execution"),
+            {"continue": "safety_check", "summarize": "summarize"},
         )
 
         self.graph.add_conditional_edges(
             "safety_check",
-            command_safe,
-            {
-                "safe": "action",
-                "unsafe": "agent",
-            },
+            self._wrap_cond(command_safe, "command_safe", "execution"),
+            {"safe": "action", "unsafe": "agent"},
         )
 
         self.graph.add_edge("action", "agent")
         self.graph.add_edge("summarize", END)
 
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
+        self._action = self.graph.compile(checkpointer=self.checkpointer)
         # self.action.get_graph().draw_mermaid_png(output_file_path="execution_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
-    def run(self, prompt, recursion_limit=1000):
-        inputs = {"messages": [HumanMessage(content=prompt)]}
-        return self.action.invoke(
-            inputs,
-            {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
-            },
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+        return self._action.invoke(inputs, config)
+
+    # this is trying to stop people bypassing invoke
+    @property
+    def action(self):
+        raise AttributeError(
+            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
         )
 
 
@@ -499,8 +508,9 @@ def main():
     inputs = {
         "messages": [HumanMessage(content=problem_string)]
     }  # , "workspace":"dummy_test"}
-    result = execution_agent.action.invoke(
-        inputs, {"configurable": {"thread_id": execution_agent.thread_id}}
+    result = execution_agent.invoke(
+        inputs,
+        config={"configurable": {"thread_id": execution_agent.thread_id}},
     )
     print(result["messages"][-1].content)
     return result

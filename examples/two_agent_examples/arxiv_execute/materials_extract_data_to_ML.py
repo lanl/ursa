@@ -3,6 +3,9 @@ from langchain_core.messages import HumanMessage
 from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ArxivAgent, ExecutionAgent
+from ursa.observability.timing import render_session_summary
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main():
@@ -21,6 +24,7 @@ def main():
         vectorstore_path="arxiv_vectorstores_materials2",
         download_papers=True,
     )
+    agent.thread_id = tid
 
     result = agent.run(
         arxiv_search_query="high entropy alloy, yield strength, interstitial",
@@ -28,6 +32,7 @@ def main():
     )
     print(result)
     executor = ExecutionAgent(llm=model)
+    executor.thread_id = tid
     exe_plan = f"""
     The following is the summaries of research papers on how yield strength increase depends on interstital doping percentage: 
     {result}
@@ -43,6 +48,8 @@ def main():
 
     for x in final_results["messages"]:
         print(x.content)
+
+    render_session_summary(tid)
 
 
 if __name__ == "__main__":

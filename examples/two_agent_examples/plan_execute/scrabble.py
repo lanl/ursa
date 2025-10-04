@@ -13,8 +13,11 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.observability.timing import render_session_summary
 
 console = get_console()  # always returns the same instance
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main(mode: str):
@@ -66,6 +69,8 @@ def main(mode: str):
         # Initialize the agents
         planner = PlanningAgent(llm=model, checkpointer=checkpointer)
         executor = ExecutionAgent(llm=model, checkpointer=checkpointer)
+        planner.thread_id = tid
+        executor.thread_id = tid
 
         # 3. top level planning
         # planning agent . . .
@@ -190,6 +195,9 @@ def main(mode: str):
                 border_style="green",
             )
         )
+
+        render_session_summary(tid)
+
         return answer
 
     except Exception as e:
