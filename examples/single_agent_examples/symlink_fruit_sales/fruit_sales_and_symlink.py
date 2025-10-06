@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from ursa.agents import ExecutionAgent
+from ursa.observability.timing import render_session_summary
 
 console = Console()  # global console object
 
@@ -35,6 +36,7 @@ lines around bars and any other additions you think are interesting.
 
 workspace = f"fruit_sales_{randomname.get_name()}"
 workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main(model_name: str):
@@ -79,20 +81,23 @@ def main(model_name: str):
         # Initialize the agent
         # no planning agent for this one - let's YOLO and go risk it
         executor = ExecutionAgent(llm=model)
+        executor.thread_id = tid
 
-        final_results = executor.action.invoke(
+        final_results = executor.invoke(
             {
                 "messages": [HumanMessage(content=problem)],
                 "workspace": workspace,
                 "symlinkdir": symlinkdict,
             },
-            {
+            config={
                 "recursion_limit": 999_999,
                 "configurable": {"thread_id": executor.thread_id},
             },
         )
 
         last_step_summary = final_results["messages"][-1].content
+
+        render_session_summary(tid)
 
         return last_step_summary, workspace
 

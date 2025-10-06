@@ -92,7 +92,7 @@ def main():
                 f"The user stated {user_prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search"
             ).content
             print("Searching ArXiv for ", llm_search_query)
-            arxiv_result = arxiv_agent.run(
+            arxiv_result = arxiv_agent.invoke(
                 arxiv_search_query=llm_search_query,
                 context=last_agent_result + user_prompt,
             )
@@ -112,7 +112,7 @@ def main():
                         f"The last agent output was: {last_agent_result}\n The user stated: {user_prompt}"
                     )
                 )
-                executor_state = executor.action.invoke(
+                executor_state = executor.invoke(
                     executor_state,
                     {
                         "recursion_limit": 999999,
@@ -127,9 +127,9 @@ def main():
                         f"The last agent output was: {last_agent_result}\n The user stated: {user_prompt}"
                     )
                 ]
-                executor_state = executor.action.invoke(
+                executor_state = executor.invoke(
                     executor_state,
-                    {
+                    config={
                         "recursion_limit": 999999,
                         "configurable": {"thread_id": executor.thread_id},
                     },
@@ -146,7 +146,7 @@ def main():
                         f"The last agent output was: {last_agent_result}\n The user stated: {user_prompt}"
                     )
                 )
-                planner_state = planner.action.invoke(
+                planner_state = planner.invoke(
                     planner_state,
                     {
                         "recursion_limit": 999999,
@@ -162,7 +162,7 @@ def main():
                         )
                     ]
                 }
-                planner_state = planner.action.invoke(
+                planner_state = planner.invoke(
                     planner_state,
                     {
                         "recursion_limit": 999999,
@@ -181,7 +181,7 @@ def main():
                         f"The last agent output was: {last_agent_result}\n The user stated: {user_prompt}"
                     )
                 )
-                websearcher_state = websearcher.action.invoke(
+                websearcher_state = websearcher.invoke(
                     websearcher_state,
                     {
                         "recursion_limit": 999999,
@@ -197,7 +197,7 @@ def main():
                         )
                     ]
                 }
-                websearcher_state = websearcher.action.invoke(
+                websearcher_state = websearcher.invoke(
                     websearcher_state,
                     {
                         "recursion_limit": 999999,
@@ -210,7 +210,7 @@ def main():
 
         if "[Rememberer]" in user_prompt:
             user_prompt = user_prompt.replace("[Rememberer]", "")
-            memory_output = rememberer.remember(user_prompt)
+            memory_output = rememberer.invoke(query=user_prompt)
             print(f"[Rememberer Output]:\n {memory_output}")
             continue
 

@@ -11,10 +11,10 @@ problem = "Find a city with as least 10 vowels in its name."
 model = ChatLiteLLM(model="openai/gpt-5", max_completion_tokens=20000)
 
 # Initialize the agent
-websearcher = WebSearchAgent(llm=model)
+websearcher = WebSearchAgent(llm=model, enable_metrics=True)
 
 # Solve the problem
-websearch_output = websearcher.run(problem)
+websearch_output = websearcher.invoke(problem)
 
 # Print results
 print("Final summary: \n", websearch_output["messages"][-1].content)

@@ -1,8 +1,10 @@
-from langchain_community.callbacks import get_openai_callback
 from langchain_core.messages import HumanMessage
 from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ArxivAgent, ExecutionAgent
+from ursa.observability.timing import render_session_summary
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main():
@@ -21,13 +23,15 @@ def main():
         vectorstore_path="arxiv_vectorstores_materials2",
         download_papers=True,
     )
+    agent.thread_id = tid
 
-    result = agent.run(
+    result = agent.invoke(
         arxiv_search_query="high entropy alloy, yield strength, interstitial",
         context="Extract data that can be used to visualize how yield strength increase (%) depends on the interstital doping atomic percentage.",
     )
     print(result)
     executor = ExecutionAgent(llm=model)
+    executor.thread_id = tid
     exe_plan = f"""
     The following is the summaries of research papers on how yield strength increase depends on interstital doping percentage: 
     {result}
@@ -39,15 +43,13 @@ def main():
 
     init = {"messages": [HumanMessage(content=exe_plan)]}
 
-    final_results = executor.action.invoke(init, {"recursion_limit": 10000})
+    final_results = executor.invoke(init, {"recursion_limit": 10000})
 
     for x in final_results["messages"]:
         print(x.content)
 
+    render_session_summary(tid)
+
 
 if __name__ == "__main__":
-    with get_openai_callback() as cbh:
-        main()
-    print(f"Total Tokens Used: {cbh.total_tokens}")
-    print(f"Prompt Tokens: {cbh.prompt_tokens}")
-    print(f"Completion Tokens: {cbh.completion_tokens}")
+    main()

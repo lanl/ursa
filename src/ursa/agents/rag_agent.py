@@ -1,8 +1,9 @@
 import os
 import re
 import statistics
+from functools import cached_property
 from threading import Lock
-from typing import TypedDict
+from typing import Any, Mapping, TypedDict
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -11,6 +12,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
+from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
 
@@ -56,10 +58,17 @@ class RAGAgent(BaseAgent):
         self.database_path = database_path
         self.summaries_path = summaries_path
         self.vectorstore_path = vectorstore_path
-        self.graph = self._build_graph()
 
         os.makedirs(self.vectorstore_path, exist_ok=True)
         self.vectorstore = self._open_global_vectorstore()
+
+    @cached_property
+    def graph(self):
+        return self._build_graph()
+
+    @property
+    def _action(self):
+        return self.graph
 
     @property
     def manifest_path(self) -> str:
@@ -109,7 +118,7 @@ class RAGAgent(BaseAgent):
             search_kwargs={"k": k}
         )
 
-    def _read_docs(self, state: RAGState) -> RAGState:
+    def _read_docs_node(self, state: RAGState) -> RAGState:
         print("[RAG Agent] Reading Documents....")
         papers = []
         new_state = state.copy()
@@ -129,7 +138,7 @@ class RAGAgent(BaseAgent):
             if not self._paper_exists_in_vectorstore(id)
         ]
 
-        for pdf_filename in pdf_files:
+        for pdf_filename in tqdm(pdf_files, desc="RAG parsing text"):
             full_text = ""
 
             try:
@@ -149,7 +158,7 @@ class RAGAgent(BaseAgent):
 
         return new_state
 
-    def _ingest_docs(self, state: RAGState) -> RAGState:
+    def _ingest_docs_node(self, state: RAGState) -> RAGState:
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
         )
@@ -161,7 +170,11 @@ class RAGAgent(BaseAgent):
             raise RuntimeError("Unexpected error: doc_texts not in state!")
 
         batch_docs, batch_ids = [], []
-        for paper, id in zip(state["doc_texts"], state["doc_ids"]):
+        for paper, id in tqdm(
+            zip(state["doc_texts"], state["doc_ids"]),
+            total=len(state["doc_texts"]),
+            desc="RAG Ingesting",
+        ):
             cleaned_text = remove_surrogates(paper)
             docs = splitter.create_documents(
                 [cleaned_text], metadatas=[{"id": id}]
@@ -179,7 +192,7 @@ class RAGAgent(BaseAgent):
 
         return state
 
-    def _summarize_node(self, state: RAGState) -> RAGState:
+    def _retrieve_and_summarize_node(self, state: RAGState) -> RAGState:
         print(
             "[RAG Agent] Retrieving Contextually Relevant Information From Database..."
         )
@@ -255,23 +268,28 @@ class RAGAgent(BaseAgent):
             },
         }
 
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+        return self._action.invoke(inputs, config)
+
     def _build_graph(self):
-        builder = StateGraph(RAGState)
-        builder.add_node("Read Documents", self._read_docs)
-        builder.add_node("Ingest Documents", self._ingest_docs)
-        builder.add_node("Retrieve and Summarize", self._summarize_node)
-        builder.add_edge("Read Documents", "Ingest Documents")
-        builder.add_edge("Ingest Documents", "Retrieve and Summarize")
+        graph = StateGraph(RAGState)
 
-        builder.set_entry_point("Read Documents")
-        builder.set_finish_point("Retrieve and Summarize")
+        self.add_node(graph, self._read_docs_node)
+        self.add_node(graph, self._ingest_docs_node)
+        self.add_node(graph, self._retrieve_and_summarize_node)
 
-        graph = builder.compile()
-        return graph
+        graph.add_edge("_read_docs_node", "_ingest_docs_node")
+        graph.add_edge("_ingest_docs_node", "_retrieve_and_summarize_node")
 
-    def run(self, context: str) -> str:
-        result = self.graph.invoke({"context": context})
-        return result.get("summary", "No summary generated.")
+        graph.set_entry_point("_read_docs_node")
+        graph.set_finish_point("_retrieve_and_summarize_node")
+
+        return graph.compile(checkpointer=self.checkpointer)
 
 
 # NOTE: Run test in `tests/agents/test_rag_agent/test_rag_agent.py` via:

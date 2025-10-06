@@ -3,6 +3,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
+from typing import Any, Mapping
 from urllib.parse import quote
 
 import feedparser
@@ -17,8 +18,8 @@ from PIL import Image
 from tqdm import tqdm
 from typing_extensions import List, TypedDict
 
-from .base import BaseAgent
-from .rag_agent import RAGAgent
+from ursa.agents.base import BaseAgent
+from ursa.agents.rag_agent import RAGAgent
 
 try:
     from openai import OpenAI
@@ -142,7 +143,7 @@ class ArxivAgent(BaseAgent):
         self.download_papers = download_papers
         self.rag_embedding = rag_embedding
 
-        self.graph = self._build_graph()
+        self._action = self._build_graph()
 
         os.makedirs(self.database_path, exist_ok=True)
 
@@ -260,10 +261,13 @@ class ArxivAgent(BaseAgent):
 
             try:
                 cleaned_text = remove_surrogates(paper["full_text"])
-                summary = chain.invoke({
-                    "retrieved_content": cleaned_text,
-                    "context": state["context"],
-                })
+                summary = chain.invoke(
+                    {
+                        "retrieved_content": cleaned_text,
+                        "context": state["context"],
+                    },
+                    config=self.build_config(tags=["arxiv", "summarize_each"]),
+                )
 
             except Exception as e:
                 summary = f"Error summarizing paper: {e}"
@@ -305,7 +309,7 @@ class ArxivAgent(BaseAgent):
             embedding=self.rag_embedding,
             database_path=self.database_path,
         )
-        new_state["final_summary"] = rag_agent.run(context=state["context"])
+        new_state["final_summary"] = rag_agent.invoke(context=state["context"])
         return new_state
 
     def _aggregate_node(self, state: PaperState) -> PaperState:
@@ -342,10 +346,13 @@ class ArxivAgent(BaseAgent):
 
         chain = prompt | self.llm | StrOutputParser()
 
-        final_summary = chain.invoke({
-            "Summaries": combined,
-            "context": state["context"],
-        })
+        final_summary = chain.invoke(
+            {
+                "Summaries": combined,
+                "context": state["context"],
+            },
+            config=self.build_config(tags=["arxiv", "aggregate"]),
+        )
 
         with open(self.summaries_path + "/final_summary.txt", "w") as f:
             f.write(final_summary)
@@ -353,49 +360,68 @@ class ArxivAgent(BaseAgent):
         return {**state, "final_summary": final_summary}
 
     def _build_graph(self):
-        builder = StateGraph(PaperState)
-        builder.add_node("fetch_papers", self._fetch_node)
+        graph = StateGraph(PaperState)
 
+        self.add_node(graph, self._fetch_node)
         if self.summarize:
             if self.rag_embedding:
-                builder.add_node("rag_summarize", self._rag_node)
-
-                builder.set_entry_point("fetch_papers")
-                builder.add_edge("fetch_papers", "rag_summarize")
-                builder.set_finish_point("rag_summarize")
+                self.add_node(graph, self._rag_node)
+                graph.set_entry_point("_fetch_node")
+                graph.add_edge("_fetch_node", "_rag_node")
+                graph.set_finish_point("_rag_node")
             else:
-                builder.add_node("summarize_each", self._summarize_node)
-                builder.add_node("aggregate", self._aggregate_node)
+                self.add_node(graph, self._summarize_node)
+                self.add_node(graph, self._aggregate_node)
 
-                builder.set_entry_point("fetch_papers")
-                builder.add_edge("fetch_papers", "summarize_each")
-                builder.add_edge("summarize_each", "aggregate")
-                builder.set_finish_point("aggregate")
-
+                graph.set_entry_point("_fetch_node")
+                graph.add_edge("_fetch_node", "_summarize_node")
+                graph.add_edge("_summarize_node", "_aggregate_node")
+                graph.set_finish_point("_aggregate_node")
         else:
-            builder.set_entry_point("fetch_papers")
-            builder.set_finish_point("fetch_papers")
+            graph.set_entry_point("_fetch_node")
+            graph.set_finish_point("_fetch_node")
 
-        graph = builder.compile()
-        return graph
+        return graph.compile(checkpointer=self.checkpointer)
 
-    def run(self, arxiv_search_query: str, context: str) -> str:
-        result = self.graph.invoke({
-            "query": arxiv_search_query,
-            "context": context,
-        })
+    def _invoke(
+        self,
+        inputs: Mapping[str, Any],
+        *,
+        summarize: bool | None = None,
+        recursion_limit: int = 1000,
+        **_,
+    ) -> str:
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
 
-        if self.summarize:
-            return result.get("final_summary", "No summary generated.")
-        else:
-            return "\n\nFinished Fetching papers!"
+        # this seems dumb, but it's b/c sometimes we had referred to the value as
+        # 'query' other times as 'arxiv_search_query' so trying to keep it compatible
+        # aliasing: accept arxiv_search_query -> query
+        if "query" not in inputs:
+            if "arxiv_search_query" in inputs:
+                # make a shallow copy and rename the key
+                inputs = dict(inputs)
+                inputs["query"] = inputs.pop("arxiv_search_query")
+            else:
+                raise KeyError(
+                    "Missing 'query' in inputs (alias 'arxiv_search_query' also accepted)."
+                )
+
+        result = self._action.invoke(inputs, config)
+
+        use_summary = self.summarize if summarize is None else summarize
+        return (
+            result.get("final_summary", "No summary generated.")
+            if use_summary
+            else "\n\nFinished Fetching papers!"
+        )
 
 
-if __name__ == "__main__":
-    agent = ArxivAgent()
-    result = agent.run(
-        arxiv_search_query="Experimental Constraints on neutron star radius",
-        context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
-    )
-
-    print(result)
+# NOTE: Run test in `tests/agents/test_arxiv_agent/test_arxiv_agent.py` via:
+#
+# pytest -s tests/agents/test_arxiv_agent
+#
+# OR
+#
+# uv run pytest -s tests/agents/test_arxiv_agent

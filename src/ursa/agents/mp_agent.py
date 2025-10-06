@@ -2,7 +2,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict
+from typing import Any, Dict, Mapping
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -50,7 +50,7 @@ class MaterialsProjectAgent(BaseAgent):
         os.makedirs(self.database_path, exist_ok=True)
         os.makedirs(self.summaries_path, exist_ok=True)
 
-        self.graph = self._build_graph()
+        self._action = self._build_graph()
 
     def _fetch_node(self, state: Dict) -> Dict:
         f = state["query"]
@@ -148,31 +148,56 @@ You are a materials-science assistant. Given the following metadata about a mate
         return {**state, "final_summary": final}
 
     def _build_graph(self):
-        g = StateGraph(dict)  # using plain dict for state
-        g.add_node("fetch", self._fetch_node)
+        graph = StateGraph(dict)  # using plain dict for state
+        self.add_node(graph, self._fetch_node)
         if self.summarize:
-            g.add_node("summarize", self._summarize_node)
-            g.add_node("aggregate", self._aggregate_node)
-            g.set_entry_point("fetch")
-            g.add_edge("fetch", "summarize")
-            g.add_edge("summarize", "aggregate")
-            g.set_finish_point("aggregate")
-        else:
-            g.set_entry_point("fetch")
-            g.set_finish_point("fetch")
-        return g.compile()
+            self.add_node(graph, self._summarize_node)
+            self.add_node(graph, self._aggregate_node)
 
-    def run(self, mp_query: str, context: str) -> str:
-        state = {"query": mp_query, "context": context}
-        out = self.graph.invoke(state)
-        if self.summarize:
-            return out.get("final_summary", "")
-        return json.dumps(out.get("materials", []), indent=2)
+            graph.set_entry_point("_fetch_node")
+            graph.add_edge("_fetch_node", "_summarize_node")
+            graph.add_edge("_summarize_node", "_aggregate_node")
+            graph.set_finish_point("_aggregate_node")
+        else:
+            graph.set_entry_point("_fetch_node")
+            graph.set_finish_point("_fetch_node")
+        return graph.compile(checkpointer=self.checkpointer)
+
+    def _invoke(
+        self,
+        inputs: Mapping[str, Any],
+        *,
+        summarize: bool | None = None,
+        recursion_limit: int = 1000,
+        **_,
+    ) -> str:
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+
+        if "query" not in inputs:
+            if "mp_query" in inputs:
+                # make a shallow copy and rename the key
+                inputs = dict(inputs)
+                inputs["query"] = inputs.pop("mp_query")
+            else:
+                raise KeyError(
+                    "Missing 'query' in inputs (alias 'mp_query' also accepted)."
+                )
+
+        result = self._action.invoke(inputs, config)
+
+        use_summary = self.summarize if summarize is None else summarize
+        return (
+            result.get("final_summary", "No summary generated.")
+            if use_summary
+            else "\n\nFinished Fetching Materials Database Information!"
+        )
 
 
 if __name__ == "__main__":
     agent = MaterialsProjectAgent()
-    resp = agent.run(
+    resp = agent.invoke(
         mp_query="LiFePO4",
         context="What is its band gap and stability, and any synthesis challenges?",
     )

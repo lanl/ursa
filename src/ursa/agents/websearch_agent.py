@@ -1,6 +1,6 @@
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Mapping, Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -8,7 +8,7 @@ from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, create_react_agent
 from pydantic import Field
@@ -57,9 +57,9 @@ class WebSearchAgent(BaseAgent):
         self.has_internet = self._check_for_internet(
             kwargs.get("url", "http://www.lanl.gov")
         )
-        self._initialize_agent()
+        self._build_graph()
 
-    def review_node(self, state: WebSearchState) -> WebSearchState:
+    def _review_node(self, state: WebSearchState) -> WebSearchState:
         if not self.has_internet:
             return {
                 "messages": [
@@ -78,7 +78,7 @@ class WebSearchAgent(BaseAgent):
         )
         return {"messages": [HumanMessage(content=res.content)]}
 
-    def response_node(self, state: WebSearchState) -> WebSearchState:
+    def _response_node(self, state: WebSearchState) -> WebSearchState:
         if not self.has_internet:
             return {
                 "messages": [
@@ -111,60 +111,50 @@ class WebSearchAgent(BaseAgent):
         except (requests.ConnectionError, requests.Timeout):
             return False
 
-    def state_store_node(self, state: WebSearchState) -> WebSearchState:
+    def _state_store_node(self, state: WebSearchState) -> WebSearchState:
         state["thread_id"] = self.thread_id
         return state
         # return dict(**state, thread_id=self.thread_id)
 
-    def _initialize_agent(self):
-        self.graph = StateGraph(WebSearchState)
-        self.graph.add_node("state_store", self.state_store_node)
-        self.graph.add_node(
-            "websearch",
-            create_react_agent(
-                self.llm,
-                self.tools,
-                state_schema=WebSearchState,
-                prompt=self.websearch_prompt,
-            ),
+    def _create_react(self, state: WebSearchState) -> WebSearchState:
+        react_agent = create_react_agent(
+            self.llm,
+            self.tools,
+            state_schema=WebSearchState,
+            prompt=self.websearch_prompt,
         )
+        return react_agent.invoke(state)
 
-        self.graph.add_node("review", self.review_node)
-        self.graph.add_node("response", self.response_node)
+    def _build_graph(self):
+        graph = StateGraph(WebSearchState)
+        self.add_node(graph, self._state_store_node)
+        self.add_node(graph, self._create_react)
+        self.add_node(graph, self._review_node)
+        self.add_node(graph, self._response_node)
 
-        self.graph.add_edge(START, "state_store")
-        self.graph.add_edge("state_store", "websearch")
-        self.graph.add_edge("websearch", "review")
-        self.graph.add_edge("response", END)
+        graph.set_entry_point("_state_store_node")
+        graph.add_edge("_state_store_node", "_create_react")
+        graph.add_edge("_create_react", "_review_node")
+        graph.set_finish_point("_response_node")
 
-        self.graph.add_conditional_edges(
-            "review",
+        graph.add_conditional_edges(
+            "_review_node",
             should_continue,
-            {"websearch": "websearch", "response": "response"},
-        )
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
-        # self.action.get_graph().draw_mermaid_png(output_file_path="./websearch_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
-
-    def run(self, prompt, recursion_limit=100):
-        if not self.has_internet:
-            return {
-                "messages": [
-                    HumanMessage(
-                        content="No internet for WebSearch Agent. No research carried out."
-                    )
-                ]
-            }
-        inputs = {
-            "messages": [HumanMessage(content=prompt)],
-            "model": self.llm,
-        }
-        return self.action.invoke(
-            inputs,
             {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
+                "_create_react": "_create_react",
+                "_response_node": "_response_node",
             },
         )
+        self._action = graph.compile(checkpointer=self.checkpointer)
+        # self._action.get_graph().draw_mermaid_png(output_file_path="./websearch_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
+
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+        return self._action.invoke(inputs, config)
 
 
 def process_content(
@@ -204,10 +194,10 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 
 def should_continue(state: WebSearchState):
     if len(state["messages"]) > (state.get("max_websearch_steps", 100) + 3):
-        return "response"
+        return "_response_node"
     if "[APPROVED]" in state["messages"][-1].content:
-        return "response"
-    return "websearch"
+        return "_response_node"
+    return "_create_react"
 
 
 def main():
@@ -220,7 +210,7 @@ def main():
         "messages": [HumanMessage(content=problem_string)],
         "model": model,
     }
-    result = websearcher.action.invoke(
+    result = websearcher.invoke(
         inputs,
         {
             "recursion_limit": 10000,

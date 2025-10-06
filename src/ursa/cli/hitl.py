@@ -195,7 +195,7 @@ class HITL:
         print("Searching ArXiv for ", llm_search_query)
 
         if isinstance(llm_search_query, str):
-            arxiv_result = self.arxiv_agent.run(
+            arxiv_result = self.arxiv_agent.invoke(
                 arxiv_search_query=llm_search_query,
                 context=self.last_agent_result + prompt,
             )
@@ -215,7 +215,7 @@ class HITL:
                     f"The user stated: {prompt}"
                 )
             )
-            executor_state = self.executor.action.invoke(
+            executor_state = self.executor.invoke(
                 self.executor_state,
                 {
                     "recursion_limit": 999999,
@@ -240,7 +240,7 @@ class HITL:
                     )
                 ],
             )
-            self.executor_state = self.executor.action.invoke(
+            self.executor_state = self.executor.invoke(
                 self.executor_state,
                 {
                     "recursion_limit": 999999,
@@ -278,7 +278,7 @@ class HITL:
                 f"The user stated: {prompt}"
             )
         )
-        self.planner_state = self.planner.action.invoke(
+        self.planner_state = self.planner.invoke(
             self.planner_state,
             {
                 "recursion_limit": 999999,
@@ -304,7 +304,7 @@ class HITL:
                     f"The user stated: {prompt}"
                 )
             )
-            self.websearcher_state = self.websearcher.action.invoke(
+            self.websearcher_state = self.websearcher.invoke(
                 self.websearcher_state,
                 {
                     "recursion_limit": 999999,
@@ -323,7 +323,7 @@ class HITL:
                     )
                 ]
             }
-            self.websearcher_state = self.websearcher.action.invoke(
+            self.websearcher_state = self.websearcher.invoke(
                 self.websearcher_state,
                 {
                     "recursion_limit": 999999,
