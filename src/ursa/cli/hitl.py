@@ -136,7 +136,7 @@ class HITL:
             summarize=self.arxiv_summarize,
             process_images=self.arxiv_process_images,
             max_results=self.arxiv_max_results,
-            rag_embedding=self.embedding,
+            # rag_embedding=self.embedding,
             database_path=self.get_path(
                 self.arxiv_database_path, "arxiv_downloaded_papers"
             ),
@@ -217,10 +217,6 @@ class HITL:
             )
             executor_state = self.executor.invoke(
                 self.executor_state,
-                {
-                    "recursion_limit": 999999,
-                    "configurable": {"thread_id": self.executor.thread_id},
-                },
             )
 
             if isinstance(
@@ -242,10 +238,6 @@ class HITL:
             )
             self.executor_state = self.executor.invoke(
                 self.executor_state,
-                {
-                    "recursion_limit": 999999,
-                    "configurable": {"thread_id": self.executor.thread_id},
-                },
             )
             self.update_last_agent_result(
                 self.executor_state["messages"][-1].content
@@ -280,10 +272,6 @@ class HITL:
         )
         self.planner_state = self.planner.invoke(
             self.planner_state,
-            {
-                "recursion_limit": 999999,
-                "configurable": {"thread_id": self.planner.thread_id},
-            },
         )
 
         plan = "\n\n\n".join(
@@ -306,10 +294,6 @@ class HITL:
             )
             self.websearcher_state = self.websearcher.invoke(
                 self.websearcher_state,
-                {
-                    "recursion_limit": 999999,
-                    "configurable": {"thread_id": self.websearcher.thread_id},
-                },
             )
             self.update_last_agent_result(
                 self.websearcher_state["messages"][-1].content
@@ -325,10 +309,6 @@ class HITL:
             }
             self.websearcher_state = self.websearcher.invoke(
                 self.websearcher_state,
-                {
-                    "recursion_limit": 999999,
-                    "configurable": {"thread_id": self.websearcher.thread_id},
-                },
             )
             self.update_last_agent_result(
                 self.websearcher_state["messages"][-1].content
