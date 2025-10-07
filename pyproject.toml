@@ -90,3 +90,6 @@ lammps = [
     "atomman>=1.5.2",
     "trafilatura>=1.6.1",
 ]
+opt = [
+    "ortools>=9.14,<9.15",
+]
