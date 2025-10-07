@@ -280,7 +280,9 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
 
 
 @tool
-def write_code(code: str, filename: str, state: Annotated[dict, InjectedState]):
+def write_code(
+    code: str, filename: str, state: Annotated[dict, InjectedState]
+) -> str:
     """
     Writes python or Julia code to a file in the given workspace as requested.
 
