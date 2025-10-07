@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Dict, Iterable, List, Tuple, Union, Optional, Callable
+from typing import Any, Callable, Dict, Iterable, List, Union
 
-from langchain_core.messages import AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable
+
 
 # --- if you already have your own versions, reuse them ---
 def _parse_args(v: Any) -> Dict[str, Any]:
@@ -19,6 +20,7 @@ def _parse_args(v: Any) -> Dict[str, Any]:
         except Exception:
             return {"_raw": v}
     return {"_raw": v}
+
 
 def extract_tool_calls(msg: AIMessage) -> List[Dict[str, Any]]:
     # Prefer normalized field
@@ -37,21 +39,30 @@ def extract_tool_calls(msg: AIMessage) -> List[Dict[str, Any]]:
         out = []
         for tc in ak["tool_calls"]:
             fn = tc.get("function", {}) or {}
-            out.append({"name": fn.get("name"),
-                        "args": _parse_args(fn.get("arguments")),
-                        "id": tc.get("id")})
+            out.append({
+                "name": fn.get("name"),
+                "args": _parse_args(fn.get("arguments")),
+                "id": tc.get("id"),
+            })
         return out
 
     if ak.get("function_call"):
         fn = ak["function_call"]
-        return [{"name": fn.get("name"),
-                 "args": _parse_args(fn.get("arguments")),
-                 "id": None}]
+        return [
+            {
+                "name": fn.get("name"),
+                "args": _parse_args(fn.get("arguments")),
+                "id": None,
+            }
+        ]
     return []
+
+
 # -----------------------------------------------------------------------------
 
 
 ToolRegistry = Dict[str, Union[Runnable, Callable[..., Any]]]
+
 
 def _stringify_output(x: Any) -> str:
     if isinstance(x, str):
@@ -61,7 +72,10 @@ def _stringify_output(x: Any) -> str:
     except Exception:
         return str(x)
 
-def _invoke_tool(tool: Union[Runnable, Callable[..., Any]], args: Dict[str, Any]) -> Any:
+
+def _invoke_tool(
+    tool: Union[Runnable, Callable[..., Any]], args: Dict[str, Any]
+) -> Any:
     # Runnable (LangChain tools & chains)
     if isinstance(tool, Runnable):
         return tool.invoke(args)
@@ -72,21 +86,25 @@ def _invoke_tool(tool: Union[Runnable, Callable[..., Any]], args: Dict[str, Any]
         # Some tools expect a single positional payload
         return tool(args)
 
+
 def run_tool_calls(
     ai_msg: AIMessage,
-    tools: Union[ToolRegistry, Iterable[Union[Runnable, Callable[..., Any]]]]
+    tools: Union[ToolRegistry, Iterable[Union[Runnable, Callable[..., Any]]]],
 ) -> List[BaseMessage]:
-    """ 
+    """
     Args:
         ai_msg: The LLM's AIMessage containing tool calls.
         tools: Either a dict {name: tool} or an iterable of tools (must have `.name`
                for mapping). Each tool can be a Runnable or a plain callable.
 
     Returns:
-        (tool_messages, call_log)
-          - tool_messages: list[ToolMessage] to feed back to the model
-          - call_log:      list of dicts with {"id","name","args","output","error"}
+        out: list[BaseMessage] to feed back to the model
     """
+    # Returns:
+    #     (tool_messages, call_log)
+    #       - tool_messages: list[ToolMessage] to feed back to the model
+    #       - call_log:      list of dicts with {"id","name","args","output","error"}
+    # """
     # Build a name->tool map
     if isinstance(tools, dict):
         registry: ToolRegistry = tools  # type: ignore
@@ -99,8 +117,8 @@ def run_tool_calls(
             registry[name] = t  # type: ignore
 
     calls = extract_tool_calls(ai_msg)
-    tool_messages: List[ToolMessage] = []
-    call_log: List[Dict[str, Any]] = []
+    # tool_messages: List[ToolMessage] = []
+    # call_log: List[Dict[str, Any]] = []
 
     if not calls:
         return []
@@ -124,8 +142,8 @@ def run_tool_calls(
             except Exception as e:
                 content = f"ERROR: {type(e).__name__}: {e}"
 
-        out.append(ToolMessage(content=content, tool_call_id=call_id, name=name))
+        out.append(
+            ToolMessage(content=content, tool_call_id=call_id, name=name)
+        )
 
     return out
-
- 

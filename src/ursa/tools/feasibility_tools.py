@@ -16,48 +16,64 @@ Install any subset you need:
 This file exposes a single LangChain tool: `feasibility_check_auto`.
 """
 
-from typing import List, Annotated, Dict, Any, Optional, Tuple
 import math
 import random
+from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 import sympy as sp
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations
-from sympy.core.relational import Relational
 from langchain_core.tools import tool
+from sympy.core.relational import Relational
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations
 
 # Optional deps — handled gracefully if not installed
 try:
     import numpy as np
+
     _HAS_NUMPY = True
 except Exception:
     _HAS_NUMPY = False
 
 try:
-    from pysmt.shortcuts import (
-        Symbol as PS_Symbol, And as PS_And, Or as PS_Or, Not as PS_Not,
-        Equals as PS_Eq, LE as PS_LE, LT as PS_LT, GE as PS_GE, GT as PS_GT,
-        Plus as PS_Plus, Times as PS_Times, Real as PS_Real, Int as PS_Int, Bool as PS_Bool,
-        Solver as PS_Solver
-    )
-    from pysmt.typing import REAL as PS_REAL, INT as PS_INT, BOOL as PS_BOOL
+    from pysmt.shortcuts import GE as PS_GE
+    from pysmt.shortcuts import GT as PS_GT
+    from pysmt.shortcuts import LE as PS_LE
+    from pysmt.shortcuts import LT as PS_LT
+    from pysmt.shortcuts import And as PS_And
+    from pysmt.shortcuts import Bool as PS_Bool
+    from pysmt.shortcuts import Equals as PS_Eq
+    from pysmt.shortcuts import Int as PS_Int
+    from pysmt.shortcuts import Not as PS_Not
+    from pysmt.shortcuts import Or as PS_Or
+    from pysmt.shortcuts import Plus as PS_Plus
+    from pysmt.shortcuts import Real as PS_Real
+    from pysmt.shortcuts import Solver as PS_Solver
+    from pysmt.shortcuts import Symbol as PS_Symbol
+    from pysmt.shortcuts import Times as PS_Times
+    from pysmt.typing import BOOL as PS_BOOL
+    from pysmt.typing import INT as PS_INT
+    from pysmt.typing import REAL as PS_REAL
+
     _HAS_PYSMT = True
 except Exception:
     _HAS_PYSMT = False
 
 try:
     from ortools.sat.python import cp_model as _cpsat
+
     _HAS_CPSAT = True
 except Exception:
     _HAS_CPSAT = False
 
 try:
     from ortools.linear_solver import pywraplp as _lp
+
     _HAS_LP = True
 except Exception:
     _HAS_LP = False
 
 try:
     from scipy.optimize import linprog as _linprog
+
     _HAS_SCIPY = True
 except Exception:
     _HAS_SCIPY = False
@@ -67,7 +83,10 @@ except Exception:
 # Parsing & classification
 # =========================
 
-def _parse_constraints(constraints: List[str], variable_name: List[str]) -> Tuple[List[sp.Symbol], List[sp.Expr]]:
+
+def _parse_constraints(
+    constraints: List[str], variable_name: List[str]
+) -> Tuple[List[sp.Symbol], List[sp.Expr]]:
     """Parse user constraint strings into SymPy expressions.
 
     Args:
@@ -84,8 +103,12 @@ def _parse_constraints(constraints: List[str], variable_name: List[str]) -> Tupl
     syms = sp.symbols(variable_name)
     local_dict = {n: s for n, s in zip(variable_name, syms)}
     sympy_cons = [
-        parse_expr(c, local_dict=local_dict,
-                   transformations=standard_transformations, evaluate=False)
+        parse_expr(
+            c,
+            local_dict=local_dict,
+            transformations=standard_transformations,
+            evaluate=False,
+        )
         for c in constraints
     ]
     return syms, sympy_cons
@@ -105,7 +128,8 @@ def _flatten_conjunction(expr: sp.Expr) -> Tuple[List[sp.Expr], bool]:
         A tuple (conjuncts, nonconj) where `conjuncts` is a list of SymPy expressions
         and `nonconj` is True if expr contains non-conjunctive logic (e.g., Or/Not).
     """
-    from sympy.logic.boolalg import And, Or, Not
+    from sympy.logic.boolalg import And, Not, Or
+
     if isinstance(expr, And):
         out, stack = [], list(expr.args)
         while stack:
@@ -124,7 +148,9 @@ def _flatten_conjunction(expr: sp.Expr) -> Tuple[List[sp.Expr], bool]:
     return [expr], True
 
 
-def _linear_relational(expr: sp.Expr, symbols: List[sp.Symbol]) -> Optional[bool]:
+def _linear_relational(
+    expr: sp.Expr, symbols: List[sp.Symbol]
+) -> Optional[bool]:
     """Check whether a relational constraint is linear in the given symbols.
 
     Args:
@@ -156,11 +182,14 @@ def _has_boolean_logic(expr: sp.Expr) -> bool:
     Returns:
         True if expr is an instance of And/Or/Not; False otherwise.
     """
-    from sympy.logic.boolalg import And, Or, Not
+    from sympy.logic.boolalg import And, Not, Or
+
     return isinstance(expr, (And, Or, Not))
 
 
-def _classify(sympy_cons: List[sp.Expr], symbols: List[sp.Symbol], vtypes: List[str]) -> Dict[str, Any]:
+def _classify(
+    sympy_cons: List[sp.Expr], symbols: List[sp.Symbol], vtypes: List[str]
+) -> Dict[str, Any]:
     """Classify the problem structure for routing.
 
     Args:
@@ -195,7 +224,9 @@ def _classify(sympy_cons: List[sp.Expr], symbols: List[sp.Symbol], vtypes: List[
         "all_linear": linear_ok,
         "has_int": any(t in ("int", "integer") for t in vtypes_l),
         "has_bool": any(t in ("bool", "boolean", "logical") for t in vtypes_l),
-        "has_real": any(t in ("real", "float", "double", "continuous") for t in vtypes_l),
+        "has_real": any(
+            t in ("real", "float", "double", "continuous") for t in vtypes_l
+        ),
         "only_conjunction": only_conj,
     }
 
@@ -213,7 +244,9 @@ def _is_int_like(x: Optional[float], tol: float = 1e-9) -> bool:
     return x is not None and abs(x - round(x)) <= tol
 
 
-def _coeffs_linear(expr: sp.Expr, symbols: List[sp.Symbol]) -> Tuple[Dict[str, float], float]:
+def _coeffs_linear(
+    expr: sp.Expr, symbols: List[sp.Symbol]
+) -> Tuple[Dict[str, float], float]:
     """Extract linear coefficients and constant term of an expression.
 
     The expression is interpreted as:
@@ -241,7 +274,9 @@ def _coeffs_linear(expr: sp.Expr, symbols: List[sp.Symbol]) -> Tuple[Dict[str, f
     return coeffs, const
 
 
-def _all_int_coeffs(coeffs: Dict[str, float], const: float, tol: float = 1e-9) -> bool:
+def _all_int_coeffs(
+    coeffs: Dict[str, float], const: float, tol: float = 1e-9
+) -> bool:
     """Return True if all coefficients and the constant are integer-like.
 
     Args:
@@ -252,12 +287,15 @@ def _all_int_coeffs(coeffs: Dict[str, float], const: float, tol: float = 1e-9) -
     Returns:
         True if every coefficient and `const` is within `tol` of an integer.
     """
-    return all(_is_int_like(v, tol) for v in coeffs.values()) and _is_int_like(const, tol)
+    return all(_is_int_like(v, tol) for v in coeffs.values()) and _is_int_like(
+        const, tol
+    )
 
 
 # =========================
 # Heuristic feasibility
 # =========================
+
 
 def _rand_unif(lo: Optional[float], hi: Optional[float], R: float) -> float:
     """Sample a uniform random real value within [lo, hi], with fallback radius.
@@ -295,7 +333,9 @@ def _rand_int(lo: Optional[float], hi: Optional[float], R: int) -> int:
     return random.randint(lo, hi)
 
 
-def _eval_relational(lhs_num: float, rhs_num: float, rel_op: str, tol: float) -> bool:
+def _eval_relational(
+    lhs_num: float, rhs_num: float, rel_op: str, tol: float
+) -> bool:
     """Evaluate a relational comparison with tolerance.
 
     Args:
@@ -339,7 +379,8 @@ def _eval_bool_expr(e: sp.Expr, env: Dict[sp.Symbol, Any], tol: float) -> bool:
         return _eval_relational(lhs, rhs, e.rel_op, tol)
 
     # Boolean logic
-    from sympy.logic.boolalg import And, Or, Not
+    from sympy.logic.boolalg import And, Not, Or
+
     if isinstance(e, And):
         return all(_eval_bool_expr(a, env, tol) for a in e.args)
     if isinstance(e, Or):
@@ -403,7 +444,9 @@ def _heuristic_feasible(
         env: Dict[sp.Symbol, Any] = {}
 
         # Sample a point
-        for n, t, (lo, hi) in zip(variable_name, variable_type, variable_bounds):
+        for n, t, (lo, hi) in zip(
+            variable_name, variable_type, variable_bounds
+        ):
             t_l = t.lower()
             if t_l in ("boolean", "bool", "logical"):
                 val = bool(random.getrandbits(1))
@@ -427,6 +470,7 @@ def _heuristic_feasible(
 # =========================
 # Exact backends
 # =========================
+
 
 def _solve_with_pysmt(
     sympy_cons: List[sp.Expr],
@@ -488,7 +532,8 @@ def _solve_with_pysmt(
             return PS_GE(conv(e.lhs), conv(e.rhs))
         if isinstance(e, sp.Gt):
             return PS_GT(conv(e.lhs), conv(e.rhs))
-        from sympy.logic.boolalg import And, Or, Not
+        from sympy.logic.boolalg import And, Not, Or
+
         if isinstance(e, And):
             return PS_And(*[conv(a) for a in e.args])
         if isinstance(e, Or):
@@ -515,15 +560,27 @@ def _solve_with_pysmt(
 
     # Append bounds as assertions
     ps_all = []
-    for (n, t), (lo, hi) in zip(zip(variable_name, variable_type), variable_bounds):
+    for (n, t), (lo, hi) in zip(
+        zip(variable_name, variable_type), variable_bounds
+    ):
         v = ps_vars[n]
         t_l = t.lower()
         if t_l in ("boolean", "bool", "logical"):
             continue
         if lo is not None:
-            ps_all.append(PS_LE(PS_Real(float(lo)) if t_l != "integer" else PS_Int(int(lo)), v))
+            ps_all.append(
+                PS_LE(
+                    PS_Real(float(lo)) if t_l != "integer" else PS_Int(int(lo)),
+                    v,
+                )
+            )
         if hi is not None:
-            ps_all.append(PS_LE(v, PS_Real(float(hi)) if t_l != "integer" else PS_Int(int(hi))))
+            ps_all.append(
+                PS_LE(
+                    v,
+                    PS_Real(float(hi)) if t_l != "integer" else PS_Int(int(hi)),
+                )
+            )
     for c in sympy_cons:
         ps_all.append(conv(c))
 
@@ -572,7 +629,7 @@ def _solve_with_cpsat_integer_boolean(
         if t_l in ("boolean", "bool", "logical"):
             v = m.NewBoolVar(n)
         else:
-            lo_i = int(lo) if lo is not None else -10**9
+            lo_i = int(lo) if lo is not None else -(10**9)
             hi_i = int(hi) if hi is not None else 10**9
             v = m.NewIntVar(lo_i, hi_i, n)
         name_to_var[n] = v
@@ -584,7 +641,10 @@ def _solve_with_cpsat_integer_boolean(
             coeffs, const = _coeffs_linear(diff, symbols)
             if not _all_int_coeffs(coeffs, const):
                 return "Detected non-integer coefficients/constant; routing to MILP/LP."
-            expr = sum(int(round(coeffs.get(n, 0))) * name_to_var[n] for n in variable_name) + int(round(const))
+            expr = sum(
+                int(round(coeffs.get(n, 0))) * name_to_var[n]
+                for n in variable_name
+            ) + int(round(const))
             if isinstance(c, sp.Eq):
                 m.Add(expr == 0)
             elif isinstance(c, sp.Le):
@@ -633,7 +693,9 @@ def _solve_with_cbc_milp(
         RuntimeError: If the CBC solver cannot be created (bad OR-Tools install).
     """
     if not _HAS_LP:
-        return "OR-Tools linear solver (CBC) not installed. `pip install ortools`."
+        return (
+            "OR-Tools linear solver (CBC) not installed. `pip install ortools`."
+        )
 
     solver = _lp.Solver.CreateSolver("CBC_MIXED_INTEGER_PROGRAMMING")
     if solver is None:
@@ -685,7 +747,11 @@ def _solve_with_cbc_milp(
     status = solver.Solve()
     if status in (_lp.Solver.OPTIMAL, _lp.Solver.FEASIBLE):
         model: Dict[str, Any] = {}
-        int_like = {n for n, t in zip(variable_name, variable_type) if t.lower() in ("integer", "int", "boolean", "bool", "logical")}
+        int_like = {
+            n
+            for n, t in zip(variable_name, variable_type)
+            if t.lower() in ("integer", "int", "boolean", "bool", "logical")
+        }
         for n, var in var_objs.items():
             val = var.solution_value()
             model[n] = int(round(val)) if n in int_like else float(val)
@@ -735,23 +801,29 @@ def _solve_with_highs_lp(
         for n, v in coeffs.items():
             row[var_index[n]] = v
         if isinstance(c, sp.Eq):
-            A_eq.append(row); b_eq.append(-const)
+            A_eq.append(row)
+            b_eq.append(-const)
         elif isinstance(c, sp.Le):
-            A_ub.append(row); b_ub.append(-const)
+            A_ub.append(row)
+            b_ub.append(-const)
         elif isinstance(c, sp.Ge):
-            A_ub.append([-v for v in row]); b_ub.append(const)
+            A_ub.append([-v for v in row])
+            b_ub.append(const)
         elif isinstance(c, sp.Lt):
-            A_ub.append(row); b_ub.append(-const - eps)
+            A_ub.append(row)
+            b_ub.append(-const - eps)
         elif isinstance(c, sp.Gt):
-            A_ub.append([-v for v in row]); b_ub.append(const - eps)
+            A_ub.append([-v for v in row])
+            b_ub.append(const - eps)
 
     bounds = []
-    for (lo, hi) in variable_bounds:
+    for lo, hi in variable_bounds:
         lo_v = -math.inf if lo is None else float(lo)
         hi_v = math.inf if hi is None else float(hi)
         bounds.append((lo_v, hi_v))
 
     import numpy as np
+
     c = np.zeros(len(variable_name))
     res = _linprog(
         c,
@@ -772,20 +844,39 @@ def _solve_with_highs_lp(
 # Router tool (with heuristic)
 # =========================
 
+
 @tool(parse_docstring=True)
 def feasibility_check_auto(
-    constraints: Annotated[List[str], "Constraint strings like 'x0 + 2*x1 <= 5' or '(x0<=3) | (x1>=2)'"],
+    constraints: Annotated[
+        List[str],
+        "Constraint strings like 'x0 + 2*x1 <= 5' or '(x0<=3) | (x1>=2)'",
+    ],
     variable_name: Annotated[List[str], "['x0','x1',...]"],
     variable_type: Annotated[List[str], "['real'|'integer'|'boolean', ...]"],
-    variable_bounds: Annotated[List[List[Optional[float]]], "[(low, high), ...] (use None for unbounded)"],
-    prefer_smt_solver: Annotated[str, "SMT backend if needed: 'cvc5'|'msat'|'yices'|'z3'"] = "cvc5",
-    heuristic_enabled: Annotated[bool, "Run a fast randomized search first?"] = True,
-    heuristic_first: Annotated[bool, "Try heuristic before exact routing"] = True,
+    variable_bounds: Annotated[
+        List[List[Optional[float]]],
+        "[(low, high), ...] (use None for unbounded)",
+    ],
+    prefer_smt_solver: Annotated[
+        str, "SMT backend if needed: 'cvc5'|'msat'|'yices'|'z3'"
+    ] = "cvc5",
+    heuristic_enabled: Annotated[
+        bool, "Run a fast randomized search first?"
+    ] = True,
+    heuristic_first: Annotated[
+        bool, "Try heuristic before exact routing"
+    ] = True,
     heuristic_samples: Annotated[int, "Samples for heuristic search"] = 2000,
     heuristic_seed: Annotated[Optional[int], "Seed for reproducibility"] = None,
-    heuristic_unbounded_radius_real: Annotated[float, "Sampling range for unbounded real vars"] = 1e3,
-    heuristic_unbounded_radius_int: Annotated[int, "Sampling range for unbounded integer vars"] = 10**6,
-    numeric_tolerance: Annotated[float, "Tolerance for relational checks (Eq/Lt/Le/etc.)"] = 1e-8,
+    heuristic_unbounded_radius_real: Annotated[
+        float, "Sampling range for unbounded real vars"
+    ] = 1e3,
+    heuristic_unbounded_radius_int: Annotated[
+        int, "Sampling range for unbounded integer vars"
+    ] = 10**6,
+    numeric_tolerance: Annotated[
+        float, "Tolerance for relational checks (Eq/Lt/Le/etc.)"
+    ] = 1e-8,
 ) -> str:
     """Unified feasibility checker with heuristic pre-check and exact auto-routing.
 
@@ -859,8 +950,13 @@ def feasibility_check_auto(
             solver_name=prefer_smt_solver,
         )
         # Optional heuristic after exact if requested
-        if heuristic_enabled and not heuristic_first and any(
-            kw in res.lower() for kw in ("unknown", "not installed", "unsupported", "failed")
+        if (
+            heuristic_enabled
+            and not heuristic_first
+            and any(
+                kw in res.lower()
+                for kw in ("unknown", "not installed", "unsupported", "failed")
+            )
         ):
             h_model = _heuristic_feasible(
                 sympy_cons,
@@ -884,14 +980,30 @@ def feasibility_check_auto(
         atoms, _ = _flatten_conjunction(c)
         conjuncts.extend(atoms)
 
-    has_int, has_bool, has_real = info["has_int"], info["has_bool"], info["has_real"]
+    has_int, has_bool, has_real = (
+        info["has_int"],
+        info["has_bool"],
+        info["has_real"],
+    )
 
     # Pure LP (continuous only)
     if not has_int and not has_bool and has_real:
-        res = _solve_with_highs_lp(conjuncts, symbols, variable_name, variable_bounds)
+        res = _solve_with_highs_lp(
+            conjuncts, symbols, variable_name, variable_bounds
+        )
         if "not installed" in res.lower():
-            res = _solve_with_cbc_milp(conjuncts, symbols, variable_name, variable_type, variable_bounds)
-        if heuristic_enabled and not heuristic_first and any(kw in res.lower() for kw in ("failed", "unknown")):
+            res = _solve_with_cbc_milp(
+                conjuncts,
+                symbols,
+                variable_name,
+                variable_type,
+                variable_bounds,
+            )
+        if (
+            heuristic_enabled
+            and not heuristic_first
+            and any(kw in res.lower() for kw in ("failed", "unknown"))
+        ):
             h_model = _heuristic_feasible(
                 sympy_cons,
                 symbols,
@@ -910,16 +1022,41 @@ def feasibility_check_auto(
 
     # All integer/boolean → CP-SAT first (if integer coefficients), else CBC MILP
     if (has_int or has_bool) and not has_real:
-        res = _solve_with_cpsat_integer_boolean(conjuncts, symbols, variable_name, variable_type, variable_bounds)
-        if any(kw in res for kw in ("routing to MILP/LP", "handles linear conjunctions only")) or "not installed" in res.lower():
-            res = _solve_with_cbc_milp(conjuncts, symbols, variable_name, variable_type, variable_bounds)
+        res = _solve_with_cpsat_integer_boolean(
+            conjuncts, symbols, variable_name, variable_type, variable_bounds
+        )
+        if (
+            any(
+                kw in res
+                for kw in (
+                    "routing to MILP/LP",
+                    "handles linear conjunctions only",
+                )
+            )
+            or "not installed" in res.lower()
+        ):
+            res = _solve_with_cbc_milp(
+                conjuncts,
+                symbols,
+                variable_name,
+                variable_type,
+                variable_bounds,
+            )
         return res
 
     # Mixed reals + integers → CBC MILP
-    res = _solve_with_cbc_milp(conjuncts, symbols, variable_name, variable_type, variable_bounds)
+    res = _solve_with_cbc_milp(
+        conjuncts, symbols, variable_name, variable_type, variable_bounds
+    )
 
     # Optional heuristic after exact (if backend missing/failing)
-    if heuristic_enabled and not heuristic_first and any(kw in res.lower() for kw in ("not installed", "failed", "status:")):
+    if (
+        heuristic_enabled
+        and not heuristic_first
+        and any(
+            kw in res.lower() for kw in ("not installed", "failed", "status:")
+        )
+    ):
         h_model = _heuristic_feasible(
             sympy_cons,
             symbols,
