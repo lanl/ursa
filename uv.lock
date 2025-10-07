@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -6538,7 +6538,6 @@ name = "ursa-ai"
 source = { editable = "." }
 dependencies = [
     { name = "arxiv" },
-    { name = "atomman" },
     { name = "beautifulsoup4" },
     { name = "chromadb" },
     { name = "ddgs" },
@@ -6559,8 +6558,6 @@ dependencies = [
     { name = "pypdf" },
     { name = "randomname" },
     { name = "rich" },
-    { name = "trafilatura", version = "1.6.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "trafilatura", version = "1.6.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
     { name = "typer" },
 ]
 
@@ -6572,11 +6569,15 @@ dev = [
     { name = "pytest" },
     { name = "scikit-optimize" },
 ]
+lammps = [
+    { name = "atomman" },
+    { name = "trafilatura", version = "1.6.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "trafilatura", version = "1.6.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "arxiv", specifier = ">=2.2.0,<3.0" },
-    { name = "atomman", specifier = ">=1.5.2" },
     { name = "beautifulsoup4", specifier = ">=4.13.4,<5.0" },
     { name = "chromadb", specifier = ">=1.0.20,<1.1" },
     { name = "ddgs", specifier = ">=9.5.5" },
@@ -6597,7 +6598,6 @@ requires-dist = [
     { name = "pypdf", specifier = ">=5.9.0,<6.0" },
     { name = "randomname", specifier = ">=0.2.1,<0.3" },
     { name = "rich", specifier = ">=13.9.4,<14.0" },
-    { name = "trafilatura", specifier = ">=1.6.1" },
     { name = "typer", specifier = ">=0.16.1" },
 ]
 
@@ -6608,6 +6608,10 @@ dev = [
     { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "scikit-optimize", specifier = ">=0.10.2" },
+]
+lammps = [
+    { name = "atomman", specifier = ">=1.5.2" },
+    { name = "trafilatura", specifier = ">=1.6.1" },
 ]
 
 [[package]]

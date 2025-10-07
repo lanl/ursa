@@ -38,8 +38,6 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=2.0.10,<3.0",
     "langchain-ollama>=0.3.6,<0.4",
     "ddgs>=9.5.5",
-    "atomman>=1.5.2",
-    "trafilatura>=1.6.1",
     "typer>=0.16.1",
 ]
 classifiers = [
@@ -87,4 +85,8 @@ dev = [
     "pre-commit>=4.3.0",
     "pytest>=8.4.2",
     "scikit-optimize>=0.10.2",
+]
+lammps = [
+    "atomman>=1.5.2",
+    "trafilatura>=1.6.1",
 ]
