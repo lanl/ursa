@@ -29,7 +29,11 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from typing_extensions import TypedDict
 
-from ..prompt_library.execution_prompts import executor_prompt, summarize_prompt
+from ..prompt_library.execution_prompts import (
+    executor_prompt,
+    safety_prompt,
+    summarize_prompt,
+)
 from ..util.diff_renderer import DiffRenderer
 from ..util.memory_logger import AgentMemory
 from .base import BaseAgent
@@ -62,6 +66,7 @@ class ExecutionAgent(BaseAgent):
     ):
         super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
+        self.safety_prompt = safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
@@ -180,11 +185,7 @@ class ExecutionAgent(BaseAgent):
             if call_name == "run_cmd":
                 query = tool_call["args"]["query"]
                 safety_check = self.llm.invoke(
-                    (
-                        "Assume commands to run/install python and Julia files are safe because "
-                        "the files are from a trusted source. "
-                        f"Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}"
-                    ),
+                    self.safety_prompt + query,
                     self.build_config(tags=["safety_check"]),
                 )
 
