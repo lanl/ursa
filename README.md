@@ -37,7 +37,68 @@ Documentation for combining agents:
 - [ArXiv -> Execution for Materials](docs/combining_arxiv_and_execution.md)
 - [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md)
 
-# Sandboxing
+
+## Command line usage
+
+You can install `ursa` as a command line app with `pip install`; or with `uv` via
+
+```bash
+uv tool install ursa-ai
+```
+
+To use the command line app, run
+
+```
+ursa run
+```
+
+This will start a REPL in your terminal.
+
+```
+  __  ________________ _
+ / / / / ___/ ___/ __ `/
+/ /_/ / /  (__  ) /_/ /
+\__,_/_/  /____/\__,_/
+
+For help, type: ? or help. Exit with Ctrl+d.
+ursa>
+```
+
+Within the REPL, you can get help by typing `?` or `help`. 
+
+You can chat with an LLM by simply typing into the terminal.
+
+```
+ursa> How are you?
+Thanks for asking! I’m doing well. How are you today? What can I help you with?
+```
+
+You can run various agents by typing the name of the agent. For example,
+
+```
+ursa> plan
+Enter your prompt for Planning Agent: Write a python script to do linear regression using only numpy.
+```
+
+If you run subsequent agents, the last output will be appended to the prompt for the next agent.
+
+So, to run the Planning Agent followed by the Execution Agent:
+```
+ursa> plan
+Enter your prompt for Planning Agent: Write a python script to do linear regression using only numpy.
+
+...
+
+ursa> execute
+Enter your prompt for Execution Agent: Execute the plan.
+```
+
+You can get a list of available command line options via
+```
+ursa run --help
+```
+
+## Sandboxing
 The Execution Agent is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
 and execute code has the potential to cause problems like:
 - Damage code or data on the computer

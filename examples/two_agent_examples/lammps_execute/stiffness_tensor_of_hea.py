@@ -24,7 +24,9 @@ simulation_task = "Carry out a LAMMPS simulation of the high entropy alloy Co-Cr
 
 elements = ["Co", "Cr", "Fe", "Mn", "Ni"]
 
-final_lammps_state = wf.run(simulation_task, elements)
+final_lammps_state = wf.invoke(
+    simulation_task=simulation_task, elements=elements
+)
 
 if final_lammps_state.get("run_returncode") == 0:
     print("\nNow handing things off to execution agent.....")
@@ -40,7 +42,7 @@ if final_lammps_state.get("run_returncode") == 0:
 
     executor_config = {"recursion_limit": 999_999}
 
-    final_results = executor.action.invoke(
+    final_results = executor.invoke(
         {
             "messages": [HumanMessage(content=exe_plan)],
             "workspace": workspace,

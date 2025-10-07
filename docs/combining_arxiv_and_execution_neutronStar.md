@@ -35,7 +35,7 @@ arxiv_agent = ArxivAgent(
 )
 
 # Run a search on neutron star radius constraints
-research_results = arxiv_agent.run(
+research_results = arxiv_agent.invoke(
     arxiv_search_query="Experimental Constraints on neutron star radius",
     context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
 )
@@ -58,7 +58,7 @@ critical.
 init = {"messages": [HumanMessage(content=execution_plan)]}
 
 # Execute the plan
-final_results = executor.action.invoke(init)
+final_results = executor.invoke(init)
 
 # Display results
 for message in final_results["messages"]:

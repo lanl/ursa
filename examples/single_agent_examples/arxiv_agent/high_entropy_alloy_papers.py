@@ -1,9 +1,10 @@
-import time
-
 from langchain_community.callbacks.openai_info import OpenAICallbackHandler
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from ursa.agents import ArxivAgent
+from ursa.observability.timing import render_session_summary
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main():
@@ -28,22 +29,18 @@ def main():
         vectorstore_path="arxiv_HEA_vectorstores",
         download_papers=True,
     )
+    agent.thread_id = tid
 
-    t0 = time.time()
+    # t0 = time.time()
 
-    agent.run(
+    results = agent.invoke(
         arxiv_search_query="High Entropy Alloys",
         context="Find High entropy alloys suitable for application under extreme conditions. For candidates that you identify, provide the starting structure, crystal structure, lattice parameters, and space group.",
     )
 
-    t1 = time.time()
+    print(results)
 
-    print(f"Time Taken: {t1 - t0}")
-    print(f"Total Tokens Used: {callback_handler.total_tokens}")
-    print(f"Prompt Tokens: {callback_handler.prompt_tokens}")
-    print(f"Completion Tokens: {callback_handler.completion_tokens}")
-    print(f"Successful Requests: {callback_handler.successful_requests}")
-    print(f"Total Cost (USD): ${callback_handler.total_cost}")
+    render_session_summary(tid)
 
 
 if __name__ == "__main__":

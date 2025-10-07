@@ -4,6 +4,9 @@ from langchain_core.messages import HumanMessage
 from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.observability.timing import render_session_summary
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main(mode: str):
@@ -23,17 +26,21 @@ def main(mode: str):
         # Initialize the agent
         planner = PlanningAgent(llm=model)
         executor = ExecutionAgent(llm=model)
+        planner.thread_id = tid
+        executor.thread_id = tid
 
         # Solve the problem
-        planning_output = planner.action.invoke(init)
+        planning_output = planner.invoke(init)
         print(planning_output["messages"][-1].content)
         planning_output["workspace"] = "workspace_cityVowels"
-        final_results = executor.action.invoke(
-            planning_output, {"recursion_limit": 100000}
+        final_results = executor.invoke(
+            planning_output, config={"recursion_limit": 100000}
         )
         for x in final_results["messages"]:
             print(x.content)
         # print(final_results["messages"][-1].content)
+
+        render_session_summary(tid)
 
         return final_results["messages"][-1].content
 

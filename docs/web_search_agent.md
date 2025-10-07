@@ -16,7 +16,7 @@ model = ChatOpenAI(model="gpt-4o", max_tokens=10000)
 websearcher = WebSearchAgent(llm=model)
 
 # Run a web search query
-result = websearcher.run("Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?")
+result = websearcher.invoke("Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?")
 
 # Access the web search results
 final_summary = result["messages"][-1].content
@@ -70,7 +70,7 @@ websearcher = WebSearchAgent(
 )
 
 # Run with higher recursion limit for complex topics
-result = websearcher.run(
+result = websearcher.invoke(
     "What are the latest developments in quantum computing? Summarize in markdown format.",
     recursion_limit=200
 )

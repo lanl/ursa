@@ -15,6 +15,10 @@ from rich import get_console
 from rich.panel import Panel
 
 from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.observability.timing import render_session_summary
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
+
 
 console = get_console()
 
@@ -53,6 +57,9 @@ planner_config = {
     "configurable": {"thread_id": executor.thread_id},
 }
 
+planner.thread_id = tid
+executor.thread_id = tid
+
 # Create a plan
 with console.status(
     "[bold deep_pink1]Planning overarching steps . . .",
@@ -61,9 +68,9 @@ with console.status(
 ):
     planner_prompt = f"Break this down into one step per technique:\n{problem}"
 
-    planning_output = planner.action.invoke(
+    planning_output = planner.invoke(
         {"messages": [HumanMessage(content=planner_prompt)]},
-        planner_config,
+        config=planner_config,
     )
 
     console.print(
@@ -91,12 +98,12 @@ for i, step in enumerate(planning_output["plan_steps"]):
     )
 
     # Invoke the agent
-    result = executor.action.invoke(
+    result = executor.invoke(
         {
             "messages": [HumanMessage(content=step_prompt)],
             "workspace": workspace,
         },
-        executor_config,
+        config=executor_config,
     )
 
     last_step_summary = result["messages"][-1].content
@@ -107,3 +114,5 @@ for i, step in enumerate(planning_output["plan_steps"]):
             border_style="orange3",
         )
     )
+
+render_session_summary(tid)

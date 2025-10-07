@@ -37,9 +37,9 @@ if set_workspace:
     print(f"\nSolving problem: {problem}\n")
 
     # Solve the problem
-    final_results = executor.action.invoke(init)
+    final_results = executor.invoke(init)
 else:
-    final_results = executor.run(problem)
+    final_results = executor.invoke(problem)
 
 for x in final_results["messages"]:
     print(x.content)

@@ -3,6 +3,9 @@ from pathlib import Path
 from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ArxivAgent
+from ursa.observability.timing import render_session_summary
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main():
@@ -19,13 +22,16 @@ def main():
         vectorstore_path="workspace/arxiv_vectorstores_neutron_star",
         download_papers=True,
     )
+    agent.thread_id = tid
 
-    result = agent.run(
+    result = agent.invoke(
         arxiv_search_query="Experimental Constraints on neutron star radius",
         context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
     )
 
     print(result)
+
+    render_session_summary(tid)
 
 
 if __name__ == "__main__":
