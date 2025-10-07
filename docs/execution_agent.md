@@ -11,7 +11,7 @@ from ursa.agents import ExecutionAgent
 agent = ExecutionAgent()
 
 # Run a prompt
-result = agent.run("Write and execute a python script to print the first 10 integers.")
+result = agent.invoke("Write and execute a python script to print the first 10 integers.")
 
 # Access the final response
 print(result["messages"][-1].content)
@@ -33,7 +33,7 @@ When initializing `ExecutionAgent`, you can customize its behavior with these pa
 The agent can safely execute shell commands in a controlled environment:
 
 ```python
-result = agent.run("Install numpy and create a script that uses it to calculate the mean of [1, 2, 3, 4, 5]")
+result = agent.invoke("Install numpy and create a script that uses it to calculate the mean of [1, 2, 3, 4, 5]")
 ```
 
 ### Code Writing
@@ -41,7 +41,7 @@ result = agent.run("Install numpy and create a script that uses it to calculate 
 The agent can write code files to a workspace directory:
 
 ```python
-result = agent.run("Create a Flask web application that displays 'Hello World'")
+result = agent.invoke("Create a Flask web application that displays 'Hello World'")
 ```
 
 ## Advanced Usage
@@ -51,7 +51,7 @@ result = agent.run("Create a Flask web application that displays 'Hello World'")
 The agent creates a workspace folder with a randomly generated name for each run. You can access this workspace path from the result:
 
 ```python
-result = agent.run("Create a Python script")
+result = agent.invoke("Create a Python script")
 workspace_path = result["workspace"]
 print(f"Files were created in: {workspace_path}")
 ```
@@ -61,7 +61,7 @@ print(f"Files were created in: {workspace_path}")
 For complex tasks, you may need to adjust the recursion limit:
 
 ```python
-result = agent.run(
+result = agent.invoke(
     "Create a complex project with multiple files and tests", 
     recursion_limit=2000
 )

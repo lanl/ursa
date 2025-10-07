@@ -11,7 +11,7 @@ from ursa.agents import PlanningAgent
 agent = PlanningAgent()
 
 # Run a planning task
-result = agent.run("Find a city with at least 10 vowels in its name.")
+result = agent.invoke("Find a city with at least 10 vowels in its name.")
 
 # Access the final plan
 plan_steps = result["plan_steps"]
@@ -56,7 +56,7 @@ initial_state = {
     "reflection_steps": 5  # Default is 3
 }
 
-result = agent.action.invoke(initial_state, {"configurable": {"thread_id": agent.thread_id}})
+result = agent.invoke(initial_state, {"configurable": {"thread_id": agent.thread_id}})
 ```
 
 ### Streaming Results
@@ -64,7 +64,7 @@ result = agent.action.invoke(initial_state, {"configurable": {"thread_id": agent
 You can stream the agent's thinking process:
 
 ```python
-for event in agent.action.stream(
+for event in agent.stream(
     {"messages": [HumanMessage(content="Your problem here")]},
     {"configurable": {"thread_id": agent.thread_id}}
 ):
@@ -76,7 +76,7 @@ for event in agent.action.stream(
 For complex planning tasks, you may need to adjust the recursion limit:
 
 ```python
-result = agent.run(
+result = agent.invoke(
     "Solve this complex problem...", 
     recursion_limit=200  # Default is 100
 )

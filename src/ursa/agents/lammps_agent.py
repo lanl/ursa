@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
 import atomman as am
 import tiktoken
@@ -11,6 +11,13 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
 
 from .base import BaseAgent
+
+working = True
+try:
+    import atomman as am
+    import trafilatura
+except Exception:
+    working = False
 
 
 class LammpsState(TypedDict, total=False):
@@ -50,6 +57,10 @@ class LammpsAgent(BaseAgent):
         max_tokens: int = 200000,
         **kwargs,
     ):
+        if not working:
+            raise ImportError(
+                "LAMMPS agent requires the atomman and trafilatura dependencies. These can be installed using 'pip install ursa-ai[lammps]' or, if working from a local installation, 'pip install -e .[lammps]' ."
+            )
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.mpi_procs = mpi_procs
@@ -144,7 +155,7 @@ class LammpsAgent(BaseAgent):
             | self.str_parser
         )
 
-        self.graph = self._build_graph().compile()
+        self._action = self._build_graph()
 
     @staticmethod
     def _safe_json_loads(s: str) -> Dict[str, Any]:
@@ -340,53 +351,66 @@ class LammpsAgent(BaseAgent):
     def _build_graph(self):
         g = StateGraph(LammpsState)
 
-        g.add_node("find_potentials", self._find_potentials)
-        g.add_node("summarize_one", self._summarize_one)
-        g.add_node("build_summaries", self._build_summaries)
-        g.add_node("choose", self._choose)
-        g.add_node("author", self._author)
-        g.add_node("run_lammps", self._run_lammps)
-        g.add_node("fix", self._fix)
+        self.add_node(g, self._find_potentials)
+        self.add_node(g, self._summarize_one)
+        self.add_node(g, self._build_summaries)
+        self.add_node(g, self._choose)
+        self.add_node(g, self._author)
+        self.add_node(g, self._run_lammps)
+        self.add_node(g, self._fix)
 
-        g.set_entry_point("find_potentials")
+        g.set_entry_point("_find_potentials")
 
         g.add_conditional_edges(
-            "find_potentials",
+            "_find_potentials",
             self._should_summarize,
             {
-                "summarize_one": "summarize_one",
-                "summarize_done": "build_summaries",
+                "summarize_one": "_summarize_one",
+                "summarize_done": "_build_summaries",
                 "done_no_matches": END,
             },
         )
 
         g.add_conditional_edges(
-            "summarize_one",
+            "_summarize_one",
             self._should_summarize,
             {
-                "summarize_one": "summarize_one",
-                "summarize_done": "build_summaries",
+                "summarize_one": "_summarize_one",
+                "summarize_done": "_build_summaries",
             },
         )
 
-        g.add_edge("build_summaries", "choose")
-        g.add_edge("choose", "author")
-        g.add_edge("author", "run_lammps")
+        g.add_edge("_build_summaries", "_choose")
+        g.add_edge("_choose", "_author")
+        g.add_edge("_author", "_run_lammps")
 
         g.add_conditional_edges(
-            "run_lammps",
+            "_run_lammps",
             self._route_run,
             {
-                "need_fix": "fix",
+                "need_fix": "_fix",
                 "done_success": END,
                 "done_failed": END,
             },
         )
-        g.add_edge("fix", "run_lammps")
-        return g
+        g.add_edge("_fix", "_run_lammps")
+        return g.compile(checkpointer=self.checkpointer)
 
-    def run(self, simulation_task, elements):
-        return self.graph.invoke(
-            {"simulation_task": simulation_task, "elements": elements},
-            {"recursion_limit": 999_999},
+    def _invoke(
+        self,
+        inputs: Mapping[str, Any],
+        *,
+        summarize: bool | None = None,
+        recursion_limit: int = 1000,
+        **_,
+    ) -> str:
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
         )
+
+        if "simulation_task" not in inputs or "elements" not in inputs:
+            raise KeyError(
+                "'simulation_task' and 'elements' are required arguments"
+            )
+
+        return self._action.invoke(inputs, config)

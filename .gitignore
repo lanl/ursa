@@ -23,3 +23,7 @@ workspace_*/
 src/ursa/util/agent_memory_db/
 tmp/
 site
+.ursa/
+.ursa_metrics
+arxiv_generated_summaries
+arxiv_papers

@@ -3,12 +3,12 @@ import ast
 # from langchain_community.tools import TavilySearchResults
 # from textwrap                  import dedent
 from datetime import datetime
-from typing import List, Literal, TypedDict
+from typing import Any, List, Literal, Mapping, TypedDict
 
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import END, StateGraph
+from langgraph.graph import StateGraph
 
 from ..prompt_library.hypothesizer_prompts import (
     competitor_prompt,
@@ -53,7 +53,7 @@ class HypothesizerAgent(BaseAgent):
         #     max_results=10, search_depth="advanced", include_answer=False
         # )
 
-        self._initialize_agent()
+        self._action = self._build_graph()
 
     def agent1_generate_solution(
         self, state: HypothesizerState
@@ -444,68 +444,65 @@ class HypothesizerAgent(BaseAgent):
         )
         return new_state
 
-    def _initialize_agent(self):
+    def _build_graph(self):
         # Initialize the graph
-        self.graph = StateGraph(HypothesizerState)
+        graph = StateGraph(HypothesizerState)
 
         # Add nodes
-        self.graph.add_node("agent1", self.agent1_generate_solution)
-        self.graph.add_node("agent2", self.agent2_critique)
-        self.graph.add_node("agent3", self.agent3_competitor_perspective)
-        self.graph.add_node("increment_iteration", self.increment_iteration)
-        self.graph.add_node("finalize", self.generate_solution)
-        self.graph.add_node("print_sites", self.print_visited_sites)
-        self.graph.add_node(
-            "summarize_as_latex", self.summarize_process_as_latex
+        self.add_node(graph, self.agent1_generate_solution, "agent1")
+        self.add_node(graph, self.agent2_critique, "agent2")
+        self.add_node(graph, self.agent3_competitor_perspective, "agent3")
+        self.add_node(graph, self.increment_iteration, "increment_iteration")
+        self.add_node(graph, self.generate_solution, "finalize")
+        self.add_node(graph, self.print_visited_sites, "print_sites")
+        self.add_node(
+            graph, self.summarize_process_as_latex, "summarize_as_latex"
         )
         # self.graph.add_node("compile_pdf",                compile_summary_to_pdf)
 
         # Add simple edges for the known flow
-        self.graph.add_edge("agent1", "agent2")
-        self.graph.add_edge("agent2", "agent3")
-        self.graph.add_edge("agent3", "increment_iteration")
+        graph.add_edge("agent1", "agent2")
+        graph.add_edge("agent2", "agent3")
+        graph.add_edge("agent3", "increment_iteration")
 
         # Then from increment_iteration, we have a conditional:
         # If we 'continue', we go back to agent1
         # If we 'finish', we jump to the finalize node
-        self.graph.add_conditional_edges(
+        graph.add_conditional_edges(
             "increment_iteration",
             should_continue,
             {"continue": "agent1", "finish": "finalize"},
         )
 
-        self.graph.add_edge("finalize", "summarize_as_latex")
-        self.graph.add_edge("summarize_as_latex", "print_sites")
-        self.graph.add_edge("print_sites", END)
+        graph.add_edge("finalize", "summarize_as_latex")
+        graph.add_edge("summarize_as_latex", "print_sites")
         # self.graph.add_edge("summarize_as_latex", "compile_pdf")
         # self.graph.add_edge("compile_pdf", "print_sites")
 
         # Set the entry point
-        self.graph.set_entry_point("agent1")
+        graph.set_entry_point("agent1")
+        graph.set_finish_point("print_sites")
 
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
+        return graph.compile(checkpointer=self.checkpointer)
         # self.action.get_graph().draw_mermaid_png(output_file_path="hypothesizer_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
-    def run(self, prompt, max_iter=3, recursion_limit=99999):
-        # Initialize the state
-        initial_state = HypothesizerState(
-            question=prompt,
-            current_iteration=0,
-            max_iterations=max_iter,
-            agent1_solution=[],
-            agent2_critiques=[],
-            agent3_perspectives=[],
-            solution="",
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
         )
-        # Run the graph
-        result = self.action.invoke(
-            initial_state,
-            {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
-            },
-        )
-        return result["solution"]
+        if "prompt" not in inputs:
+            raise KeyError("'prompt' is a required arguments")
+
+        inputs["max_iterations"] = inputs.get("max_iterations", 3)
+        inputs["current_iteration"] = 0
+        inputs["agent1_solution"] = []
+        inputs["agent2_critiques"] = []
+        inputs["agent3_perspectives"] = []
+        inputs["solution"] = ""
+
+        return self._action.invoke(inputs, config)
 
 
 def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
@@ -583,7 +580,7 @@ if __name__ == "__main__":
 
     print("[DEBUG] Invoking the graph...")
     # Run the graph
-    result = hypothesizer_agent.action.invoke(
+    result = hypothesizer_agent.invoke(
         initial_state,
         {
             "recursion_limit": 999999,

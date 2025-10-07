@@ -3,7 +3,7 @@ import os
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Mapping, Optional
 
 import randomname
 from langchain_community.tools import (
@@ -17,11 +17,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import InjectedToolCallId, tool
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
-from litellm import ContentPolicyViolationError
+from litellm.exceptions import ContentPolicyViolationError
 
 # Rich
 from rich import get_console
@@ -29,7 +29,11 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from typing_extensions import TypedDict
 
-from ..prompt_library.execution_prompts import executor_prompt, summarize_prompt
+from ..prompt_library.execution_prompts import (
+    executor_prompt,
+    safety_prompt,
+    summarize_prompt,
+)
 from ..util.diff_renderer import DiffRenderer
 from ..util.memory_logger import AgentMemory
 from .base import BaseAgent
@@ -62,6 +66,7 @@ class ExecutionAgent(BaseAgent):
     ):
         super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
+        self.safety_prompt = safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
@@ -69,7 +74,7 @@ class ExecutionAgent(BaseAgent):
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
 
-        self._initialize_agent()
+        self._action = self._build_graph()
 
     # Define the function that calls the model
     def query_executor(self, state: ExecutionState) -> ExecutionState:
@@ -115,8 +120,7 @@ class ExecutionAgent(BaseAgent):
             ] + state["messages"]
         try:
             response = self.llm.invoke(
-                new_state["messages"],
-                {"configurable": {"thread_id": self.thread_id}},
+                new_state["messages"], self.build_config(tags=["agent"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
@@ -129,7 +133,7 @@ class ExecutionAgent(BaseAgent):
         messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
         try:
             response = self.llm.invoke(
-                messages, {"configurable": {"thread_id": self.thread_id}}
+                messages, self.build_config(tags=["summarize"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", messages[-1].content)
@@ -181,11 +185,8 @@ class ExecutionAgent(BaseAgent):
             if call_name == "run_cmd":
                 query = tool_call["args"]["query"]
                 safety_check = self.llm.invoke(
-                    (
-                        "Assume commands to run/install python and Julia files are safe because "
-                        "the files are from a trusted source. "
-                        f"Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}"
-                    )
+                    self.safety_prompt + query,
+                    self.build_config(tags=["safety_check"]),
                 )
 
                 if "[NO]" in safety_check.content:
@@ -222,50 +223,49 @@ class ExecutionAgent(BaseAgent):
 
         return new_state
 
-    def _initialize_agent(self):
-        self.graph = StateGraph(ExecutionState)
+    def _build_graph(self):
+        graph = StateGraph(ExecutionState)
 
-        self.graph.add_node("agent", self.query_executor)
-        self.graph.add_node("action", self.tool_node)
-        self.graph.add_node("summarize", self.summarize)
-        self.graph.add_node("safety_check", self.safety_check)
+        self.add_node(graph, self.query_executor, "agent")
+        self.add_node(graph, self.tool_node, "action")
+        self.add_node(graph, self.summarize, "summarize")
+        self.add_node(graph, self.safety_check, "safety_check")
 
         # Set the entrypoint as `agent`
         # This means that this node is the first one called
-        self.graph.add_edge(START, "agent")
+        graph.set_entry_point("agent")
 
-        self.graph.add_conditional_edges(
+        graph.add_conditional_edges(
             "agent",
-            should_continue,
-            {
-                "continue": "safety_check",
-                "summarize": "summarize",
-            },
+            self._wrap_cond(should_continue, "should_continue", "execution"),
+            {"continue": "safety_check", "summarize": "summarize"},
         )
 
-        self.graph.add_conditional_edges(
+        graph.add_conditional_edges(
             "safety_check",
-            command_safe,
-            {
-                "safe": "action",
-                "unsafe": "agent",
-            },
+            self._wrap_cond(command_safe, "command_safe", "execution"),
+            {"safe": "action", "unsafe": "agent"},
         )
 
-        self.graph.add_edge("action", "agent")
-        self.graph.add_edge("summarize", END)
+        graph.add_edge("action", "agent")
+        graph.set_finish_point("summarize")
 
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
+        return graph.compile(checkpointer=self.checkpointer)
         # self.action.get_graph().draw_mermaid_png(output_file_path="execution_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
-    def run(self, prompt, recursion_limit=1000):
-        inputs = {"messages": [HumanMessage(content=prompt)]}
-        return self.action.invoke(
-            inputs,
-            {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
-            },
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+        return self._action.invoke(inputs, config)
+
+    # this is trying to stop people bypassing invoke
+    @property
+    def action(self):
+        raise AttributeError(
+            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
         )
 
 
@@ -499,8 +499,9 @@ def main():
     inputs = {
         "messages": [HumanMessage(content=problem_string)]
     }  # , "workspace":"dummy_test"}
-    result = execution_agent.action.invoke(
-        inputs, {"configurable": {"thread_id": execution_agent.thread_id}}
+    result = execution_agent.invoke(
+        inputs,
+        config={"configurable": {"thread_id": execution_agent.thread_id}},
     )
     print(result["messages"][-1].content)
     return result

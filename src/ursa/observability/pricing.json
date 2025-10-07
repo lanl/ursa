@@ -1,0 +1,85 @@
+{
+  "_note": "Prices are per 1K tokens; derived from OpenAI's table (originally per 1M). Source: https://platform.openai.com/docs/pricing",
+  "local/*": { "input_per_1k": 0.0, "output_per_1k": 0.0, "cached_input_multiplier": 1.0 },
+
+  "gpt-5":                       { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+  "openai/gpt-5":                { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+
+  "gpt-5-mini":                  { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
+  "openai/gpt-5-mini":           { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
+
+  "gpt-5-nano":                  { "input_per_1k": 0.00005, "output_per_1k": 0.0004, "cached_input_multiplier": 0.1 },
+  "openai/gpt-5-nano":           { "input_per_1k": 0.00005, "output_per_1k": 0.0004, "cached_input_multiplier": 0.1 },
+
+  "gpt-5-chat-latest":           { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+  "openai/gpt-5-chat-latest":    { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+
+  "gpt-5-codex":                 { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+  "openai/gpt-5-codex":          { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+
+  "gpt-4.1":                     { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+  "openai/gpt-4.1":              { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+
+  "gpt-4.1-mini":                { "input_per_1k": 0.0004,  "output_per_1k": 0.0016, "cached_input_multiplier": 0.25 },
+  "openai/gpt-4.1-mini":         { "input_per_1k": 0.0004,  "output_per_1k": 0.0016, "cached_input_multiplier": 0.25 },
+
+  "gpt-4.1-nano":                { "input_per_1k": 0.0001,  "output_per_1k": 0.0004, "cached_input_multiplier": 0.25 },
+  "openai/gpt-4.1-nano":         { "input_per_1k": 0.0001,  "output_per_1k": 0.0004, "cached_input_multiplier": 0.25 },
+
+  "gpt-4o":                      { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 0.5 },
+  "openai/gpt-4o":               { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 0.5 },
+
+  "gpt-4o-2024-05-13":           { "input_per_1k": 0.005,   "output_per_1k": 0.015,  "cached_input_multiplier": 1.0 },
+  "openai/gpt-4o-2024-05-13":    { "input_per_1k": 0.005,   "output_per_1k": 0.015,  "cached_input_multiplier": 1.0 },
+
+  "gpt-4o-mini":                 { "input_per_1k": 0.00015, "output_per_1k": 0.0006, "cached_input_multiplier": 0.5 },
+  "openai/gpt-4o-mini":          { "input_per_1k": 0.00015, "output_per_1k": 0.0006, "cached_input_multiplier": 0.5 },
+
+  "gpt-realtime":                { "input_per_1k": 0.004,   "output_per_1k": 0.016,  "cached_input_multiplier": 0.1 },
+  "openai/gpt-realtime":         { "input_per_1k": 0.004,   "output_per_1k": 0.016,  "cached_input_multiplier": 0.1 },
+
+  "gpt-4o-realtime-preview":     { "input_per_1k": 0.005,   "output_per_1k": 0.02,   "cached_input_multiplier": 0.5 },
+  "openai/gpt-4o-realtime-preview": { "input_per_1k": 0.005, "output_per_1k": 0.02,  "cached_input_multiplier": 0.5 },
+
+  "gpt-4o-mini-realtime-preview":{ "input_per_1k": 0.0006,  "output_per_1k": 0.0024, "cached_input_multiplier": 0.5 },
+  "openai/gpt-4o-mini-realtime-preview": { "input_per_1k": 0.0006, "output_per_1k": 0.0024, "cached_input_multiplier": 0.5 },
+
+  "gpt-audio":                   { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 1.0 },
+  "openai/gpt-audio":            { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 1.0 },
+
+  "gpt-4o-audio-preview":        { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 1.0 },
+  "openai/gpt-4o-audio-preview": { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 1.0 },
+
+  "gpt-4o-mini-audio-preview":   { "input_per_1k": 0.00015, "output_per_1k": 0.0006, "cached_input_multiplier": 1.0 },
+  "openai/gpt-4o-mini-audio-preview": { "input_per_1k": 0.00015, "output_per_1k": 0.0006, "cached_input_multiplier": 1.0 },
+
+  "o1":                          { "input_per_1k": 0.015,   "output_per_1k": 0.06,   "cached_input_multiplier": 0.5 },
+  "openai/o1":                   { "input_per_1k": 0.015,   "output_per_1k": 0.06,   "cached_input_multiplier": 0.5 },
+
+  "o1-pro":                      { "input_per_1k": 0.15,    "output_per_1k": 0.6,    "cached_input_multiplier": 1.0 },
+  "openai/o1-pro":               { "input_per_1k": 0.15,    "output_per_1k": 0.6,    "cached_input_multiplier": 1.0 },
+
+  "o3-pro":                      { "input_per_1k": 0.02,    "output_per_1k": 0.08,   "cached_input_multiplier": 1.0 },
+  "openai/o3-pro":               { "input_per_1k": 0.02,    "output_per_1k": 0.08,   "cached_input_multiplier": 1.0 },
+
+  "o3":                          { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+  "openai/o3":                   { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+
+  "o3-deep-research":            { "input_per_1k": 0.01,    "output_per_1k": 0.04,   "cached_input_multiplier": 0.25 },
+  "openai/o3-deep-research":     { "input_per_1k": 0.01,    "output_per_1k": 0.04,   "cached_input_multiplier": 0.25 },
+
+  "o4-mini":                     { "input_per_1k": 0.0011,  "output_per_1k": 0.0044, "cached_input_multiplier": 0.25 },
+  "openai/o4-mini":              { "input_per_1k": 0.0011,  "output_per_1k": 0.0044, "cached_input_multiplier": 0.25 },
+
+  "o4-mini-deep-research":       { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+  "openai/o4-mini-deep-research":{ "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+
+  "o3-mini":                     { "input_per_1k": 0.0011,  "output_per_1k": 0.0044, "cached_input_multiplier": 0.5 },
+  "openai/o3-mini":              { "input_per_1k": 0.0011,  "output_per_1k": 0.0044, "cached_input_multiplier": 0.5 },
+
+  "o1-mini":                     { "input_per_1k": 0.0011,  "output_per_1k": 0.0044, "cached_input_multiplier": 0.5 },
+  "openai/o1-mini":              { "input_per_1k": 0.0011,  "output_per_1k": 0.0044, "cached_input_multiplier": 0.5 },
+
+  "codex-mini-latest":           { "input_per_1k": 0.0015,  "output_per_1k": 0.006,  "cached_input_multiplier": 0.25 },
+  "openai/codex-mini-latest":    { "input_per_1k": 0.0015,  "output_per_1k": 0.006,  "cached_input_multiplier": 0.25 }
+}
