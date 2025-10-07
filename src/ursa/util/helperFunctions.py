@@ -100,11 +100,6 @@ def run_tool_calls(
     Returns:
         out: list[BaseMessage] to feed back to the model
     """
-    # Returns:
-    #     (tool_messages, call_log)
-    #       - tool_messages: list[ToolMessage] to feed back to the model
-    #       - call_log:      list of dicts with {"id","name","args","output","error"}
-    # """
     # Build a name->tool map
     if isinstance(tools, dict):
         registry: ToolRegistry = tools  # type: ignore
@@ -117,8 +112,6 @@ def run_tool_calls(
             registry[name] = t  # type: ignore
 
     calls = extract_tool_calls(ai_msg)
-    # tool_messages: List[ToolMessage] = []
-    # call_log: List[Dict[str, Any]] = []
 
     if not calls:
         return []
