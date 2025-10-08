@@ -197,7 +197,7 @@ class HITL:
         if isinstance(llm_search_query, str):
             arxiv_result = self.arxiv_agent.invoke(
                 arxiv_search_query=llm_search_query,
-                context=self.last_agent_result + prompt,
+                context=prompt,
             )
             self.arxiv_state.append(arxiv_result)
             self.update_last_agent_result(arxiv_result)
