@@ -115,6 +115,22 @@ Some suggestions for sandboxing the agent:
 
 You have a duty for ensuring that you use URSA responsibly.
 
+## Container image
+
+To enable limited sandboxing insofar as containerization does this, you can run the following commands:
+
+```shell
+# build a local container using the Docker runtime
+docker buildx build --progress=plain -t ursa .
+
+# # run included example
+docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY ursa bash -c "uv run python examples/single_agent_examples/arxiv_agent/neutron_star_radius.py"
+
+# # run script from host system
+cp examples/single_agent_examples/arxiv_agent/neutron_star_radius.py myscript.py
+docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY --mount type=bind,src=$PWD,dst=/mnt/workspace ursa bash -c "uv run python /mnt/workspace/myscript.py"
+```
+
 ## Development Dependencies
 
 * [`uv`](https://docs.astral.sh/uv/)
