@@ -1,13 +1,15 @@
 name: docker
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - 'main'
+    tags:
+      - "v*"
+  workflow_dispatch:  # allow manual trigger
 
 jobs:
   build:
+    env:
+      GIT_TAG: ${{ github.ref_name }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

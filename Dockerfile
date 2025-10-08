@@ -3,20 +3,39 @@
 FROM python:3.12-slim-trixie
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-ADD . /app
+# Get current git tag
+ARG GIT_TAG
 
+# Set working dir
 WORKDIR /app
 
-RUN apt update && apt install -y build-essential curl ca-certificates
+# Get essentials
+RUN apt update && apt install -y build-essential curl ca-certificates git
 
-RUN uv sync --locked
+RUN git config --global init.defaultBranch main
+RUN git config --global user.email "ursa@fake-domain.com"
+RUN git config --global user.name "ursa-bot"
 
-# # debugging
-# docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY -it ursa /bin/bash
+# ursa directories
+COPY .gitignore /app/.gitignore
+COPY examples /app/examples
+COPY docs /app/docs
+COPY src /app/src
 
-# # run included example
-# docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY ursa bash -c "uv run python examples/single_agent_examples/arxiv_agent/neutron_star_radius.py"
+# ursa files
+COPY LICENSE /app
+COPY README.md /app
+COPY pyproject.toml /app
+COPY uv.lock /app
 
-# # run script from host system
-# cp examples/single_agent_examples/arxiv_agent/neutron_star_radius.py myscript.py
-# docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY --mount type=bind,src=$PWD,dst=/mnt/workspace ursa bash -c "uv run python /mnt/workspace/myscript.py"
+# Sync ursa environment. Use git to inform version.
+RUN uv python pin 3.13
+RUN git init 
+RUN git add -A
+RUN git commit -m 'init'
+RUN git tag ${GIT_TAG}
+RUN uv sync --no-cache --no-dev --locked
+RUN uv run ursa version
+
+# Set environment in /app as default uv environment
+ENV UV_PROJECT=/app
