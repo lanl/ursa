@@ -28,7 +28,7 @@ from ursa.util.memory_logger import AgentMemory
 
 app = Typer()
 
-ursa_banner = """\
+ursa_banner = r"""
   __  ________________ _
  / / / / ___/ ___/ __ `/
 / /_/ / /  (__  ) /_/ / 
@@ -197,7 +197,7 @@ class HITL:
         if isinstance(llm_search_query, str):
             arxiv_result = self.arxiv_agent.invoke(
                 arxiv_search_query=llm_search_query,
-                context=self.last_agent_result + prompt,
+                context=prompt,
             )
             self.arxiv_state.append(arxiv_result)
             self.update_last_agent_result(arxiv_result)
@@ -365,7 +365,8 @@ class UrsaRepl(Cmd):
         pass
 
     def run_agent(self, agent: str, run: Callable[[str], str]):
-        prompt = self.get_input(f"Enter your prompt for [emph]{agent}[/]: ")
+        # prompt = self.get_input(f"Enter your prompt for [emph]{agent}[/]: ")
+        prompt = input(f"Enter your prompt for {agent}: ")
         with self.console.status("Generating response"):
             return run(prompt)
 

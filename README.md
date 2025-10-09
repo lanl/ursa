@@ -115,6 +115,65 @@ Some suggestions for sandboxing the agent:
 
 You have a duty for ensuring that you use URSA responsibly.
 
+## Container image
+
+To enable limited sandboxing insofar as containerization does this, you can run
+the following commands:
+
+### Docker
+
+```shell
+# Build a local container using the Docker runtime
+docker buildx build --progress=plain -t ursa .
+
+# Run included example
+docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY ursa \
+    bash -c "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
+
+# Run script from host system
+mkdir -p scripts
+echo "import ursa; print('Hello from ursa')" > scripts/my_script.py
+docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY \
+    --mount type=bind,src=$PWD/scripts,dst=/mnt/workspace \
+    ursa \
+    bash -c "uv run /mnt/workspace/my_script.py"
+```
+
+### Charliecloud
+
+[Charliecloud](https://charliecloud.io/) is a rootless alternative to docker
+that is sometimes preferred on HPC. The following commands replicate the
+behaviors above for docker.
+
+```shell
+# Build a local container using the Docker runtime
+ch-image build -t ursa
+
+# Convert image to sqfs, for use on another system
+ch-convert ursa ursa.sqfs
+
+# Run included example (if wanted, replace ursa with /path/to/ursa.sqfs)
+ch-run -W ursa \
+    --unset-env="*" \
+    --set-env \
+    --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
+    --cd /app \
+    -- bash -c \
+    "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
+
+# Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
+mkdir -p scripts
+echo "import ursa; print('Hello from ursa')" > scripts/my_script.py
+ch-run -W ursa \
+    --unset-env="*" \
+    --set-env \
+    --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
+    --bind ${PWD}/scripts:/mnt/workspace \
+    --cd /app \
+    -- bash -c \
+    "uv run python /mnt/workspace/integer_sum.py"
+```
+
 ## Development Dependencies
 
 * [`uv`](https://docs.astral.sh/uv/)

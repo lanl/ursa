@@ -94,7 +94,7 @@ def main():
             print("Searching ArXiv for ", llm_search_query)
             arxiv_result = arxiv_agent.invoke(
                 arxiv_search_query=llm_search_query,
-                context=last_agent_result + user_prompt,
+                context=user_prompt,
             )
             if arxiv_state:
                 arxiv_state.append(arxiv_result)

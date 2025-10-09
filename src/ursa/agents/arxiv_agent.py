@@ -309,7 +309,9 @@ class ArxivAgent(BaseAgent):
             embedding=self.rag_embedding,
             database_path=self.database_path,
         )
-        new_state["final_summary"] = rag_agent.invoke(context=state["context"])
+        new_state["final_summary"] = rag_agent.invoke(context=state["context"])[
+            "summary"
+        ]
         return new_state
 
     def _aggregate_node(self, state: PaperState) -> PaperState:
@@ -411,6 +413,7 @@ class ArxivAgent(BaseAgent):
         result = self._action.invoke(inputs, config)
 
         use_summary = self.summarize if summarize is None else summarize
+
         return (
             result.get("final_summary", "No summary generated.")
             if use_summary

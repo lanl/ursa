@@ -54,3 +54,12 @@ clean: clean-workspaces
 
 test-cli:
     uv run ursa run
+
+docker-build:
+    docker buildx \
+        build \
+        --build-arg GIT_TAG=$(uv run ursa version) \
+        --progress=plain -t ursa .
+
+docker-shell:
+    docker run -e OPENAI_API_KEY=$OPENAI_API_KEY -it ursa bash
