@@ -128,7 +128,7 @@ docker buildx build --progress=plain -t ursa .
 
 # Run included example
 docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY ursa \
-    bash -c "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
+    bash -c "uv run examples/single_agent_examples/execution_agnet/integer_sum.py"
 
 # Run script from host system
 mkdir -p scripts
@@ -147,7 +147,7 @@ behaviors above for docker.
 
 ```shell
 # Build a local container using the Docker runtime
-ch-image build -t ursa
+ch-image build -t ursa .
 
 # Convert image to sqfs, for use on another system
 ch-convert ursa ursa.sqfs
@@ -157,9 +157,9 @@ ch-run -W ursa \
     --unset-env="*" \
     --set-env \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
-    --cd /app \
+    --cd /mnt/workspace \
     -- bash -c \
-    "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
+    "uv run /app/examples/single_agent_examples/execution_agnet/integer_sum.py"
 
 # Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
 mkdir -p scripts
@@ -169,9 +169,9 @@ ch-run -W ursa \
     --set-env \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
     --bind ${PWD}/scripts:/mnt/workspace \
-    --cd /app \
+    --cd /mnt/workspace \
     -- bash -c \
-    "uv run python /mnt/workspace/integer_sum.py"
+    "uv run /mnt/workspace/integer_sum.py"
 ```
 
 ## Development Dependencies

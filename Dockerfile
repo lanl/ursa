@@ -1,9 +1,5 @@
 # https://docs.astral.sh/uv/guides/integration/docker/
-
-# FROM python:3.12-slim-trixie
-# COPY --from=ghcr.io/astral-sh/uv:0.9.0 /uv /uvx /bin/
-
-# FROM ghcr.io/astral-sh/uv:0.9.0-python3.12-trixie-slim
+# NOTE: This is compatible with docker and charliecloud
 FROM ghcr.io/astral-sh/uv:0.9.0-bookworm
 
 # Get current git tag
@@ -46,7 +42,3 @@ ENV UV_PROJECT=/app
 
 # Set default directory to /workspace  
 WORKDIR /mnt/workspace
-
-# ENV TERM=xterm-256color
-# ENV COLORTERM=truecolor
-# ENV FORCE_COLOR=1
