@@ -62,4 +62,4 @@ docker-build:
         --progress=plain -t ursa .
 
 docker-shell:
-    docker run -it ursa bash
+    docker run -e OPENAI_API_KEY=$OPENAI_API_KEY -it ursa bash

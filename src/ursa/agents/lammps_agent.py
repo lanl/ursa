@@ -3,9 +3,7 @@ import os
 import subprocess
 from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
-import atomman as am
 import tiktoken
-import trafilatura
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph

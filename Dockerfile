@@ -1,7 +1,10 @@
 # https://docs.astral.sh/uv/guides/integration/docker/
-# docker buildx build --progress=plain -t ursa .
-FROM python:3.12-slim-trixie
-COPY --from=ghcr.io/astral-sh/uv:0.9.0 /uv /uvx /bin/
+
+# FROM python:3.12-slim-trixie
+# COPY --from=ghcr.io/astral-sh/uv:0.9.0 /uv /uvx /bin/
+
+# FROM ghcr.io/astral-sh/uv:0.9.0-python3.12-trixie-slim
+FROM ghcr.io/astral-sh/uv:0.9.0-bookworm
 
 # Get current git tag
 ARG GIT_TAG
@@ -29,13 +32,21 @@ COPY pyproject.toml /app
 COPY uv.lock /app
 
 # Sync ursa environment. Use git to inform version.
-RUN uv python pin 3.13
+RUN uv python pin 3.12
 RUN git init 
 RUN git add -A
 RUN git commit -m 'init'
 RUN git tag ${GIT_TAG}
-RUN uv sync --no-cache --no-dev --locked
-RUN uv run ursa version
+RUN uv sync --no-cache --all-groups --no-dev --locked
+RUN cp /app/.venv/bin/ursa /bin
+RUN ursa version
 
 # Set environment in /app as default uv environment
 ENV UV_PROJECT=/app
+
+# Set default directory to /workspace  
+WORKDIR /mnt/workspace
+
+# ENV TERM=xterm-256color
+# ENV COLORTERM=truecolor
+# ENV FORCE_COLOR=1
