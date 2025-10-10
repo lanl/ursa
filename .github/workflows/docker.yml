@@ -7,7 +7,7 @@ on:
   workflow_dispatch:  # allow manual trigger
 
 jobs:
-  build:
+  build-docker:
     env:
       GIT_TAG: ${{ github.ref_name }}
     runs-on: ubuntu-latest
