@@ -1,3 +1,12 @@
+from .acquisition_agents import (
+    ArxivAgentGeneric as ArxivAgentGeneric,
+)
+from .acquisition_agents import (
+    OSTIAgent as OSTIAgent,
+)
+from .acquisition_agents import (
+    WebSearchAgentGeneric as WebSearchAgentGeneric,
+)
 from .arxiv_agent import ArxivAgent as ArxivAgent
 from .arxiv_agent import PaperMetadata as PaperMetadata
 from .arxiv_agent import PaperState as PaperState
