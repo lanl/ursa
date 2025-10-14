@@ -147,7 +147,7 @@ behaviors above for docker.
 
 ```shell
 # Pull the image
-ch-image pull ghcr.io/lanl/ursa --arch=yolo
+ch-image pull ghcr.io/lanl/ursa
 
 # Convert image to sqfs, for use on another system
 ch-convert ursa ursa.sqfs
