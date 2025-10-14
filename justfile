@@ -1,4 +1,8 @@
 ruff := "uvx ruff@0.12.10"
+name := "ursa"
+version := `uv run ursa version`
+tag := version + "-" + `arch`
+sqfs := name + "-" + tag + ".sqfs"
 
 help:
     just -l -u
@@ -63,3 +67,30 @@ docker-build:
 
 docker-shell:
     docker run -e OPENAI_API_KEY=$OPENAI_API_KEY -it ursa bash
+
+# Build wheel and sqfs
+wcc: wheel cc
+
+# Build wheel
+[private]
+wheel:
+    [ ! -d "dist" ] || rm -rf dist/*.whl
+    uv build .
+
+# Build sqfs, assumes wheel exists
+[private]
+cc:
+    #!/bin/bash
+    module load charliecloud
+    unset CH_IMAGE_AUTH
+    ch-image build -t {{ name }}:{{ tag }} .
+    ch-convert {{ name }}:{{ tag }} {{ sqfs }}
+
+shell:
+    #!/bin/bash
+    module load charliecloud
+    unset CH_IMAGE_AUTH
+    ch-run -W {{ name }}:{{ tag }} \
+            --unset-env='*' \
+            --set-env \
+            -- bash
