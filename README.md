@@ -159,7 +159,7 @@ ch-run -W ursa \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
     --cd /app \
     -- bash -c \
-    "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
+    "uv run examples/single_agent_examples/execution_agnet/integer_sum.py"
 
 # Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
 mkdir -p scripts
@@ -171,7 +171,7 @@ ch-run -W ursa \
     --bind ${PWD}/scripts:/mnt/workspace \
     --cd /app \
     -- bash -c \
-    "uv run python /mnt/workspace/integer_sum.py"
+    "uv run /mnt/workspace/integer_sum.py"
 ```
 
 ## Development Dependencies
