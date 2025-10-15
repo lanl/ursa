@@ -40,14 +40,11 @@ if final_lammps_state.get("run_returncode") == 0:
     Summarize the contents of this file in a markdown document. Include a plot, if relevent.
     """
 
-    executor_config = {"recursion_limit": 999_999}
-
     final_results = executor.invoke(
         {
             "messages": [HumanMessage(content=exe_plan)],
             "workspace": workspace,
-        },
-        executor_config,
+        }
     )
 
     for x in final_results["messages"]:

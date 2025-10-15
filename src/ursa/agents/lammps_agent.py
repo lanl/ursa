@@ -399,7 +399,7 @@ class LammpsAgent(BaseAgent):
         inputs: Mapping[str, Any],
         *,
         summarize: bool | None = None,
-        recursion_limit: int = 1000,
+        recursion_limit: int = 999_999,
         **_,
     ) -> str:
         config = self.build_config(
