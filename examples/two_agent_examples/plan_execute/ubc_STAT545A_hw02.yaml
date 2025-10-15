@@ -1,0 +1,42 @@
+# This example is taken from: https://www.stat.ubc.ca/~jenny/STAT545A/hw02_rmarkdownGapminder.html
+# but modified to move from R --> Python and remove some of the content related to publishing
+# the results.
+
+project: ubc_STAT545A_hw02
+
+# omit if not needed
+# this is where you might link in a local dataset you want the agents
+# to have access to, or a program (simulation, executable, etc) or
+# libraries you have locally that you want the agent to use.
+# to be clear, you'd then tell the agent (below) that it has
+# access to the files you describe in 'dest' in the symlink
+# below.
+# symlink:
+#  source: ./some-destination-directory
+#  dest: the-directory-name-symlinked-for-this-instance-to-see
+
+models:
+  choices:
+    - openai/gpt-5
+    - openai/o3
+    - openai/o3-mini
+  default: openai/gpt-5
+
+problem: |
+  * TITLE: Mini Data Analysis - Gapminder (Python + HTML report)
+
+  Write a standalone Python script (.py) that performs the tasks below and
+  generates an HTML page the reader can open locally. Include narrative text in
+  the page and demonstrate headings, bullet points, blockquotes, hyperlinks, and
+  inline code snippets. Include at least one equation written plainly (e.g.,
+  growth_rate = (value_t - value_{t-1}) / value_{t-1}); do not use LaTeX. Follow
+  the course naming convention.
+    
+  * Data - available at: https://www.stat.ubc.ca/~jenny/notOcto/STAT545A/examples/gapminder/data/gapminderDataFiveYear.txt
+  * Basic facts: Report the number of observations and variables,
+                 list variable names and types, and show basic
+                 descriptive statistics or a few targeted summaries). Make at
+                 least one figure (e.g., with matplotlib plotting).
+  * Produce an HTML page (offline): Create an output/ folder, save any figures as .png into output/,
+      Write output/index.html that contains your narrative and embeds the figures 
+      No external hosting or internet resources.

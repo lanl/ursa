@@ -36,7 +36,7 @@ def main():
         executor = ExecutionAgent(llm=model)
 
         # Solve the problem
-        planning_output = planner.action.invoke(init)
+        planning_output = planner.invoke(init)
         print(planning_output["messages"][-1].content)
         last_step_string = "This is the first step."
         for x in planning_output["plan_steps"]:
@@ -54,7 +54,7 @@ def main():
 
                 {execute_string}
             """
-            final_results = executor.action.invoke(
+            final_results = executor.invoke(
                 {
                     "messages": [HumanMessage(content=step_prompt)],
                     "workspace": "workspace_qutip",

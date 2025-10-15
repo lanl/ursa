@@ -1,17 +1,16 @@
 import base64
 import os
 import re
-import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
+from typing import Any, Mapping
 from urllib.parse import quote
 
 import feedparser
 import pymupdf
 import requests
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
@@ -19,15 +18,13 @@ from PIL import Image
 from tqdm import tqdm
 from typing_extensions import List, TypedDict
 
-from .base import BaseAgent
+from ursa.agents.base import BaseAgent
+from ursa.agents.rag_agent import RAGAgent
 
 try:
     from openai import OpenAI
 except Exception:
     pass
-
-# embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-# embeddings = OpenAIEmbeddings()
 
 
 class PaperMetadata(TypedDict):
@@ -125,7 +122,7 @@ def remove_surrogates(text: str) -> str:
 class ArxivAgent(BaseAgent):
     def __init__(
         self,
-        llm="openai/o3-mini",
+        llm: str | BaseChatModel = "openai/o3-mini",
         summarize: bool = True,
         process_images=True,
         max_results: int = 3,
@@ -146,7 +143,7 @@ class ArxivAgent(BaseAgent):
         self.download_papers = download_papers
         self.rag_embedding = rag_embedding
 
-        self.graph = self._build_graph()
+        self._action = self._build_graph()
 
         os.makedirs(self.database_path, exist_ok=True)
 
@@ -156,9 +153,29 @@ class ArxivAgent(BaseAgent):
         if self.download_papers:
             encoded_query = quote(query)
             url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results={self.max_results}"
-            feed = feedparser.parse(url)
+            #            print(f"URL is {url}") # if verbose
+            entries = []
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
 
-            for i, entry in enumerate(feed.entries):
+                feed = feedparser.parse(response.content)
+                #                print(f"parsed response status is {feed.status}") # if verbose
+                entries = feed.entries
+                if feed.bozo:
+                    raise Exception("Feed from arXiv looks like garbage =(")
+            except requests.exceptions.Timeout:
+                print("Request timed out while fetching papers.")
+            except requests.exceptions.RequestException as e:
+                print(f"Request error encountered while fetching papers: {e}")
+            except ValueError as ve:
+                print(f"Value error occurred while fetching papers: {ve}")
+            except Exception as e:
+                print(
+                    f"An unexpected error occurred while fetching papers: {e}"
+                )
+
+            for i, entry in enumerate(entries):
                 full_id = entry.id.split("/abs/")[-1]
                 arxiv_id = full_id.split("/")[-1]
                 title = entry.title.strip()
@@ -222,27 +239,6 @@ class ArxivAgent(BaseAgent):
         papers = self._fetch_papers(state["query"])
         return {**state, "papers": papers}
 
-    def _get_or_build_vectorstore(self, paper_text: str, arxiv_id: str):
-        os.makedirs(self.vectorstore_path, exist_ok=True)
-
-        persist_directory = os.path.join(self.vectorstore_path, arxiv_id)
-
-        if os.path.exists(persist_directory):
-            vectorstore = Chroma(
-                persist_directory=persist_directory,
-                embedding_function=self.rag_embedding,
-            )
-        else:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000, chunk_overlap=200
-            )
-            docs = splitter.create_documents([paper_text])
-            vectorstore = Chroma.from_documents(
-                docs, self.rag_embedding, persist_directory=persist_directory
-            )
-
-        return vectorstore.as_retriever(search_kwargs={"k": 5})
-
     def _summarize_node(self, state: PaperState) -> PaperState:
         prompt = ChatPromptTemplate.from_template("""
         You are a scientific assistant responsible for summarizing extracts from research papers, in the context of the following task: {context}
@@ -265,35 +261,13 @@ class ArxivAgent(BaseAgent):
 
             try:
                 cleaned_text = remove_surrogates(paper["full_text"])
-                if self.rag_embedding:
-                    retriever = self._get_or_build_vectorstore(
-                        cleaned_text, arxiv_id
-                    )
-
-                    relevant_docs_with_scores = (
-                        retriever.vectorstore.similarity_search_with_score(
-                            state["context"], k=5
-                        )
-                    )
-
-                    if relevant_docs_with_scores:
-                        score = sum([
-                            s for _, s in relevant_docs_with_scores
-                        ]) / len(relevant_docs_with_scores)
-                        relevancy_scores[i] = abs(1.0 - score)
-                    else:
-                        relevancy_scores[i] = 0.0
-
-                    retrieved_content = "\n\n".join([
-                        doc.page_content for doc, _ in relevant_docs_with_scores
-                    ])
-                else:
-                    retrieved_content = cleaned_text
-
-                summary = chain.invoke({
-                    "retrieved_content": retrieved_content,
-                    "context": state["context"],
-                })
+                summary = chain.invoke(
+                    {
+                        "retrieved_content": cleaned_text,
+                        "context": state["context"],
+                    },
+                    config=self.build_config(tags=["arxiv", "summarize_each"]),
+                )
 
             except Exception as e:
                 summary = f"Error summarizing paper: {e}"
@@ -326,14 +300,19 @@ class ArxivAgent(BaseAgent):
                 i, result = future.result()
                 summaries[i] = result
 
-        if self.rag_embedding:
-            print(f"\nMax Relevancy Score: {max(relevancy_scores)}")
-            print(f"Min Relevancy Score: {min(relevancy_scores)}")
-            print(
-                f"Median Relevancy Score: {statistics.median(relevancy_scores)}\n"
-            )
-
         return {**state, "summaries": summaries}
+
+    def _rag_node(self, state: PaperState) -> PaperState:
+        new_state = state.copy()
+        rag_agent = RAGAgent(
+            llm=self.llm,
+            embedding=self.rag_embedding,
+            database_path=self.database_path,
+        )
+        new_state["final_summary"] = rag_agent.invoke(context=state["context"])[
+            "summary"
+        ]
+        return new_state
 
     def _aggregate_node(self, state: PaperState) -> PaperState:
         summaries = state["summaries"]
@@ -369,10 +348,13 @@ class ArxivAgent(BaseAgent):
 
         chain = prompt | self.llm | StrOutputParser()
 
-        final_summary = chain.invoke({
-            "Summaries": combined,
-            "context": state["context"],
-        })
+        final_summary = chain.invoke(
+            {
+                "Summaries": combined,
+                "context": state["context"],
+            },
+            config=self.build_config(tags=["arxiv", "aggregate"]),
+        )
 
         with open(self.summaries_path + "/final_summary.txt", "w") as f:
             f.write(final_summary)
@@ -380,42 +362,69 @@ class ArxivAgent(BaseAgent):
         return {**state, "final_summary": final_summary}
 
     def _build_graph(self):
-        builder = StateGraph(PaperState)
-        builder.add_node("fetch_papers", self._fetch_node)
+        graph = StateGraph(PaperState)
 
+        self.add_node(graph, self._fetch_node)
         if self.summarize:
-            builder.add_node("summarize_each", self._summarize_node)
-            builder.add_node("aggregate", self._aggregate_node)
+            if self.rag_embedding:
+                self.add_node(graph, self._rag_node)
+                graph.set_entry_point("_fetch_node")
+                graph.add_edge("_fetch_node", "_rag_node")
+                graph.set_finish_point("_rag_node")
+            else:
+                self.add_node(graph, self._summarize_node)
+                self.add_node(graph, self._aggregate_node)
 
-            builder.set_entry_point("fetch_papers")
-            builder.add_edge("fetch_papers", "summarize_each")
-            builder.add_edge("summarize_each", "aggregate")
-            builder.set_finish_point("aggregate")
-
+                graph.set_entry_point("_fetch_node")
+                graph.add_edge("_fetch_node", "_summarize_node")
+                graph.add_edge("_summarize_node", "_aggregate_node")
+                graph.set_finish_point("_aggregate_node")
         else:
-            builder.set_entry_point("fetch_papers")
-            builder.set_finish_point("fetch_papers")
+            graph.set_entry_point("_fetch_node")
+            graph.set_finish_point("_fetch_node")
 
-        graph = builder.compile()
-        return graph
+        return graph.compile(checkpointer=self.checkpointer)
 
-    def run(self, arxiv_search_query: str, context: str) -> str:
-        result = self.graph.invoke({
-            "query": arxiv_search_query,
-            "context": context,
-        })
+    def _invoke(
+        self,
+        inputs: Mapping[str, Any],
+        *,
+        summarize: bool | None = None,
+        recursion_limit: int = 1000,
+        **_,
+    ) -> str:
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
 
-        if self.summarize:
-            return result.get("final_summary", "No summary generated.")
-        else:
-            return "\n\nFinished Fetching papers!"
+        # this seems dumb, but it's b/c sometimes we had referred to the value as
+        # 'query' other times as 'arxiv_search_query' so trying to keep it compatible
+        # aliasing: accept arxiv_search_query -> query
+        if "query" not in inputs:
+            if "arxiv_search_query" in inputs:
+                # make a shallow copy and rename the key
+                inputs = dict(inputs)
+                inputs["query"] = inputs.pop("arxiv_search_query")
+            else:
+                raise KeyError(
+                    "Missing 'query' in inputs (alias 'arxiv_search_query' also accepted)."
+                )
+
+        result = self._action.invoke(inputs, config)
+
+        use_summary = self.summarize if summarize is None else summarize
+
+        return (
+            result.get("final_summary", "No summary generated.")
+            if use_summary
+            else "\n\nFinished Fetching papers!"
+        )
 
 
-if __name__ == "__main__":
-    agent = ArxivAgent()
-    result = agent.run(
-        arxiv_search_query="Experimental Constraints on neutron star radius",
-        context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
-    )
-
-    print(result)
+# NOTE: Run test in `tests/agents/test_arxiv_agent/test_arxiv_agent.py` via:
+#
+# pytest -s tests/agents/test_arxiv_agent
+#
+# OR
+#
+# uv run pytest -s tests/agents/test_arxiv_agent

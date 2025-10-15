@@ -3,9 +3,9 @@ import os
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Mapping, Optional
 
-import coolname
+import randomname
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
@@ -17,11 +17,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import InjectedToolCallId, tool
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
-from litellm import ContentPolicyViolationError
+from litellm.exceptions import ContentPolicyViolationError
 
 # Rich
 from rich import get_console
@@ -29,7 +29,11 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from typing_extensions import TypedDict
 
-from ..prompt_library.execution_prompts import executor_prompt, summarize_prompt
+from ..prompt_library.execution_prompts import (
+    executor_prompt,
+    safety_prompt,
+    summarize_prompt,
+)
 from ..util.diff_renderer import DiffRenderer
 from ..util.memory_logger import AgentMemory
 from .base import BaseAgent
@@ -62,6 +66,7 @@ class ExecutionAgent(BaseAgent):
     ):
         super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
+        self.safety_prompt = safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
@@ -69,23 +74,21 @@ class ExecutionAgent(BaseAgent):
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
 
-        self._initialize_agent()
+        self._action = self._build_graph()
 
     # Define the function that calls the model
     def query_executor(self, state: ExecutionState) -> ExecutionState:
         new_state = state.copy()
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = coolname.generate_slug(2)
+            new_state["workspace"] = randomname.get_name()
             print(
                 f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
             )
         os.makedirs(new_state["workspace"], exist_ok=True)
 
         # code related to symlink
-        if (
-            "symlinkdir" in new_state.keys()
-            and "is_linked" not in new_state["symlinkdir"].keys()
-        ):
+        sd = new_state.get("symlinkdir")
+        if isinstance(sd, dict) and "is_linked" not in sd:
             # symlinkdir = {"source": "foo", "dest": "bar"}
             symlinkdir = new_state["symlinkdir"]
             # user provided a symlinkdir key - let's do the linking!
@@ -117,8 +120,7 @@ class ExecutionAgent(BaseAgent):
             ] + state["messages"]
         try:
             response = self.llm.invoke(
-                new_state["messages"],
-                {"configurable": {"thread_id": self.thread_id}},
+                new_state["messages"], self.build_config(tags=["agent"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
@@ -131,7 +133,7 @@ class ExecutionAgent(BaseAgent):
         messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
         try:
             response = self.llm.invoke(
-                messages, {"configurable": {"thread_id": self.thread_id}}
+                messages, self.build_config(tags=["summarize"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", messages[-1].content)
@@ -183,11 +185,8 @@ class ExecutionAgent(BaseAgent):
             if call_name == "run_cmd":
                 query = tool_call["args"]["query"]
                 safety_check = self.llm.invoke(
-                    (
-                        "Assume commands to run/install python and Julia files are safe because "
-                        "the files are from a trusted source. "
-                        f"Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}"
-                    )
+                    self.safety_prompt + query,
+                    self.build_config(tags=["safety_check"]),
                 )
 
                 if "[NO]" in safety_check.content:
@@ -224,51 +223,88 @@ class ExecutionAgent(BaseAgent):
 
         return new_state
 
-    def _initialize_agent(self):
-        self.graph = StateGraph(ExecutionState)
+    def _build_graph(self):
+        graph = StateGraph(ExecutionState)
 
-        self.graph.add_node("agent", self.query_executor)
-        self.graph.add_node("action", self.tool_node)
-        self.graph.add_node("summarize", self.summarize)
-        self.graph.add_node("safety_check", self.safety_check)
+        self.add_node(graph, self.query_executor, "agent")
+        self.add_node(graph, self.tool_node, "action")
+        self.add_node(graph, self.summarize, "summarize")
+        self.add_node(graph, self.safety_check, "safety_check")
 
         # Set the entrypoint as `agent`
         # This means that this node is the first one called
-        self.graph.add_edge(START, "agent")
+        graph.set_entry_point("agent")
 
-        self.graph.add_conditional_edges(
+        graph.add_conditional_edges(
             "agent",
-            should_continue,
-            {
-                "continue": "safety_check",
-                "summarize": "summarize",
-            },
+            self._wrap_cond(should_continue, "should_continue", "execution"),
+            {"continue": "safety_check", "summarize": "summarize"},
         )
 
-        self.graph.add_conditional_edges(
+        graph.add_conditional_edges(
             "safety_check",
-            command_safe,
-            {
-                "safe": "action",
-                "unsafe": "agent",
-            },
+            self._wrap_cond(command_safe, "command_safe", "execution"),
+            {"safe": "action", "unsafe": "agent"},
         )
 
-        self.graph.add_edge("action", "agent")
-        self.graph.add_edge("summarize", END)
+        graph.add_edge("action", "agent")
+        graph.set_finish_point("summarize")
 
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
+        return graph.compile(checkpointer=self.checkpointer)
         # self.action.get_graph().draw_mermaid_png(output_file_path="execution_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
-    def run(self, prompt, recursion_limit=1000):
-        inputs = {"messages": [HumanMessage(content=prompt)]}
-        return self.action.invoke(
-            inputs,
-            {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
-            },
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
         )
+        return self._action.invoke(inputs, config)
+
+    # this is trying to stop people bypassing invoke
+    @property
+    def action(self):
+        raise AttributeError(
+            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
+        )
+
+
+def _snip_text(text: str, max_chars: int) -> tuple[str, bool]:
+    if text is None:
+        return "", False
+    if max_chars <= 0:
+        return "", len(text) > 0
+    if len(text) <= max_chars:
+        return text, False
+    head = max_chars // 2
+    tail = max_chars - head
+    return (
+        text[:head]
+        + f"\n... [snipped {len(text) - max_chars} chars] ...\n"
+        + text[-tail:],
+        True,
+    )
+
+
+def _fit_streams_to_budget(stdout: str, stderr: str, total_budget: int):
+    label_overhead = len("STDOUT:\n") + len("\nSTDERR:\n")
+    budget = max(0, total_budget - label_overhead)
+
+    if len(stdout) + len(stderr) <= budget:
+        return stdout, stderr
+
+    total_len = max(1, len(stdout) + len(stderr))
+    stdout_budget = int(budget * (len(stdout) / total_len))
+    stderr_budget = budget - stdout_budget
+
+    stdout_snip, _ = _snip_text(stdout, stdout_budget)
+    stderr_snip, _ = _snip_text(stderr, stderr_budget)
+    return stdout_snip, stderr_snip
+
+
+# the idea here is that we just set a limit - the user could overload
+# that in their env, or maybe we could pull this out of the LLM parameters
+MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "50000"))
 
 
 @tool
@@ -295,10 +331,15 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
         print("Keyboard Interrupt of command: ", query)
         stdout, stderr = "", "KeyboardInterrupt:"
 
-    print("STDOUT: ", stdout)
-    print("STDERR: ", stderr)
+    # Fit BOTH streams under a single overall cap
+    stdout_fit, stderr_fit = _fit_streams_to_budget(
+        stdout or "", stderr or "", MAX_TOOL_MSG_CHARS
+    )
 
-    return f"STDOUT: {stdout} and STDERR: {stderr}"
+    print("STDOUT: ", stdout_fit)
+    print("STDERR: ", stderr_fit)
+
+    return f"STDOUT:\n{stdout_fit}\nSTDERR:\n{stderr_fit}"
 
 
 def _strip_fences(snippet: str) -> str:
@@ -501,8 +542,9 @@ def main():
     inputs = {
         "messages": [HumanMessage(content=problem_string)]
     }  # , "workspace":"dummy_test"}
-    result = execution_agent.action.invoke(
-        inputs, {"configurable": {"thread_id": execution_agent.thread_id}}
+    result = execution_agent.invoke(
+        inputs,
+        config={"configurable": {"thread_id": execution_agent.thread_id}},
     )
     print(result["messages"][-1].content)
     return result

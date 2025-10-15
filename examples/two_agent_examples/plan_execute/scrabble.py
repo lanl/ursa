@@ -13,8 +13,11 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.observability.timing import render_session_summary
 
 console = get_console()  # always returns the same instance
+
+tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main(mode: str):
@@ -66,13 +69,15 @@ def main(mode: str):
         # Initialize the agents
         planner = PlanningAgent(llm=model, checkpointer=checkpointer)
         executor = ExecutionAgent(llm=model, checkpointer=checkpointer)
+        planner.thread_id = tid
+        executor.thread_id = tid
 
         # 3. top level planning
         # planning agent . . .
         with console.status(
             "[bold green]Planning overarching steps . . .", spinner="point"
         ):
-            planning_output = planner.action.invoke(
+            planning_output = planner.invoke(
                 {"messages": [HumanMessage(content=problem)]},
                 {
                     "recursion_limit": 999_999,
@@ -125,7 +130,7 @@ def main(mode: str):
                     )
                 )
 
-                detail_output = planner.action.invoke(
+                detail_output = planner.invoke(
                     {"messages": [HumanMessage(content=step_prompt)]},
                     {
                         "recursion_limit": 999_999,
@@ -158,7 +163,7 @@ def main(mode: str):
                         )
                     )
 
-                    final_results = executor.action.invoke(
+                    final_results = executor.invoke(
                         {
                             "messages": [HumanMessage(content=sub_prompt)],
                             "workspace": workspace,
@@ -190,6 +195,9 @@ def main(mode: str):
                 border_style="green",
             )
         )
+
+        render_session_summary(tid)
+
         return answer
 
     except Exception as e:

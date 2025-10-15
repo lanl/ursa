@@ -1,16 +1,15 @@
 import os
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, Mapping
 
-import coolname
+import randomname
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     SystemMessage,
 )
 from langchain_core.tools import tool
-from langchain_litellm import ChatLiteLLM
-from langchain_openai import OpenAIEmbeddings
-from langgraph.graph import END, START, StateGraph
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from typing_extensions import TypedDict
@@ -54,8 +53,8 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 """
 
 
-model = ChatLiteLLM(
-    model="openai/o3",
+model = ChatOpenAI(
+    model="o3",
     max_tokens=50000,
 )
 embedding = OpenAIEmbeddings()
@@ -90,7 +89,7 @@ def query_arxiver(search_query: str, context: str) -> str:
     """
     print(f"{GREEN}[Arxiver Search] - {search_query}{RESET}")
     print(f"{GREEN}[Arxiver Context] - {context}{RESET}")
-    return arxiver.run(arxiv_search_query=search_query, context=context)
+    return arxiver.invoke(arxiv_search_query=search_query, context=context)
 
 
 @tool
@@ -109,7 +108,7 @@ def query_executor(
         "workspace": state["workspace"],
     }
     print(f"{RED}[Executor Request] - {request}{RESET}")
-    return executor.action.invoke(init)
+    return executor.invoke(init)
 
 
 @tool
@@ -122,7 +121,7 @@ def query_rememberer(request: str) -> str:
 
     """
     print(f"{BLUE}[Rememberer Request] - {request}{RESET}")
-    return rememberer.remember(query=request)
+    return rememberer.invoke(query=request)
 
 
 class State(TypedDict):
@@ -143,17 +142,17 @@ class CombinedAgent(BaseAgent):
         self.runner_prompt = runner_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [query_arxiver, query_executor, query_rememberer]
-        self.tool_node = ToolNode(self.tools)
+        self._tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
 
-        self._initialize_agent()
+        self._action = self._build_graph()
 
     # Define the function that calls the model
-    def runner(self, state: State) -> State:
+    def _runner(self, state: State) -> State:
         new_state = state.copy()
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = coolname.generate_slug(2)
+            new_state["workspace"] = randomname.get_name()
             print(
                 f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
             )
@@ -174,7 +173,7 @@ class CombinedAgent(BaseAgent):
         return {"messages": [response], "workspace": new_state["workspace"]}
 
     # Define the function that calls the model
-    def summarize(self, state: ExecutionState) -> ExecutionState:
+    def _summarize(self, state: ExecutionState) -> ExecutionState:
         messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
         response = self.llm.invoke(
             messages, {"configurable": {"thread_id": self.thread_id}}
@@ -204,40 +203,38 @@ class CombinedAgent(BaseAgent):
             self.write_state("combined_agent.json", save_state)
         return {"messages": [response.content]}
 
-    def _initialize_agent(self):
-        self.graph = StateGraph(State)
+    def _build_graph(self):
+        graph = StateGraph(State)
 
-        self.graph.add_node("agent", self.runner)
-        self.graph.add_node("action", self.tool_node)
-        self.graph.add_node("summarize", self.summarize)
+        self.add_node(graph, self._runner)
+        self.add_node(graph, self._tool_node, "_tool_node")
+        self.add_node(graph, self._summarize)
 
         # Set the entrypoint as `agent`
         # This means that this node is the first one called
-        self.graph.add_edge(START, "agent")
+        graph.set_entry_point("_runner")
 
-        self.graph.add_conditional_edges(
-            "agent",
+        graph.add_conditional_edges(
+            "_runner",
             should_continue,
             {
-                "continue": "action",
-                "summarize": "summarize",
+                "continue": "_tool_node",
+                "summarize": "_summarize",
             },
         )
 
-        self.graph.add_edge("action", "agent")
-        self.graph.add_edge("summarize", END)
+        graph.add_edge("_tool_node", "_runner")
+        graph.set_finish_point("_summarize")
 
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
+        return graph.compile(checkpointer=self.checkpointer)
 
-    def run(self, prompt, recursion_limit=1000):
-        inputs = {"messages": [HumanMessage(content=prompt)]}
-        return self.action.invoke(
-            inputs,
-            {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
-            },
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
         )
+        return self._action.invoke(inputs, config)
 
 
 # Define the function that determines whether to continue or not
@@ -254,11 +251,9 @@ def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
 
 def main():
     agent = CombinedAgent(llm=model, log_state=True)
-    result = agent.run(
-        prompt="""What are the constraints on the neutron star radius and what uncertainties are there on the constraints? 
+    result = agent.invoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints? 
                 Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This 
-                will be reviewed by experts in the field so technical accuracy and clarity is critical."""
-    )
+                will be reviewed by experts in the field so technical accuracy and clarity is critical.""")
     print(result["messages"][-1].content)
 
 

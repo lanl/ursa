@@ -32,7 +32,7 @@ class AgentMemory:
             case None:
                 return Path.home() / ".cache" / "ursa" / "rag" / "db"
             case str():
-                return Path(str)
+                return Path(path)
             case Path():
                 return path
             case _:

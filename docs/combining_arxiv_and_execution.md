@@ -35,7 +35,7 @@ arxiv_agent = ArxivAgent(
 )
 
 # Run a search and analysis
-research_results = arxiv_agent.run(
+research_results = arxiv_agent.invoke(
     arxiv_search_query="high entropy alloy hardness",
     context="What data and uncertainties are reported for hardness of the high entropy alloy and how that that compare to other alloys?",
 )
@@ -56,7 +56,7 @@ will be reviewed by experts in the field so technical accuracy and clarity is cr
 init = {"messages": [HumanMessage(content=execution_plan)]}
 
 # Execute the plan
-final_results = executor.action.invoke(init)
+final_results = executor.invoke(init)
 
 # Display results
 for message in final_results["messages"]:

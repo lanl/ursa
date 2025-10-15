@@ -34,3 +34,10 @@ Your responsibilities is to write a condensed summary of the conversation.
     - Summarize all the work that was carried out to meet those goals
     - Highlight any places where those goals were not achieved and why.
 """
+
+safety_prompt = (
+    "Assume commands to run/install "
+    "python and Julia"
+    "files are safe because the files are from a trusted source. "
+    "Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: "
+)

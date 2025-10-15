@@ -3,12 +3,12 @@ import ast
 # from langchain_community.tools import TavilySearchResults
 # from textwrap                  import dedent
 from datetime import datetime
-from typing import List, Literal, TypedDict
+from typing import Any, List, Literal, Mapping, TypedDict
 
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import END, StateGraph
+from langgraph.graph import StateGraph
 
 from ..prompt_library.hypothesizer_prompts import (
     competitor_prompt,
@@ -35,7 +35,7 @@ class HypothesizerState(TypedDict):
     agent1_solution: List[str]  # List to store each iteration of solutions
     agent2_critiques: List[str]  # List to store critiques
     agent3_perspectives: List[str]  # List to store competitor perspectives
-    final_solution: str  # Final refined solution
+    solution: str  # Refined solution
     summary_report: str  # the final summarized report
     visited_sites: List[str]
 
@@ -53,7 +53,7 @@ class HypothesizerAgent(BaseAgent):
         #     max_results=10, search_depth="advanced", include_answer=False
         # )
 
-        self._initialize_agent()
+        self._action = self._build_graph()
 
     def agent1_generate_solution(
         self, state: HypothesizerState
@@ -262,12 +262,10 @@ class HypothesizerAgent(BaseAgent):
         )
         return new_state
 
-    def generate_final_solution(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        """Generate the final, refined solution based on all iterations."""
+    def generate_solution(self, state: HypothesizerState) -> HypothesizerState:
+        """Generate the overall, refined solution based on all iterations."""
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Entering generate_final_solution."
+            f"[iteration {state['current_iteration']} - DEBUG] Entering generate_solution."
         )
         prompt = f"Original question: {state['question']}\n\n"
         prompt += "Evolution of solutions:\n"
@@ -280,23 +278,23 @@ class HypothesizerAgent(BaseAgent):
                 f"Competitor perspective: {state['agent3_perspectives'][i]}\n"
             )
 
-        prompt += "\nBased on this iterative process, provide the final, refined solution."
+        prompt += "\nBased on this iterative process, provide the overall, refined solution."
 
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Generating final solution with LLM..."
+            f"[iteration {state['current_iteration']} - DEBUG] Generating overall solution with LLM..."
         )
-        final_solution = self.llm.invoke(prompt)
+        solution = self.llm.invoke(prompt)
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Final solution obtained. Preview:",
-            final_solution.content[:200],
+            f"[iteration {state['current_iteration']} - DEBUG] Overall solution obtained. Preview:",
+            solution.content[:200],
             "...",
         )
 
         new_state = state.copy()
-        new_state["final_solution"] = final_solution.content
+        new_state["solution"] = solution.content
 
         print(
-            f"[iteration {state['current_iteration']} - DEBUG] Exiting generate_final_solution."
+            f"[iteration {state['current_iteration']} - DEBUG] Exiting generate_solution."
         )
         return new_state
 
@@ -363,13 +361,13 @@ class HypothesizerAgent(BaseAgent):
 
             {iteration_details}
 
-            The final solution we arrived at was:
+            The solution we arrived at was:
 
-            {state["final_solution"]}
+            {state["solution"]}
 
             Now produce a valid LaTeX document.  Be sure to use a table of contents.
             It must start with an Executive Summary (that may be multiple pages) which summarizes
-            the entire iterative process.  Following that, we should include the final solution in full,
+            the entire iterative process.  Following that, we should include the solution in full,
             not summarized, but reformatted for appropriate LaTeX.  And then, finally (and this will be
             quite long), we must take all the steps - solutions, critiques, and competitor perspectives
             and *NOT SUMMARIZE THEM* but merely reformat them for the reader.  This will be in an Appendix
@@ -387,7 +385,7 @@ class HypothesizerAgent(BaseAgent):
         """
 
         # Now produce a valid LaTeX document that nicely summarizes this entire iterative process.
-        # It must include the final solution in full, not summarized, but reformatted for appropriate
+        # It must include the overall solution in full, not summarized, but reformatted for appropriate
         # LaTeX. The summarization is for the other steps.
 
         all_visited_sites = state.get("visited_sites", [])
@@ -446,68 +444,65 @@ class HypothesizerAgent(BaseAgent):
         )
         return new_state
 
-    def _initialize_agent(self):
+    def _build_graph(self):
         # Initialize the graph
-        self.graph = StateGraph(HypothesizerState)
+        graph = StateGraph(HypothesizerState)
 
         # Add nodes
-        self.graph.add_node("agent1", self.agent1_generate_solution)
-        self.graph.add_node("agent2", self.agent2_critique)
-        self.graph.add_node("agent3", self.agent3_competitor_perspective)
-        self.graph.add_node("increment_iteration", self.increment_iteration)
-        self.graph.add_node("finalize", self.generate_final_solution)
-        self.graph.add_node("print_sites", self.print_visited_sites)
-        self.graph.add_node(
-            "summarize_as_latex", self.summarize_process_as_latex
+        self.add_node(graph, self.agent1_generate_solution, "agent1")
+        self.add_node(graph, self.agent2_critique, "agent2")
+        self.add_node(graph, self.agent3_competitor_perspective, "agent3")
+        self.add_node(graph, self.increment_iteration, "increment_iteration")
+        self.add_node(graph, self.generate_solution, "finalize")
+        self.add_node(graph, self.print_visited_sites, "print_sites")
+        self.add_node(
+            graph, self.summarize_process_as_latex, "summarize_as_latex"
         )
         # self.graph.add_node("compile_pdf",                compile_summary_to_pdf)
 
         # Add simple edges for the known flow
-        self.graph.add_edge("agent1", "agent2")
-        self.graph.add_edge("agent2", "agent3")
-        self.graph.add_edge("agent3", "increment_iteration")
+        graph.add_edge("agent1", "agent2")
+        graph.add_edge("agent2", "agent3")
+        graph.add_edge("agent3", "increment_iteration")
 
         # Then from increment_iteration, we have a conditional:
         # If we 'continue', we go back to agent1
         # If we 'finish', we jump to the finalize node
-        self.graph.add_conditional_edges(
+        graph.add_conditional_edges(
             "increment_iteration",
             should_continue,
             {"continue": "agent1", "finish": "finalize"},
         )
 
-        self.graph.add_edge("finalize", "summarize_as_latex")
-        self.graph.add_edge("summarize_as_latex", "print_sites")
-        self.graph.add_edge("print_sites", END)
+        graph.add_edge("finalize", "summarize_as_latex")
+        graph.add_edge("summarize_as_latex", "print_sites")
         # self.graph.add_edge("summarize_as_latex", "compile_pdf")
         # self.graph.add_edge("compile_pdf", "print_sites")
 
         # Set the entry point
-        self.graph.set_entry_point("agent1")
+        graph.set_entry_point("agent1")
+        graph.set_finish_point("print_sites")
 
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
+        return graph.compile(checkpointer=self.checkpointer)
         # self.action.get_graph().draw_mermaid_png(output_file_path="hypothesizer_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
-    def run(self, prompt, max_iter=3, recursion_limit=99999):
-        # Initialize the state
-        initial_state = HypothesizerState(
-            question=prompt,
-            current_iteration=0,
-            max_iterations=max_iter,
-            agent1_solution=[],
-            agent2_critiques=[],
-            agent3_perspectives=[],
-            final_solution="",
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
         )
-        # Run the graph
-        result = self.action.invoke(
-            initial_state,
-            {
-                "recursion_limit": recursion_limit,
-                "configurable": {"thread_id": self.thread_id},
-            },
-        )
-        return result["final_solution"]
+        if "prompt" not in inputs:
+            raise KeyError("'prompt' is a required arguments")
+
+        inputs["max_iterations"] = inputs.get("max_iterations", 3)
+        inputs["current_iteration"] = 0
+        inputs["agent1_solution"] = []
+        inputs["agent2_critiques"] = []
+        inputs["agent3_perspectives"] = []
+        inputs["solution"] = ""
+
+        return self._action.invoke(inputs, config)
 
 
 def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
@@ -580,12 +575,12 @@ if __name__ == "__main__":
         agent1_solution=[],
         agent2_critiques=[],
         agent3_perspectives=[],
-        final_solution="",
+        solution="",
     )
 
     print("[DEBUG] Invoking the graph...")
     # Run the graph
-    result = hypothesizer_agent.action.invoke(
+    result = hypothesizer_agent.invoke(
         initial_state,
         {
             "recursion_limit": 999999,
@@ -596,9 +591,9 @@ if __name__ == "__main__":
 
     print("[DEBUG] Graph invocation complete.")
 
-    # Print the final solution
-    print("Final Solution:")
-    print(result["final_solution"])
+    # Print the overall solution
+    print("Overall Solution:")
+    print(result["solution"])
 
     # print("Summarized Report:")
     # print(summary_text)

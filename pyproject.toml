@@ -19,7 +19,7 @@ requires-python = ">=3.10"
 dependencies = [
     "arxiv>=2.2.0,<3.0",
     "beautifulsoup4>=4.13.4,<5.0",
-    "coolname>=2.2.0,<3.0",
+    "randomname>=0.2.1,<0.3",
     "langchain>=0.3.27,<0.4",
     "langchain-community>=0.3.29,<0.4",
     "langchain-litellm>=0.2.2,<0.3",
@@ -38,8 +38,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=2.0.10,<3.0",
     "langchain-ollama>=0.3.6,<0.4",
     "ddgs>=9.5.5",
-    "atomman>=1.5.2",
-    "trafilatura>=1.6.1",
+    "typer>=0.16.1",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -49,6 +48,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
+
+[project.scripts]
+ursa = "ursa.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
@@ -81,5 +83,19 @@ dev = [
     "langgraph-checkpoint-sqlite>=2.0.10",
     "notebook>=7.3.3",
     "pre-commit>=4.3.0",
+    "pytest>=8.4.2",
     "scikit-optimize>=0.10.2",
+]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-autorefs>=1.4.3",
+    "mkdocs-material>=9.6.21",
+    "mkdocstrings-python>=1.18.2",
+]
+lammps = [
+    "atomman>=1.5.2",
+    "trafilatura>=1.6.1",
+]
+opt = [
+    "ortools>=9.14,<9.15",
 ]

@@ -11,7 +11,7 @@ from ursa.agents import ArxivAgent
 agent = ArxivAgent()
 
 # Run a query
-result = agent.run(
+result = agent.invoke(
     arxiv_search_query="Experimental Constraints on neutron star radius", 
     context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?"
 )
@@ -52,13 +52,13 @@ agent = ArxivAgent(
 
 ```python
 # First query
-result1 = agent.run(
+result1 = agent.invoke(
     arxiv_search_query="quantum computing error correction", 
     context="Summarize recent advances in quantum error correction techniques"
 )
 
 # Second query (will reuse downloaded papers if applicable)
-result2 = agent.run(
+result2 = agent.invoke(
     arxiv_search_query="quantum computing algorithms", 
     context="What are the most promising quantum algorithms for near-term devices?"
 )

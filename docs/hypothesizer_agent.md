@@ -11,7 +11,7 @@ from ursa.agents import HypothesizerAgent
 agent = HypothesizerAgent()
 
 # Run the agent with a question
-solution = agent.run(
+solution = agent.invoke(
     prompt="Find a city with at least 10 vowels in its name.",
     max_iter=3
 )
@@ -75,7 +75,7 @@ from ursa.agents import HypothesizerAgent
 agent = HypothesizerAgent(llm="openai/gpt-4o")
 
 # Run with 5 iterations
-result = agent.run(
+result = agent.invoke(
     prompt="What strategies could a small local bookstore use to compete with large online retailers?",
     max_iter=5
 )
