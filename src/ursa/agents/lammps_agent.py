@@ -21,6 +21,7 @@ except Exception:
 class LammpsState(TypedDict, total=False):
     simulation_task: str
     elements: List[str]
+    template: Optional[str]
 
     matches: List[Any]
     db_message: str
@@ -119,6 +120,8 @@ class LammpsAgent(BaseAgent):
                 "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
+                "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
+                "Template provided (if any): {template}\n"
                 "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
                 "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
@@ -141,6 +144,8 @@ class LammpsAgent(BaseAgent):
                 "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
+                "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
+                "Template provided (if any): {template}\n"
                 "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
                 "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
@@ -280,6 +285,7 @@ class LammpsAgent(BaseAgent):
             "simulation_task": state["simulation_task"],
             "metadata": text,
             "pair_info": pair_info,
+            "template": state["template"],
         })
         script_dict = self._safe_json_loads(authored_json)
         input_script = script_dict["input_script"]
@@ -335,6 +341,7 @@ class LammpsAgent(BaseAgent):
             "err_message": err_blob,
             "metadata": text,
             "pair_info": pair_info,
+            "template": state["template"],
         })
         script_dict = self._safe_json_loads(fixed_json)
         new_input = script_dict["input_script"]
@@ -411,4 +418,9 @@ class LammpsAgent(BaseAgent):
                 "'simulation_task' and 'elements' are required arguments"
             )
 
+        if "template" not in inputs:
+            inputs = {**inputs, "template": "No template provided."}
+
         return self._action.invoke(inputs, config)
+
+        

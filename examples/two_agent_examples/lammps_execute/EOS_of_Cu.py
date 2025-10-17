@@ -19,13 +19,16 @@ wf = LammpsAgent(
     mpirun_cmd="mpirun",
 )
 
+with open("eos_template.txt", "r") as file:
+    template = file.read()
+
 simulation_task = (
     "Carry out a LAMMPS simulation of Cu to determine its equation of state."
 )
 elements = ["Cu"]
 
 final_lammps_state = wf.invoke(
-    simulation_task=simulation_task, elements=elements
+    simulation_task=simulation_task, elements=elements, template=template
 )
 
 if final_lammps_state.get("run_returncode") == 0:

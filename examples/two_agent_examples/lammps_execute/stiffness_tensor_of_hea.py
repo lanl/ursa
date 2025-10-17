@@ -7,7 +7,6 @@ model = "gpt-5"
 
 llm = ChatOpenAI(model=model, timeout=None, max_retries=2)
 
-
 workspace = "./workspace_stiffness_tensor"
 
 wf = LammpsAgent(
@@ -20,12 +19,15 @@ wf = LammpsAgent(
     mpirun_cmd="mpirun",
 )
 
+with open("elastic_template.txt", "r") as file:
+    template = file.read()
+
 simulation_task = "Carry out a LAMMPS simulation of the high entropy alloy Co-Cr-Fe-Mn-Ni to determine its stiffness tensor."
 
 elements = ["Co", "Cr", "Fe", "Mn", "Ni"]
 
 final_lammps_state = wf.invoke(
-    simulation_task=simulation_task, elements=elements
+    simulation_task=simulation_task, elements=elements, template=template
 )
 
 if final_lammps_state.get("run_returncode") == 0:
