@@ -94,3 +94,6 @@ shell:
             --unset-env='*' \
             --set-env \
             -- bash
+
+web port="8000":
+    uv run ursa-ui --port {{ port }}

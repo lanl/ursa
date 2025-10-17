@@ -51,6 +51,7 @@ classifiers = [
 
 [project.scripts]
 ursa = "ursa.cli:main"
+ursa-ui = "ursa.ui:main"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
@@ -98,4 +99,7 @@ lammps = [
 ]
 opt = [
     "ortools>=9.14,<9.15",
+]
+ui = [
+    "chainlit>=2.8.3",
 ]
