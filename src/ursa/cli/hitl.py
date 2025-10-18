@@ -215,7 +215,7 @@ class HITL:
                     f"The user stated: {prompt}"
                 )
             )
-            executor_state = self.executor.invoke(
+            self.executor_state = self.executor.invoke(
                 self.executor_state,
             )
 

@@ -29,3 +29,4 @@ arxiv_generated_summaries
 arxiv_papers
 *.sqfs
 .chainlit/
+.ursa-ui/
