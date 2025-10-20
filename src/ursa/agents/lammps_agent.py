@@ -22,6 +22,7 @@ class LammpsState(TypedDict, total=False):
     simulation_task: str
     elements: List[str]
     template: Optional[str]
+    chosen_potential: Optional[Any]
 
     matches: List[Any]
     idx: int
@@ -29,8 +30,6 @@ class LammpsState(TypedDict, total=False):
     full_texts: List[str]
     summaries_combined: str
     
-    chosen_potential: Any
-
     input_script: str
     run_returncode: Optional[int]
     run_stdout: str
@@ -114,7 +113,6 @@ class LammpsAgent(BaseAgent):
         self.author_chain = (
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
-                #"Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
@@ -138,7 +136,6 @@ class LammpsAgent(BaseAgent):
                 "However, when running the simulation, an error was raised.\n"
                 "Here is the full stdout message that includes the error message: {err_message}\n"
                 "Your task is to write a new input file that resolves the error.\n"
-                #"Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
@@ -191,18 +188,17 @@ class LammpsAgent(BaseAgent):
             pass
         return text
 
+
+    def _entry_router(self, state: LammpsState) -> dict:
+        return {}
+            
+            
     def _find_potentials(self, state: LammpsState) -> LammpsState:
         db = am.library.Database(remote=True)
         matches = db.get_lammps_potentials(
             pair_style=self.pair_styles, elements=state["elements"]
         )
-        msg_lines = []
-        if not list(matches):
-            msg_lines.append("No potentials found for this task in NIST.")
-        else:
-            msg_lines.append("Found these potentials in NIST:")
-            for rec in matches:
-                msg_lines.append(f"{rec.id}  {rec.pair_style}  {rec.symbols}")
+        
         return {
             **state,
             "matches": list(matches),
@@ -269,20 +265,15 @@ class LammpsAgent(BaseAgent):
         print(f"Chosen potential #{chosen_index}")
         print("Rationale for choosing this potential:")
         print(choice_dict["rationale"])
-
         chosen_potential = state["matches"][chosen_index]
-        
         return {**state, "chosen_potential": chosen_potential}
 
     def _author(self, state: LammpsState) -> LammpsState:
         print("First attempt at writing LAMMPS input file....")
-        #match = state["matches"][state["chosen_index"]]
         state["chosen_potential"].download_files(self.workspace)
-        #text = state["full_texts"][state["chosen_index"]]
         pair_info = state["chosen_potential"].pair_info()
         authored_json = self.author_chain.invoke({
             "simulation_task": state["simulation_task"],
-            #"metadata": text,
             "pair_info": pair_info,
             "template": state["template"],
         })
@@ -329,8 +320,6 @@ class LammpsAgent(BaseAgent):
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
-        #match = state["matches"][state["chosen_index"]]
-        #text = state["full_texts"][state["chosen_index"]]
         pair_info = state["chosen_potential"].pair_info().pair_info()
         err_blob = state.get("run_stdout")
 
@@ -338,7 +327,6 @@ class LammpsAgent(BaseAgent):
             "simulation_task": state["simulation_task"],
             "input_script": state["input_script"],
             "err_message": err_blob,
-            #"metadata": text,
             "pair_info": pair_info,
             "template": state["template"],
         })
@@ -354,7 +342,8 @@ class LammpsAgent(BaseAgent):
 
     def _build_graph(self):
         g = StateGraph(LammpsState)
-
+        
+        self.add_node(g, self._entry_router)
         self.add_node(g, self._find_potentials)
         self.add_node(g, self._summarize_one)
         self.add_node(g, self._build_summaries)
@@ -363,8 +352,17 @@ class LammpsAgent(BaseAgent):
         self.add_node(g, self._run_lammps)
         self.add_node(g, self._fix)
 
-        g.set_entry_point("_find_potentials")
+        g.set_entry_point("_entry_router")
 
+        g.add_conditional_edges(
+            "_entry_router",
+            lambda state: "user_choice" if state.get("chosen_potential") else "agent_choice",
+            {
+                "user_choice": "_author",
+                "agent_choice": "_find_potentials",
+            },
+        )
+        
         g.add_conditional_edges(
             "_find_potentials",
             self._should_summarize,
