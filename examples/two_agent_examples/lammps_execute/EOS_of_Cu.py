@@ -22,6 +22,7 @@ wf = LammpsAgent(
     llm=llm,
     max_potentials=2,
     max_fix_attempts=5,
+    find_potential_only=False,
     mpi_procs=8,
     workspace=workspace,
     lammps_cmd="lmp_mpi",

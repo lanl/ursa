@@ -44,6 +44,7 @@ class LammpsAgent(BaseAgent):
         llm,
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
+        find_potential_only: bool = False,
         mpi_procs: int = 8,
         workspace: str = "./workspace",
         lammps_cmd: str = "lmp_mpi",
@@ -58,6 +59,7 @@ class LammpsAgent(BaseAgent):
             )
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
+        self.find_potential_only = find_potential_only
         self.mpi_procs = mpi_procs
         self.lammps_cmd = lammps_cmd
         self.mpirun_cmd = mpirun_cmd
@@ -69,13 +71,13 @@ class LammpsAgent(BaseAgent):
             "eam/alloy",
             "eam/fs",
             "meam",
-            "adp",  # classical, HEA-relevant
-            "kim",  # OpenKIM models
+            "adp",  
+            "kim",  
             "snap",
             "quip",
             "mlip",
             "pace",
-            "nep",  # ML/ACE families (if available)
+            "nep",  
         ]
 
         self.workspace = workspace
@@ -190,6 +192,12 @@ class LammpsAgent(BaseAgent):
 
 
     def _entry_router(self, state: LammpsState) -> dict:
+        if self.find_potential_only and state.get("chosen_potential"):
+            raise Exception("You cannot set find_potential_only=True and also specify your own potential!") 
+            
+        if not state.get("chosen_potential"):
+            self.potential_summaries_dir = os.path.join(self.workspace, "potential_summaries")
+            os.makedirs(self.potential_summaries_dir, exist_ok=True)
         return {}
             
             
@@ -240,6 +248,10 @@ class LammpsAgent(BaseAgent):
                 "simulation_task": state["simulation_task"],
             })
 
+        summary_file = os.path.join(self.potential_summaries_dir,"potential_"+str(i)+".txt")
+        with open(summary_file, "w") as f:
+            f.write(summary)
+            
         return {
             **state,
             "idx": i + 1,
@@ -262,11 +274,27 @@ class LammpsAgent(BaseAgent):
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
+        
         print(f"Chosen potential #{chosen_index}")
         print("Rationale for choosing this potential:")
         print(choice_dict["rationale"])
+        
         chosen_potential = state["matches"][chosen_index]
+
+        out_file = os.path.join(self.potential_summaries_dir,"Rationale.txt")
+        with open(out_file, "w") as f:
+            f.write(f"Chosen potential #{chosen_index}")
+            f.write("\n")
+            f.write("Rationale for choosing this potential:")
+            f.write("\n")
+            f.write(choice_dict["rationale"])
+            
         return {**state, "chosen_potential": chosen_potential}
+
+    def _route_after_summarization(self, state: LammpsState) -> str:
+        if self.find_potential_only:
+            return "Exit"
+        return "continue_author"
 
     def _author(self, state: LammpsState) -> LammpsState:
         print("First attempt at writing LAMMPS input file....")
@@ -320,7 +348,7 @@ class LammpsAgent(BaseAgent):
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
-        pair_info = state["chosen_potential"].pair_info().pair_info()
+        pair_info = state["chosen_potential"].pair_info()
         err_blob = state.get("run_stdout")
 
         fixed_json = self.fix_chain.invoke({
@@ -383,7 +411,16 @@ class LammpsAgent(BaseAgent):
         )
 
         g.add_edge("_build_summaries", "_choose")
-        g.add_edge("_choose", "_author")
+        
+        g.add_conditional_edges(
+            "_choose",
+            self._route_after_summarization,
+            {
+                "continue_author": "_author",
+                "Exit": END,
+            },
+        )
+        
         g.add_edge("_author", "_run_lammps")
 
         g.add_conditional_edges(
