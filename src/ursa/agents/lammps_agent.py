@@ -24,15 +24,12 @@ class LammpsState(TypedDict, total=False):
     template: Optional[str]
 
     matches: List[Any]
-    db_message: str
-
     idx: int
     summaries: List[str]
     full_texts: List[str]
-
     summaries_combined: str
-    choice_json: str
-    chosen_index: int
+    
+    chosen_potential: Any
 
     input_script: str
     run_returncode: Optional[int]
@@ -117,7 +114,7 @@ class LammpsAgent(BaseAgent):
         self.author_chain = (
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
-                "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
+                #"Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
@@ -141,7 +138,7 @@ class LammpsAgent(BaseAgent):
                 "However, when running the simulation, an error was raised.\n"
                 "Here is the full stdout message that includes the error message: {err_message}\n"
                 "Your task is to write a new input file that resolves the error.\n"
-                "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
+                #"Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
@@ -209,7 +206,6 @@ class LammpsAgent(BaseAgent):
         return {
             **state,
             "matches": list(matches),
-            "db_message": "\n".join(msg_lines),
             "idx": 0,
             "summaries": [],
             "full_texts": [],
@@ -273,17 +269,20 @@ class LammpsAgent(BaseAgent):
         print(f"Chosen potential #{chosen_index}")
         print("Rationale for choosing this potential:")
         print(choice_dict["rationale"])
-        return {**state, "choice_json": choice, "chosen_index": chosen_index}
+
+        chosen_potential = state["matches"][chosen_index]
+        
+        return {**state, "chosen_potential": chosen_potential}
 
     def _author(self, state: LammpsState) -> LammpsState:
         print("First attempt at writing LAMMPS input file....")
-        match = state["matches"][state["chosen_index"]]
-        match.download_files(self.workspace)
-        text = state["full_texts"][state["chosen_index"]]
-        pair_info = match.pair_info()
+        #match = state["matches"][state["chosen_index"]]
+        state["chosen_potential"].download_files(self.workspace)
+        #text = state["full_texts"][state["chosen_index"]]
+        pair_info = state["chosen_potential"].pair_info()
         authored_json = self.author_chain.invoke({
             "simulation_task": state["simulation_task"],
-            "metadata": text,
+            #"metadata": text,
             "pair_info": pair_info,
             "template": state["template"],
         })
@@ -330,16 +329,16 @@ class LammpsAgent(BaseAgent):
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
-        match = state["matches"][state["chosen_index"]]
-        text = state["full_texts"][state["chosen_index"]]
-        pair_info = match.pair_info()
+        #match = state["matches"][state["chosen_index"]]
+        #text = state["full_texts"][state["chosen_index"]]
+        pair_info = state["chosen_potential"].pair_info().pair_info()
         err_blob = state.get("run_stdout")
 
         fixed_json = self.fix_chain.invoke({
             "simulation_task": state["simulation_task"],
             "input_script": state["input_script"],
             "err_message": err_blob,
-            "metadata": text,
+            #"metadata": text,
             "pair_info": pair_info,
             "template": state["template"],
         })
