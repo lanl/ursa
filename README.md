@@ -123,8 +123,8 @@ the following commands:
 ### Docker
 
 ```shell
-# Build a local container using the Docker runtime
-docker buildx build --progress=plain -t ursa .
+# Pull the image
+docker pull ghcr.io/lanl/ursa
 
 # Run included example
 docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY ursa \
@@ -146,8 +146,8 @@ that is sometimes preferred on HPC. The following commands replicate the
 behaviors above for docker.
 
 ```shell
-# Build a local container using the Docker runtime
-ch-image build -t ursa
+# Pull the image
+ch-image pull ghcr.io/lanl/ursa
 
 # Convert image to sqfs, for use on another system
 ch-convert ursa ursa.sqfs
@@ -159,7 +159,7 @@ ch-run -W ursa \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
     --cd /app \
     -- bash -c \
-    "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
+    "uv run examples/single_agent_examples/execution_agnet/integer_sum.py"
 
 # Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
 mkdir -p scripts
@@ -171,7 +171,7 @@ ch-run -W ursa \
     --bind ${PWD}/scripts:/mnt/workspace \
     --cd /app \
     -- bash -c \
-    "uv run python /mnt/workspace/integer_sum.py"
+    "uv run /mnt/workspace/integer_sum.py"
 ```
 
 ## Development Dependencies
