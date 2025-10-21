@@ -39,6 +39,8 @@ dependencies = [
     "langchain-ollama>=0.3.6,<0.4",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
+    "trafilatura>=1.6.1,<1.7",
+    "selectolax>=0.4.0,<0.5",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -94,7 +96,6 @@ docs = [
 ]
 lammps = [
     "atomman>=1.5.2",
-    "trafilatura>=1.6.1",
 ]
 opt = [
     "ortools>=9.14,<9.15",
