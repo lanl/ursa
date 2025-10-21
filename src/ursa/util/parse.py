@@ -365,7 +365,6 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
         if txt and txt.strip():
             txt = _normalize_ws(txt)
             txt = _dedupe_lines(txt)
-            print(f"trafilatura Webpage: {html}\n\n{txt[:max_chars]}")
             return txt[:max_chars]
     except Exception:
         pass
@@ -377,7 +376,6 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
         if body_paras:
             txt = _normalize_ws("\n\n".join(body_paras))
             txt = _dedupe_lines(txt)
-            print(f"jusText Webpage: {html}\n\n{txt[:max_chars]}")
             return txt[:max_chars]
     except Exception:
         pass
@@ -404,5 +402,4 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
             chunks.append(t)
     txt = _normalize_ws("\n\n".join(chunks))
     txt = _dedupe_lines(txt)
-    print(f"Bs4 Webpage: {html}\n\n{txt[:max_chars]}")
     return txt[:max_chars]

@@ -16,7 +16,6 @@ import feedparser
 # PDF & Vision extras (match your existing stack)
 import pymupdf
 import requests
-from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
@@ -103,21 +102,20 @@ def _load_pdf_text(path: str) -> str:
     return "\n".join(p.page_content for p in pages)
 
 
-def _basic_readable_text_from_html(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    # Drop scripts/styles/navs for a crude readability
-    for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
-        tag.decompose()
-    # Keep title for context
-    title = soup.title.get_text(strip=True) if soup.title else ""
-    # Join paragraphs
-    texts = [
-        p.get_text(" ", strip=True)
-        for p in soup.find_all(["p", "h1", "h2", "h3", "li", "figcaption"])
-    ]
-    body = "\n".join(t for t in texts if t)
-    print(f"Webpage: {html}\n\n{body}")
-    return (title + "\n\n" + body).strip()
+# def _basic_readable_text_from_html(html: str) -> str:
+#     soup = BeautifulSoup(html, "html.parser")
+#     # Drop scripts/styles/navs for a crude readability
+#     for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
+#         tag.decompose()
+#     # Keep title for context
+#     title = soup.title.get_text(strip=True) if soup.title else ""
+#     # Join paragraphs
+#     texts = [
+#         p.get_text(" ", strip=True)
+#         for p in soup.find_all(["p", "h1", "h2", "h3", "li", "figcaption"])
+#     ]
+#     body = "\n".join(t for t in texts if t)
+#     return (title + "\n\n" + body).strip()
 
 
 def describe_image(image: Image.Image) -> str:
@@ -323,7 +321,7 @@ class BaseAcquisitionAgent(BaseAgent):
 
     def _summarize_node(self, state: AcquisitionState) -> AcquisitionState:
         prompt = ChatPromptTemplate.from_template("""
-        You are a scientific assistant responsible for summarizing retrieved content in the context of this task: {context}
+        You are an assistant responsible for summarizing retrieved content in the context of this task: {context}
 
         Summarize the content below:
 
@@ -401,7 +399,7 @@ class BaseAcquisitionAgent(BaseAgent):
 
         {Summaries}
 
-        Provide a consolidated response to this task: {context}
+        Your task is to read all the summaries and provide a response to this task: {context}
         """)
         chain = prompt | self.llm | StrOutputParser()
 
@@ -476,7 +474,7 @@ class BaseAcquisitionAgent(BaseAgent):
 # ---------- Concrete: Web Search via ddgs ----------
 
 
-class WebSearchAgentGeneric(BaseAcquisitionAgent):
+class WebSearchAgent(BaseAcquisitionAgent):
     """
     Uses DuckDuckGo Search (ddgs) to find pages, downloads HTML or PDFs,
     extracts text, and then follows the same summarize/RAG path.
@@ -541,6 +539,7 @@ class WebSearchAgentGeneric(BaseAcquisitionAgent):
                 with open(local_path, "w", encoding="utf-8") as f:
                     f.write(html)
                 full_text = extract_main_text_only(html)
+                # full_text = _basic_readable_text_from_html(html)
         except Exception as e:
             full_text = f"[Error retrieving {url}: {e}]"
 
@@ -722,7 +721,7 @@ class OSTIAgent(BaseAcquisitionAgent):
 # ---------- (Optional) Refactor your ArxivAgent to reuse the parent ----------
 
 
-class ArxivAgentGeneric(BaseAcquisitionAgent):
+class ArxivAgent(BaseAcquisitionAgent):
     """
     Drop-in replacement for your existing ArxivAgent that reuses the generic flow.
     Keeps the same behaviors (download PDFs, image processing, summarization/RAG).
