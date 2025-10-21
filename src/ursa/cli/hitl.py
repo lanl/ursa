@@ -127,7 +127,7 @@ class HITL:
         self.chatter_state = {"messages": []}
         self.executor_state = {}
         self.planner_state = {}
-        self.websearcher_state = {}
+        self.websearcher_state = []
 
     def update_last_agent_result(self, result: str):
         self.last_agent_result = result
@@ -198,6 +198,9 @@ class HITL:
 
         return WebSearchAgent(
             llm=self.model,
+            max_results=10,
+            database_path="web_db",
+            summaries_path="web_summaries",
             checkpointer=self.websearcher_checkpointer,
             thread_id=self.thread_id + "_websearch",
         )
@@ -309,35 +312,20 @@ class HITL:
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
     def run_websearcher(self, prompt: str) -> str:
-        if self.websearcher_state:
-            self.websearcher_state["messages"].append(
-                HumanMessage(
-                    f"The last agent output was: {self.last_agent_result}\n"
-                    f"The user stated: {prompt}"
-                )
+        llm_search_query = self.model.invoke(
+            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
+        ).content
+        print("Searching Web for ", llm_search_query)
+        if isinstance(llm_search_query, str):
+            web_result = self.websearcher.invoke(
+                query=llm_search_query,
+                context=prompt,
             )
-            self.websearcher_state = self.websearcher.invoke(
-                self.websearcher_state,
-            )
-            self.update_last_agent_result(
-                self.websearcher_state["messages"][-1].content
-            )
+            self.websearcher_state.append(web_result)
+            self.update_last_agent_result(web_result)
+            return f"[WebSearch Agent Output]:\n {self.last_agent_result}"
         else:
-            self.websearcher_state = {
-                "messages": [
-                    HumanMessage(
-                        f"The last agent output was: {self.last_agent_result}\n"
-                        f"The user stated: {prompt}"
-                    )
-                ]
-            }
-            self.websearcher_state = self.websearcher.invoke(
-                self.websearcher_state,
-            )
-            self.update_last_agent_result(
-                self.websearcher_state["messages"][-1].content
-            )
-        return f"[Planner Agent Output]:\n {self.last_agent_result}"
+            raise RuntimeError("Unexpected error while running WebSearchAgent!")
 
 
 class UrsaRepl(Cmd):
