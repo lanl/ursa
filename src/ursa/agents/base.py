@@ -29,6 +29,7 @@ from typing import (
     final,
 )
 from uuid import uuid4
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.load import dumps
 from langchain_core.runnables import (
@@ -38,6 +39,7 @@ from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 from langchain_core.messages import HumanMessage
+
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
@@ -48,6 +50,19 @@ _INVOKE_DEPTH = ContextVar("_INVOKE_DEPTH", default=0)
 
 
 def _to_snake(s: str) -> str:
+    """Convert a string to snake_case format.
+    
+    This function transforms various string formats (CamelCase, PascalCase, etc.) into
+    snake_case. It handles special cases like acronyms at the beginning of strings
+    (e.g., "RAGAgent" becomes "rag_agent") and replaces hyphens and spaces with
+    underscores.
+    
+    Args:
+        s: The input string to convert to snake_case.
+    
+    Returns:
+        The snake_case version of the input string.
+    """
     s = re.sub(
         r"^([A-Z]{2,})([A-Z][a-z])",
         lambda m: m.group(1)[0] + m.group(1)[1:].lower() + m.group(2),
