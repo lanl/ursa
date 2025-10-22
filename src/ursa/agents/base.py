@@ -1,3 +1,20 @@
+"""Base agent class providing telemetry, configuration, and execution abstractions.
+
+This module defines the BaseAgent abstract class, which serves as the foundation for all
+agent implementations in the Ursa framework. It provides:
+
+- Standardized initialization with LLM configuration
+- Telemetry and metrics collection
+- Thread and checkpoint management
+- Input normalization and validation
+- Execution flow control with invoke/stream methods
+- Graph integration utilities for LangGraph compatibility
+- Runtime enforcement of the agent interface contract
+
+Agents built on this base class benefit from consistent behavior, observability, and
+integration capabilities while only needing to implement the core _invoke method.
+"""
+
 import re
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
@@ -12,7 +29,6 @@ from typing import (
     final,
 )
 from uuid import uuid4
-
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.load import dumps
 from langchain_core.runnables import (
@@ -21,10 +37,11 @@ from langchain_core.runnables import (
 from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
-
+from langchain_core.messages import HumanMessage
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
+
 
 InputLike = Union[str, Mapping[str, Any]]
 _INVOKE_DEPTH = ContextVar("_INVOKE_DEPTH", default=0)
@@ -70,7 +87,8 @@ class BaseAgent(ABC):
 
             case _:
                 raise TypeError(
-                    "llm argument must be a string with the provider and model, or a BaseChatModel instance."
+                    "llm argument must be a string with the provider and model, or a "
+                    "BaseChatModel instance."
                 )
 
         self.thread_id = thread_id or uuid4().hex
@@ -126,13 +144,6 @@ class BaseAgent(ABC):
                 "thread_id": self.thread_id,
                 "telemetry_run_id": self.telemetry.context.get("run_id"),
             },
-            # "configurable": {
-            #     "thread_id": getattr(self, "thread_id", "default")
-            # },
-            # "metadata": {
-            #     "thread_id": getattr(self, "thread_id", "default"),
-            #     "telemetry_run_id": self.telemetry.context.get("run_id"),
-            # },
             "tags": [self.name],
             "callbacks": self.telemetry.callbacks,
         }
@@ -210,7 +221,8 @@ class BaseAgent(ABC):
                 inputs = kw_inputs
                 kwargs = control_kwargs  # only control kwargs remain
 
-            # If both positional inputs and extra unknown kwargs-as-inputs are given, forbid merging
+            # If both positional inputs and extra unknown kwargs-as-inputs are given,
+            # forbid merging
             else:
                 # keep only control kwargs; anything else would be ambiguous
                 for k in kwargs.keys():
@@ -242,8 +254,6 @@ class BaseAgent(ABC):
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         if isinstance(inputs, str):
             # Adjust to your message type
-            from langchain_core.messages import HumanMessage
-
             return {"messages": [HumanMessage(content=inputs)]}
         if isinstance(inputs, Mapping):
             return inputs
@@ -261,9 +271,9 @@ class BaseAgent(ABC):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         if "invoke" in cls.__dict__:
-            raise TypeError(
-                f"{cls.__name__} must not override BaseAgent.invoke(); implement _invoke() only."
-            )
+            err_msg = (f"{cls.__name__} must not override BaseAgent.invoke(); "
+                       "implement _invoke() only.")
+            raise TypeError(err_msg)
 
     def stream(
         self,
@@ -312,33 +322,6 @@ class BaseAgent(ABC):
             "Override _stream(...) in your agent to enable it."
         )
 
-    # def run(
-    #     self,
-    #     *args,
-    #     raw_debug: bool = False,
-    #     save_json: bool | None = None,
-    #     metrics_path: str | None = None,
-    #     save_raw_snapshot: bool | None = None,
-    #     save_raw_records: bool | None = None,
-    #     **kwargs
-    # ):
-    #     try:
-    #         self.telemetry.begin_run(agent=self.name, thread_id=self.thread_id)
-    #         result = self._run_impl(*args, **kwargs)
-    #         return result
-    #     finally:
-    #         print(self.telemetry.render(
-    #             raw=raw_debug,
-    #             save_json=save_json,
-    #             filepath=metrics_path,
-    #             save_raw_snapshot=save_raw_snapshot,
-    #             save_raw_records=save_raw_records,
-    #         ))
-
-    # @abstractmethod
-    # def _run_impl(self, *args, **kwargs):
-    #     raise NotImplementedError("Agents must implement _run_impl")
-
     def _default_node_tags(
         self, name: str, extra: Sequence[str] | None = None
     ) -> list[str]:
@@ -356,11 +339,13 @@ class BaseAgent(ABC):
         )
 
     def _node_cfg(self, name: str, *extra_tags: str) -> dict:
-        """Build a consistent config for a node/runnable so we can reapply it after .map(), subgraph compile, etc."""
+        """Build a consistent config for a node/runnable so we can reapply it after
+        .map(), subgraph compile, etc.
+        """
         ns = extra_tags[0] if extra_tags else _to_snake(self.name)
         tags = [self.name, "graph", name, *extra_tags]
         return dict(
-            run_name="node",  # keep "node:" prefixing in the timer; don't fight Rich labels here
+            run_name="node",  # keep "node:" prefixing in the timer;
             tags=tags,
             metadata={
                 "langgraph_node": name,
@@ -370,8 +355,10 @@ class BaseAgent(ABC):
         )
 
     def ns(self, runnable_or_fn, name: str, *extra_tags: str):
-        """Return a runnable with our node config applied. Safe to call on callables or runnables.
-        IMPORTANT: call this AGAIN after .map() / subgraph .compile() (they often drop config)."""
+        """Return a runnable with our node config applied. Safe to call on callables or
+        runnables. IMPORTANT: call this AGAIN after .map() / subgraph .compile()
+        (they often drop config).
+        """
         r = self._as_runnable(runnable_or_fn)
         return r.with_config(**self._node_cfg(name, *extra_tags))
 
@@ -406,3 +393,4 @@ class BaseAgent(ABC):
                 "ursa_agent": self.name,
             },
         )
+
