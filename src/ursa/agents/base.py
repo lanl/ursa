@@ -74,8 +74,43 @@ def _to_snake(s: str) -> str:
 
 
 class BaseAgent(ABC):
-    # llm: BaseChatModel
-    # llm_with_tools: Runnable[LanguageModelInput, BaseMessage]
+    """Abstract base class for all agent implementations in the Ursa framework.
+    
+    BaseAgent provides a standardized foundation for building LLM-powered agents with
+    built-in telemetry, configuration management, and execution flow control. It handles
+    common tasks like input normalization, thread management, metrics collection, and
+    LangGraph integration.
+    
+    Subclasses only need to implement the _invoke method to define their core
+    functionality, while inheriting standardized invocation patterns, telemetry, and
+    graph integration capabilities. The class enforces a consistent interface through
+    runtime checks that prevent subclasses from overriding critical methods like
+    invoke().
+    
+    The agent supports both direct invocation with inputs and streaming responses, with
+    automatic tracking of token usage, execution time, and other metrics. It also
+    provides utilities for integrating with LangGraph through node wrapping and
+    configuration.
+    
+    To create a custom agent, inherit from this class and implement the _invoke method:
+    
+    ```python
+    class MyAgent(BaseAgent):
+        def _invoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
+            # Process inputs and return results
+            ...
+    ```
+    """
+
+    _TELEMETRY_KW = {
+        "raw_debug",
+        "save_json",
+        "metrics_path",
+        "save_raw_snapshot",
+        "save_raw_records",
+    }
+
+    _CONTROL_KW = {"config", "recursion_limit", "tags", "metadata", "callbacks"}
 
     def __init__(
         self,
@@ -87,6 +122,19 @@ class BaseAgent(ABC):
         thread_id: Optional[str] = None,
         **kwargs,
     ):
+        """Initializes the base agent with a language model and optional configurations.
+
+        Args:
+            llm: Either a string in the format "provider/model" or a BaseChatModel
+                 instance.
+            checkpointer: Optional checkpoint saver for persisting agent state.
+            enable_metrics: Whether to collect performance and usage metrics.
+            metrics_dir: Directory path where metrics will be saved.
+            autosave_metrics: Whether to automatically save metrics to disk.
+            thread_id: Unique identifier for this agent instance. Generated if not
+                       provided.
+            **kwargs: Additional keyword arguments passed to the LLM initialization.
+        """
         match llm:
             case BaseChatModel():
                 self.llm = llm
@@ -126,33 +174,59 @@ class BaseAgent(ABC):
         node_name: Optional[str] = None,
         agent_name: Optional[str] = None,
     ) -> StateGraph:
-        """Add node to graph.
-
-        This is used to track token usage and is simply the following.
-
-        ```python
-        _node_name = node_name or f.__name__
-        return graph.add_node(
-            _node_name, self._wrap_node(f, _node_name, self.name)
-        )
-        ```
+        """Add a node to the state graph with token usage tracking.
+        
+        This method adds a function as a node to the state graph, wrapping it to track
+        token usage during execution. The node is identified by either the provided
+        node_name or the function's name.
+        
+        Args:
+            graph: The StateGraph to add the node to.
+            f: The function to add as a node. Should return a mapping of string keys to
+                any values.
+            node_name: Optional name for the node. If not provided, the function's name
+                will be used.
+            agent_name: Optional agent name for tracking. If not provided, the agent's
+                name in snake_case will be used.
+                
+        Returns:
+            The updated StateGraph with the new node added.
         """
         _node_name = node_name or f.__name__
         _agent_name = agent_name or _to_snake(self.name)
         wrapped_node = self._wrap_node(f, _node_name, _agent_name)
+
         return graph.add_node(_node_name, wrapped_node)
 
-    def write_state(self, filename, state):
+    def write_state(self, filename: str, state: dict) -> None:
+        """Writes agent state to a JSON file.
+        
+        Serializes the provided state dictionary to JSON format and writes it to the
+        specified file. The JSON is written with non-ASCII characters preserved.
+        
+        Args:
+            filename: Path to the file where state will be written.
+            state: Dictionary containing the agent state to be serialized.
+        """
         json_state = dumps(state, ensure_ascii=False)
         with open(filename, "w") as f:
             f.write(json_state)
 
-    # BaseAgent
     def build_config(self, **overrides) -> dict:
+        """Constructs a config dictionary for agent operations with telemetry support.
+        
+        This method creates a standardized configuration dictionary that includes thread
+        identification, telemetry callbacks, and other metadata needed for agent
+        operations. The configuration can be customized through override parameters.
+        
+        Args:
+            **overrides: Optional configuration overrides that can include keys like
+                'recursion_limit', 'configurable', 'metadata', 'tags', etc.
+                
+        Returns:
+            dict: A complete configuration dictionary with all necessary parameters.
         """
-        Build a config dict that includes telemetry callbacks and the thread_id.
-        You can pass overrides like recursion_limit=..., configurable={...}, etc.
-        """
+        # Create the base configuration with essential fields.
         base = {
             "configurable": {"thread_id": self.thread_id},
             "metadata": {
@@ -162,45 +236,36 @@ class BaseAgent(ABC):
             "tags": [self.name],
             "callbacks": self.telemetry.callbacks,
         }
-        # include model name when we can
+
+        # Try to determine the model name from either direct or nested attributes
         model_name = getattr(self, "llm_model", None) or getattr(
             getattr(self, "llm", None), "model", None
         )
+
+        # Add model name to metadata if available
         if model_name:
             base["metadata"]["model"] = model_name
 
+        # Handle configurable dictionary overrides by merging with base configurable
         if "configurable" in overrides and isinstance(
             overrides["configurable"], dict
         ):
             base["configurable"].update(overrides.pop("configurable"))
+            
+        # Handle metadata dictionary overrides by merging with base metadata
         if "metadata" in overrides and isinstance(overrides["metadata"], dict):
-            base["metadata"].update(overrides.pop("metadata"))
-        # merge tags if caller provides them
+            base["metadata"].update(overrides.pop("metadata"))        
+
+        # Merge tags from caller-provided overrides, avoid duplicates
         if "tags" in overrides and isinstance(overrides["tags"], list):
             base["tags"] = base["tags"] + [
                 t for t in overrides.pop("tags") if t not in base["tags"]
             ]
-        base.update(overrides)
-        return base
 
-    # agents will invoke like this:
-    # planning_output = planner.invoke(
-    #     {"messages": [HumanMessage(content=problem)]},
-    #     config={
-    #         "recursion_limit": 999_999,
-    #         "configurable": {"thread_id": planner.thread_id},
-    #     },
-    # )
-    # they can also, separately, override these defaults about metrics
-    # keys that are NOT inputs; they should not be folded into the inputs mapping
-    _TELEMETRY_KW = {
-        "raw_debug",
-        "save_json",
-        "metrics_path",
-        "save_raw_snapshot",
-        "save_raw_records",
-    }
-    _CONTROL_KW = {"config", "recursion_limit", "tags", "metadata", "callbacks"}
+        # Apply any remaining overrides directly to the base configuration
+        base.update(overrides)
+
+        return base
 
     @final
     def invoke(
