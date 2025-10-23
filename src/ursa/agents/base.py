@@ -32,18 +32,17 @@ from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.load import dumps
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import (
     RunnableLambda,
 )
 from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
-from langchain_core.messages import HumanMessage
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
-
 
 InputLike = Union[str, Mapping[str, Any]]
 _INVOKE_DEPTH = ContextVar("_INVOKE_DEPTH", default=0)
