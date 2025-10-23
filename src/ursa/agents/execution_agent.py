@@ -1,3 +1,29 @@
+"""Execution agent that builds a tool-enabled state graph to autonomously run tasks.
+
+This module implements ExecutionAgent, a LangGraph-based agent that executes user
+instructions by invoking LLM tool calls and coordinating a controlled workflow.
+
+Key features:
+- Workspace management with optional symlinking for external sources.
+- Safety-checked shell execution via run_cmd with output size budgeting.
+- Code authoring and edits through write_code and edit_code with rich previews.
+- Web search capability through DuckDuckGoSearchResults.
+- Summarization of the session and optional memory logging.
+- Configurable graph with nodes for agent, safety_check, action, and summarize.
+
+Implementation notes:
+- LLM prompts are sourced from prompt_library.execution_prompts.
+- Outputs from subprocess are trimmed under MAX_TOOL_MSG_CHARS to fit tool messages.
+- The agent uses ToolNode and LangGraph StateGraph to loop until no tool calls remain.
+- Safety gates block unsafe shell commands and surface the rationale to the user.
+
+Environment:
+- MAX_TOOL_MSG_CHARS caps combined stdout/stderr in tool responses.
+
+Entry points:
+- ExecutionAgent._invoke(...) runs the compiled graph.
+- main() shows a minimal demo that writes and runs a script.
+"""
 import os
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
