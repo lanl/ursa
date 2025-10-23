@@ -80,6 +80,7 @@ BOLD = "\033[1m"
 # that in their env, or maybe we could pull this out of the LLM parameters
 MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "50000"))
 
+# Set a search tool.
 search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 # search_tool = TavilySearchResults(
 #                   max_results=10,
@@ -108,8 +109,17 @@ class ExecutionState(TypedDict):
 
 # Helper functions
 def _strip_fences(snippet: str) -> str:
-    """
-    Remove leading markdown ``` fence
+    """Remove markdown fences from a code snippet.
+
+    This function strips leading triple backticks and any language
+    identifiers from a markdown-formatted code snippet and returns
+    only the contained code.
+
+    Args:
+        snippet: The markdown-formatted code snippet.
+
+    Returns:
+        The snippet content without leading markdown fences.
     """
     if "```" not in snippet:
         return snippet
@@ -123,6 +133,16 @@ def _strip_fences(snippet: str) -> str:
 
 
 def _snip_text(text: str, max_chars: int) -> tuple[str, bool]:
+    """Truncate text to a maximum length and indicate if truncation occurred.
+
+    Args:
+        text: The original text to potentially truncate.
+        max_chars: The maximum characters allowed in the output.
+
+    Returns:
+        A tuple of (possibly truncated text, boolean flag indicating
+        if truncation occurred).
+    """
     if text is None:
         return "", False
     if max_chars <= 0:
@@ -140,6 +160,16 @@ def _snip_text(text: str, max_chars: int) -> tuple[str, bool]:
 
 
 def _fit_streams_to_budget(stdout: str, stderr: str, total_budget: int):
+    """Allocate and truncate stdout and stderr to fit a total character budget.
+
+    Args:
+        stdout: The original stdout string.
+        stderr: The original stderr string.
+        total_budget: The combined character budget for stdout and stderr.
+
+    Returns:
+        A tuple of (possibly truncated stdout, possibly truncated stderr).
+    """
     label_overhead = len("STDOUT:\n") + len("\nSTDERR:\n")
     budget = max(0, total_budget - label_overhead)
 
@@ -152,11 +182,20 @@ def _fit_streams_to_budget(stdout: str, stderr: str, total_budget: int):
 
     stdout_snip, _ = _snip_text(stdout, stdout_budget)
     stderr_snip, _ = _snip_text(stderr, stderr_budget)
+
     return stdout_snip, stderr_snip
 
 
-# Define the function that determines whether to continue or not
 def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
+    """Return 'summarize' if no tool calls in the last message, else 'continue'.
+
+    Args:
+        state: The current execution state containing messages.
+
+    Returns:
+        A literal "summarize" if the last message has no tool calls,
+        otherwise "continue".
+    """
     messages = state["messages"]
     last_message = messages[-1]
     # If there is no tool call, then we finish
@@ -167,12 +206,15 @@ def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
         return "continue"
 
 
-# Define the function that determines whether to continue or not
 def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
-    """
-    Return graph edge "safe" if the last command was safe, otherwise return edge "unsafe"
-    """
+    """Return 'safe' if the last command was safe, otherwise 'unsafe'.
 
+    Args:
+        state: The current execution state containing messages and tool calls.
+    Returns:
+        A literal "safe" if no '[UNSAFE]' tags are in the last command,
+        otherwise "unsafe".
+    """
     index = -1
     message = state["messages"][index]
     # Loop through all the consecutive tool messages in reverse order
@@ -189,13 +231,23 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
 # Tools for ExecutionAgent
 @tool
 def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
-    """
-    Run a commandline command from using the subprocess package in python
+    """Execute a shell command in the workspace and return its combined output.
+
+    Runs the specified command using subprocess.run in the given workspace
+    directory, captures stdout and stderr, enforces a maximum character budget,
+    and formats both streams into a single string. KeyboardInterrupt during
+    execution is caught and reported.
 
     Args:
-        query: commandline command to be run as a string given to the subprocess.run command.
+        query: The shell command to execute.
+        state: A dict with injected state; must include the 'workspace' path.
+
+    Returns:
+        A formatted string with "STDOUT:" followed by the truncated stdout and
+        "STDERR:" followed by the truncated stderr.
     """
     workspace_dir = state["workspace"]
+
     print("RUNNING: ", query)
     try:
         result = subprocess.run(
@@ -229,22 +281,26 @@ def write_code(
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[dict, InjectedState],
 ) -> Command:
-    """Write *code* to *filename*.
+    """Write source code to a file and update the agent’s workspace state.
 
     Args:
-        code: Source code as a string.
-        filename: Target filename (including extension).
+        code: The source code content to be written to disk.
+        filename: Name of the target file (including its extension).
+        tool_call_id: Identifier for this tool invocation.
+        state: Agent state dict holding workspace path and file list.
 
     Returns:
-        Success / failure message.
+        Command: Contains an updated state (including code_files) and
+        a ToolMessage acknowledging success or failure.
     """
+    # Determine the full path to the target file
     workspace_dir = state["workspace"]
     console.print("[cyan]Writing file:[/]", filename)
 
-    # Clean up markdown fences
+    # Clean up markdown fences on submitted code.
     code = _strip_fences(code)
 
-    # Syntax-highlighted preview
+    # Show syntax-highlighted preview before writing to file
     try:
         lexer_name = Syntax.guess_lexer(filename, code)
     except Exception:
@@ -258,6 +314,7 @@ def write_code(
         )
     )
 
+    # Write cleaned code to disk
     code_file = os.path.join(workspace_dir, filename)
     try:
         with open(code_file, "w", encoding="utf-8") as f:
@@ -275,11 +332,11 @@ def write_code(
         f"[green]File written:[/] {code_file}"
     )
 
-    # Append the file to the list in state
+    # Append the file to the list in agent's state for later reference
     file_list = state.get("code_files", [])
     file_list.append(filename)
 
-    # Create a tool message to send back
+    # Create a tool message to send back to acknowledge success.
     msg = ToolMessage(
         content=f"File {filename} written successfully.",
         tool_call_id=tool_call_id,
@@ -627,7 +684,6 @@ class ExecutionAgent(BaseAgent):
         graph.set_finish_point("summarize")
 
         return graph.compile(checkpointer=self.checkpointer)
-        # self.action.get_graph().draw_mermaid_png(output_file_path="execution_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
