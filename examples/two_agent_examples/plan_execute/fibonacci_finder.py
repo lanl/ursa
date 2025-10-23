@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
@@ -36,7 +36,7 @@ problem = (
 
 
 # Init the model
-model = ChatLiteLLM(model="openai/o3")
+model = ChatOpenAI(model="o3")
 
 # Setup checkpointing
 db_path = Path(workspace) / "checkpoint.db"
