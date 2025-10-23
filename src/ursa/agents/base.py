@@ -50,15 +50,15 @@ _INVOKE_DEPTH = ContextVar("_INVOKE_DEPTH", default=0)
 
 def _to_snake(s: str) -> str:
     """Convert a string to snake_case format.
-    
+
     This function transforms various string formats (CamelCase, PascalCase, etc.) into
     snake_case. It handles special cases like acronyms at the beginning of strings
     (e.g., "RAGAgent" becomes "rag_agent") and replaces hyphens and spaces with
     underscores.
-    
+
     Args:
         s: The input string to convert to snake_case.
-    
+
     Returns:
         The snake_case version of the input string.
     """
@@ -74,23 +74,23 @@ def _to_snake(s: str) -> str:
 
 class BaseAgent(ABC):
     """Abstract base class for all agent implementations in the Ursa framework.
-    
+
     BaseAgent provides a standardized foundation for building LLM-powered agents with
     built-in telemetry, configuration management, and execution flow control. It handles
     common tasks like input normalization, thread management, metrics collection, and
     LangGraph integration.
-    
+
     Subclasses only need to implement the _invoke method to define their core
     functionality, while inheriting standardized invocation patterns, telemetry, and
     graph integration capabilities. The class enforces a consistent interface through
     runtime checks that prevent subclasses from overriding critical methods like
     invoke().
-    
+
     The agent supports both direct invocation with inputs and streaming responses, with
     automatic tracking of token usage, execution time, and other metrics. It also
     provides utilities for integrating with LangGraph through node wrapping and
     configuration.
-    
+
     Subclass Inheritance Guidelines:
         - Must Override: _invoke() - Define your agent's core functionality
         - Can Override: _stream() - Enable streaming support
@@ -102,7 +102,7 @@ class BaseAgent(ABC):
                           Other public methods (build_config, write_state, add_node)
 
     To create a custom agent, inherit from this class and implement the _invoke method:
-    
+
     ```python
     class MyAgent(BaseAgent):
         def _invoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
@@ -184,11 +184,11 @@ class BaseAgent(ABC):
         agent_name: Optional[str] = None,
     ) -> StateGraph:
         """Add a node to the state graph with token usage tracking.
-        
+
         This method adds a function as a node to the state graph, wrapping it to track
         token usage during execution. The node is identified by either the provided
         node_name or the function's name.
-        
+
         Args:
             graph: The StateGraph to add the node to.
             f: The function to add as a node. Should return a mapping of string keys to
@@ -197,7 +197,7 @@ class BaseAgent(ABC):
                 will be used.
             agent_name: Optional agent name for tracking. If not provided, the agent's
                 name in snake_case will be used.
-                
+
         Returns:
             The updated StateGraph with the new node added.
         """
@@ -209,10 +209,10 @@ class BaseAgent(ABC):
 
     def write_state(self, filename: str, state: dict) -> None:
         """Writes agent state to a JSON file.
-        
+
         Serializes the provided state dictionary to JSON format and writes it to the
         specified file. The JSON is written with non-ASCII characters preserved.
-        
+
         Args:
             filename: Path to the file where state will be written.
             state: Dictionary containing the agent state to be serialized.
@@ -223,15 +223,15 @@ class BaseAgent(ABC):
 
     def build_config(self, **overrides) -> dict:
         """Constructs a config dictionary for agent operations with telemetry support.
-        
+
         This method creates a standardized configuration dictionary that includes thread
         identification, telemetry callbacks, and other metadata needed for agent
         operations. The configuration can be customized through override parameters.
-        
+
         Args:
             **overrides: Optional configuration overrides that can include keys like
                 'recursion_limit', 'configurable', 'metadata', 'tags', etc.
-                
+
         Returns:
             dict: A complete configuration dictionary with all necessary parameters.
         """
@@ -260,10 +260,10 @@ class BaseAgent(ABC):
             overrides["configurable"], dict
         ):
             base["configurable"].update(overrides.pop("configurable"))
-            
+
         # Handle metadata dictionary overrides by merging with base metadata
         if "metadata" in overrides and isinstance(overrides["metadata"], dict):
-            base["metadata"].update(overrides.pop("metadata"))        
+            base["metadata"].update(overrides.pop("metadata"))
 
         # Merge tags from caller-provided overrides, avoid duplicates
         if "tags" in overrides and isinstance(overrides["tags"], list):
@@ -282,7 +282,7 @@ class BaseAgent(ABC):
     def invoke(
         self,
         inputs: Optional[InputLike] = None,
-        /,  
+        /,
         *,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
@@ -293,11 +293,11 @@ class BaseAgent(ABC):
         **kwargs: Any,
     ) -> Any:
         """Executes the agent with the provided inputs and configuration.
-        
+
         This is the main entry point for agent execution. It handles input normalization,
         telemetry tracking, and proper execution context management. The method supports
         flexible input formats - either as a positional argument or as keyword arguments.
-        
+
         Args:
             inputs: Optional positional input to the agent. If provided, all non-control
                 keyword arguments will be rejected to avoid ambiguity.
@@ -310,10 +310,10 @@ class BaseAgent(ABC):
             **kwargs: Additional keyword arguments that can be either:
                 - Input parameters (when no positional input is provided)
                 - Control parameters recognized by the agent
-        
+
         Returns:
             The result of the agent's execution.
-            
+
         Raises:
             TypeError: If both positional inputs and non-control keyword arguments are
                 provided simultaneously.
@@ -339,7 +339,7 @@ class BaseAgent(ABC):
                     else:
                         kw_inputs[k] = v
                 inputs = kw_inputs
-                
+
                 # Only control kwargs remain for further processing
                 kwargs = control_kwargs
 
@@ -365,7 +365,7 @@ class BaseAgent(ABC):
             # Clean up the invocation depth tracking
             new_depth = _INVOKE_DEPTH.get() - 1
             _INVOKE_DEPTH.set(new_depth)
-            
+
             # For the top-level invocation, finalize telemetry and generate outputs
             if new_depth == 0:
                 self.telemetry.render(
@@ -378,19 +378,19 @@ class BaseAgent(ABC):
 
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         """Normalizes various input formats into a standardized mapping.
-        
+
         This method converts different input types into a consistent dictionary format
         that can be processed by the agent. String inputs are wrapped as messages, while
         mappings are passed through unchanged.
-        
+
         Args:
             inputs: The input to normalize. Can be a string (which will be converted to a
                 message) or a mapping (which will be returned as-is).
-                
+
         Returns:
             A mapping containing the normalized inputs, with keys appropriate for agent
             processing.
-            
+
         Raises:
             TypeError: If the input type is not supported (neither string nor mapping).
         """
@@ -415,8 +415,10 @@ class BaseAgent(ABC):
         """Ensure subclass does not override key method."""
         super().__init_subclass__(**kwargs)
         if "invoke" in cls.__dict__:
-            err_msg = (f"{cls.__name__} must not override BaseAgent.invoke(); "
-                       "implement _invoke() only.")
+            err_msg = (
+                f"{cls.__name__} must not override BaseAgent.invoke(); "
+                "implement _invoke() only."
+            )
             raise TypeError(err_msg)
 
     def stream(
@@ -433,11 +435,11 @@ class BaseAgent(ABC):
         **kwargs: Any,
     ) -> Iterator[Any]:
         """Streams agent responses with telemetry tracking.
-        
+
         This method serves as the public streaming entry point for agent interactions.
         It wraps the actual streaming implementation with telemetry tracking to capture
         metrics and debugging information.
-        
+
         Args:
             inputs: The input to process, which will be normalized internally.
             config: Optional configuration for the agent, compatible with LangGraph
@@ -449,10 +451,10 @@ class BaseAgent(ABC):
             save_raw_records: If True, saves raw record data in telemetry.
             **kwargs: Additional keyword arguments passed to the streaming
                 implementation.
-            
+
         Returns:
             An iterator yielding the agent's responses.
-            
+
         Note:
             This method tracks invocation depth to properly handle nested agent calls
             and ensure telemetry is only rendered once at the top level.
@@ -460,23 +462,23 @@ class BaseAgent(ABC):
         # Track invocation depth to handle nested agent calls
         depth = _INVOKE_DEPTH.get()
         _INVOKE_DEPTH.set(depth + 1)
-        
+
         try:
             # Start telemetry tracking for top-level invocations only
             if depth == 0:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
-                
+
             # Normalize inputs and delegate to the actual streaming implementation
             normalized = self._normalize_inputs(inputs)
             yield from self._stream(normalized, config=config, **kwargs)
-            
+
         finally:
             # Decrement invocation depth when exiting
             new_depth = _INVOKE_DEPTH.get() - 1
             _INVOKE_DEPTH.set(new_depth)
-            
+
             # Render telemetry data only for top-level invocations
             if new_depth == 0:
                 self.telemetry.render(
@@ -515,11 +517,11 @@ class BaseAgent(ABC):
         """
         # Start with standard tags: agent name, graph indicator, and node name
         tags = [self.name, "graph", name]
-        
+
         # Add any extra tags if provided
         if extra:
             tags.extend(extra)
-            
+
         return tags
 
     def _as_runnable(self, fn: Any):
@@ -557,10 +559,10 @@ class BaseAgent(ABC):
         # Determine the namespace - use first extra tag if available, otherwise
         # convert agent name to snake_case
         ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-        
+
         # Combine all tags: agent name, graph indicator, node name, and any extra tags
         tags = [self.name, "graph", name, *extra_tags]
-        
+
         # Return the complete configuration dictionary
         return dict(
             run_name="node",  # keep "node:" prefixing in the timer
@@ -574,16 +576,16 @@ class BaseAgent(ABC):
 
     def ns(self, runnable_or_fn, name: str, *extra_tags: str):
         """Return a runnable with node configuration applied.
-        
+
         Applies the agent's node configuration to a runnable or callable. This method
         should be called again after operations like .map() or subgraph .compile() as
         these operations may drop configuration.
-        
+
         Args:
             runnable_or_fn: A runnable or callable to configure.
             name: The name to assign to this node.
             *extra_tags: Additional tags to apply to the node.
-            
+
         Returns:
             A configured runnable with the agent's node configuration applied.
         """
@@ -594,14 +596,14 @@ class BaseAgent(ABC):
 
     def _wrap_node(self, fn_or_runnable, name: str, *extra_tags: str):
         """Wrap a function or runnable as a node in the graph.
-        
+
         This is a convenience wrapper around the ns() method.
-        
+
         Args:
             fn_or_runnable: A function or runnable to wrap as a node.
             name: The name to assign to this node.
             *extra_tags: Additional tags to apply to the node.
-            
+
         Returns:
             A configured runnable with the agent's node configuration applied.
         """
@@ -609,20 +611,20 @@ class BaseAgent(ABC):
 
     def _wrap_cond(self, fn: Any, name: str, *extra_tags: str):
         """Wrap a conditional function as a routing node in the graph.
-        
+
         Creates a runnable lambda with routing-specific configuration.
-        
+
         Args:
             fn: The conditional function to wrap.
             name: The name of the routing node.
             *extra_tags: Additional tags to apply to the node.
-            
+
         Returns:
             A configured RunnableLambda with routing-specific metadata.
         """
         # Use the first extra tag as namespace, or fall back to agent name in snake_case
         ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-        
+
         # Create and return a configured RunnableLambda for routing
         return RunnableLambda(fn).with_config(
             run_name="node",
@@ -641,20 +643,20 @@ class BaseAgent(ABC):
 
     def _named(self, runnable: Any, name: str, *extra_tags: str):
         """Apply a specific name and configuration to a runnable.
-        
+
         Configures a runnable with a specific name and the agent's metadata.
-        
+
         Args:
             runnable: The runnable to configure.
             name: The name to assign to this runnable.
             *extra_tags: Additional tags to apply to the runnable.
-            
+
         Returns:
             A configured runnable with the specified name and agent metadata.
         """
         # Use the first extra tag as namespace, or fall back to agent name in snake_case
         ns = extra_tags[0] if extra_tags else _to_snake(self.name)
-        
+
         # Apply configuration and return the configured runnable
         return runnable.with_config(
             run_name=name,
@@ -665,5 +667,3 @@ class BaseAgent(ABC):
                 "ursa_agent": self.name,
             },
         )
-
-
