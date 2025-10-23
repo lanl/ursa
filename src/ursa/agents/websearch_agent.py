@@ -46,7 +46,7 @@ class WebSearchState(TypedDict):
 # all the tokens of all the sources.
 
 
-class WebSearchAgent(BaseAgent):
+class WebSearchAgentLegacy(BaseAgent):
     def __init__(
         self, llm: str | BaseChatModel = "openai/gpt-4o-mini", **kwargs
     ):
@@ -204,7 +204,7 @@ def main():
     model = ChatOpenAI(
         model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
     )
-    websearcher = WebSearchAgent(llm=model)
+    websearcher = WebSearchAgentLegacy(llm=model)
     problem_string = "Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?"
     inputs = {
         "messages": [HumanMessage(content=problem_string)],

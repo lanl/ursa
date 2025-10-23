@@ -19,6 +19,7 @@ from typer import Typer
 
 from ursa.agents import (
     ArxivAgent,
+    ChatAgent,
     ExecutionAgent,
     PlanningAgent,
     RecallAgent,
@@ -63,6 +64,7 @@ class HITL:
     emb_base_url: str
     emb_api_key: Optional[str]
     share_key: bool
+    thread_id: str
     arxiv_summarize: bool
     arxiv_process_images: bool
     arxiv_max_results: int
@@ -122,9 +124,10 @@ class HITL:
 
         self.last_agent_result = ""
         self.arxiv_state = []
+        self.chatter_state = {"messages": []}
         self.executor_state = {}
         self.planner_state = {}
-        self.websearcher_state = {}
+        self.websearcher_state = []
 
     def update_last_agent_result(self, result: str):
         self.last_agent_result = result
@@ -150,8 +153,20 @@ class HITL:
         )
 
     @cached_property
+    def chatter(self) -> ChatAgent:
+        edb_path = self.workspace / "checkpoint.db"
+        edb_path.parent.mkdir(parents=True, exist_ok=True)
+        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
+        self.chatter_checkpointer = SqliteSaver(econn)
+        return ChatAgent(
+            llm=self.model,
+            checkpointer=self.chatter_checkpointer,
+            thread_id=self.thread_id + "_chatter",
+        )
+
+    @cached_property
     def executor(self) -> ExecutionAgent:
-        edb_path = self.workspace / "executor_checkpoint.db"
+        edb_path = self.workspace / "checkpoint.db"
         edb_path.parent.mkdir(parents=True, exist_ok=True)
         econn = sqlite3.connect(str(edb_path), check_same_thread=False)
         self.executor_checkpointer = SqliteSaver(econn)
@@ -159,29 +174,35 @@ class HITL:
             llm=self.model,
             checkpointer=self.executor_checkpointer,
             agent_memory=self.memory,
+            thread_id=self.thread_id + "_executor",
         )
 
     @cached_property
     def planner(self) -> PlanningAgent:
-        pdb_path = Path(self.workspace) / "planner_checkpoint.db"
+        pdb_path = Path(self.workspace) / "checkpoint.db"
         pdb_path.parent.mkdir(parents=True, exist_ok=True)
         pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
         self.planner_checkpointer = SqliteSaver(pconn)
         return PlanningAgent(
             llm=self.model,
             checkpointer=self.planner_checkpointer,
+            thread_id=self.thread_id + "_planner",
         )
 
     @cached_property
     def websearcher(self) -> WebSearchAgent:
-        rdb_path = Path(self.workspace) / "websearcher_checkpoint.db"
+        rdb_path = Path(self.workspace) / "checkpoint.db"
         rdb_path.parent.mkdir(parents=True, exist_ok=True)
         rconn = sqlite3.connect(str(rdb_path), check_same_thread=False)
         self.websearcher_checkpointer = SqliteSaver(rconn)
 
         return WebSearchAgent(
             llm=self.model,
+            max_results=10,
+            database_path="web_db",
+            summaries_path="web_summaries",
             checkpointer=self.websearcher_checkpointer,
+            thread_id=self.thread_id + "_websearch",
         )
 
     @cached_property
@@ -249,13 +270,19 @@ class HITL:
         return f"[Rememberer Output]:\n {memory_output}"
 
     def run_chatter(self, prompt: str) -> str:
-        chat_output = self.model.invoke(
-            f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
+        self.chatter_state["messages"].append(
+            HumanMessage(
+                content=f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
+            )
         )
+        self.chatter_state = self.chatter.invoke(
+            self.chatter_state,
+        )
+        chat_output = self.chatter_state["messages"][-1]
 
         if not isinstance(chat_output.content, str):
             raise TypeError(
-                f"chat_output is not a str! Instead, it is: {chat_output}."
+                f"chat_output is not a str! Instead, it is: {type(chat_output.content)}."
             )
 
         self.update_last_agent_result(chat_output.content)
@@ -285,35 +312,20 @@ class HITL:
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
     def run_websearcher(self, prompt: str) -> str:
-        if self.websearcher_state:
-            self.websearcher_state["messages"].append(
-                HumanMessage(
-                    f"The last agent output was: {self.last_agent_result}\n"
-                    f"The user stated: {prompt}"
-                )
+        llm_search_query = self.model.invoke(
+            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
+        ).content
+        print("Searching Web for ", llm_search_query)
+        if isinstance(llm_search_query, str):
+            web_result = self.websearcher.invoke(
+                query=llm_search_query,
+                context=prompt,
             )
-            self.websearcher_state = self.websearcher.invoke(
-                self.websearcher_state,
-            )
-            self.update_last_agent_result(
-                self.websearcher_state["messages"][-1].content
-            )
+            self.websearcher_state.append(web_result)
+            self.update_last_agent_result(web_result)
+            return f"[WebSearch Agent Output]:\n {self.last_agent_result}"
         else:
-            self.websearcher_state = {
-                "messages": [
-                    HumanMessage(
-                        f"The last agent output was: {self.last_agent_result}\n"
-                        f"The user stated: {prompt}"
-                    )
-                ]
-            }
-            self.websearcher_state = self.websearcher.invoke(
-                self.websearcher_state,
-            )
-            self.update_last_agent_result(
-                self.websearcher_state["messages"][-1].content
-            )
-        return f"[Planner Agent Output]:\n {self.last_agent_result}"
+            raise RuntimeError("Unexpected error while running WebSearchAgent!")
 
 
 class UrsaRepl(Cmd):

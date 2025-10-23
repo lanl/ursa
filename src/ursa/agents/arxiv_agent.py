@@ -119,7 +119,7 @@ def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
 
 
-class ArxivAgent(BaseAgent):
+class ArxivAgentLegacy(BaseAgent):
     def __init__(
         self,
         llm: str | BaseChatModel = "openai/o3-mini",

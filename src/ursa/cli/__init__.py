@@ -12,7 +12,7 @@ app = Typer()
 def run(
     workspace: Annotated[
         Path, Option(help="Directory to store ursa ouput")
-    ] = Path(".ursa"),
+    ] = Path("ursa_workspace"),
     llm_model_name: Annotated[
         str,
         Option(
@@ -48,6 +48,9 @@ def run(
             )
         ),
     ] = False,
+    thread_id: Annotated[
+        str, Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID")
+    ] = "ursa_cli",
     arxiv_summarize: Annotated[
         bool,
         Option(
@@ -104,6 +107,7 @@ def run(
         emb_base_url=emb_base_url,
         emb_api_key=emb_api_key,
         share_key=share_key,
+        thread_id=thread_id,
         arxiv_summarize=arxiv_summarize,
         arxiv_process_images=arxiv_process_images,
         arxiv_max_results=arxiv_max_results,
