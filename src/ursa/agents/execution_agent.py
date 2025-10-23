@@ -74,7 +74,31 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 
 
+# Global variables for the module.
+
+# Set a limit for message characters - the user could overload
+# that in their env, or maybe we could pull this out of the LLM parameters
+MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "50000"))
+
+search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
+# search_tool = TavilySearchResults(
+#                   max_results=10,
+#                   search_depth="advanced",
+#                   include_answer=True)
+
+
+# Classes for typing
 class ExecutionState(TypedDict):
+    """TypedDict representing the execution agent's mutable run state used by nodes.
+
+    Fields:
+    - messages: list of messages (System/Human/AI/Tool) with add_messages metadata.
+    - current_progress: short status string describing agent progress.
+    - code_files: list of filenames created or edited in the workspace.
+    - workspace: path to the working directory where files and commands run.
+    - symlinkdir: optional dict describing a symlink operation (source, dest,
+      is_linked).
+    """
     messages: Annotated[list, add_messages]
     current_progress: str
     code_files: list[str]
@@ -82,217 +106,20 @@ class ExecutionState(TypedDict):
     symlinkdir: dict
 
 
-class ExecutionAgent(BaseAgent):
-    def __init__(
-        self,
-        llm: str | BaseChatModel = "openai/gpt-4o-mini",
-        agent_memory: Optional[Any | AgentMemory] = None,
-        log_state: bool = False,
-        **kwargs,
-    ):
-        super().__init__(llm, **kwargs)
-        self.agent_memory = agent_memory
-        self.safety_prompt = safety_prompt
-        self.executor_prompt = executor_prompt
-        self.summarize_prompt = summarize_prompt
-        self.tools = [run_cmd, write_code, edit_code, search_tool]
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
-        self.log_state = log_state
+# Helper functions
+def _strip_fences(snippet: str) -> str:
+    """
+    Remove leading markdown ``` fence
+    """
+    if "```" not in snippet:
+        return snippet
 
-        self._action = self._build_graph()
+    parts = snippet.split("```")
+    if len(parts) < 3:
+        return snippet
 
-    # Define the function that calls the model
-    def query_executor(self, state: ExecutionState) -> ExecutionState:
-        new_state = state.copy()
-        if "workspace" not in new_state.keys():
-            new_state["workspace"] = randomname.get_name()
-            print(
-                f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
-            )
-        os.makedirs(new_state["workspace"], exist_ok=True)
-
-        # code related to symlink
-        sd = new_state.get("symlinkdir")
-        if isinstance(sd, dict) and "is_linked" not in sd:
-            # symlinkdir = {"source": "foo", "dest": "bar"}
-            symlinkdir = new_state["symlinkdir"]
-            # user provided a symlinkdir key - let's do the linking!
-
-            src = Path(symlinkdir["source"]).expanduser().resolve()
-            workspace_root = Path(new_state["workspace"]).expanduser().resolve()
-            dst = workspace_root / symlinkdir["dest"]  # prepend workspace
-
-            # if you want to replace an existing link/file, unlink it first
-            if dst.exists() or dst.is_symlink():
-                dst.unlink()
-
-            # create parent dirs for the link location if they don’t exist
-            dst.parent.mkdir(parents=True, exist_ok=True)
-
-            # actually make the link (tell pathlib it’s a directory target)
-            dst.symlink_to(src, target_is_directory=src.is_dir())
-            print(f"{RED}Symlinked {src} (source) --> {dst} (dest)")
-            # note that we've done the symlink now, so don't need to do it later
-            new_state["symlinkdir"]["is_linked"] = True
-
-        if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(
-                content=self.executor_prompt
-            )
-        else:
-            new_state["messages"] = [
-                SystemMessage(content=self.executor_prompt)
-            ] + state["messages"]
-        try:
-            response = self.llm.invoke(
-                new_state["messages"], self.build_config(tags=["agent"])
-            )
-        except ContentPolicyViolationError as e:
-            print("Error: ", e, " ", new_state["messages"][-1].content)
-        if self.log_state:
-            self.write_state("execution_agent.json", new_state)
-        return {"messages": [response], "workspace": new_state["workspace"]}
-
-    # Define the function that calls the model
-    def summarize(self, state: ExecutionState) -> ExecutionState:
-        messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
-        try:
-            response = self.llm.invoke(
-                messages, self.build_config(tags=["summarize"])
-            )
-        except ContentPolicyViolationError as e:
-            print("Error: ", e, " ", messages[-1].content)
-        if self.agent_memory:
-            memories = []
-            # Handle looping through the messages
-            for x in state["messages"]:
-                if not isinstance(x, AIMessage):
-                    memories.append(x.content)
-                elif not x.tool_calls:
-                    memories.append(x.content)
-                else:
-                    tool_strings = []
-                    for tool in x.tool_calls:
-                        tool_name = "Tool Name: " + tool["name"]
-                        tool_strings.append(tool_name)
-                        for y in tool["args"]:
-                            tool_strings.append(
-                                f"Arg: {str(y)}\nValue: {str(tool['args'][y])}"
-                            )
-                    memories.append("\n".join(tool_strings))
-            memories.append(response.content)
-            self.agent_memory.add_memories(memories)
-            save_state = state.copy()
-            save_state["messages"].append(response)
-        if self.log_state:
-            self.write_state("execution_agent.json", save_state)
-        return {"messages": [response.content]}
-
-    # Define the function that calls the model
-    def safety_check(self, state: ExecutionState) -> ExecutionState:
-        """
-        Validate the safety of a pending shell command.
-
-        Args:
-            state: Current execution state.
-
-        Returns:
-            Either the unchanged state (safe) or a state with tool message(s) (unsafe).
-        """
-        new_state = state.copy()
-        last_msg = new_state["messages"][-1]
-
-        tool_responses = []
-        tool_failed = False
-        for tool_call in last_msg.tool_calls:
-            call_name = tool_call["name"]
-
-            if call_name == "run_cmd":
-                query = tool_call["args"]["query"]
-                safety_check = self.llm.invoke(
-                    self.safety_prompt + query,
-                    self.build_config(tags=["safety_check"]),
-                )
-
-                if "[NO]" in safety_check.content:
-                    tool_failed = True
-
-                    tool_response = f"""
-                    [UNSAFE] That command `{query}` was deemed unsafe and cannot be run.
-                    For reason: {safety_check.content}
-                    """
-                    console.print(
-                        "[bold red][WARNING][/bold red] Command deemed unsafe:",
-                        query,
-                    )
-                    # and tell the user the reason
-                    console.print(
-                        "[bold red][WARNING][/bold red] REASON:", tool_response
-                    )
-
-                else:
-                    tool_response = f"Command `{query}` passed safety check."
-                    console.print(
-                        f"[green]Command passed safety check:[/green] {query}"
-                    )
-
-                tool_responses.append(
-                    ToolMessage(
-                        content=tool_response,
-                        tool_call_id=tool_call["id"],
-                    )
-                )
-
-        if tool_failed:
-            new_state["messages"].extend(tool_responses)
-
-        return new_state
-
-    def _build_graph(self):
-        graph = StateGraph(ExecutionState)
-
-        self.add_node(graph, self.query_executor, "agent")
-        self.add_node(graph, self.tool_node, "action")
-        self.add_node(graph, self.summarize, "summarize")
-        self.add_node(graph, self.safety_check, "safety_check")
-
-        # Set the entrypoint as `agent`
-        # This means that this node is the first one called
-        graph.set_entry_point("agent")
-
-        graph.add_conditional_edges(
-            "agent",
-            self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "safety_check", "summarize": "summarize"},
-        )
-
-        graph.add_conditional_edges(
-            "safety_check",
-            self._wrap_cond(command_safe, "command_safe", "execution"),
-            {"safe": "action", "unsafe": "agent"},
-        )
-
-        graph.add_edge("action", "agent")
-        graph.set_finish_point("summarize")
-
-        return graph.compile(checkpointer=self.checkpointer)
-        # self.action.get_graph().draw_mermaid_png(output_file_path="execution_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
-
-    # this is trying to stop people bypassing invoke
-    @property
-    def action(self):
-        raise AttributeError(
-            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
-        )
+    body = parts[1]
+    return "\n".join(body.split("\n")[1:]) if "\n" in body else body.strip()
 
 
 def _snip_text(text: str, max_chars: int) -> tuple[str, bool]:
@@ -328,11 +155,38 @@ def _fit_streams_to_budget(stdout: str, stderr: str, total_budget: int):
     return stdout_snip, stderr_snip
 
 
-# the idea here is that we just set a limit - the user could overload
-# that in their env, or maybe we could pull this out of the LLM parameters
-MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "50000"))
+# Define the function that determines whether to continue or not
+def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
+    messages = state["messages"]
+    last_message = messages[-1]
+    # If there is no tool call, then we finish
+    if not last_message.tool_calls:
+        return "summarize"
+    # Otherwise if there is, we continue
+    else:
+        return "continue"
 
 
+# Define the function that determines whether to continue or not
+def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
+    """
+    Return graph edge "safe" if the last command was safe, otherwise return edge "unsafe"
+    """
+
+    index = -1
+    message = state["messages"][index]
+    # Loop through all the consecutive tool messages in reverse order
+    while isinstance(message, ToolMessage):
+        if "[UNSAFE]" in message.content:
+            return "unsafe"
+
+        index -= 1
+        message = state["messages"][index]
+
+    return "safe"
+
+
+# Tools for ExecutionAgent
 @tool
 def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
     """
@@ -366,21 +220,6 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
     print("STDERR: ", stderr_fit)
 
     return f"STDOUT:\n{stdout_fit}\nSTDERR:\n{stderr_fit}"
-
-
-def _strip_fences(snippet: str) -> str:
-    """
-    Remove leading markdown ``` fence
-    """
-    if "```" not in snippet:
-        return snippet
-
-    parts = snippet.split("```")
-    if len(parts) < 3:
-        return snippet
-
-    body = parts[1]
-    return "\n".join(body.split("\n")[1:]) if "\n" in body else body.strip()
 
 
 @tool
@@ -525,41 +364,288 @@ def edit_code(
     return f"File {filename} updated successfully."
 
 
-search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
-# search_tool = TavilySearchResults(max_results=10, search_depth="advanced", include_answer=True)
+# Main module class
+class ExecutionAgent(BaseAgent):
+    """Orchestrates model-driven code execution, tool calls, and state management.
 
+    Orchestrates model-driven code execution, tool calls, and state management for
+    iterative program synthesis and shell interaction.
 
-# Define the function that determines whether to continue or not
-def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
-    messages = state["messages"]
-    last_message = messages[-1]
-    # If there is no tool call, then we finish
-    if not last_message.tool_calls:
-        return "summarize"
-    # Otherwise if there is, we continue
-    else:
-        return "continue"
+    This agent wraps an LLM with a small execution graph that alternates
+    between issuing model queries, invoking tools (run, write, edit, search),
+    performing safety checks, and summarizing progress. It manages a
+    workspace on disk, optional symlinks, and an optional memory backend to
+    persist summaries.
 
+    Args:
+        llm (str | BaseChatModel): Model identifier or bound chat model
+            instance. If a string is provided, the BaseAgent initializer will
+            resolve it.
+        agent_memory (Any | AgentMemory, optional): Memory backend used to
+            store summarized agent interactions. If provided, summaries are
+            saved here.
+        log_state (bool): When True, the agent writes intermediate json state
+            to disk for debugging and auditability.
+        **kwargs: Passed through to the BaseAgent constructor (e.g., model
+            configuration, checkpointer).
 
-# Define the function that determines whether to continue or not
-def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
+    Attributes:
+        safety_prompt (str): Prompt used to evaluate safety of shell
+            commands.
+        executor_prompt (str): Prompt used when invoking the executor LLM
+            loop.
+        summarize_prompt (str): Prompt used to request concise summaries for
+            memory or final output.
+        tools (list[Tool]): Tools available to the agent (run_cmd, write_code,
+            edit_code, search_tool).
+        tool_node (ToolNode): Graph node that dispatches tool calls.
+        llm (BaseChatModel): LLM instance bound to the available tools.
+        _action (StateGraph): Compiled execution graph that implements the
+            main loop and branching logic.
+
+    Methods:
+        query_executor(state): Send messages to the executor LLM, ensure
+            workspace exists, and handle symlink setup before returning the
+            model response.
+        summarize(state): Produce and optionally persist a summary of recent
+            interactions to the memory backend.
+        safety_check(state): Validate pending run_cmd calls via the safety
+            prompt and append ToolMessages for unsafe commands.
+        _build_graph(): Construct and compile the StateGraph for the agent
+            loop.
+        _invoke(inputs, recursion_limit=...): Internal entry that invokes the
+            compiled graph with a given recursion limit.
+        action (property): Disabled; direct access is not supported. Use
+            invoke or stream entry points instead.
+
+    Raises:
+        AttributeError: Accessing the .action attribute raises to encourage
+            using .stream(...) or .invoke(...).
     """
-    Return graph edge "safe" if the last command was safe, otherwise return edge "unsafe"
-    """
 
-    index = -1
-    message = state["messages"][index]
-    # Loop through all the consecutive tool messages in reverse order
-    while isinstance(message, ToolMessage):
-        if "[UNSAFE]" in message.content:
-            return "unsafe"
+    def __init__(
+        self,
+        llm: str | BaseChatModel = "openai/gpt-4o-mini",
+        agent_memory: Optional[Any | AgentMemory] = None,
+        log_state: bool = False,
+        **kwargs,
+    ):
+        super().__init__(llm, **kwargs)
+        self.agent_memory = agent_memory
+        self.safety_prompt = safety_prompt
+        self.executor_prompt = executor_prompt
+        self.summarize_prompt = summarize_prompt
+        self.tools = [run_cmd, write_code, edit_code, search_tool]
+        self.tool_node = ToolNode(self.tools)
+        self.llm = self.llm.bind_tools(self.tools)
+        self.log_state = log_state
 
-        index -= 1
-        message = state["messages"][index]
+        self._action = self._build_graph()
 
-    return "safe"
+    # Define the function that calls the model
+    def query_executor(self, state: ExecutionState) -> ExecutionState:
+        new_state = state.copy()
+        if "workspace" not in new_state.keys():
+            new_state["workspace"] = randomname.get_name()
+            print(
+                f"{RED}Creating the folder "
+                f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "
+                f"for this project.{RESET}"
+            )
+        os.makedirs(new_state["workspace"], exist_ok=True)
+
+        # code related to symlink
+        sd = new_state.get("symlinkdir")
+        if isinstance(sd, dict) and "is_linked" not in sd:
+            # symlinkdir = {"source": "foo", "dest": "bar"}
+            symlinkdir = new_state["symlinkdir"]
+            # user provided a symlinkdir key - let's do the linking!
+
+            src = Path(symlinkdir["source"]).expanduser().resolve()
+            workspace_root = Path(new_state["workspace"]).expanduser().resolve()
+            dst = workspace_root / symlinkdir["dest"]  # prepend workspace
+
+            # if you want to replace an existing link/file, unlink it first
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+
+            # create parent dirs for the link location if they don’t exist
+            dst.parent.mkdir(parents=True, exist_ok=True)
+
+            # actually make the link (tell pathlib it’s a directory target)
+            dst.symlink_to(src, target_is_directory=src.is_dir())
+            print(f"{RED}Symlinked {src} (source) --> {dst} (dest)")
+            # note that we've done the symlink now, so don't need to do it later
+            new_state["symlinkdir"]["is_linked"] = True
+
+        if isinstance(new_state["messages"][0], SystemMessage):
+            new_state["messages"][0] = SystemMessage(
+                content=self.executor_prompt
+            )
+        else:
+            new_state["messages"] = [
+                SystemMessage(content=self.executor_prompt)
+            ] + state["messages"]
+        try:
+            response = self.llm.invoke(
+                new_state["messages"], self.build_config(tags=["agent"])
+            )
+        except ContentPolicyViolationError as e:
+            print("Error: ", e, " ", new_state["messages"][-1].content)
+        if self.log_state:
+            self.write_state("execution_agent.json", new_state)
+        return {"messages": [response], "workspace": new_state["workspace"]}
+
+    # Define the function that calls the model
+    def summarize(self, state: ExecutionState) -> ExecutionState:
+        """Summarize current messages, update agent memory, and optionally log the state.
+
+        Args:
+            state (ExecutionState): The execution state containing message history.
+
+        Returns:
+            ExecutionState: A new state dict containing only the summary message content.
+        """
+        messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
+        try:
+            response = self.llm.invoke(
+                messages, self.build_config(tags=["summarize"])
+            )
+        except ContentPolicyViolationError as e:
+            print("Error: ", e, " ", messages[-1].content)
+        if self.agent_memory:
+            memories = []
+            # Handle looping through the messages
+            for x in state["messages"]:
+                if not isinstance(x, AIMessage):
+                    memories.append(x.content)
+                elif not x.tool_calls:
+                    memories.append(x.content)
+                else:
+                    tool_strings = []
+                    for tool in x.tool_calls:
+                        tool_name = "Tool Name: " + tool["name"]
+                        tool_strings.append(tool_name)
+                        for y in tool["args"]:
+                            tool_strings.append(
+                                f"Arg: {str(y)}\nValue: {str(tool['args'][y])}"
+                            )
+                    memories.append("\n".join(tool_strings))
+            memories.append(response.content)
+            self.agent_memory.add_memories(memories)
+            save_state = state.copy()
+            save_state["messages"].append(response)
+        if self.log_state:
+            self.write_state("execution_agent.json", save_state)
+        return {"messages": [response.content]}
+
+    # Define the function that calls the model
+    def safety_check(self, state: ExecutionState) -> ExecutionState:
+        """
+        Validate the safety of a pending shell command.
+
+        Args:
+            state: Current execution state.
+
+        Returns:
+            Either the unchanged state (safe) or a state with tool message(s) (unsafe).
+        """
+        new_state = state.copy()
+        last_msg = new_state["messages"][-1]
+
+        tool_responses = []
+        tool_failed = False
+        for tool_call in last_msg.tool_calls:
+            call_name = tool_call["name"]
+
+            if call_name == "run_cmd":
+                query = tool_call["args"]["query"]
+                safety_check = self.llm.invoke(
+                    self.safety_prompt + query,
+                    self.build_config(tags=["safety_check"]),
+                )
+
+                if "[NO]" in safety_check.content:
+                    tool_failed = True
+
+                    tool_response = f"""
+                    [UNSAFE] That command `{query}` was deemed unsafe and cannot be run.
+                    For reason: {safety_check.content}
+                    """
+                    console.print(
+                        "[bold red][WARNING][/bold red] Command deemed unsafe:",
+                        query,
+                    )
+                    # and tell the user the reason
+                    console.print(
+                        "[bold red][WARNING][/bold red] REASON:", tool_response
+                    )
+
+                else:
+                    tool_response = f"Command `{query}` passed safety check."
+                    console.print(
+                        f"[green]Command passed safety check:[/green] {query}"
+                    )
+
+                tool_responses.append(
+                    ToolMessage(
+                        content=tool_response,
+                        tool_call_id=tool_call["id"],
+                    )
+                )
+
+        if tool_failed:
+            new_state["messages"].extend(tool_responses)
+
+        return new_state
+
+    def _build_graph(self):
+        graph = StateGraph(ExecutionState)
+
+        self.add_node(graph, self.query_executor, "agent")
+        self.add_node(graph, self.tool_node, "action")
+        self.add_node(graph, self.summarize, "summarize")
+        self.add_node(graph, self.safety_check, "safety_check")
+
+        # Set the entrypoint as `agent`
+        # This means that this node is the first one called
+        graph.set_entry_point("agent")
+
+        graph.add_conditional_edges(
+            "agent",
+            self._wrap_cond(should_continue, "should_continue", "execution"),
+            {"continue": "safety_check", "summarize": "summarize"},
+        )
+
+        graph.add_conditional_edges(
+            "safety_check",
+            self._wrap_cond(command_safe, "command_safe", "execution"),
+            {"safe": "action", "unsafe": "agent"},
+        )
+
+        graph.add_edge("action", "agent")
+        graph.set_finish_point("summarize")
+
+        return graph.compile(checkpointer=self.checkpointer)
+        # self.action.get_graph().draw_mermaid_png(output_file_path="execution_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
+
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+        return self._action.invoke(inputs, config)
+
+    # this is trying to stop people bypassing invoke
+    @property
+    def action(self):
+        raise AttributeError(
+            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
+        )
 
 
+# Single module test execution
 def main():
     execution_agent = ExecutionAgent()
     problem_string = (
