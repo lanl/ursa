@@ -53,8 +53,8 @@ def main(mode: str):
 
         # 2. LLM & agents
         model = ChatLiteLLM(
-            model="o3"
-            # model="o1"
+            model="openai/o3"
+            # model="openai/o1"
             if mode == "prod"
             else "ollama_chat/llama3.1:8b",
             max_tokens=10000 if mode == "prod" else 4000,
