@@ -9,13 +9,11 @@ web_agent = WebSearchAgent(
     summaries_path="web_summaries",
     enable_metrics=True,
 )
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-web_agent.thread_id = tid
 summary = web_agent.invoke({
     "query": "graph neural networks for PDEs",
     "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
 })
-render_session_summary(tid)
+render_session_summary(web_agent.thread_id)
 print("=" * 80)
 print("=" * 80)
 print(summary)
@@ -30,14 +28,12 @@ osti_agent = OSTIAgent(
     summaries_path="osti_summaries",
     enable_metrics=True,
 )
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-osti_agent.thread_id = tid
 
 summary = osti_agent.invoke({
     "query": "quantum annealing materials",
     "context": "What are the key findings?",
 })
-render_session_summary(tid)
+render_session_summary(osti_agent.thread_id)
 print(summary)
 print("=" * 80)
 print("=" * 80)
@@ -49,14 +45,12 @@ arxiv_agent = ArxivAgentLegacy(
     summaries_path="arxiv_generated_summaries",
     enable_metrics=True,
 )
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-arxiv_agent.thread_id = tid
 
 summary = arxiv_agent.invoke({
     "query": "graph neural networks for PDEs",
     "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
 })
-render_session_summary(tid)
+render_session_summary(arxiv_agent.thread_id)
 print(summary)
 print("=" * 80)
 print("=" * 80)
@@ -68,12 +62,10 @@ arxiv_agent = ArxivAgent(
     summaries_path="arxiv_generated_summaries",
     enable_metrics=True,
 )
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-arxiv_agent.thread_id = tid
 
 summary = arxiv_agent.invoke({
     "query": "graph neural networks for PDEs",
     "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
 })
-render_session_summary(tid)
+render_session_summary(arxiv_agent.thread_id)
 print(summary)
