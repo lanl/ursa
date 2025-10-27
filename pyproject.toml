@@ -99,3 +99,6 @@ lammps = [
 opt = [
     "ortools>=9.14,<9.15",
 ]
+mcp = [
+    "fastapi>=0.120.0,<0.121",
+]

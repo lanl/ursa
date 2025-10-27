@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import httpx
+from fastapi import Depends, FastAPI, HTTPException, Request
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
-from pydantic import SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
@@ -417,6 +418,49 @@ class UrsaRepl(Cmd):
             f"[dim]{self.hitl.emb_base_url}",
             markdown=False,
         )
+
+
+mcp_app = FastAPI(
+    title="URSA Server",
+    description="Micro-service for hosting URSA to integrate as an MCP tool.",
+    version="0.1.0",
+)
+
+
+class QueryRequest(BaseModel):
+    agent: str = Field(..., example="execute")
+    query: str = Field(
+        ..., example="Write the first 1000 prime numbers to a text file."
+    )
+
+
+class QueryResponse(BaseModel):
+    response: str
+
+
+def get_hitl(req: Request):
+    # Single, pre-created instance set by the CLI (see below)
+    return req.app.state.hitl
+
+
+@mcp_app.post("/run", response_model=QueryResponse)
+def run_ursa(req: QueryRequest, hitl=Depends(get_hitl)):
+    try:
+        match req.agent:
+            case "arxiv":
+                response = hitl.run_arvix(req.query)
+            case "plan":
+                response = hitl.run_planner(req.query)
+            case "execute":
+                response = hitl.run_executor(req.query)
+            case "web":
+                response = hitl.run_webresearcher(req.query)
+            case "recall":
+                response = hitl.run_rememberer(req.query)
+        return QueryResponse(response=response)
+    except Exception as exc:
+        # Surface a readable error message for upstream agents
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # TODO:
