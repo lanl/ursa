@@ -4,7 +4,8 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_UP, Decimal, getcontext
-from typing import Any, Dict, Optional, Tuple
+from importlib import resources
+from typing import Any, Optional, Tuple
 
 getcontext().prec = 28  # robust money math
 
@@ -24,7 +25,7 @@ class ModelPricing:
         "1"
     )  # e.g., 0.25 if your provider discounts cached prompt tokens
 
-    def price_tokens(self, usage: Dict[str, Any]) -> Dict[str, Decimal]:
+    def price_tokens(self, usage: dict[str, Any]) -> dict[str, Decimal]:
         """Compute cost components from a usage dict with keys like input_tokens, output_tokens, reasoning_tokens, cached_tokens."""
 
         def _to_dec(x) -> Decimal:
@@ -83,7 +84,7 @@ def _dec(x: str | float | int) -> Decimal:
 
 # DEFAULTS: keep $0.00 so you don’t accidentally attribute costs.
 # Fill in values for your org as needed (USD per 1K tokens).
-DEFAULT_REGISTRY: Dict[str, ModelPricing] = {
+DEFAULT_REGISTRY: dict[str, ModelPricing] = {
     # Examples — edit to match your negotiated prices:
     # "openai/gpt-4o": ModelPricing(_dec("5.00"), _dec("15.00")),
     # "openai/o3-mini": ModelPricing(_dec("2.50"), _dec("10.00"), reasoning_per_1k=_dec("5.00")),
@@ -98,7 +99,7 @@ def normalize_model_name(name: str) -> str:
     return (name or "").strip().lower()
 
 
-def resolve_model_name(event: Dict[str, Any]) -> str:
+def resolve_model_name(event: dict[str, Any]) -> str:
     m = (
         ((event.get("metadata") or {}).get("model"))
         or ((event.get("metadata") or {}).get("ls_model_name"))
@@ -108,7 +109,7 @@ def resolve_model_name(event: Dict[str, Any]) -> str:
 
 
 def find_pricing(
-    model: str, registry: Dict[str, ModelPricing]
+    model: str, registry: dict[str, ModelPricing]
 ) -> Optional[ModelPricing]:
     if model in registry:
         return registry[model]
@@ -124,15 +125,16 @@ def find_pricing(
 
 
 def default_registry_path() -> str:
-    """Pricing file shipped with this module (pricing.json next to pricing.py)."""
-    return os.path.join(os.path.dirname(__file__), "pricing.json")
+    """Path to pricing file shipped with this package"""
+    path = resources.files("ursa") / "observability" / "pricing.json"
+    return str(path)
 
 
 def load_registry(
     path: Optional[str] = None,
-    overrides: Optional[Dict[str, Any]] = None,
+    overrides: Optional[dict[str, Any]] = None,
     use_default_if_missing: bool = True,
-) -> Dict[str, ModelPricing]:
+) -> dict[str, ModelPricing]:
     """
     Load pricing registry from:
       1) explicit `path` (if provided), else
@@ -140,7 +142,7 @@ def load_registry(
       3) pricing.json next to pricing.py (if present, and use_default_if_missing)
       4) fall back to DEFAULT_REGISTRY
     """
-    reg: Dict[str, ModelPricing] = dict(DEFAULT_REGISTRY)
+    reg: dict[str, ModelPricing] = dict(DEFAULT_REGISTRY)
 
     # 1) explicit path from caller wins
     candidate = path
@@ -194,7 +196,7 @@ def load_registry(
 # ---------- Core pricing application ----------
 
 
-def _has_provider_cost(roll: Dict[str, Any]) -> bool:
+def _has_provider_cost(roll: dict[str, Any]) -> bool:
     # Treat nonzero provider totals as authoritative
     try:
         return any([
@@ -211,10 +213,10 @@ def _round_money(x: Decimal) -> float:
 
 
 def price_event(
-    event: Dict[str, Any],
-    registry: Dict[str, ModelPricing],
+    event: dict[str, Any],
+    registry: dict[str, ModelPricing],
     overwrite: bool = False,
-) -> Tuple[Dict[str, Any], Optional[Decimal], str]:
+) -> Tuple[dict[str, Any], Optional[Decimal], str]:
     """
     Returns (event, total_cost_decimal_or_None, cost_source)
       cost_source ∈ {"provider", "computed", "no_usage", "no_pricing"}
@@ -255,10 +257,10 @@ def price_event(
 
 
 def price_payload(
-    payload: Dict[str, Any],
-    registry: Optional[Dict[str, ModelPricing]] = None,
+    payload: dict[str, Any],
+    registry: Optional[dict[str, ModelPricing]] = None,
     overwrite: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Enriches payload in-place with computed costs where missing.
     Adds a `costs` block with totals and by-model aggregation.
@@ -266,7 +268,7 @@ def price_payload(
     reg = registry or load_registry()
     llm_events = payload.get("llm_events") or []
     total = Decimal("0")
-    by_model: Dict[str, Decimal] = {}
+    by_model: dict[str, Decimal] = {}
     sources = {"provider": 0, "computed": 0, "no_usage": 0, "no_pricing": 0}
 
     for ev in llm_events:
