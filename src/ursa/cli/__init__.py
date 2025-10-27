@@ -207,6 +207,10 @@ def serve(
             )
         ),
     ] = False,
+    thread_id: Annotated[
+        str,
+        typer.Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID"),
+    ] = "ursa_cli",
     arxiv_summarize: Annotated[
         bool,
         typer.Option(
@@ -278,6 +282,7 @@ def serve(
         emb_base_url=emb_base_url,
         emb_api_key=emb_api_key,
         share_key=share_key,
+        thread_id=thread_id,
         arxiv_summarize=arxiv_summarize,
         arxiv_process_images=arxiv_process_images,
         arxiv_max_results=arxiv_max_results,
