@@ -80,6 +80,9 @@ pycodestyle.max-doc-length = 80
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**/*.py" = ["D"]
 
+[tool.setuptools.package-data]
+ursa = ["observability/pricing.json"]
+
 [dependency-groups]
 dev = [
     "langgraph-checkpoint-sqlite>=2.0.10",

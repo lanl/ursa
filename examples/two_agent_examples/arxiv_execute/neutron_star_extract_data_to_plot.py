@@ -1,5 +1,5 @@
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
+from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.observability.timing import render_session_summary
@@ -8,8 +8,8 @@ tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main():
-    model = ChatLiteLLM(
-        model="openai/gpt-5",
+    model = ChatOpenAI(
+        model="gpt-5",
         max_completion_tokens=50000,
     )
 

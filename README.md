@@ -8,6 +8,8 @@
 The flexible agentic workflow for accelerating scientific tasks. 
 Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
 
+The original arxiv paper is [here](https://arxiv.org/abs/2506.22653).
+
 ## Installation
 You can install `ursa` via `pip` or `uv`.
 
