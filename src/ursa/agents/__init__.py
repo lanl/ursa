@@ -1,4 +1,13 @@
-from .arxiv_agent import ArxivAgent as ArxivAgent
+from .acquisition_agents import (
+    ArxivAgent as ArxivAgent,
+)
+from .acquisition_agents import (
+    OSTIAgent as OSTIAgent,
+)
+from .acquisition_agents import (
+    WebSearchAgent as WebSearchAgent,
+)
+from .arxiv_agent import ArxivAgentLegacy as ArxivAgentLegacy
 from .arxiv_agent import PaperMetadata as PaperMetadata
 from .arxiv_agent import PaperState as PaperState
 from .base import BaseAgent as BaseAgent
@@ -17,5 +26,5 @@ from .planning_agent import PlanningState as PlanningState
 from .rag_agent import RAGAgent as RAGAgent
 from .rag_agent import RAGState as RAGState
 from .recall_agent import RecallAgent as RecallAgent
-from .websearch_agent import WebSearchAgent as WebSearchAgent
+from .websearch_agent import WebSearchAgentLegacy as WebSearchAgentLegacy
 from .websearch_agent import WebSearchState as WebSearchState
