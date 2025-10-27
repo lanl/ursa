@@ -21,17 +21,14 @@ except Exception:
 class LammpsState(TypedDict, total=False):
     simulation_task: str
     elements: List[str]
+    template: Optional[str]
+    chosen_potential: Optional[Any]
 
     matches: List[Any]
-    db_message: str
-
     idx: int
     summaries: List[str]
     full_texts: List[str]
-
     summaries_combined: str
-    choice_json: str
-    chosen_index: int
 
     input_script: str
     run_returncode: Optional[int]
@@ -47,6 +44,7 @@ class LammpsAgent(BaseAgent):
         llm,
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
+        find_potential_only: bool = False,
         mpi_procs: int = 8,
         workspace: str = "./workspace",
         lammps_cmd: str = "lmp_mpi",
@@ -61,6 +59,7 @@ class LammpsAgent(BaseAgent):
             )
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
+        self.find_potential_only = find_potential_only
         self.mpi_procs = mpi_procs
         self.lammps_cmd = lammps_cmd
         self.mpirun_cmd = mpirun_cmd
@@ -72,13 +71,13 @@ class LammpsAgent(BaseAgent):
             "eam/alloy",
             "eam/fs",
             "meam",
-            "adp",  # classical, HEA-relevant
-            "kim",  # OpenKIM models
+            "adp",
+            "kim",
             "snap",
             "quip",
             "mlip",
             "pace",
-            "nep",  # ML/ACE families (if available)
+            "nep",
         ]
 
         self.workspace = workspace
@@ -116,9 +115,10 @@ class LammpsAgent(BaseAgent):
         self.author_chain = (
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
-                "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
+                "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
+                "Template provided (if any): {template}\n"
                 "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
                 "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
@@ -138,9 +138,10 @@ class LammpsAgent(BaseAgent):
                 "However, when running the simulation, an error was raised.\n"
                 "Here is the full stdout message that includes the error message: {err_message}\n"
                 "Your task is to write a new input file that resolves the error.\n"
-                "Here is metadata about the interatomic potential that will be used: {metadata}.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
+                "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
+                "Template provided (if any): {template}\n"
                 "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
                 "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
@@ -189,22 +190,28 @@ class LammpsAgent(BaseAgent):
             pass
         return text
 
+    def _entry_router(self, state: LammpsState) -> dict:
+        if self.find_potential_only and state.get("chosen_potential"):
+            raise Exception(
+                "You cannot set find_potential_only=True and also specify your own potential!"
+            )
+
+        if not state.get("chosen_potential"):
+            self.potential_summaries_dir = os.path.join(
+                self.workspace, "potential_summaries"
+            )
+            os.makedirs(self.potential_summaries_dir, exist_ok=True)
+        return {}
+
     def _find_potentials(self, state: LammpsState) -> LammpsState:
         db = am.library.Database(remote=True)
         matches = db.get_lammps_potentials(
             pair_style=self.pair_styles, elements=state["elements"]
         )
-        msg_lines = []
-        if not list(matches):
-            msg_lines.append("No potentials found for this task in NIST.")
-        else:
-            msg_lines.append("Found these potentials in NIST:")
-            for rec in matches:
-                msg_lines.append(f"{rec.id}  {rec.pair_style}  {rec.symbols}")
+
         return {
             **state,
             "matches": list(matches),
-            "db_message": "\n".join(msg_lines),
             "idx": 0,
             "summaries": [],
             "full_texts": [],
@@ -243,6 +250,12 @@ class LammpsAgent(BaseAgent):
                 "simulation_task": state["simulation_task"],
             })
 
+        summary_file = os.path.join(
+            self.potential_summaries_dir, "potential_" + str(i) + ".txt"
+        )
+        with open(summary_file, "w") as f:
+            f.write(summary)
+
         return {
             **state,
             "idx": i + 1,
@@ -265,21 +278,36 @@ class LammpsAgent(BaseAgent):
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
+
         print(f"Chosen potential #{chosen_index}")
         print("Rationale for choosing this potential:")
         print(choice_dict["rationale"])
-        return {**state, "choice_json": choice, "chosen_index": chosen_index}
+
+        chosen_potential = state["matches"][chosen_index]
+
+        out_file = os.path.join(self.potential_summaries_dir, "Rationale.txt")
+        with open(out_file, "w") as f:
+            f.write(f"Chosen potential #{chosen_index}")
+            f.write("\n")
+            f.write("Rationale for choosing this potential:")
+            f.write("\n")
+            f.write(choice_dict["rationale"])
+
+        return {**state, "chosen_potential": chosen_potential}
+
+    def _route_after_summarization(self, state: LammpsState) -> str:
+        if self.find_potential_only:
+            return "Exit"
+        return "continue_author"
 
     def _author(self, state: LammpsState) -> LammpsState:
         print("First attempt at writing LAMMPS input file....")
-        match = state["matches"][state["chosen_index"]]
-        match.download_files(self.workspace)
-        text = state["full_texts"][state["chosen_index"]]
-        pair_info = match.pair_info()
+        state["chosen_potential"].download_files(self.workspace)
+        pair_info = state["chosen_potential"].pair_info()
         authored_json = self.author_chain.invoke({
             "simulation_task": state["simulation_task"],
-            "metadata": text,
             "pair_info": pair_info,
+            "template": state["template"],
         })
         script_dict = self._safe_json_loads(authored_json)
         input_script = script_dict["input_script"]
@@ -324,17 +352,15 @@ class LammpsAgent(BaseAgent):
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
-        match = state["matches"][state["chosen_index"]]
-        text = state["full_texts"][state["chosen_index"]]
-        pair_info = match.pair_info()
+        pair_info = state["chosen_potential"].pair_info()
         err_blob = state.get("run_stdout")
 
         fixed_json = self.fix_chain.invoke({
             "simulation_task": state["simulation_task"],
             "input_script": state["input_script"],
             "err_message": err_blob,
-            "metadata": text,
             "pair_info": pair_info,
+            "template": state["template"],
         })
         script_dict = self._safe_json_loads(fixed_json)
         new_input = script_dict["input_script"]
@@ -349,6 +375,7 @@ class LammpsAgent(BaseAgent):
     def _build_graph(self):
         g = StateGraph(LammpsState)
 
+        self.add_node(g, self._entry_router)
         self.add_node(g, self._find_potentials)
         self.add_node(g, self._summarize_one)
         self.add_node(g, self._build_summaries)
@@ -357,7 +384,18 @@ class LammpsAgent(BaseAgent):
         self.add_node(g, self._run_lammps)
         self.add_node(g, self._fix)
 
-        g.set_entry_point("_find_potentials")
+        g.set_entry_point("_entry_router")
+
+        g.add_conditional_edges(
+            "_entry_router",
+            lambda state: "user_choice"
+            if state.get("chosen_potential")
+            else "agent_choice",
+            {
+                "user_choice": "_author",
+                "agent_choice": "_find_potentials",
+            },
+        )
 
         g.add_conditional_edges(
             "_find_potentials",
@@ -379,7 +417,16 @@ class LammpsAgent(BaseAgent):
         )
 
         g.add_edge("_build_summaries", "_choose")
-        g.add_edge("_choose", "_author")
+
+        g.add_conditional_edges(
+            "_choose",
+            self._route_after_summarization,
+            {
+                "continue_author": "_author",
+                "Exit": END,
+            },
+        )
+
         g.add_edge("_author", "_run_lammps")
 
         g.add_conditional_edges(
@@ -399,7 +446,7 @@ class LammpsAgent(BaseAgent):
         inputs: Mapping[str, Any],
         *,
         summarize: bool | None = None,
-        recursion_limit: int = 1000,
+        recursion_limit: int = 999_999,
         **_,
     ) -> str:
         config = self.build_config(
@@ -410,5 +457,8 @@ class LammpsAgent(BaseAgent):
             raise KeyError(
                 "'simulation_task' and 'elements' are required arguments"
             )
+
+        if "template" not in inputs:
+            inputs = {**inputs, "template": "No template provided."}
 
         return self._action.invoke(inputs, config)
