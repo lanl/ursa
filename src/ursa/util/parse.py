@@ -3,7 +3,7 @@ import os
 import re
 import shutil
 import unicodedata
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 import justext
@@ -160,7 +160,7 @@ def _download_stream_to(path: str, resp: requests.Response) -> str:
 
 
 def _get_soup(
-    url: str, timeout: int = 20, headers: Optional[Dict[str, str]] = None
+    url: str, timeout: int = 20, headers: Optional[dict[str, str]] = None
 ) -> BeautifulSoup:
     r = requests.get(url, timeout=timeout, headers=headers or {})
     r.raise_for_status()
@@ -210,9 +210,9 @@ def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> Optional[str]:
 
 
 def resolve_pdf_from_osti_record(
-    rec: Dict[str, Any],
+    rec: dict[str, Any],
     *,
-    headers: Optional[Dict[str, str]] = None,
+    headers: Optional[dict[str, str]] = None,
     unpaywall_email: Optional[str] = None,
     timeout: int = 25,
 ) -> Tuple[Optional[str], Optional[str], str]:
@@ -223,7 +223,7 @@ def resolve_pdf_from_osti_record(
       - note: brief trace of how we found it
     """
     headers = headers or {"User-Agent": "Mozilla/5.0"}
-    note_parts: List[str] = []
+    note_parts: list[str] = []
 
     links = rec.get("links", []) or []
     # doi = rec.get("doi")
