@@ -11,7 +11,7 @@ except Exception:
         "This can be installed using 'pip install ursa-ai[lammps]' or, "
         "if working from a local installation, 'pip install -e .[lammps]' ."
     )
-    
+
 model = "gpt-5"
 
 llm = ChatOpenAI(model=model, timeout=None, max_retries=2)
@@ -32,7 +32,9 @@ wf = LammpsAgent(
 with open("eos_template.txt", "r") as file:
     template = file.read()
 
-simulation_task = ("Carry out a LAMMPS simulation of Cu to determine its equation of state.")
+simulation_task = (
+    "Carry out a LAMMPS simulation of Cu to determine its equation of state."
+)
 
 elements = ["Cu"]
 
@@ -40,11 +42,12 @@ db = am.library.Database(remote=True)
 matches = db.get_lammps_potentials(pair_style=["eam"], elements=elements)
 chosen_potential = matches[-1]
 
-final_lammps_state = wf.invoke(simulation_task=simulation_task, 
-                               elements=elements, 
-                               template=template, 
-                               chosen_potential=chosen_potential,
-                              )
+final_lammps_state = wf.invoke(
+    simulation_task=simulation_task,
+    elements=elements,
+    template=template,
+    chosen_potential=chosen_potential,
+)
 
 if final_lammps_state.get("run_returncode") == 0:
     print("\nNow handing things off to execution agent.....")
@@ -58,12 +61,10 @@ if final_lammps_state.get("run_returncode") == 0:
     Summarize the contents of this file in a markdown document. Include a plot, if relevent.
     """
 
-    final_results = executor.invoke(
-        {
-            "messages": [HumanMessage(content=exe_plan)],
-            "workspace": workspace,
-        }
-    )
+    final_results = executor.invoke({
+        "messages": [HumanMessage(content=exe_plan)],
+        "workspace": workspace,
+    })
 
     for x in final_results["messages"]:
         print(x.content)

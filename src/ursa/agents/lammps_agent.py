@@ -29,7 +29,7 @@ class LammpsState(TypedDict, total=False):
     summaries: List[str]
     full_texts: List[str]
     summaries_combined: str
-    
+
     input_script: str
     run_returncode: Optional[int]
     run_stdout: str
@@ -71,13 +71,13 @@ class LammpsAgent(BaseAgent):
             "eam/alloy",
             "eam/fs",
             "meam",
-            "adp",  
-            "kim",  
+            "adp",
+            "kim",
             "snap",
             "quip",
             "mlip",
             "pace",
-            "nep",  
+            "nep",
         ]
 
         self.workspace = workspace
@@ -190,23 +190,25 @@ class LammpsAgent(BaseAgent):
             pass
         return text
 
-
     def _entry_router(self, state: LammpsState) -> dict:
         if self.find_potential_only and state.get("chosen_potential"):
-            raise Exception("You cannot set find_potential_only=True and also specify your own potential!") 
-            
+            raise Exception(
+                "You cannot set find_potential_only=True and also specify your own potential!"
+            )
+
         if not state.get("chosen_potential"):
-            self.potential_summaries_dir = os.path.join(self.workspace, "potential_summaries")
+            self.potential_summaries_dir = os.path.join(
+                self.workspace, "potential_summaries"
+            )
             os.makedirs(self.potential_summaries_dir, exist_ok=True)
         return {}
-            
-            
+
     def _find_potentials(self, state: LammpsState) -> LammpsState:
         db = am.library.Database(remote=True)
         matches = db.get_lammps_potentials(
             pair_style=self.pair_styles, elements=state["elements"]
         )
-        
+
         return {
             **state,
             "matches": list(matches),
@@ -248,10 +250,12 @@ class LammpsAgent(BaseAgent):
                 "simulation_task": state["simulation_task"],
             })
 
-        summary_file = os.path.join(self.potential_summaries_dir,"potential_"+str(i)+".txt")
+        summary_file = os.path.join(
+            self.potential_summaries_dir, "potential_" + str(i) + ".txt"
+        )
         with open(summary_file, "w") as f:
             f.write(summary)
-            
+
         return {
             **state,
             "idx": i + 1,
@@ -274,21 +278,21 @@ class LammpsAgent(BaseAgent):
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
-        
+
         print(f"Chosen potential #{chosen_index}")
         print("Rationale for choosing this potential:")
         print(choice_dict["rationale"])
-        
+
         chosen_potential = state["matches"][chosen_index]
 
-        out_file = os.path.join(self.potential_summaries_dir,"Rationale.txt")
+        out_file = os.path.join(self.potential_summaries_dir, "Rationale.txt")
         with open(out_file, "w") as f:
             f.write(f"Chosen potential #{chosen_index}")
             f.write("\n")
             f.write("Rationale for choosing this potential:")
             f.write("\n")
             f.write(choice_dict["rationale"])
-            
+
         return {**state, "chosen_potential": chosen_potential}
 
     def _route_after_summarization(self, state: LammpsState) -> str:
@@ -370,7 +374,7 @@ class LammpsAgent(BaseAgent):
 
     def _build_graph(self):
         g = StateGraph(LammpsState)
-        
+
         self.add_node(g, self._entry_router)
         self.add_node(g, self._find_potentials)
         self.add_node(g, self._summarize_one)
@@ -384,13 +388,15 @@ class LammpsAgent(BaseAgent):
 
         g.add_conditional_edges(
             "_entry_router",
-            lambda state: "user_choice" if state.get("chosen_potential") else "agent_choice",
+            lambda state: "user_choice"
+            if state.get("chosen_potential")
+            else "agent_choice",
             {
                 "user_choice": "_author",
                 "agent_choice": "_find_potentials",
             },
         )
-        
+
         g.add_conditional_edges(
             "_find_potentials",
             self._should_summarize,
@@ -411,7 +417,7 @@ class LammpsAgent(BaseAgent):
         )
 
         g.add_edge("_build_summaries", "_choose")
-        
+
         g.add_conditional_edges(
             "_choose",
             self._route_after_summarization,
@@ -420,7 +426,7 @@ class LammpsAgent(BaseAgent):
                 "Exit": END,
             },
         )
-        
+
         g.add_edge("_author", "_run_lammps")
 
         g.add_conditional_edges(
@@ -456,5 +462,3 @@ class LammpsAgent(BaseAgent):
             inputs = {**inputs, "template": "No template provided."}
 
         return self._action.invoke(inputs, config)
-
-        
