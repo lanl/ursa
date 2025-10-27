@@ -487,6 +487,7 @@ class ExecutionAgent(BaseAgent):
         log_state: bool = False,
         **kwargs,
     ):
+        """ExecutionAgent class initialization."""
         super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
         self.safety_prompt = safety_prompt
@@ -501,7 +502,28 @@ class ExecutionAgent(BaseAgent):
 
     # Define the function that calls the model
     def query_executor(self, state: ExecutionState) -> ExecutionState:
+        """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
+
+        This method copies the incoming state, ensures a workspace directory exists
+        (creating one with a random name when absent), optionally creates a symlink
+        described by state["symlinkdir"], sets or injects the executor system prompt
+        as the first message, and invokes the bound LLM. When logging is enabled,
+        it persists the pre-invocation state to disk.
+
+        Args:
+            state: The current execution state. Expected keys include:
+                - "messages": Ordered list of System/Human/AI/Tool messages.
+                - "workspace": Optional path to the working directory.
+                - "symlinkdir": Optional dict with "source" and "dest" keys.
+
+        Returns:
+            ExecutionState: Partial state update containing:
+                - "messages": A list with the model's response as the latest entry.
+                - "workspace": The resolved workspace path.
+        """        
         new_state = state.copy()
+
+        # 1) Ensure a workspace directory exists, creating a named one if absent.       
         if "workspace" not in new_state.keys():
             new_state["workspace"] = randomname.get_name()
             print(
@@ -511,46 +533,49 @@ class ExecutionAgent(BaseAgent):
             )
         os.makedirs(new_state["workspace"], exist_ok=True)
 
-        # code related to symlink
+        # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
         if isinstance(sd, dict) and "is_linked" not in sd:
-            # symlinkdir = {"source": "foo", "dest": "bar"}
-            symlinkdir = new_state["symlinkdir"]
-            # user provided a symlinkdir key - let's do the linking!
+            # symlinkdir structure: {"source": "/path/to/src", "dest": "link/name"}
+            symlinkdir = sd
 
             src = Path(symlinkdir["source"]).expanduser().resolve()
             workspace_root = Path(new_state["workspace"]).expanduser().resolve()
-            dst = workspace_root / symlinkdir["dest"]  # prepend workspace
+            dst = workspace_root / symlinkdir["dest"]  # Link lives inside workspace.
 
-            # if you want to replace an existing link/file, unlink it first
+            # If a file/link already exists at the destination, replace it.
             if dst.exists() or dst.is_symlink():
                 dst.unlink()
 
-            # create parent dirs for the link location if they don’t exist
+            # Ensure parent directories for the link exist.
             dst.parent.mkdir(parents=True, exist_ok=True)
 
-            # actually make the link (tell pathlib it’s a directory target)
+            # Create the symlink (tell pathlib if the target is a directory).
             dst.symlink_to(src, target_is_directory=src.is_dir())
             print(f"{RED}Symlinked {src} (source) --> {dst} (dest)")
-            # note that we've done the symlink now, so don't need to do it later
             new_state["symlinkdir"]["is_linked"] = True
 
+        # 3) Ensure the executor prompt is the first SystemMessage.
         if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(
-                content=self.executor_prompt
-            )
+            new_state["messages"][0] = SystemMessage(content=self.executor_prompt)
         else:
             new_state["messages"] = [
                 SystemMessage(content=self.executor_prompt)
             ] + state["messages"]
+
+        # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.llm.invoke(
                 new_state["messages"], self.build_config(tags=["agent"])
             )
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
+
+        # 5) Optionally persist the pre-invocation state for audit/debugging.
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
+
+        # Return the model's response and the workspace path as a partial state update.
         return {"messages": [response], "workspace": new_state["workspace"]}
 
     # Define the function that calls the model
