@@ -1,5 +1,6 @@
 from rich import print as rprint
 from rich.panel import Panel
+
 from ursa.agents import ArxivAgent, ArxivAgentLegacy, OSTIAgent, WebSearchAgent
 
 
@@ -15,12 +16,10 @@ web_agent = WebSearchAgent(
     summaries_path="web_summaries",
     enable_metrics=True,
 )
-summary = web_agent.invoke(
-    {
-        "query": "graph neural networks for PDEs",
-        "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
-    }
-)
+summary = web_agent.invoke({
+    "query": "graph neural networks for PDEs",
+    "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
+})
 print_summary(summary, title="Web Agent Summary")
 
 # OSTI agent
@@ -31,12 +30,10 @@ osti_agent = OSTIAgent(
     summaries_path="osti_summaries",
     enable_metrics=True,
 )
-summary = osti_agent.invoke(
-    {
-        "query": "quantum annealing materials",
-        "context": "What are the key findings?",
-    }
-)
+summary = osti_agent.invoke({
+    "query": "quantum annealing materials",
+    "context": "What are the key findings?",
+})
 print_summary(summary, title="OSTI Agent Summary")
 
 # ArXiv agent (legacy version)
@@ -47,12 +44,10 @@ arxiv_agent_legacy = ArxivAgentLegacy(
     summaries_path="arxiv_generated_summaries",
     enable_metrics=True,
 )
-summary = arxiv_agent_legacy.invoke(
-    {
-        "query": "graph neural networks for PDEs",
-        "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
-    }
-)
+summary = arxiv_agent_legacy.invoke({
+    "query": "graph neural networks for PDEs",
+    "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
+})
 print_summary(summary, title="Arxiv Agent (Legacy) Summary")
 
 # ArXiv agent
@@ -63,10 +58,8 @@ arxiv_agent = ArxivAgent(
     summaries_path="arxiv_generated_summaries",
     enable_metrics=True,
 )
-summary = arxiv_agent.invoke(
-    {
-        "query": "graph neural networks for PDEs",
-        "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
-    }
-)
+summary = arxiv_agent.invoke({
+    "query": "graph neural networks for PDEs",
+    "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
+})
 print_summary(summary, title="Arxiv Agent Summary")
