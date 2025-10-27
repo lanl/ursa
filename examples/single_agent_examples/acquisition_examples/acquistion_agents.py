@@ -1,5 +1,12 @@
+from rich import print as rprint
+from rich.panel import Panel
+
 from ursa.agents import ArxivAgent, ArxivAgentLegacy, OSTIAgent, WebSearchAgent
-from ursa.observability.timing import render_session_summary
+
+
+def print_summary(summary: str, title: str):
+    rprint(Panel(summary, title=title))
+
 
 # Web search (ddgs) agent
 web_agent = WebSearchAgent(
@@ -13,12 +20,7 @@ summary = web_agent.invoke({
     "query": "graph neural networks for PDEs",
     "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
 })
-render_session_summary(web_agent.thread_id)
-print("=" * 80)
-print("=" * 80)
-print(summary)
-print("=" * 80)
-print("=" * 80)
+print_summary(summary, title="Web Agent Summary")
 
 # OSTI agent
 osti_agent = OSTIAgent(
@@ -28,32 +30,26 @@ osti_agent = OSTIAgent(
     summaries_path="osti_summaries",
     enable_metrics=True,
 )
-
 summary = osti_agent.invoke({
     "query": "quantum annealing materials",
     "context": "What are the key findings?",
 })
-render_session_summary(osti_agent.thread_id)
-print(summary)
-print("=" * 80)
-print("=" * 80)
+print_summary(summary, title="OSTI Agent Summary")
+
 # ArXiv agent (legacy version)
-arxiv_agent = ArxivAgentLegacy(
+arxiv_agent_legacy = ArxivAgentLegacy(
     llm="openai/o3-mini",
     max_results=3,
     database_path="arxiv_papers",
     summaries_path="arxiv_generated_summaries",
     enable_metrics=True,
 )
-
-summary = arxiv_agent.invoke({
+summary = arxiv_agent_legacy.invoke({
     "query": "graph neural networks for PDEs",
     "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
 })
-render_session_summary(arxiv_agent.thread_id)
-print(summary)
-print("=" * 80)
-print("=" * 80)
+print_summary(summary, title="Arxiv Agent (Legacy) Summary")
+
 # ArXiv agent
 arxiv_agent = ArxivAgent(
     llm="openai/o3-mini",
@@ -62,10 +58,8 @@ arxiv_agent = ArxivAgent(
     summaries_path="arxiv_generated_summaries",
     enable_metrics=True,
 )
-
 summary = arxiv_agent.invoke({
     "query": "graph neural networks for PDEs",
     "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
 })
-render_session_summary(arxiv_agent.thread_id)
-print(summary)
+print_summary(summary, title="Arxiv Agent Summary")
