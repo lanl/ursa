@@ -39,6 +39,7 @@ dependencies = [
     "langchain-ollama>=0.3.6,<0.4",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
+    "trafilatura>=1.6.1,<1.7",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -78,6 +79,9 @@ pycodestyle.max-doc-length = 80
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**/*.py" = ["D"]
 
+[tool.setuptools.package-data]
+ursa = ["observability/pricing.json"]
+
 [dependency-groups]
 dev = [
     "langgraph-checkpoint-sqlite>=2.0.10",
@@ -94,7 +98,6 @@ docs = [
 ]
 lammps = [
     "atomman>=1.5.2",
-    "trafilatura>=1.6.1",
 ]
 opt = [
     "ortools>=9.14,<9.15",
