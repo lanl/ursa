@@ -11,7 +11,7 @@ from .base import BaseAgent
 
 class ChatState(TypedDict):
     messages: Annotated[list, add_messages]
-    thread_id: Any
+    thread_id: str
 
 
 class ChatAgent(BaseAgent):
@@ -30,10 +30,8 @@ class ChatAgent(BaseAgent):
     def _build_graph(self):
         graph = StateGraph(ChatState)
         self.add_node(graph, self._response_node)
-
         graph.set_entry_point("_response_node")
         graph.set_finish_point("_response_node")
-
         self._action = graph.compile(checkpointer=self.checkpointer)
 
     def _invoke(
