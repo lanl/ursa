@@ -578,48 +578,66 @@ class ExecutionAgent(BaseAgent):
         # Return the model's response and the workspace path as a partial state update.
         return {"messages": [response], "workspace": new_state["workspace"]}
 
-    # Define the function that calls the model
     def summarize(self, state: ExecutionState) -> ExecutionState:
-        """Summarize current messages, update agent memory, and optionally log the state.
+        """Produce a concise summary of the conversation and optionally persist memory.
+
+        This method builds a summarization prompt, invokes the LLM to obtain a compact
+        summary of recent interactions, optionally logs salient details to the agent
+        memory backend, and writes debug state when logging is enabled.
 
         Args:
             state (ExecutionState): The execution state containing message history.
 
         Returns:
-            ExecutionState: A new state dict containing only the summary message content.
+            ExecutionState: A partial update with a single string message containing
+                the summary.
         """
+        # 1) Construct the summarization message list (system prompt + prior messages).
         messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
+
+        # 2) Invoke the LLM to generate a summary; capture content even on failure.
+        response_content = ""
         try:
             response = self.llm.invoke(
                 messages, self.build_config(tags=["summarize"])
             )
+            response_content = response.content
         except ContentPolicyViolationError as e:
             print("Error: ", e, " ", messages[-1].content)
+
+        # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
-            memories = []
-            # Handle looping through the messages
-            for x in state["messages"]:
-                if not isinstance(x, AIMessage):
-                    memories.append(x.content)
-                elif not x.tool_calls:
-                    memories.append(x.content)
+            memories: list[str] = []
+            # Collect human/system/tool message content; for AI tool calls, store args.
+            for msg in state["messages"]:
+                if not isinstance(msg, AIMessage):
+                    memories.append(msg.content)
+                elif not msg.tool_calls:
+                    memories.append(msg.content)
                 else:
                     tool_strings = []
-                    for tool in x.tool_calls:
-                        tool_name = "Tool Name: " + tool["name"]
-                        tool_strings.append(tool_name)
-                        for y in tool["args"]:
+                    for tool in msg.tool_calls:
+                        tool_strings.append("Tool Name: " + tool["name"])
+                        for arg_name in tool["args"]:
                             tool_strings.append(
-                                f"Arg: {str(y)}\nValue: {str(tool['args'][y])}"
+                                f"Arg: {str(arg_name)}\nValue: "
+                                f"{str(tool['args'][arg_name])}"
                             )
                     memories.append("\n".join(tool_strings))
-            memories.append(response.content)
+            memories.append(response_content)
             self.agent_memory.add_memories(memories)
-            save_state = state.copy()
-            save_state["messages"].append(response)
+
+        # 4) Optionally write state to disk for debugging/auditing.
         if self.log_state:
+            save_state = state.copy()
+            # Append the summary as an AI message for a complete trace.
+            save_state["messages"] = save_state["messages"] + [
+                AIMessage(content=response_content)
+            ]
             self.write_state("execution_agent.json", save_state)
-        return {"messages": [response.content]}
+
+        # 5) Return a partial state update with only the summary content.
+        return {"messages": [response_content]}
 
     # Define the function that calls the model
     def safety_check(self, state: ExecutionState) -> ExecutionState:
