@@ -3,8 +3,7 @@ import sqlite3
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import (
@@ -43,8 +42,8 @@ def main():
     rconn = sqlite3.connect(str(rdb_path), check_same_thread=False)
     websearcher_checkpointer = SqliteSaver(rconn)
 
-    model = ChatLiteLLM(
-        model="openai/gpt-5",
+    model = ChatOpenAI(
+        model="gpt-5",
         max_completion_tokens=50000,
     )
     embedding = OpenAIEmbeddings()
