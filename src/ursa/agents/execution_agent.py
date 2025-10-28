@@ -705,43 +705,63 @@ class ExecutionAgent(BaseAgent):
         return new_state
 
     def _build_graph(self):
+        """Construct and compile the agent's LangGraph state machine."""
+        # Create a graph over the agent's execution state.
         graph = StateGraph(ExecutionState)
 
+        # Register nodes:
+        # - "agent": LLM planning/execution step
+        # - "action": tool dispatch (run_cmd, write_code, etc.)
+        # - "summarize": summary/finalization step
+        # - "safety_check": gate for shell command safety
         self.add_node(graph, self.query_executor, "agent")
         self.add_node(graph, self.tool_node, "action")
         self.add_node(graph, self.summarize, "summarize")
         self.add_node(graph, self.safety_check, "safety_check")
 
-        # Set the entrypoint as `agent`
-        # This means that this node is the first one called
+        # Set entrypoint: execution starts with the "agent" node.
         graph.set_entry_point("agent")
 
+        # From "agent", either continue (tools) or finish (summarize),
+        # based on presence of tool calls in the last message.
         graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
             {"continue": "safety_check", "summarize": "summarize"},
         )
 
+        # From "safety_check", route to tools if safe, otherwise back to agent
+        # to revise the plan without executing unsafe commands.
         graph.add_conditional_edges(
             "safety_check",
             self._wrap_cond(command_safe, "command_safe", "execution"),
             {"safe": "action", "unsafe": "agent"},
         )
 
+        # After tools run, return control to the agent for the next step.
         graph.add_edge("action", "agent")
+
+        # The graph completes at the "summarize" node.
         graph.set_finish_point("summarize")
 
+        # Compile and return the executable graph (optionally with a checkpointer).
         return graph.compile(checkpointer=self.checkpointer)
 
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
     ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
+        """Invoke the compiled graph with inputs under a specified recursion limit.
 
-    # this is trying to stop people bypassing invoke
+        This method builds a LangGraph config with the provided recursion limit
+        and a "graph" tag, then delegates to the compiled graph's invoke method.
+        """
+        # Build invocation config with a generous recursion limit for long runs.
+        config = self.build_config(recursion_limit=recursion_limit, tags=["graph"])
+
+        # Delegate execution to the compiled graph.
+        return self._action.invoke(inputs, config)
+ 
+    # This property is trying to stop people bypassing invoke
     @property
     def action(self):
         """Property used to affirm `action` attribute is unsupported."""
