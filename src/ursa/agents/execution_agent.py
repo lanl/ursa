@@ -639,62 +639,67 @@ class ExecutionAgent(BaseAgent):
         # 5) Return a partial state update with only the summary content.
         return {"messages": [response_content]}
 
-    # Define the function that calls the model
     def safety_check(self, state: ExecutionState) -> ExecutionState:
-        """
-        Validate the safety of a pending shell command.
+        """Assess pending shell commands for safety and inject ToolMessages with results.
+
+        This method inspects the most recent AI tool calls, evaluates any run_cmd
+        queries against the safety prompt, and constructs ToolMessages that either
+        flag unsafe commands with reasons or confirm safe execution. If any command
+        is unsafe, the generated ToolMessages are appended to the state so the agent
+        can react without executing the command.
 
         Args:
-            state: Current execution state.
+            state (ExecutionState): Current execution state.
 
         Returns:
-            Either the unchanged state (safe) or a state with tool message(s) (unsafe).
+            ExecutionState: Either the unchanged state (all safe) or a copy with one
+                or more ToolMessages appended when unsafe commands are detected.
         """
+        # 1) Work on a shallow copy; inspect the most recent model message.
         new_state = state.copy()
         last_msg = new_state["messages"][-1]
 
-        tool_responses = []
-        tool_failed = False
+        # 2) Evaluate any pending run_cmd tool calls for safety.
+        tool_responses: list[ToolMessage] = []
+        any_unsafe = False
         for tool_call in last_msg.tool_calls:
-            call_name = tool_call["name"]
+            if tool_call["name"] != "run_cmd":
+                continue
 
-            if call_name == "run_cmd":
-                query = tool_call["args"]["query"]
-                safety_check = self.llm.invoke(
-                    self.safety_prompt + query,
-                    self.build_config(tags=["safety_check"]),
+            query = tool_call["args"]["query"]
+            safety_result = self.llm.invoke(
+                self.safety_prompt + query,
+                self.build_config(tags=["safety_check"]),
+            )
+
+            if "[NO]" in safety_result.content:
+                any_unsafe = True
+                tool_response = (
+                    "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
+                    "For reason: {r}"
+                ).format(q=query, r=safety_result.content)
+                console.print(
+                    "[bold red][WARNING][/bold red] Command deemed unsafe:", query
+                )
+                # Also surface the model's rationale for transparency.
+                console.print(
+                    "[bold red][WARNING][/bold red] REASON:", tool_response
+                )
+            else:
+                tool_response = f"Command `{query}` passed safety check."
+                console.print(
+                    f"[green]Command passed safety check:[/green] {query}"
                 )
 
-                if "[NO]" in safety_check.content:
-                    tool_failed = True
-
-                    tool_response = f"""
-                    [UNSAFE] That command `{query}` was deemed unsafe and cannot be run.
-                    For reason: {safety_check.content}
-                    """
-                    console.print(
-                        "[bold red][WARNING][/bold red] Command deemed unsafe:",
-                        query,
-                    )
-                    # and tell the user the reason
-                    console.print(
-                        "[bold red][WARNING][/bold red] REASON:", tool_response
-                    )
-
-                else:
-                    tool_response = f"Command `{query}` passed safety check."
-                    console.print(
-                        f"[green]Command passed safety check:[/green] {query}"
-                    )
-
-                tool_responses.append(
-                    ToolMessage(
-                        content=tool_response,
-                        tool_call_id=tool_call["id"],
-                    )
+            tool_responses.append(
+                ToolMessage(
+                    content=tool_response,
+                    tool_call_id=tool_call["id"],
                 )
+            )
 
-        if tool_failed:
+        # 3) If any command is unsafe, append all tool responses; otherwise keep state.
+        if any_unsafe:
             new_state["messages"].extend(tool_responses)
 
         return new_state
