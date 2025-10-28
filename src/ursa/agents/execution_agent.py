@@ -24,6 +24,7 @@ Entry points:
 - ExecutionAgent._invoke(...) runs the compiled graph.
 - main() shows a minimal demo that writes and runs a script.
 """
+
 import os
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
@@ -100,6 +101,7 @@ class ExecutionState(TypedDict):
     - symlinkdir: optional dict describing a symlink operation (source, dest,
       is_linked).
     """
+
     messages: Annotated[list, add_messages]
     current_progress: str
     code_files: list[str]
@@ -520,10 +522,10 @@ class ExecutionAgent(BaseAgent):
             ExecutionState: Partial state update containing:
                 - "messages": A list with the model's response as the latest entry.
                 - "workspace": The resolved workspace path.
-        """        
+        """
         new_state = state.copy()
 
-        # 1) Ensure a workspace directory exists, creating a named one if absent.       
+        # 1) Ensure a workspace directory exists, creating a named one if absent.
         if "workspace" not in new_state.keys():
             new_state["workspace"] = randomname.get_name()
             print(
@@ -541,7 +543,9 @@ class ExecutionAgent(BaseAgent):
 
             src = Path(symlinkdir["source"]).expanduser().resolve()
             workspace_root = Path(new_state["workspace"]).expanduser().resolve()
-            dst = workspace_root / symlinkdir["dest"]  # Link lives inside workspace.
+            dst = (
+                workspace_root / symlinkdir["dest"]
+            )  # Link lives inside workspace.
 
             # If a file/link already exists at the destination, replace it.
             if dst.exists() or dst.is_symlink():
@@ -557,7 +561,9 @@ class ExecutionAgent(BaseAgent):
 
         # 3) Ensure the executor prompt is the first SystemMessage.
         if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(content=self.executor_prompt)
+            new_state["messages"][0] = SystemMessage(
+                content=self.executor_prompt
+            )
         else:
             new_state["messages"] = [
                 SystemMessage(content=self.executor_prompt)
@@ -679,7 +685,8 @@ class ExecutionAgent(BaseAgent):
                     "For reason: {r}"
                 ).format(q=query, r=safety_result.content)
                 console.print(
-                    "[bold red][WARNING][/bold red] Command deemed unsafe:", query
+                    "[bold red][WARNING][/bold red] Command deemed unsafe:",
+                    query,
                 )
                 # Also surface the model's rationale for transparency.
                 console.print(
@@ -756,11 +763,13 @@ class ExecutionAgent(BaseAgent):
         and a "graph" tag, then delegates to the compiled graph's invoke method.
         """
         # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(recursion_limit=recursion_limit, tags=["graph"])
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
 
         # Delegate execution to the compiled graph.
         return self._action.invoke(inputs, config)
- 
+
     # This property is trying to stop people bypassing invoke
     @property
     def action(self):
