@@ -739,6 +739,7 @@ class ExecutionAgent(BaseAgent):
     # this is trying to stop people bypassing invoke
     @property
     def action(self):
+        """Property used to affirm `action` attribute is unsupported."""
         raise AttributeError(
             "Use .stream(...) or .invoke(...); direct .action access is unsupported."
         )
