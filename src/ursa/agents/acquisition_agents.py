@@ -742,7 +742,6 @@ class ArxivAgent(BaseAcquisitionAgent):
     ):
         super().__init__(
             llm,
-            summarize=True,
             rag_embedding=rag_embedding,
             process_images=process_images,
             max_results=max_results,
