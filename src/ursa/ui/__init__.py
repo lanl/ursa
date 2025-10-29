@@ -1,7 +1,7 @@
 import subprocess
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Optional, cast
 
 import chainlit as cl
 from chainlit.types import CommandDict
@@ -127,17 +127,16 @@ def run_executor(prompt: str) -> str:
     # to have their own space.
     workspace = Path.home() / ".ursa" / "ui"
     workspace.mkdir(parents=True, exist_ok=True)
-    state = cl.user_session.get(
-        "executor_state",
-        {"workspace": str(workspace)},
+    state = cast(
+        dict,
+        cl.user_session.get(
+            "executor_state",
+            {"workspace": str(workspace)},
+        ),
     )
     last_agent_result = cl.user_session.get("last_agent_result")
 
-    if not isinstance(state, dict):
-        raise RuntimeError("executor_state is not dict!")
-
-    agent = cl.user_session.get("execution_agent")
-    assert isinstance(agent, ExecutionAgent)
+    agent = cast(ExecutionAgent, cl.user_session.get("execution_agent"))
 
     if "messages" in state and isinstance(state["messages"], list):
         state["messages"].append(
