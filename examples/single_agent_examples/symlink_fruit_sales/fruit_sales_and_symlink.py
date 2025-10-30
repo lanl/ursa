@@ -11,6 +11,7 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.logo_generator import kickoff_logo
 
 console = Console()  # global console object
 
@@ -34,9 +35,35 @@ lines around bars and any other additions you think are interesting.
 """
 )
 
-workspace = f"fruit_sales_{randomname.get_name()}"
+workspace = f"fruit_sales_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
+
 workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
 tid = "run-" + __import__("uuid").uuid4().hex[:8]
+
+
+# Create a logo for this run (saved as <workspace>/<something>.png
+# Fire-and-continue (no blocking)
+_ = kickoff_logo(
+    problem_text=problem,
+    workspace=workspace,
+    out_dir=workspace,
+    size="1536x1024",
+    background="opaque",
+    quality="high",
+    n=4,
+    style="random-scene",  # try: 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', or 'brutalist'
+    console=console,  # plug in a Rich console if you have it
+    on_done=lambda p: console.print(
+        Panel.fit(
+            f"[bold yellow]Project art saved:[/] {p}", border_style="yellow"
+        )
+    ),
+    on_error=lambda e: console.print(
+        Panel.fit(
+            f"[bold red]Art generation failed:[/] {e}", border_style="red"
+        )
+    ),
+)
 
 
 def main(model_name: str):
