@@ -58,7 +58,7 @@ from typing_extensions import TypedDict
 
 from ..prompt_library.execution_prompts import (
     executor_prompt,
-    safety_prompt,
+    get_safety_prompt,
     summarize_prompt,
 )
 from ..util.diff_renderer import DiffRenderer
@@ -336,7 +336,8 @@ def write_code(
 
     # Append the file to the list in agent's state for later reference
     file_list = state.get("code_files", [])
-    file_list.append(filename)
+    if filename not in file_list:
+        file_list.append(filename)
 
     # Create a tool message to send back to acknowledge success.
     msg = ToolMessage(
@@ -449,8 +450,8 @@ class ExecutionAgent(BaseAgent):
             configuration, checkpointer).
 
     Attributes:
-        safety_prompt (str): Prompt used to evaluate safety of shell
-            commands.
+        safe_codes (list[str]): List of trusted programming languages for the
+            agent. Defaults to python and julia
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
         summarize_prompt (str): Prompt used to request concise summaries for
@@ -470,6 +471,9 @@ class ExecutionAgent(BaseAgent):
             interactions to the memory backend.
         safety_check(state): Validate pending run_cmd calls via the safety
             prompt and append ToolMessages for unsafe commands.
+        get_safety_prompt(query, safe_codes, created_files): Get the LLM prompt for safety_check
+            that includes an editable list of available programming languages and gets the context
+            of files that the agent has generated and can trust.
         _build_graph(): Construct and compile the StateGraph for the agent
             loop.
         _invoke(inputs, recursion_limit=...): Internal entry that invokes the
@@ -492,7 +496,8 @@ class ExecutionAgent(BaseAgent):
         """ExecutionAgent class initialization."""
         super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
-        self.safety_prompt = safety_prompt
+        self.safe_codes = kwargs.get("safe_codes", ["python", "julia"])
+        self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
@@ -668,13 +673,16 @@ class ExecutionAgent(BaseAgent):
         # 2) Evaluate any pending run_cmd tool calls for safety.
         tool_responses: list[ToolMessage] = []
         any_unsafe = False
+        print("FOR DEBUGGING, code_files = ", new_state.get("code_files", []))
         for tool_call in last_msg.tool_calls:
             if tool_call["name"] != "run_cmd":
                 continue
 
             query = tool_call["args"]["query"]
             safety_result = self.llm.invoke(
-                self.safety_prompt + query,
+                self.get_safety_prompt(
+                    query, self.safe_codes, new_state.get("code_files", [])
+                ),
                 self.build_config(tags=["safety_check"]),
             )
 
