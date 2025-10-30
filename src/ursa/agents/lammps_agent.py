@@ -53,6 +53,7 @@ class LammpsAgent(BaseAgent):
         lammps_cmd: str = "lmp_mpi",
         mpirun_cmd: str = "mpirun",
         tiktoken_model: str = "o3",
+        max_tokens: int = 200000,
         **kwargs,
     ):
         if not working:

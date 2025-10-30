@@ -1336,7 +1336,7 @@ class Telemetry:
             saved_path = self._save_json(payload, filepath=filepath)
 
         # --- Build Rich renderables ---
-        console = get_console()
+        # console = get_console()
 
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
