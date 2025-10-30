@@ -13,12 +13,12 @@ from typing import (
 )
 from uuid import uuid4
 
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.load import dumps
 from langchain_core.runnables import (
     RunnableLambda,
 )
-from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 
@@ -48,7 +48,7 @@ class BaseAgent(ABC):
     def __init__(
         self,
         llm: str | BaseChatModel,
-        checkpointer: BaseCheckpointSaver = None,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
         enable_metrics: bool = False,  # default to enabling metrics
         metrics_dir: str = ".ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
@@ -60,10 +60,12 @@ class BaseAgent(ABC):
                 self.llm = llm
 
             case str():
-                self.llm_provider, self.llm_model = llm.split("/")
-                self.llm = ChatLiteLLM(
+                self.llm_provider, self.llm_model = llm.split(":")
+                self.llm = init_chat_model(
                     model=llm,
-                    max_tokens=kwargs.pop("max_tokens", 10000),
+                    max_completion_tokens=kwargs.pop(
+                        "max_completion_tokens", 10000
+                    ),
                     max_retries=kwargs.pop("max_retries", 2),
                     **kwargs,
                 )

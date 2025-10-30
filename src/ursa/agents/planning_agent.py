@@ -30,7 +30,7 @@ class PlanningState(TypedDict):
 
 class PlanningAgent(BaseAgent):
     def __init__(
-        self, llm: str | BaseChatModel = "openai/gpt-4o-mini", **kwargs
+        self, llm: str | BaseChatModel = "openai:gpt-4o-mini", **kwargs
     ):
         super().__init__(llm, **kwargs)
         self.planner_prompt = planner_prompt

@@ -48,7 +48,7 @@ class WebSearchState(TypedDict):
 
 class WebSearchAgent(BaseAgent):
     def __init__(
-        self, llm: str | BaseChatModel = "openai/gpt-4o-mini", **kwargs
+        self, llm: str | BaseChatModel = "openai:gpt-4o-mini", **kwargs
     ):
         super().__init__(llm, **kwargs)
         self.websearch_prompt = websearch_prompt

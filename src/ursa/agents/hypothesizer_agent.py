@@ -41,7 +41,7 @@ class HypothesizerState(TypedDict):
 
 
 class HypothesizerAgent(BaseAgent):
-    def __init__(self, llm: str | BaseChatModel = "openai/o3-mini", **kwargs):
+    def __init__(self, llm: str | BaseChatModel = "openai:o3-mini", **kwargs):
         super().__init__(llm, **kwargs)
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt

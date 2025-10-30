@@ -85,9 +85,9 @@ def _dec(x: str | float | int) -> Decimal:
 # Fill in values for your org as needed (USD per 1K tokens).
 DEFAULT_REGISTRY: Dict[str, ModelPricing] = {
     # Examples — edit to match your negotiated prices:
-    # "openai/gpt-4o": ModelPricing(_dec("5.00"), _dec("15.00")),
-    # "openai/o3-mini": ModelPricing(_dec("2.50"), _dec("10.00"), reasoning_per_1k=_dec("5.00")),
-    "openai/o3": ModelPricing(
+    # "openai:gpt-4o": ModelPricing(_dec("5.00"), _dec("15.00")),
+    # "openai:o3-mini": ModelPricing(_dec("2.50"), _dec("10.00"), reasoning_per_1k=_dec("5.00")),
+    "openai:o3": ModelPricing(
         _dec("0.00"), _dec("0.00"), reasoning_per_1k=_dec("0.00")
     ),
     "local/*": ModelPricing(_dec("0.00"), _dec("0.00")),
@@ -116,7 +116,7 @@ def find_pricing(
     for key, mp in registry.items():
         if key.endswith("/*") and model.startswith(key[:-2]):
             return mp
-    # try provider/model normalization like "openai-o3" → "openai/o3"
+    # try provider/model normalization like "openai-o3" → "openai:o3"
     model2 = model.replace("-", "/")
     if model2 in registry:
         return registry[model2]

@@ -21,7 +21,6 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
-from litellm.exceptions import ContentPolicyViolationError
 
 # Rich
 from rich import get_console
@@ -59,7 +58,7 @@ class ExecutionState(TypedDict):
 class ExecutionAgent(BaseAgent):
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/gpt-4o-mini",
+        llm: str | BaseChatModel = "openai:gpt-4o-mini",
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
         **kwargs,
@@ -122,7 +121,7 @@ class ExecutionAgent(BaseAgent):
             response = self.llm.invoke(
                 new_state["messages"], self.build_config(tags=["agent"])
             )
-        except ContentPolicyViolationError as e:
+        except Exception as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
@@ -135,7 +134,7 @@ class ExecutionAgent(BaseAgent):
             response = self.llm.invoke(
                 messages, self.build_config(tags=["summarize"])
             )
-        except ContentPolicyViolationError as e:
+        except Exception as e:
             print("Error: ", e, " ", messages[-1].content)
         if self.agent_memory:
             memories = []
