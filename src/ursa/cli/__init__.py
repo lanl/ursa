@@ -51,6 +51,13 @@ def run(
     thread_id: Annotated[
         str, Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID")
     ] = "ursa_cli",
+    safe_codes: Annotated[
+        list[str],
+        Option(
+            help="Programming languages that the execution agent can trust by default.",
+            envvar="URSA_THREAD_ID",
+        ),
+    ] = ["python", "julia"],
     arxiv_summarize: Annotated[
         bool,
         Option(

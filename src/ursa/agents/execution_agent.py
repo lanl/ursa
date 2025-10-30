@@ -673,7 +673,6 @@ class ExecutionAgent(BaseAgent):
         # 2) Evaluate any pending run_cmd tool calls for safety.
         tool_responses: list[ToolMessage] = []
         any_unsafe = False
-        print("FOR DEBUGGING, code_files = ", new_state.get("code_files", []))
         for tool_call in last_msg.tool_calls:
             if tool_call["name"] != "run_cmd":
                 continue
