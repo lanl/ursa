@@ -421,6 +421,11 @@ def edit_code(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
         f"[green]File updated:[/] {code_file}"
     )
+    file_list = state.get("code_files", [])
+    if code_file not in file_list:
+        file_list.append(filename)
+    state["code_files"] = file_list
+
     return f"File {filename} updated successfully."
 
 
