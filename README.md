@@ -102,35 +102,49 @@ ursa run --help
 
 ## MCP serving
 
-You can install `ursa` as a command line app with `pip install`; or with `uv` via
+You can install `ursa` as a command line app via `pip` or `uv`:
 
-```bash
-uv tool install ursa-ai
+**pip**
+
+```shell
+pip install 'ursa-ai[mcp]'
+```
+
+**uv**
+
+```shell
+uv tool install 'ursa-ai[mcp]'
 ```
 
 To start hosting URSA as a local MCP server, run
 
-```
+```shell
 ursa serve
 ```
 
 This will start an MCP server on localhost (127.0.0.1) on port 8000.
 
 You can test the server using curl from another terminal:
-```
-curl -X POST -H "Content-Type: application/json" -d '{"agent": "execute", "query": "Plot the first 1000 prime numbers with matplotlib"}' http://localhost:8000/run
+
+```shell
+curl -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"agent": "execute", "query": "Plot the first 1000 prime numbers with matplotlib"}' \
+    http://localhost:8000/run
 ```
 
-The resulting code is written in the ursa_mcp subfolder of the serving location. The curl query will get the final summary of what the agent carried out. 
+The resulting code is written in the `ursa_mcp` subfolder of the serving
+location. The curl query will get the final summary of what the agent carried
+out. 
 
-When served locally, URSA can then be set up as an MCP tool that can be couple to other agentic workflows. The set of agents is the same as the cli (execute, plan, arxiv, web, recall, chat)
+When served locally, URSA can then be set up as an MCP tool that can be couple
+to other agentic workflows. The set of agents is the same as the cli (execute,
+plan, arxiv, web, recall, chat)
 
 You can get a list of available command line options via
 ```
 ursa serve --help
 ```
-
-
 
 ## Sandboxing
 The Execution Agent is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
