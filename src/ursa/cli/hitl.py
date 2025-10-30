@@ -5,7 +5,7 @@ from cmd import Cmd
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import Annotated, Callable, Literal, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -440,10 +440,11 @@ mcp_app = FastAPI(
 
 
 class QueryRequest(BaseModel):
-    agent: str = Literal["arxiv", "plan", "execute", "web", "recall", "chat"]
-    query: str = Field(
-        ..., example="Write the first 1000 prime numbers to a text file."
-    )
+    agent: Literal["arxiv", "plan", "execute", "web", "recall", "chat"]
+    query: Annotated[
+        str,
+        Field(examples=["Write the first 1000 prime numbers to a text file."]),
+    ]
 
 
 class QueryResponse(BaseModel):
