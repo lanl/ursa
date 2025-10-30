@@ -21,12 +21,6 @@ from ..prompt_library.websearch_prompts import (
 )
 from .base import BaseAgent
 
-# --- ANSI color codes ---
-BLUE = "\033[1;34m"
-RED = "\033[1;31m"
-GREEN = "\033[92m"
-RESET = "\033[0m"
-
 
 class WebSearchState(TypedDict):
     websearch_query: str
@@ -46,7 +40,7 @@ class WebSearchState(TypedDict):
 # all the tokens of all the sources.
 
 
-class WebSearchAgent(BaseAgent):
+class WebSearchAgentLegacy(BaseAgent):
     def __init__(
         self,
         llm: BaseChatModel = init_chat_model("openai:gpt-4o-mini"),

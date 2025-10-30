@@ -17,7 +17,6 @@ def test_rag_agent():
         database_path="tests/tiny-corpus",
         summaries_path=str(summary_dir),
         vectorstore_path=str(vectorstore_dir),
-        enable_metrics=True,
     )
     agent.invoke(context="What is AIBD?")
     render_session_summary(agent.thread_id)

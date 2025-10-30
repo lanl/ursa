@@ -1,0 +1,390 @@
+log ./log.lammps
+
+units           metal
+atom_style      atomic
+boundary        p p p
+newton          on
+
+variable        a0           equal xxx
+variable        nrep         equal xxx
+variable        seed         equal xxx
+variable        delta        equal xxx
+variable        etol         equal xxx
+variable        ftol         equal xxx
+variable        maxiter      equal xxx
+variable        maxeval      equal xxx
+
+# ------------ SYSTEM / STRUCTURE ------------
+lattice        xxx (fcc,bcc,etc....) ${a0}
+region         box block 0 ${nrep} 0 ${nrep} 0 ${nrep}
+create_box     xx box
+create_atoms   xx box
+
+# Example random equiatomic assignment across 5 types (1..5)
+# Adjust according to your needs
+set type 1 type/fraction 2 0.20 ${seed}
+set type 1 type/fraction 3 0.25 ${seed}
+set type 1 type/fraction 4 0.3333 ${seed}
+set type 1 type/fraction 5 0.5 ${seed}
+
+# Masses 
+mass 1 xxxx
+mass 2 xxxx
+mass 3 xxxx
+mass 4 xxxx
+mass 5 xxxx
+
+# pair_style and pair_coeff details should be entered here
+
+neighbor        2.0 bin   
+neigh_modify    delay 0 every 1 check yes
+
+# ------------ MINIMIZATION TO 0 K ------------
+reset_timestep  0
+thermo          xxxxx
+thermo_style    custom step pe lx ly lz pxx pyy pzz pxy pxz pyz
+
+min_style       cg
+min_modify      dmax 0.1 line quadratic
+minimize        ${etol} ${ftol} ${maxiter} ${maxeval}
+
+# Store reference cell (for shear normalization)
+variable Lx0 equal lx
+variable Ly0 equal ly
+variable Lz0 equal lz
+
+# ------------ HELPER VARIABLES ------------
+# Precompute scale factors for normal strains
+variable facP   equal 1.0+v_delta          # 1 + delta
+variable facM   equal 1.0-v_delta          # 1 - delta
+variable facPi  equal 1.0/${facP}          # 1/(1+delta)
+variable facMi  equal 1.0/${facM}          # 1/(1-delta)
+
+# A macro to relax atoms after each strain change
+variable relax string "minimize ${etol} ${ftol} ${maxiter} ${maxeval}"
+
+# ------------ STRESS (GPa, tension-positive) ------------
+# LAMMPS 'metal' pressure is bar (compression positive). Convert and flip sign.
+variable S1 equal -pxx*1.0e-4
+variable S2 equal -pyy*1.0e-4
+variable S3 equal -pzz*1.0e-4
+variable S4 equal -pyz*1.0e-4
+variable S5 equal -pxz*1.0e-4
+variable S6 equal -pxy*1.0e-4
+
+# Initialize holders for +/- stress states
+variable Sp1 equal 0.0
+variable Sp2 equal 0.0
+variable Sp3 equal 0.0
+variable Sp4 equal 0.0
+variable Sp5 equal 0.0
+variable Sp6 equal 0.0
+
+variable Sm1 equal 0.0
+variable Sm2 equal 0.0
+variable Sm3 equal 0.0
+variable Sm4 equal 0.0
+variable Sm5 equal 0.0
+variable Sm6 equal 0.0
+
+variable Tp1 equal 0.0
+variable Tp2 equal 0.0
+variable Tp3 equal 0.0
+variable Tp4 equal 0.0
+variable Tp5 equal 0.0
+variable Tp6 equal 0.0
+
+variable Tm1 equal 0.0
+variable Tm2 equal 0.0
+variable Tm3 equal 0.0
+variable Tm4 equal 0.0
+variable Tm5 equal 0.0
+variable Tm6 equal 0.0
+
+variable Up1 equal 0.0
+variable Up2 equal 0.0
+variable Up3 equal 0.0
+variable Up4 equal 0.0
+variable Up5 equal 0.0
+variable Up6 equal 0.0
+
+variable Um1 equal 0.0
+variable Um2 equal 0.0
+variable Um3 equal 0.0
+variable Um4 equal 0.0
+variable Um5 equal 0.0
+variable Um6 equal 0.0
+
+
+# ------------ NORMAL STRAINS ------------
+# X: +delta then -delta
+label strain_x_plus
+change_box all x scale ${facP} remap units box
+${relax}
+variable Sp1 equal ${S1}
+variable Sp2 equal ${S2}
+variable Sp3 equal ${S3}
+variable Sp4 equal ${S4}
+variable Sp5 equal ${S5}
+variable Sp6 equal ${S6}
+change_box all x scale ${facPi} remap units box
+${relax}
+
+label strain_x_minus
+change_box all x scale ${facM} remap units box
+${relax}
+variable Sm1 equal ${S1}
+variable Sm2 equal ${S2}
+variable Sm3 equal ${S3}
+variable Sm4 equal ${S4}
+variable Sm5 equal ${S5}
+variable Sm6 equal ${S6}
+change_box all x scale ${facMi} remap units box
+${relax}
+
+# Y
+label strain_y_plus
+change_box all y scale ${facP} remap units box
+${relax}
+variable Tp1 equal ${S1}
+variable Tp2 equal ${S2}
+variable Tp3 equal ${S3}
+variable Tp4 equal ${S4}
+variable Tp5 equal ${S5}
+variable Tp6 equal ${S6}
+change_box all y scale ${facPi} remap units box
+${relax}
+
+label strain_y_minus
+change_box all y scale ${facM} remap units box
+${relax}
+variable Tm1 equal ${S1}
+variable Tm2 equal ${S2}
+variable Tm3 equal ${S3}
+variable Tm4 equal ${S4}
+variable Tm5 equal ${S5}
+variable Tm6 equal ${S6}
+change_box all y scale ${facMi} remap units box
+${relax}
+
+# Z
+label strain_z_plus
+change_box all z scale ${facP} remap units box
+${relax}
+variable Up1 equal ${S1}
+variable Up2 equal ${S2}
+variable Up3 equal ${S3}
+variable Up4 equal ${S4}
+variable Up5 equal ${S5}
+variable Up6 equal ${S6}
+change_box all z scale ${facPi} remap units box
+${relax}
+
+label strain_z_minus
+change_box all z scale ${facM} remap units box
+${relax}
+variable Um1 equal ${S1}
+variable Um2 equal ${S2}
+variable Um3 equal ${S3}
+variable Um4 equal ${S4}
+variable Um5 equal ${S5}
+variable Um6 equal ${S6}
+change_box all z scale ${facMi} remap units box
+${relax}
+
+# ------------ SHEAR STRAINS (triclinic + proper gamma) ------------
+# Convert to triclinic once so we can tilt
+change_box all triclinic remap units box
+
+# Define tilt distances so that engineering shear gamma == delta
+# divisors: xy->Ly, xz->Lz, yz->Lz
+variable dxy equal v_delta*v_Ly0
+variable dxz equal v_delta*v_Lz0
+variable dyz equal v_delta*v_Lz0
+
+# XY
+label shear_xy_plus
+change_box all xy delta ${dxy} remap units box
+${relax}
+variable Xp1 equal ${S1}
+variable Xp2 equal ${S2}
+variable Xp3 equal ${S3}
+variable Xp4 equal ${S4}
+variable Xp5 equal ${S5}
+variable Xp6 equal ${S6}
+change_box all xy delta -${dxy} remap units box
+${relax}
+
+label shear_xy_minus
+change_box all xy delta -${dxy} remap units box
+${relax}
+variable Xm1 equal ${S1}
+variable Xm2 equal ${S2}
+variable Xm3 equal ${S3}
+variable Xm4 equal ${S4}
+variable Xm5 equal ${S5}
+variable Xm6 equal ${S6}
+change_box all xy delta ${dxy} remap units box
+${relax}
+
+# XZ
+label shear_xz_plus
+change_box all xz delta ${dxz} remap units box
+${relax}
+variable Yp1 equal ${S1}
+variable Yp2 equal ${S2}
+variable Yp3 equal ${S3}
+variable Yp4 equal ${S4}
+variable Yp5 equal ${S5}
+variable Yp6 equal ${S6}
+change_box all xz delta -${dxz} remap units box
+${relax}
+
+label shear_xz_minus
+change_box all xz delta -${dxz} remap units box
+${relax}
+variable Ym1 equal ${S1}
+variable Ym2 equal ${S2}
+variable Ym3 equal ${S3}
+variable Ym4 equal ${S4}
+variable Ym5 equal ${S5}
+variable Ym6 equal ${S6}
+change_box all xz delta ${dxz} remap units box
+${relax}
+
+# YZ
+label shear_yz_plus
+change_box all yz delta ${dyz} remap units box
+${relax}
+variable Zp1 equal ${S1}
+variable Zp2 equal ${S2}
+variable Zp3 equal ${S3}
+variable Zp4 equal ${S4}
+variable Zp5 equal ${S5}
+variable Zp6 equal ${S6}
+change_box all yz delta -${dyz} remap units box
+${relax}
+
+label shear_yz_minus
+change_box all yz delta -${dyz} remap units box
+${relax}
+variable Zm1 equal ${S1}
+variable Zm2 equal ${S2}
+variable Zm3 equal ${S3}
+variable Zm4 equal ${S4}
+variable Zm5 equal ${S5}
+variable Zm6 equal ${S6}
+change_box all yz delta ${dyz} remap units box
+${relax}
+
+# (Optional tidy-up: zero tilts and return to orthogonal)
+change_box all xy final 0.0 xz final 0.0 yz final 0.0 remap units box
+change_box all ortho remap units box
+
+# ------------ BUILD THE 6x6 C MATRIX (GPa) ------------
+# Voigt: 1=xx,2=yy,3=zz,4=yz,5=xz,6=xy
+# Normal: epsilon = +/- delta
+# Shear:  epsilon4..6 = gamma/2 = +/- delta/2  -> divide by delta below
+
+# j=1 (exx)
+variable C11 equal ( ${Sp1}-${Sm1} )/( 2*${delta} )
+variable C21 equal ( ${Sp2}-${Sm2} )/( 2*${delta} )
+variable C31 equal ( ${Sp3}-${Sm3} )/( 2*${delta} )
+variable C41 equal ( ${Sp4}-${Sm4} )/( 2*${delta} )
+variable C51 equal ( ${Sp5}-${Sm5} )/( 2*${delta} )
+variable C61 equal ( ${Sp6}-${Sm6} )/( 2*${delta} )
+
+# j=2 (eyy)
+variable C12 equal ( ${Tp1}-${Tm1} )/( 2*${delta} )
+variable C22 equal ( ${Tp2}-${Tm2} )/( 2*${delta} )
+variable C32 equal ( ${Tp3}-${Tm3} )/( 2*${delta} )
+variable C42 equal ( ${Tp4}-${Tm4} )/( 2*${delta} )
+variable C52 equal ( ${Tp5}-${Tm5} )/( 2*${delta} )
+variable C62 equal ( ${Tp6}-${Tm6} )/( 2*${delta} )
+
+# j=3 (ezz)
+variable C13 equal ( ${Up1}-${Um1} )/( 2*${delta} )
+variable C23 equal ( ${Up2}-${Um2} )/( 2*${delta} )
+variable C33 equal ( ${Up3}-${Um3} )/( 2*${delta} )
+variable C43 equal ( ${Up4}-${Um4} )/( 2*${delta} )
+variable C53 equal ( ${Up5}-${Um5} )/( 2*${delta} )
+variable C63 equal ( ${Up6}-${Um6} )/( 2*${delta} )
+
+# j=6 (exy = gamma/2): divide by delta
+variable C16 equal ( ${Xp1}-${Xm1} )/( ${delta} )
+variable C26 equal ( ${Xp2}-${Xm2} )/( ${delta} )
+variable C36 equal ( ${Xp3}-${Xm3} )/( ${delta} )
+variable C46 equal ( ${Xp4}-${Xm4} )/( ${delta} )
+variable C56 equal ( ${Xp5}-${Xm5} )/( ${delta} )
+variable C66 equal ( ${Xp6}-${Xm6} )/( ${delta} )
+
+# j=5 (exz = gamma/2): divide by delta
+variable C15 equal ( ${Yp1}-${Ym1} )/( ${delta} )
+variable C25 equal ( ${Yp2}-${Ym2} )/( ${delta} )
+variable C35 equal ( ${Yp3}-${Ym3} )/( ${delta} )
+variable C45 equal ( ${Yp4}-${Ym4} )/( ${delta} )
+variable C55 equal ( ${Yp5}-${Ym5} )/( ${delta} )
+variable C65 equal ( ${Yp6}-${Ym6} )/( ${delta} )
+
+# j=4 (eyz = gamma/2): divide by delta
+variable C14 equal ( ${Zp1}-${Zm1} )/( ${delta} )
+variable C24 equal ( ${Zp2}-${Zm2} )/( ${delta} )
+variable C34 equal ( ${Zp3}-${Zm3} )/( ${delta} )
+variable C44 equal ( ${Zp4}-${Zm4} )/( ${delta} )
+variable C54 equal ( ${Zp5}-${Zm5} )/( ${delta} )
+variable C64 equal ( ${Zp6}-${Zm6} )/( ${delta} )
+
+# ------------ REPORT: raw, symmetrized, cubic averages, stability ------------
+print "Elastic stiffness matrix C_ij (GPa):"
+print "  ${C11} ${C12} ${C13} ${C14} ${C15} ${C16}"
+print "  ${C21} ${C22} ${C23} ${C24} ${C25} ${C26}"
+print "  ${C31} ${C32} ${C33} ${C34} ${C35} ${C36}"
+print "  ${C41} ${C42} ${C43} ${C44} ${C45} ${C46}"
+print "  ${C51} ${C52} ${C53} ${C54} ${C55} ${C56}"
+print "  ${C61} ${C62} ${C63} ${C64} ${C65} ${C66}"
+
+
+
+# ---- Symmetrize C (recommended for reporting) ----
+variable Cs12 equal 0.5*(${C12}+${C21})
+variable Cs13 equal 0.5*(${C13}+${C31})
+variable Cs23 equal 0.5*(${C23}+${C32})
+variable Cs14 equal 0.5*(${C14}+${C41})
+variable Cs15 equal 0.5*(${C15}+${C51})
+variable Cs16 equal 0.5*(${C16}+${C61})
+variable Cs24 equal 0.5*(${C24}+${C42})
+variable Cs25 equal 0.5*(${C25}+${C52})
+variable Cs26 equal 0.5*(${C26}+${C62})
+variable Cs34 equal 0.5*(${C34}+${C43})
+variable Cs35 equal 0.5*(${C35}+${C53})
+variable Cs36 equal 0.5*(${C36}+${C63})
+variable Cs44 equal ${C44}
+variable Cs55 equal ${C55}
+variable Cs66 equal ${C66}
+variable Cs11 equal ${C11}
+variable Cs22 equal ${C22}
+variable Cs33 equal ${C33}
+
+print "Symmetrized C_ij (GPa) key entries:"
+print "C11=${Cs11} C22=${Cs22} C33=${Cs33}"
+print "C12=${Cs12} C13=${Cs13} C23=${Cs23}"
+print "C44=${Cs44} C55=${Cs55} C66=${Cs66}"
+
+# ---- Cubic-averaged moduli (for near-cubic HEAs) ----
+variable C11_c equal ( ${Cs11}+${Cs22}+${Cs33} )/3.0
+variable C12_c equal ( ${Cs12}+${Cs13}+${Cs23} )/3.0
+variable C44_c equal ( ${Cs44}+${Cs55}+${Cs66} )/3.0
+print "Cubic-averaged: C11bar=${C11_c} GPa, C12bar=${C12_c} GPa, C44bar=${C44_c} GPa"
+
+# ---- Born stability (cubic) using cubic-averaged values ----
+variable born1 equal ${C11_c}-${C12_c}
+variable born2 equal ${C11_c}+2.0*${C12_c}
+variable born3 equal ${C44_c}
+print "Born (cubic) checks: C11-C12=${born1} (>0), C11+2C12=${born2} (>0), C44=${born3} (>0)"
+
+# ------------ DERIVED MODULI (Voigt estimates from raw C) ------------
+variable K_V equal ( ( ${C11}+${C22}+${C33} ) + 2*( ${Cs12}+${Cs13}+${Cs23} ) )/9.0
+variable G_V equal ( ( ${C11}+${C22}+${C33} ) - ( ${Cs12}+${Cs13}+${Cs23} ) + 3*( ${C44}+${C55}+${C66} ) )/15.0
+variable E_V equal 9.0*${K_V}*${G_V}/(3.0*${K_V}+${G_V})
+variable nu_V equal (3.0*${K_V}-2.0*${G_V})/(2.0*(3.0*${K_V}+${G_V}))
+print "Voigt estimates (polycrystal): K=${K_V} GPa, G=${G_V} GPa, E=${E_V} GPa, nu=${nu_V}"

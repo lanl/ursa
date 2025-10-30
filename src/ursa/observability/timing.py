@@ -1391,14 +1391,14 @@ class Telemetry:
                 Text.from_markup(pricing_str),
             ]  # <- parse markup
 
-        panel = Panel.fit(
-            Group(*renderables),  # <- pass a single renderable
-            title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
-            border_style="bright_magenta",
-            padding=(1, 2),
-            box=HEAVY,  # <- beefy border with corners
-        )
-        console.print(panel)
+        # panel = Panel.fit(
+        #     Group(*renderables),  # <- pass a single renderable
+        #     title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
+        #     border_style="bright_magenta",
+        #     padding=(1, 2),
+        #     box=HEAVY,  # <- beefy border with corners
+        # )
+        # console.print(panel)
 
         _session_ingest(payload)
 

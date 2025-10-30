@@ -8,6 +8,8 @@
 The flexible agentic workflow for accelerating scientific tasks. 
 Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
 
+The original arxiv paper is [here](https://arxiv.org/abs/2506.22653).
+
 ## Installation
 You can install `ursa` via `pip` or `uv`.
 
@@ -96,6 +98,52 @@ Enter your prompt for Execution Agent: Execute the plan.
 You can get a list of available command line options via
 ```
 ursa run --help
+```
+
+## MCP serving
+
+You can install `ursa` as a command line app via `pip` or `uv`:
+
+**pip**
+
+```shell
+pip install 'ursa-ai[mcp]'
+```
+
+**uv**
+
+```shell
+uv tool install 'ursa-ai[mcp]'
+```
+
+To start hosting URSA as a local MCP server, run
+
+```shell
+ursa serve
+```
+
+This will start an MCP server on localhost (127.0.0.1) on port 8000.
+
+You can test the server using curl from another terminal:
+
+```shell
+curl -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"agent": "execute", "query": "Plot the first 1000 prime numbers with matplotlib"}' \
+    http://localhost:8000/run
+```
+
+The resulting code is written in the `ursa_mcp` subfolder of the serving
+location. The curl query will get the final summary of what the agent carried
+out. 
+
+When served locally, URSA can then be set up as an MCP tool that can be couple
+to other agentic workflows. The set of agents is the same as the cli (execute,
+plan, arxiv, web, recall, chat)
+
+You can get a list of available command line options via
+```
+ursa serve --help
 ```
 
 ## Sandboxing

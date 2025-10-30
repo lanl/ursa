@@ -1,14 +1,18 @@
-from langchain.chat_models import init_chat_model
+from uuid import uuid4
+
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.observability.timing import render_session_summary
 
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
 
 def main():
-    model = init_chat_model(model="openai:o3", max_completion_tokens=50000)
+    tid = f"run-{uuid4().hex[:8]}"
+    model = ChatOpenAI(
+        model="o3",
+        max_tokens=50000,
+    )
 
     agent = ArxivAgent(
         llm=model,
@@ -19,16 +23,15 @@ def main():
         summaries_path="arxiv_summaries_materials2",
         vectorstore_path="arxiv_vectorstores_materials2",
         download_papers=True,
+        thread_id=tid,
     )
-    agent.thread_id = tid
 
     result = agent.invoke(
         arxiv_search_query="high entropy alloy, yield strength, interstitial",
         context="Extract data that can be used to visualize how yield strength increase (%) depends on the interstital doping atomic percentage.",
     )
     print(result)
-    executor = ExecutionAgent(llm=model)
-    executor.thread_id = tid
+    executor = ExecutionAgent(llm=model, thread_id=tid)
     exe_plan = f"""
     The following is the summaries of research papers on how yield strength increase depends on interstital doping percentage: 
     {result}
