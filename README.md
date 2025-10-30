@@ -102,10 +102,18 @@ ursa run --help
 
 ## MCP serving
 
-You can install `ursa` as a command line app with `pip install`; or with `uv` via
+You can install `ursa` as a command line app with `pip` or `uv`:
 
-```bash
-uv tool install ursa-ai
+**pip**
+
+```shell
+pip install 'ursa-ai[mcp]'
+```
+
+**uv**
+
+```shell
+uv tool install 'ursa-ai[mcp]'
 ```
 
 To start hosting URSA as a local MCP server, run
