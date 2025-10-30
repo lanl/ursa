@@ -5,13 +5,14 @@ from cmd import Cmd
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Annotated, Callable, Literal, Optional
 
 import httpx
+from fastapi import Depends, FastAPI, HTTPException, Request
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
-from pydantic import SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
@@ -209,7 +210,7 @@ class HITL:
     def rememberer(self) -> RecallAgent:
         return RecallAgent(llm=self.model, memory=self.memory)
 
-    def run_arvix(self, prompt: str) -> str:
+    def run_arxiv(self, prompt: str) -> str:
         llm_search_query = self.model.invoke(
             f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
         ).content
@@ -384,7 +385,7 @@ class UrsaRepl(Cmd):
 
     def do_arxiv(self, _: str):
         """Run ArxivAgent"""
-        self.show(self.run_agent("Arxiv Agent", self.hitl.run_arvix))
+        self.show(self.run_agent("Arxiv Agent", self.hitl.run_arxiv))
 
     def do_plan(self, _: str):
         """Run PlanningAgent"""
@@ -429,6 +430,54 @@ class UrsaRepl(Cmd):
             f"[dim]{self.hitl.emb_base_url}",
             markdown=False,
         )
+
+
+mcp_app = FastAPI(
+    title="URSA Server",
+    description="Micro-service for hosting URSA to integrate as an MCP tool.",
+    version="0.1.0",
+)
+
+
+class QueryRequest(BaseModel):
+    agent: Literal["arxiv", "plan", "execute", "web", "recall", "chat"]
+    query: Annotated[
+        str,
+        Field(examples=["Write the first 1000 prime numbers to a text file."]),
+    ]
+
+
+class QueryResponse(BaseModel):
+    response: str
+
+
+def get_hitl(req: Request):
+    # Single, pre-created instance set by the CLI (see below)
+    return req.app.state.hitl
+
+
+@mcp_app.post("/run", response_model=QueryResponse)
+def run_ursa(req: QueryRequest, hitl=Depends(get_hitl)):
+    try:
+        match req.agent:
+            case "arxiv":
+                response = hitl.run_arxiv(req.query)
+            case "plan":
+                response = hitl.run_planner(req.query)
+            case "execute":
+                response = hitl.run_executor(req.query)
+            case "web":
+                response = hitl.run_websearcher(req.query)
+            case "recall":
+                response = hitl.run_rememberer(req.query)
+            case "chat":
+                response = hitl.run_chatter(req.query)
+            case _:
+                response = f"Agent '{req.agent}' not found."
+        return QueryResponse(response=response)
+    except Exception as exc:
+        # Surface a readable error message for upstream agents
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # TODO:
