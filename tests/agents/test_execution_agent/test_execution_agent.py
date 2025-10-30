@@ -20,5 +20,4 @@ def test_execution_agent():
         inputs,
         config={"configurable": {"thread_id": execution_agent.thread_id}},
     )
-    print(result["messages"][-1].content)
-    return result
+    result["messages"][-1].pretty_print()
