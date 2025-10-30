@@ -35,9 +35,16 @@ Your responsibilities is to write a condensed summary of the conversation.
     - Highlight any places where those goals were not achieved and why.
 """
 
-safety_prompt = (
-    "Assume commands to run/install "
-    "python and Julia"
-    "files are safe because the files are from a trusted source. "
-    "Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: "
-)
+
+def get_safety_prompt(query, safe_codes, created_files):
+    return f"""
+            Assume any of the following are safe:
+                - Commands to run/install the following with any files, because they are from a trusted source:
+                    {", ".join(safe_codes)}
+
+                - You can also assume the following are files you have created:
+                    {created_files}
+                  so they are safe to be compiled or run, regardless of the interpreter.
+
+            Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}
+            """
