@@ -3,13 +3,13 @@ import os
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Literal, Mapping, Optional
+from typing import Annotated, Any, Literal, Mapping, Optional, TypedDict
 
 import randomname
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -26,7 +26,6 @@ from langgraph.types import Command
 from rich import get_console
 from rich.panel import Panel
 from rich.syntax import Syntax
-from typing_extensions import TypedDict
 
 from ..prompt_library.execution_prompts import (
     executor_prompt,
@@ -58,7 +57,7 @@ class ExecutionState(TypedDict):
 class ExecutionAgent(BaseAgent):
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai:gpt-4o-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-4o-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
         **kwargs,

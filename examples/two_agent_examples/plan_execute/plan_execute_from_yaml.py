@@ -1,16 +1,13 @@
 import argparse
-import ssl
 import sys
 from types import SimpleNamespace as NS
 from typing import Any
+from uuid import uuid4
 
-import httpx
-import litellm
 import randomname
-import truststore
 import yaml
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 
 # rich console stuff for beautification
 from rich import get_console
@@ -20,12 +17,6 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
-
-ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # use macOS Keychain
-litellm.client_session = httpx.Client(verify=ctx, timeout=30)
-
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
 
 console = get_console()  # always returns the same instance
 
@@ -44,9 +35,9 @@ def main(model_name: str, config: Any, planning_mode: str = "hierarchical"):
         # workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
         symlinkdict = getattr(config, "symlink", {}) or None
 
-        model = ChatLiteLLM(
+        model = init_chat_model(
             model=model_name,
-            max_tokens=10000,
+            max_completion_tokens=10000,
             max_retries=2,
             model_kwargs={
                 # "reasoning": {"effort": "high"},
@@ -85,10 +76,9 @@ def main(model_name: str, config: Any, planning_mode: str = "hierarchical"):
         )
 
         # Initialize the agents
-        planner = PlanningAgent(llm=model)
-        executor = ExecutionAgent(llm=model)
-        planner.thread_id = tid
-        executor.thread_id = tid
+        tid = uuid4().hex
+        planner = PlanningAgent(llm=model, thread_id=tid)
+        executor = ExecutionAgent(llm=model, thread_id=tid)
 
         # 3. top level planning
         # planning agent . . .
@@ -294,9 +284,9 @@ if __name__ == "__main__":
     DEFAULT_MODELS = tuple(
         models_cfg.get("choices")
         or (
-            "openai/gpt-5",
-            "openai/o3",
-            "openai/o3-mini",
+            "openai:gpt-5",
+            "openai:o3",
+            "openai:o3-mini",
         )
     )
     DEFAULT_MODEL = models_cfg.get("default")  # may be None

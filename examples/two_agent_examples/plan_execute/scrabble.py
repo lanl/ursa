@@ -2,8 +2,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # rich console stuff for beautification
@@ -52,11 +52,8 @@ def main(mode: str):
         )
 
         # 2. LLM & agents
-        model = ChatLiteLLM(
-            model="openai/o3"
-            # model="openai/o1"
-            if mode == "prod"
-            else "ollama_chat/llama3.1:8b",
+        model = init_chat_model(
+            model="openai:o3" if mode == "prod" else "ollama:llama3.1:8b",
             max_tokens=10000 if mode == "prod" else 4000,
             max_retries=2,
         )

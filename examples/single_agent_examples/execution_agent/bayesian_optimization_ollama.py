@@ -1,5 +1,6 @@
+from langchain.chat_models import init_chat_model
+from langchain.embeddings import init_embeddings
 from langchain_core.messages import HumanMessage
-from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 from ursa.agents import ExecutionAgent
 from ursa.util.memory_logger import AgentMemory
@@ -15,9 +16,9 @@ Optimize the six-hump camel function.
     Carry out the optimization and report the results.
 """
 
-model = ChatOllama(model="gpt-oss:20b")
+model = init_chat_model(model="ollama:gpt-oss:20b")
 
-embedding_model = OllamaEmbeddings(model="nomic-embed-text:latest")
+embedding_model = init_embeddings(model="ollama:nomic-embed-text:latest")
 
 memory = AgentMemory(embedding_model=embedding_model, path=".")
 

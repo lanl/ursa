@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 websearcher = WebSearchAgent()
 
 # Or initialize with a custom model
-model = ChatOpenAI(model="gpt-4o", max_tokens=10000)
+model = ChatOpenAI(model="gpt-4o", max_completion_tokens=10000)
 websearcher = WebSearchAgent(llm=model)
 
 # Run a web search query
@@ -33,8 +33,8 @@ print("Sources:", sources)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | str or BaseChatModel | "openai/gpt-4o-mini" | The language model to use for web search |
-| `**kwargs` | dict | {} | Additional parameters passed to the base agent |
+| `llm` | `BaseChatModel` | init_chat_model("openai:gpt-4o-mini") | The language model to use for web search |
+| `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
 
 ### Run Method
 
@@ -61,11 +61,12 @@ The agent returns a dictionary containing:
 ## Advanced Usage
 
 ```python
+from langchain.chat_model import init_chat_model
 from ursa.agents import WebSearchAgent
 
 # Initialize with custom parameters
 websearcher = WebSearchAgent(
-    llm="openai/gpt-4o",
+    llm=init_chat_model("openai:gpt-4o"),
     url="https://www.example.com"  # Custom URL for internet connectivity check
 )
 

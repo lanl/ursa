@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from langchain_litellm import ChatLiteLLM
+from langchain.chat_models import init_chat_model
 
 from ursa.agents import ArxivAgent
 from ursa.observability.timing import render_session_summary
@@ -9,7 +9,7 @@ tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 def main():
-    llm = ChatLiteLLM(model="openai/o3", max_completion_tokens=20000)
+    llm = init_chat_model(model="openai:o3", max_completion_tokens=20000)
 
     Path("workspace").mkdir(exist_ok=True)
     agent = ArxivAgent(
