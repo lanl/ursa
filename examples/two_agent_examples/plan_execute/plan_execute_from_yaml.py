@@ -30,7 +30,6 @@ from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util.logo_generator import kickoff_logo
 
-
 ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # use macOS Keychain
 litellm.client_session = httpx.Client(verify=ctx, timeout=30)
 
@@ -708,12 +707,16 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
 
     # Initialize the agents
     planner = PlanningAgent(
-        llm=model, checkpointer=planner_checkpointer,
-        enable_metrics=True, metrics_dir = Path(workspace) / "ursa_metrics"
+        llm=model,
+        checkpointer=planner_checkpointer,
+        enable_metrics=True,
+        metrics_dir=Path(workspace) / "ursa_metrics",
     )  # include checkpointer
     executor = ExecutionAgent(
-        llm=model, checkpointer=executor_checkpointer,
-        enable_metrics=True, metrics_dir = Path(workspace) / "ursa_metrics"
+        llm=model,
+        checkpointer=executor_checkpointer,
+        enable_metrics=True,
+        metrics_dir=Path(workspace) / "ursa_metrics",
     )  # include checkpointer
     # Use the workspace as the thread id (one thread per workspace)
     thread_id = Path(workspace).name
@@ -1116,8 +1119,6 @@ def main(
                 # Remove this flag manually if you want to re-generate art for this workspace.
                 save_run_meta(workspace, logo_created=True)
         # --------------------------------------------------------------------
-
-
 
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(

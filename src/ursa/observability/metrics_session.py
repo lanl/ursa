@@ -1,35 +1,39 @@
 # metrics_session.py
 from __future__ import annotations
-import os, json, re
+
+import json
+import os
+import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
 from datetime import datetime, timezone
+from typing import Dict, List, Tuple
 
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from collections import defaultdict
-from typing import Iterable
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import pandas as pd
 
-from ursa.observability.metrics_io import load_metrics
-from ursa.observability.metrics_charts import compute_attribution 
 from ursa.observability.metrics_charts import (
-    extract_time_breakdown,     # reuse per-file extraction
-    extract_llm_token_stats,    # reuse per-file tokens
     compute_attribution,
-    compute_llm_wall_seconds,
+    extract_llm_token_stats,  # reuse per-file tokens
+    extract_time_breakdown,  # reuse per-file extraction
 )
+from ursa.observability.metrics_io import load_metrics
+
 
 def _dt(x: str) -> datetime:
     return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+
 
 # Compact, predictable layout
 _LAYOUT = dict(
     header_y=0.965,
     subtitle_y=0.915,
-    legend_y=0.885,             # legend sits just under the subtitle
+    legend_y=0.885,  # legend sits just under the subtitle
     ax_rect=(0.10, 0.28, 0.86, 0.58),  # [left, bottom, width, height]
     footer1_y=0.105,
     footer2_y=0.070,
@@ -42,7 +46,9 @@ def _parse_iso(ts: str | None) -> datetime | None:
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ISO_RE.sub("+00:00", ts)).astimezone(timezone.utc)
+        return datetime.fromisoformat(ISO_RE.sub("+00:00", ts)).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -91,8 +97,12 @@ def scan_directory_for_threads(dir_path: str) -> Dict[str, List[RunRecord]]:
             if not (thread_id and agent and run_id and s and e):
                 continue
             rec = RunRecord(
-                path=fp, agent=agent, thread_id=thread_id, run_id=run_id,
-                started_at=s, ended_at=e
+                path=fp,
+                agent=agent,
+                thread_id=thread_id,
+                run_id=run_id,
+                started_at=s,
+                ended_at=e,
             )
             sessions.setdefault(thread_id, []).append(rec)
         except Exception:
@@ -103,7 +113,9 @@ def scan_directory_for_threads(dir_path: str) -> Dict[str, List[RunRecord]]:
     return sessions
 
 
-def list_threads_summary(sessions: Dict[str, List[RunRecord]]) -> List[Tuple[str, int]]:
+def list_threads_summary(
+    sessions: Dict[str, List[RunRecord]],
+) -> List[Tuple[str, int]]:
     """Return [(thread_id, count)] sorted by count desc, then thread_id."""
     out = [(tid, len(runs)) for tid, runs in sessions.items()]
     out.sort(key=lambda t: (-t[1], t[0]))
@@ -113,6 +125,7 @@ def list_threads_summary(sessions: Dict[str, List[RunRecord]]) -> List[Tuple[str
 # -------------------------------
 #         Timeline plot
 # -------------------------------
+
 
 def _abbrev_agent(agent: str) -> str:
     # Common cleanup: drop trailing 'Agent', trim to a tidy length
@@ -130,8 +143,8 @@ def plot_thread_timeline(
     out_path: str,
     *,
     title: str = "Agent runs timeline",
-    stacked_rows: bool = False,     # False = single lane (“flow”); True = one row per run
-    min_label_sec: float = 0.50,    # skip labels for bars shorter than this
+    stacked_rows: bool = False,  # False = single lane (“flow”); True = one row per run
+    min_label_sec: float = 0.50,  # skip labels for bars shorter than this
 ) -> str:
     """
     Draw a time timeline for a single thread_id across multiple agent runs.
@@ -161,7 +174,10 @@ def plot_thread_timeline(
         if a not in uniq_agents:
             uniq_agents.append(a)
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
-    color_map = {a: color_cycle[i % max(1, len(color_cycle))] for i, a in enumerate(uniq_agents)}
+    color_map = {
+        a: color_cycle[i % max(1, len(color_cycle))]
+        for i, a in enumerate(uniq_agents)
+    }
 
     if stacked_rows:
         fig_h = max(2.5, 0.35 * len(runs))
@@ -172,13 +188,27 @@ def plot_thread_timeline(
         for yi, r in zip(y_positions, runs):
             xs = mdates.date2num(r.started_at)
             w = mdates.date2num(r.ended_at) - xs
-            ax.barh(yi, w, left=xs, height=bar_h, edgecolor="black",
-                    color=color_map.get(r.agent))
+            ax.barh(
+                yi,
+                w,
+                left=xs,
+                height=bar_h,
+                edgecolor="black",
+                color=color_map.get(r.agent),
+            )
             if r.duration_s >= min_label_sec:
-                ax.text(xs + w/2, yi, _label_for_run(r, 1),
-                        ha="center", va="center", fontsize="small")
+                ax.text(
+                    xs + w / 2,
+                    yi,
+                    _label_for_run(r, 1),
+                    ha="center",
+                    va="center",
+                    fontsize="small",
+                )
         ax.set_yticks(y_positions)
-        ax.set_yticklabels([f"{_abbrev_agent(r.agent)}:{r.run_id[:6]}" for r in runs])
+        ax.set_yticklabels([
+            f"{_abbrev_agent(r.agent)}:{r.run_id[:6]}" for r in runs
+        ])
         ax.invert_yaxis()
     else:
         # Single lane “flow” with alternating label bands
@@ -192,7 +222,9 @@ def plot_thread_timeline(
             w = mdates.date2num(r.ended_at) - xs
             segs.append((xs, w))
             colors.append(color_map.get(r.agent))
-        ax.broken_barh(segs, (lane_y, lane_h), facecolors=colors, edgecolor="black")
+        ax.broken_barh(
+            segs, (lane_y, lane_h), facecolors=colors, edgecolor="black"
+        )
 
         # Alternate label positions: upper/lower halves of the lane
         upper_y = lane_y + lane_h * 0.72
@@ -201,8 +233,14 @@ def plot_thread_timeline(
             if r.duration_s < min_label_sec:
                 continue
             y = upper_y if (idx % 2 == 0) else lower_y
-            ax.text(xs + w/2, y, _label_for_run(r, 1),
-                    ha="center", va="center", fontsize="small")
+            ax.text(
+                xs + w / 2,
+                y,
+                _label_for_run(r, 1),
+                ha="center",
+                va="center",
+                fontsize="small",
+            )
 
         ax.set_yticks([])
 
@@ -218,18 +256,47 @@ def plot_thread_timeline(
 
     # Header / subtitle
     fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-    fig.text(0.5, _LAYOUT["subtitle_y"], subtitle, ha="center", va="top", fontsize="small")
+    fig.text(
+        0.5,
+        _LAYOUT["subtitle_y"],
+        subtitle,
+        ha="center",
+        va="top",
+        fontsize="small",
+    )
 
     # Legend (outside the axes, above the chart)
     if len(uniq_agents) > 0:
-        handles = [plt.Line2D([0], [0], color=color_map[a], lw=6) for a in uniq_agents]
-        fig.legend(handles, [_abbrev_agent(a) for a in uniq_agents],
-                   loc="center", bbox_to_anchor=(0.5, _LAYOUT["legend_y"]),
-                   ncol=max(1, min(4, len(uniq_agents))), frameon=False, fontsize="x-small")
+        handles = [
+            plt.Line2D([0], [0], color=color_map[a], lw=6) for a in uniq_agents
+        ]
+        fig.legend(
+            handles,
+            [_abbrev_agent(a) for a in uniq_agents],
+            loc="center",
+            bbox_to_anchor=(0.5, _LAYOUT["legend_y"]),
+            ncol=max(1, min(4, len(uniq_agents))),
+            frameon=False,
+            fontsize="x-small",
+        )
 
     # Footers
-    fig.text(0.5, _LAYOUT["footer1_y"], footer1, ha="center", va="center", fontsize="x-small")
-    fig.text(0.5, _LAYOUT["footer2_y"], footer2, ha="center", va="center", fontsize="x-small")
+    fig.text(
+        0.5,
+        _LAYOUT["footer1_y"],
+        footer1,
+        ha="center",
+        va="center",
+        fontsize="x-small",
+    )
+    fig.text(
+        0.5,
+        _LAYOUT["footer2_y"],
+        footer2,
+        ha="center",
+        va="center",
+        fontsize="x-small",
+    )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -237,17 +304,20 @@ def plot_thread_timeline(
 
 
 def runs_to_dataframe(runs: list[RunRecord]) -> pd.DataFrame:
-    rows = [{
-        "thread_id": r.thread_id,
-        "agent": r.agent,
-        "run_id": r.run_id,
-        "label": f"{r.agent}:{r.run_id[:8]}",
-        "start": r.started_at,
-        "end": r.ended_at,
-        "duration_s": r.duration_s,
-        "started_at": r.started_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
-        "ended_at": r.ended_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
-    } for r in runs]
+    rows = [
+        {
+            "thread_id": r.thread_id,
+            "agent": r.agent,
+            "run_id": r.run_id,
+            "label": f"{r.agent}:{r.run_id[:8]}",
+            "start": r.started_at,
+            "end": r.ended_at,
+            "duration_s": r.duration_s,
+            "started_at": r.started_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "ended_at": r.ended_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        }
+        for r in runs
+    ]
     return pd.DataFrame(rows).sort_values("start").reset_index(drop=True)
 
 
@@ -255,9 +325,10 @@ def plot_thread_timeline_interactive(
     runs: list[RunRecord],
     out_html: str,
     *,
-    group_by: str = "agent",   # "agent" (few lanes) or "run" (one lane per run)
+    group_by: str = "agent",  # "agent" (few lanes) or "run" (one lane per run)
 ) -> str:
     import plotly.express as px
+
     if not runs:
         raise ValueError("No runs provided")
     df = runs_to_dataframe(runs)
@@ -265,11 +336,20 @@ def plot_thread_timeline_interactive(
 
     ycol = "agent" if group_by == "agent" else "label"
     fig = px.timeline(
-        df, x_start="start", x_end="end", y=ycol, color="agent",
+        df,
+        x_start="start",
+        x_end="end",
+        y=ycol,
+        color="agent",
         hover_data={
-            "agent": True, "run_id": True, "duration_s": ":.2f",
-            "started_at": True, "ended_at": True,
-            "label": False, "start": False, "end": False,
+            "agent": True,
+            "run_id": True,
+            "duration_s": ":.2f",
+            "started_at": True,
+            "ended_at": True,
+            "label": False,
+            "start": False,
+            "end": False,
         },
         title=f"Thread: {thread_id} — Agent runs timeline (interactive)",
     )
@@ -283,6 +363,7 @@ def plot_thread_timeline_interactive(
     fig.update_xaxes(range=[df["start"].min(), df["end"].max()])
     fig.write_html(out_html, include_plotlyjs="cdn", full_html=True)
     return out_html
+
 
 def export_thread_csv(runs: list[RunRecord], out_csv: str) -> str:
     df = runs_to_dataframe(runs)
@@ -306,6 +387,7 @@ def aggregate_thread_context(runs: list[RunRecord]) -> dict:
         "ended_at": t1.isoformat(),
     }
 
+
 def extract_thread_time_breakdown(
     runs: list[RunRecord],
     *,
@@ -328,6 +410,7 @@ def extract_thread_time_breakdown(
     parts = sorted(parts_acc.items(), key=lambda kv: kv[1], reverse=True)
     ctx = aggregate_thread_context(runs)
     return total_sum, parts, ctx
+
 
 def extract_thread_token_stats(
     runs: list[RunRecord],
@@ -358,6 +441,7 @@ def extract_thread_token_stats(
     ctx = aggregate_thread_context(runs)
     return totals, samples, ctx
 
+
 def compute_thread_time_bases(runs: list[RunRecord]) -> tuple[float, float]:
     """
     Return (llm_active_seconds, thread_elapsed_seconds) for a thread.
@@ -376,45 +460,69 @@ def compute_thread_time_bases(runs: list[RunRecord]) -> tuple[float, float]:
     elapsed = max(0.0, (end - start).total_seconds())
     return (llm, elapsed)
 
-def extract_run_tokens_by_model(payload: dict) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float]]:
+
+def extract_run_tokens_by_model(
+    payload: dict,
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float]]:
     """
     Returns:
       tokens_by_model: {model: {input_tokens,...,total_tokens}}
       seconds_by_model: {model: llm_active_seconds_sum}
     """
-    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
     seconds_by_model: Dict[str, float] = defaultdict(float)
 
     # 1) tokens by model from llm_events
-    for ev in (payload.get("llm_events") or []):
+    for ev in payload.get("llm_events") or []:
         name = ev.get("name") or ""
-        model = name.split("llm:", 1)[-1] if name.startswith("llm:") else (name or "unknown")
+        model = (
+            name.split("llm:", 1)[-1]
+            if name.startswith("llm:")
+            else (name or "unknown")
+        )
         roll = ((ev.get("metrics") or {}).get("usage_rollup")) or {}
-        for k in ("input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens"):
+        for k in (
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "cached_tokens",
+            "total_tokens",
+        ):
             try:
                 tokens_by_model[model][k] += int(float(roll.get(k, 0) or 0))
             except Exception:
                 pass
 
     # 2) llm-active seconds by model from tables.llm
-    for row in ((payload.get("tables") or {}).get("llm") or []):
+    for row in (payload.get("tables") or {}).get("llm") or []:
         n = row.get("name") or ""
-        model = n.split("llm:", 1)[-1] if n.startswith("llm:") else (n or "unknown")
+        model = (
+            n.split("llm:", 1)[-1] if n.startswith("llm:") else (n or "unknown")
+        )
         try:
             seconds_by_model[model] += float(row.get("total_s") or 0.0)
         except Exception:
             pass
 
     # Cast out of defaultdicts
-    return {m: dict(d) for m, d in tokens_by_model.items()}, dict(seconds_by_model)
+    return {m: dict(d) for m, d in tokens_by_model.items()}, dict(
+        seconds_by_model
+    )
 
-def extract_thread_tokens_by_model(runs) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, dict]:
+
+def extract_thread_tokens_by_model(
+    runs,
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, dict]:
     """
     Aggregate by LLM across all runs in a single thread.
     Returns:
       tokens_by_model, seconds_by_model, window_seconds, context
     """
-    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
     seconds_by_model: Dict[str, float] = defaultdict(float)
 
     min_start, max_end = None, None
@@ -428,16 +536,22 @@ def extract_thread_tokens_by_model(runs) -> Tuple[Dict[str, Dict[str, int]], Dic
         for m, secs in s_by_model.items():
             seconds_by_model[m] += float(secs or 0.0)
 
-        ctx = (payload.get("context") or {})
+        ctx = payload.get("context") or {}
         s, e = ctx.get("started_at"), ctx.get("ended_at")
         if s:
             ds = _dt(s)
-            min_start = ds if (min_start is None or ds < min_start) else min_start
+            min_start = (
+                ds if (min_start is None or ds < min_start) else min_start
+            )
         if e:
             de = _dt(e)
             max_end = de if (max_end is None or de > max_end) else max_end
 
-    window_seconds = (max_end - min_start).total_seconds() if (min_start and max_end) else 0.0
+    window_seconds = (
+        (max_end - min_start).total_seconds()
+        if (min_start and max_end)
+        else 0.0
+    )
     ctx_out = {
         "agent": "Thread",
         "thread_id": runs[0].thread_id if runs else "",
@@ -445,15 +559,25 @@ def extract_thread_tokens_by_model(runs) -> Tuple[Dict[str, Dict[str, int]], Dic
         "started_at": min_start.isoformat() if min_start else "",
         "ended_at": max_end.isoformat() if max_end else "",
     }
-    return {m: dict(tokens_by_model[m]) for m in tokens_by_model}, dict(seconds_by_model), window_seconds, ctx_out
+    return (
+        {m: dict(tokens_by_model[m]) for m in tokens_by_model},
+        dict(seconds_by_model),
+        window_seconds,
+        ctx_out,
+    )
 
-def aggregate_super_tokens_by_model(thread_dirs: List[str]) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, dict]:
+
+def aggregate_super_tokens_by_model(
+    thread_dirs: List[str],
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, dict]:
     """
     Walk all thread subdirs and aggregate per-LLM totals and LLM-active seconds.
     Returns:
       tokens_by_model, seconds_by_model, window_seconds, context
     """
-    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
     seconds_by_model: Dict[str, float] = defaultdict(float)
 
     min_start, max_end = None, None
@@ -475,12 +599,22 @@ def aggregate_super_tokens_by_model(thread_dirs: List[str]) -> Tuple[Dict[str, D
                 s, e = ctx.get("started_at"), ctx.get("ended_at")
                 if s:
                     ds = _dt(s)
-                    min_start = ds if (min_start is None or ds < min_start) else min_start
+                    min_start = (
+                        ds
+                        if (min_start is None or ds < min_start)
+                        else min_start
+                    )
                 if e:
                     de = _dt(e)
-                    max_end = de if (max_end is None or de > max_end) else max_end
+                    max_end = (
+                        de if (max_end is None or de > max_end) else max_end
+                    )
 
-    window_seconds = (max_end - min_start).total_seconds() if (min_start and max_end) else 0.0
+    window_seconds = (
+        (max_end - min_start).total_seconds()
+        if (min_start and max_end)
+        else 0.0
+    )
     ctx_out = {
         "agent": "SUPER",
         "thread_id": f"{len(thread_dirs)} thread dirs",
@@ -488,7 +622,12 @@ def aggregate_super_tokens_by_model(thread_dirs: List[str]) -> Tuple[Dict[str, D
         "started_at": min_start.isoformat() if min_start else "",
         "ended_at": max_end.isoformat() if max_end else "",
     }
-    return {m: dict(tokens_by_model[m]) for m in tokens_by_model}, dict(seconds_by_model), window_seconds, ctx_out
+    return (
+        {m: dict(tokens_by_model[m]) for m in tokens_by_model},
+        dict(seconds_by_model),
+        window_seconds,
+        ctx_out,
+    )
 
 
 def extract_thread_token_stats_by_agent(
@@ -502,7 +641,9 @@ def extract_thread_token_stats_by_agent(
         - llm_secs_by_agent: {agent: seconds}
         - thread_window_seconds: (max end - min start) across all runs in this thread
     """
-    totals_by_agent: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    totals_by_agent: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
     llm_secs_by_agent: Dict[str, float] = defaultdict(float)
 
     if not runs:
@@ -510,7 +651,7 @@ def extract_thread_token_stats_by_agent(
 
     # compute thread window
     min_start = min(r.started_at for r in runs)
-    max_end   = max(r.ended_at   for r in runs)
+    max_end = max(r.ended_at for r in runs)
     thread_window_seconds = max(0.0, (max_end - min_start).total_seconds())
 
     for r in runs:
@@ -527,18 +668,25 @@ def extract_thread_token_stats_by_agent(
         # llm-active seconds for this run -> bucket by r.agent
         try:
             att = compute_attribution(payload)
-            llm_secs_by_agent[r.agent] += float(att.get("llm_total_s", 0.0) or 0.0)
+            llm_secs_by_agent[r.agent] += float(
+                att.get("llm_total_s", 0.0) or 0.0
+            )
         except Exception:
             pass
 
     # cast out of defaultdicts
-    return {a: dict(d) for a, d in totals_by_agent.items()}, dict(llm_secs_by_agent), float(thread_window_seconds)
-
+    return (
+        {a: dict(d) for a, d in totals_by_agent.items()},
+        dict(llm_secs_by_agent),
+        float(thread_window_seconds),
+    )
 
 
 def aggregate_super_token_stats_by_agent(
     sessions: Dict[str, List[RunRecord]],
-) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, Dict[str, float]]:
+) -> Tuple[
+    Dict[str, Dict[str, int]], Dict[str, float], float, Dict[str, float]
+]:
     """
     Aggregate across ALL threads in a directory (non-recursive).
     Input:
@@ -550,7 +698,9 @@ def aggregate_super_token_stats_by_agent(
         - sum_thread_secs: sum of each thread's (max end - min start)
         - summary: {"n_threads": ..., "n_runs": ..., "sum_thread_secs": ...}
     """
-    totals_by_agent: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    totals_by_agent: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
     llm_secs_by_agent: Dict[str, float] = defaultdict(float)
     sum_thread_secs = 0.0
     n_runs = 0
@@ -562,7 +712,7 @@ def aggregate_super_token_stats_by_agent(
 
         # thread window for this thread
         t_min = min(r.started_at for r in runs)
-        t_max = max(r.ended_at   for r in runs)
+        t_max = max(r.ended_at for r in runs)
         sum_thread_secs += max(0.0, (t_max - t_min).total_seconds())
 
         # per-run aggregation by agent
@@ -580,7 +730,9 @@ def aggregate_super_token_stats_by_agent(
             # llm seconds
             try:
                 att = compute_attribution(payload)
-                llm_secs_by_agent[r.agent] += float(att.get("llm_total_s", 0.0) or 0.0)
+                llm_secs_by_agent[r.agent] += float(
+                    att.get("llm_total_s", 0.0) or 0.0
+                )
             except Exception:
                 pass
 
@@ -590,4 +742,9 @@ def aggregate_super_token_stats_by_agent(
         "sum_thread_secs": float(sum_thread_secs),
     }
 
-    return {a: dict(d) for a, d in totals_by_agent.items()}, dict(llm_secs_by_agent), float(sum_thread_secs), summary
+    return (
+        {a: dict(d) for a, d in totals_by_agent.items()},
+        dict(llm_secs_by_agent),
+        float(sum_thread_secs),
+        summary,
+    )

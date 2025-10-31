@@ -584,7 +584,7 @@ class PerLLMTimer(BaseCallbackHandler):
             time.perf_counter(),
             tags or [],
             metadata or {},
-            time.time(),               # wall-clock start (epoch seconds)
+            time.time(),  # wall-clock start (epoch seconds)
         )
 
     def _extract_metrics(self, response) -> dict:
@@ -742,9 +742,14 @@ class PerLLMTimer(BaseCallbackHandler):
         self.agg.add(name, ms, True)
         metrics = self._extract_metrics(response)
         self.samples.append({
-            "name": name, "ms": ms, "ok": True,
-            "tags": tags, "metadata": metadata, "metrics": metrics,
-            "t_start": wall_t0, "t_end": wall_t1,   # <— add these
+            "name": name,
+            "ms": ms,
+            "ok": True,
+            "tags": tags,
+            "metadata": metadata,
+            "metrics": metrics,
+            "t_start": wall_t0,
+            "t_end": wall_t1,  # <— add these
         })
 
     def on_llm_error(self, error, *, run_id, **kwargs):
@@ -1082,7 +1087,9 @@ class Telemetry:
             "agent": agent,
             "thread_id": thread_id,
             "run_id": uuid.uuid4().hex,
-            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "started_at": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(),
         })
 
     @property
@@ -1168,15 +1175,22 @@ class Telemetry:
         runnable_rows = tables.get("runnable") or []
 
         # choose the single root graph row (fallback to 0.0 if missing)
-        graph_rows = [r for r in runnable_rows
-                    if str(r.get("name", "")).startswith("graph:")]
+        graph_rows = [
+            r
+            for r in runnable_rows
+            if str(r.get("name", "")).startswith("graph:")
+        ]
         graph_total = max(
             (float(r.get("total_s") or 0.0) for r in graph_rows),
             default=0.0,
         )
 
-        llm_total = sum(float(r.get("total_s") or 0.0) for r in (tables.get("llm") or []))
-        tool_total = sum(float(r.get("total_s") or 0.0) for r in (tables.get("tool") or []))
+        llm_total = sum(
+            float(r.get("total_s") or 0.0) for r in (tables.get("llm") or [])
+        )
+        tool_total = sum(
+            float(r.get("total_s") or 0.0) for r in (tables.get("tool") or [])
+        )
 
         return {
             "graph_total_s": graph_total,

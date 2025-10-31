@@ -1,30 +1,37 @@
 # charts.py
 from __future__ import annotations
+
 from typing import Any, Dict, List, Tuple
+
 import matplotlib
+
 matplotlib.use("Agg")  # safe for headless environments
+import datetime as _dt
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import gaussian_kde  # type: ignore
-import math
-import datetime as _dt
-
 
 # Layout spec for compact charts (fractions of figure size)
 _LAYOUT = dict(
-    header_y=1.1,          # big header (agent : thread_id)
-    subtitle_y=1.0,        # smaller subtitle (title/total)
+    header_y=1.1,  # big header (agent : thread_id)
+    subtitle_y=1.0,  # smaller subtitle (title/total)
     ax_rect=(0.12, 0.310, 0.84, 0.58),  # [left, bottom, width, height]
-    footer1_y=0.105,         # run_id
-    footer2_y=0.050,         # started → ended
+    footer1_y=0.105,  # run_id
+    footer2_y=0.050,  # started → ended
 )
+
 
 def compute_llm_wall_seconds(payload: dict) -> float:
     evs = payload.get("llm_events") or []
     intervals = []
     for ev in evs:
         t0, t1 = ev.get("t_start"), ev.get("t_end")
-        if isinstance(t0, (int, float)) and isinstance(t1, (int, float)) and t1 >= t0:
+        if (
+            isinstance(t0, (int, float))
+            and isinstance(t1, (int, float))
+            and t1 >= t0
+        ):
             intervals.append((t0, t1))
     if not intervals:
         return 0.0
@@ -35,9 +42,9 @@ def compute_llm_wall_seconds(payload: dict) -> float:
         if s <= cur_e:
             cur_e = max(cur_e, e)
         else:
-            wall += (cur_e - cur_s)
+            wall += cur_e - cur_s
             cur_s, cur_e = s, e
-    wall += (cur_e - cur_s)
+    wall += cur_e - cur_s
     return float(wall)
 
 
@@ -56,8 +63,12 @@ def compute_attribution(payload: Dict[str, Any]) -> Dict[str, float]:
     # but extract_time_breakdown returns (total, parts); we only need total
     total_s = _find_graph_total_seconds(payload)
 
-    llm_total_s = sum(float(r.get("total_s") or 0.0) for r in (tables.get("llm") or []))
-    tool_total_s = sum(float(r.get("total_s") or 0.0) for r in (tables.get("tool") or []))
+    llm_total_s = sum(
+        float(r.get("total_s") or 0.0) for r in (tables.get("llm") or [])
+    )
+    tool_total_s = sum(
+        float(r.get("total_s") or 0.0) for r in (tables.get("tool") or [])
+    )
     unattributed_s = max(0.0, total_s - (llm_total_s + tool_total_s))
     overage_s = max(0.0, (llm_total_s + tool_total_s) - total_s)
     return {
@@ -67,6 +78,7 @@ def compute_attribution(payload: Dict[str, Any]) -> Dict[str, float]:
         "unattributed_s": unattributed_s,
         "overage_s": overage_s,
     }
+
 
 def _extract_context(payload: Dict[str, Any]) -> Dict[str, str]:
     """Return a normalized context dict with agent/thread/run_id/started/ended."""
@@ -78,6 +90,7 @@ def _extract_context(payload: Dict[str, Any]) -> Dict[str, str]:
         "started_at": str(ctx.get("started_at") or ""),
         "ended_at": str(ctx.get("ended_at") or ""),
     }
+
 
 def _fmt_iso_pretty(ts: str) -> str:
     """ISO8601 -> 'YYYY-MM-DD HH:MM:SS UTC' (best-effort; falls back to the original)."""
@@ -108,7 +121,9 @@ def _find_graph_total_seconds(payload: Dict[str, Any]) -> float:
         return 0.0
 
 
-def _aggregate_tools_seconds(payload: Dict[str, Any]) -> List[Tuple[str, float]]:
+def _aggregate_tools_seconds(
+    payload: Dict[str, Any],
+) -> List[Tuple[str, float]]:
     tables = payload.get("tables") or {}
     tool_rows = tables.get("tool") or []
     out: List[Tuple[str, float]] = []
@@ -122,7 +137,9 @@ def _aggregate_tools_seconds(payload: Dict[str, Any]) -> List[Tuple[str, float]]
     return out
 
 
-def _aggregate_llm_seconds(payload: Dict[str, Any], *, group_llm: bool) -> List[Tuple[str, float]]:
+def _aggregate_llm_seconds(
+    payload: Dict[str, Any], *, group_llm: bool
+) -> List[Tuple[str, float]]:
     tables = payload.get("tables") or {}
     llm_rows = tables.get("llm") or []
     if group_llm:
@@ -145,7 +162,9 @@ def _aggregate_llm_seconds(payload: Dict[str, Any], *, group_llm: bool) -> List[
         return out
 
 
-def extract_time_breakdown(payload: Dict[str, Any], *, group_llm: bool = False) -> Tuple[float, List[Tuple[str, float]]]:
+def extract_time_breakdown(
+    payload: Dict[str, Any], *, group_llm: bool = False
+) -> Tuple[float, List[Tuple[str, float]]]:
     """
     Returns (total_seconds, parts), where parts is a list of (label, seconds).
     parts = [each tool, each llm (or grouped), "other"] with "other" >= 0.
@@ -170,9 +189,9 @@ def plot_time_breakdown(
     out_path: str,
     *,
     title: str = "",
-    chart: str = "pie",           # "pie" or "bar"
+    chart: str = "pie",  # "pie" or "bar"
     min_label_pct: float = 1.0,
-    context: Dict[str, Any] | None = None,   # NEW
+    context: Dict[str, Any] | None = None,  # NEW
 ) -> str:
     labels = [k for k, _ in parts]
     values = [v for _, v in parts]
@@ -194,12 +213,17 @@ def plot_time_breakdown(
 
         left = 0.0
         for label, val in parts:
-            width = (val / overall)
+            width = val / overall
             ax.barh([0], [width], left=left, edgecolor="black")
             pct = width * 100.0
             if pct >= min_label_pct:
-                ax.text(left + width / 2.0, 0, f"{label} ({pct:.1f}%)",
-                        ha="center", va="center")
+                ax.text(
+                    left + width / 2.0,
+                    0,
+                    f"{label} ({pct:.1f}%)",
+                    ha="center",
+                    va="center",
+                )
             left += width
 
         ax.set_xlim(0, 1)
@@ -208,19 +232,35 @@ def plot_time_breakdown(
 
         if header:
             fig.text(0.5, 0.965, header, ha="center", va="top")
-            fig.text(0.5, 0.915, subtitle, ha="center", va="top", fontsize="small")
+            fig.text(
+                0.5, 0.915, subtitle, ha="center", va="top", fontsize="small"
+            )
         else:
             fig.text(0.5, 0.945, subtitle, ha="center", va="top")
 
         if run_id:
-            fig.text(0.5, 0.10, f"run_id: {run_id}", ha="center", va="center", fontsize="x-small")
+            fig.text(
+                0.5,
+                0.10,
+                f"run_id: {run_id}",
+                ha="center",
+                va="center",
+                fontsize="x-small",
+            )
         if started or ended:
-            fig.text(0.5, 0.06, f"{started} \u2192 {ended}", ha="center", va="center", fontsize="x-small")
+            fig.text(
+                0.5,
+                0.06,
+                f"{started} \u2192 {ended}",
+                ha="center",
+                va="center",
+                fontsize="x-small",
+            )
 
         fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
         plt.close(fig)
         return out_path
-    
+
     # --- pie ---
     fig = plt.figure(figsize=(6, 6))
     ax = fig.add_axes([0.08, 0.22, 0.84, 0.70])  # tighter
@@ -234,20 +274,46 @@ def plot_time_breakdown(
 
     if header:
         fig.text(0.5, 0.965, header, ha="center", va="top")
-        fig.text(0.5, 0.915, (title or f"Time Breakdown (total = {total:.3f}s)"),
-                 ha="center", va="top", fontsize="small")
+        fig.text(
+            0.5,
+            0.915,
+            (title or f"Time Breakdown (total = {total:.3f}s)"),
+            ha="center",
+            va="top",
+            fontsize="small",
+        )
     else:
-        fig.text(0.5, 0.945, (title or f"Time Breakdown (total = {total:.3f}s)"),
-                 ha="center", va="top")
+        fig.text(
+            0.5,
+            0.945,
+            (title or f"Time Breakdown (total = {total:.3f}s)"),
+            ha="center",
+            va="top",
+        )
 
     if run_id:
-        fig.text(0.5, 0.10, f"run_id: {run_id}", ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            0.10,
+            f"run_id: {run_id}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
     if started or ended:
-        fig.text(0.5, 0.06, f"{started} \u2192 {ended}", ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            0.06,
+            f"{started} \u2192 {ended}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_path
+
 
 def plot_lollipop_time(
     total: float,
@@ -256,13 +322,12 @@ def plot_lollipop_time(
     *,
     title: str = "",
     log_x: bool = True,
-    min_label_pct: float = 0.0,   # you said you set default to 0.0
+    min_label_pct: float = 0.0,  # you said you set default to 0.0
     show_seconds: bool = True,
     show_percent: bool = True,
     exclude_zero: bool = True,
-    context: Dict[str, Any] | None = None,    # NEW
+    context: Dict[str, Any] | None = None,  # NEW
 ) -> str:
-
     data = [(k, v) for (k, v) in parts if (v > 0 if exclude_zero else True)]
     data.sort(key=lambda kv: kv[1])
     labels = [k for k, _ in data]
@@ -281,7 +346,7 @@ def plot_lollipop_time(
     # --- explicit layout: one Axes, exact placement ---
     fig_h = max(2.2, 0.35 * max(1, len(values)))
     fig = plt.figure(figsize=(8, fig_h))
-    ax = fig.add_axes(list(_LAYOUT["ax_rect"])) 
+    ax = fig.add_axes(list(_LAYOUT["ax_rect"]))
 
     # plot
     y = range(len(values))
@@ -293,20 +358,33 @@ def plot_lollipop_time(
         if vmin <= 0:
             vmin = min([v for v in values if v > 0] + [1e-6])
         ax.set_xscale("log")
-        ax.set_xlim(left=vmin * 0.8, right=(max(values) * 1.1 if values else 1.0))
+        ax.set_xlim(
+            left=vmin * 0.8, right=(max(values) * 1.1 if values else 1.0)
+        )
 
     # axes cosmetics
     ax.set_yticks(list(y))
     ax.set_yticklabels(labels)
-    ax.set_xlabel("Seconds (log scale)" if log_x else "Seconds", fontsize="small")
+    ax.set_xlabel(
+        "Seconds (log scale)" if log_x else "Seconds", fontsize="small"
+    )
     ax.tick_params(labelsize="small")
 
     # header/subtitle (figure text so they don't push the axes)
     if header:
         fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-        fig.text(0.5, _LAYOUT["subtitle_y"], subtitle, ha="center", va="top", fontsize="small")
+        fig.text(
+            0.5,
+            _LAYOUT["subtitle_y"],
+            subtitle,
+            ha="center",
+            va="top",
+            fontsize="small",
+        )
     else:
-        fig.text(0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top")
+        fig.text(
+            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
+        )
 
     # annotate dots
     for yi, val in zip(y, values):
@@ -317,22 +395,43 @@ def plot_lollipop_time(
                 bits.append(f"{pct:.2f}%")
             if show_seconds:
                 bits.append(f"{val:.3f}s")
-            ax.text(val, yi, "  " + " ".join(bits), va="center", ha="left", fontsize="small")
+            ax.text(
+                val,
+                yi,
+                "  " + " ".join(bits),
+                va="center",
+                ha="left",
+                fontsize="small",
+            )
 
     # compact footers
     if run_id:
-        fig.text(0.5, _LAYOUT["footer1_y"], f"run_id: {run_id}",
-                ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            _LAYOUT["footer1_y"],
+            f"run_id: {run_id}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
     if started or ended:
-        fig.text(0.5, _LAYOUT["footer2_y"], f"{started} \u2192 {ended}",
-                ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            _LAYOUT["footer2_y"],
+            f"{started} \u2192 {ended}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return out_path
 
 
-def extract_llm_token_stats(payload: Dict[str, Any]) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
+def extract_llm_token_stats(
+    payload: Dict[str, Any],
+) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
     """
     Return (totals, samples) for LLM token usage from Telemetry payload.
     - totals: sum across all LLM calls
@@ -351,6 +450,7 @@ def extract_llm_token_stats(payload: Dict[str, Any]) -> Tuple[Dict[str, int], Di
 
     for ev in events:
         m = (ev.get("metrics") or {}).get("usage_rollup") or {}
+
         # Normalize with safe int coercion
         def _gi(key: str) -> int:
             try:
@@ -379,8 +479,10 @@ def extract_llm_token_stats(payload: Dict[str, Any]) -> Tuple[Dict[str, int], Di
 
         samples["input_tokens"].append(it)
         samples["output_tokens"].append(ot)
-        if rt: samples["reasoning_tokens"].append(rt)
-        if ct: samples["cached_tokens"].append(ct)
+        if rt:
+            samples["reasoning_tokens"].append(rt)
+        if ct:
+            samples["cached_tokens"].append(ct)
         samples["total_tokens"].append(tt)
 
     return totals, samples
@@ -397,7 +499,13 @@ def plot_token_totals_bar(
     Horizontal bar chart of token totals by category.
     """
 
-    order = ["input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens"]
+    order = [
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cached_tokens",
+        "total_tokens",
+    ]
     labels = [lbl.replace("_", " ") for lbl in order]
     values = [int(totals.get(k, 0)) for k in order]
 
@@ -429,14 +537,37 @@ def plot_token_totals_bar(
 
     if header:
         fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-        fig.text(0.5, _LAYOUT["subtitle_y"], subtitle, ha="center", va="top", fontsize="small")
+        fig.text(
+            0.5,
+            _LAYOUT["subtitle_y"],
+            subtitle,
+            ha="center",
+            va="top",
+            fontsize="small",
+        )
     else:
-        fig.text(0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top")
+        fig.text(
+            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
+        )
 
     if run_id:
-        fig.text(0.5, _LAYOUT["footer1_y"], f"run_id: {run_id}", ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            _LAYOUT["footer1_y"],
+            f"run_id: {run_id}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
     if started or ended:
-        fig.text(0.5, _LAYOUT["footer2_y"], f"{started} \u2192 {ended}", ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            _LAYOUT["footer2_y"],
+            f"{started} \u2192 {ended}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -521,21 +652,46 @@ def plot_token_kde(
         ax.set_xscale("log")
         ax.set_xlim(left=max(1e-6, x_min + 1e-6), right=x_max)
 
-    ax.set_xlabel("Tokens" + (" (log scale)" if log_x else ""), fontsize="small")
+    ax.set_xlabel(
+        "Tokens" + (" (log scale)" if log_x else ""), fontsize="small"
+    )
     ax.set_ylabel("Density", fontsize="small")
     ax.tick_params(labelsize="small")
     ax.legend(loc="upper right", fontsize="x-small", frameon=False)
 
     if header:
         fig.text(0.5, _LAYOUT["header_y"], header, ha="center", va="top")
-        fig.text(0.5, _LAYOUT["subtitle_y"], subtitle, ha="center", va="top", fontsize="small")
+        fig.text(
+            0.5,
+            _LAYOUT["subtitle_y"],
+            subtitle,
+            ha="center",
+            va="top",
+            fontsize="small",
+        )
     else:
-        fig.text(0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top")
+        fig.text(
+            0.5, (_LAYOUT["header_y"] - 0.02), subtitle, ha="center", va="top"
+        )
 
     if run_id:
-        fig.text(0.5, _LAYOUT["footer1_y"], f"run_id: {run_id}", ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            _LAYOUT["footer1_y"],
+            f"run_id: {run_id}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
     if started or ended:
-        fig.text(0.5, _LAYOUT["footer2_y"], f"{started} \u2192 {ended}", ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            _LAYOUT["footer2_y"],
+            f"{started} \u2192 {ended}",
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
@@ -572,16 +728,15 @@ def plot_token_rates_bar(
     rates_win = [_rate(x, window_seconds) for x in vals]
 
     ctx = context or {}
-    agent  = str(ctx.get("agent") or "")
+    agent = str(ctx.get("agent") or "")
     thread = str(ctx.get("thread_id") or "")
     run_id = str(ctx.get("run_id") or "")
     # shorten very long run_ids in the footer to keep things readable
     run_id_short = f"{run_id[:8]}" if run_id else ""
     started = _fmt_iso_pretty(str(ctx.get("started_at") or ""))
-    ended   = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
+    ended = _fmt_iso_pretty(str(ctx.get("ended_at") or ""))
 
     header = " : ".join([p for p in [agent, thread] if p]) or ""
-    subtitle = title
 
     # ---------------- layout: reserve dynamic space for 2–3 footer lines -------
     show_warn = bool(window_seconds > 0 and llm_seconds > window_seconds)
@@ -595,10 +750,12 @@ def plot_token_rates_bar(
         )
     if run_id_short or started or ended:
         right = "  ".join(
-            s for s in [
+            s
+            for s in [
                 f"run_id: {run_id_short}" if run_id_short else "",
                 f"{started} \u2192 {ended}" if (started or ended) else "",
-            ] if s
+            ]
+            if s
         )
         footer_lines.append(right)
 
@@ -610,7 +767,7 @@ def plot_token_rates_bar(
     fig = plt.figure(figsize=(10.0, h))
 
     # Leave a right margin (legend will sit outside on the right)
-    ax_left, ax_width = 0.07, 0.75   # was 0.08, 0.84
+    ax_left, ax_width = 0.07, 0.75  # was 0.08, 0.84
     ax_bottom = 0.24 + 0.05 * max(0, n_footer - 2)
     ax_height = 0.58
     ax = fig.add_axes([ax_left, ax_bottom, ax_width, ax_height])
@@ -618,10 +775,22 @@ def plot_token_rates_bar(
     x = np.arange(len(labels))
     width = 0.38
 
-    bars1 = ax.bar(x - width/2, rates_llm, width, label="per LLM-sec (sum)",
-                   color="tab:purple", edgecolor="black")
-    bars2 = ax.bar(x + width/2, rates_win, width, label="per thread-sec",
-                   color="tab:gray", edgecolor="black")
+    bars1 = ax.bar(
+        x - width / 2,
+        rates_llm,
+        width,
+        label="per LLM-sec (sum)",
+        color="tab:purple",
+        edgecolor="black",
+    )
+    bars2 = ax.bar(
+        x + width / 2,
+        rates_win,
+        width,
+        label="per thread-sec",
+        color="tab:gray",
+        edgecolor="black",
+    )
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=0)
@@ -629,7 +798,7 @@ def plot_token_rates_bar(
     ax.tick_params(labelsize="small")
     ax.legend(
         loc="upper left",
-        bbox_to_anchor=(1.005, 1.0),   # just outside the axes, top-right corner
+        bbox_to_anchor=(1.005, 1.0),  # just outside the axes, top-right corner
         borderaxespad=0.0,
         frameon=False,
         fontsize="small",
@@ -639,23 +808,40 @@ def plot_token_rates_bar(
     def _annotate(bars):
         for b in bars:
             h = b.get_height()
-            ax.text(b.get_x() + b.get_width()/2, h,
-                    f"{h:.2f}", ha="center", va="bottom", fontsize="x-small")
-    _annotate(bars1); _annotate(bars2)
+            ax.text(
+                b.get_x() + b.get_width() / 2,
+                h,
+                f"{h:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize="x-small",
+            )
+
+    _annotate(bars1)
+    _annotate(bars2)
 
     # header + subtitle
-    header_y   = 0.985
+    header_y = 0.985
     subtitle_y = 0.955
     if header:
-        fig.text(0.5, header_y,   header,   ha="center", va="top")
-        fig.text(0.5, subtitle_y, title,    ha="center", va="top", fontsize="small")
+        fig.text(0.5, header_y, header, ha="center", va="top")
+        fig.text(
+            0.5, subtitle_y, title, ha="center", va="top", fontsize="small"
+        )
     else:
         fig.text(0.5, (header_y - 0.015), title, ha="center", va="top")
 
     # footer stack (unchanged)
     y0, step = 0.09, 0.035
     for i, line in enumerate(footer_lines):
-        fig.text(0.5, y0 + i*step, line, ha="center", va="center", fontsize="x-small")
+        fig.text(
+            0.5,
+            y0 + i * step,
+            line,
+            ha="center",
+            va="center",
+            fontsize="x-small",
+        )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0.03)
     plt.close(fig)
@@ -671,7 +857,13 @@ def plot_tokens_bar_by_model(
 ) -> str:
     import matplotlib.pyplot as plt
 
-    cats = ["input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens"]
+    cats = [
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cached_tokens",
+        "total_tokens",
+    ]
     labels = [c.replace("_", " ") for c in cats]
     models = sorted(totals_by_model.keys())
     if not models:
@@ -685,16 +877,29 @@ def plot_tokens_bar_by_model(
 
     for i, model in enumerate(models):
         ax = axes[i]
-        vals = [int(totals_by_model.get(model, {}).get(k, 0) or 0) for k in cats]
+        vals = [
+            int(totals_by_model.get(model, {}).get(k, 0) or 0) for k in cats
+        ]
         bars = ax.barh(labels, vals, edgecolor="black")
         for b, v in zip(bars, vals):
-            ax.text(b.get_width(), b.get_y() + b.get_height() / 2, f" {v:,}", va="center", ha="left", fontsize=9)
+            ax.text(
+                b.get_width(),
+                b.get_y() + b.get_height() / 2,
+                f" {v:,}",
+                va="center",
+                ha="left",
+                fontsize=9,
+            )
         ax.set_title(model, loc="left", fontsize=11)
         ax.set_xlabel("Tokens")
 
     # Header/subtitle/footer
     if context:
-        header = f"{context.get('agent','')}: {context.get('thread_id','')}".strip(" :")
+        header = (
+            f"{context.get('agent', '')}: {context.get('thread_id', '')}".strip(
+                " :"
+            )
+        )
         if header:
             fig.suptitle(header, fontsize=14, y=0.98)
     if title:
@@ -721,10 +926,16 @@ def plot_token_rates_by_model(
     title: str = "Tokens per second — by model",
     context: dict | None = None,
 ) -> str:
-    import numpy as np
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    cats = ["input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens"]
+    cats = [
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cached_tokens",
+        "total_tokens",
+    ]
     xlabels = [c.replace("_", " ") for c in cats]
     models = sorted(totals_by_model.keys())
     if not models:
@@ -742,20 +953,43 @@ def plot_token_rates_by_model(
 
     for i, model in enumerate(models):
         ax = axes[i]
-        totals = [int(totals_by_model.get(model, {}).get(k, 0) or 0) for k in cats]
-        denom_llm = max(1e-9, float(llm_seconds_by_model.get(model, 0.0) or 0.0))
+        totals = [
+            int(totals_by_model.get(model, {}).get(k, 0) or 0) for k in cats
+        ]
+        denom_llm = max(
+            1e-9, float(llm_seconds_by_model.get(model, 0.0) or 0.0)
+        )
 
         per_llm = [v / denom_llm for v in totals]
         per_thread = [v / denom_thread for v in totals]
 
-        b1 = ax.bar(x - w / 2, per_llm, width=w, label="per LLM-sec (sum)", edgecolor="black")
-        b2 = ax.bar(x + w / 2, per_thread, width=w, label="per thread-sec", edgecolor="black")
+        b1 = ax.bar(
+            x - w / 2,
+            per_llm,
+            width=w,
+            label="per LLM-sec (sum)",
+            edgecolor="black",
+        )
+        b2 = ax.bar(
+            x + w / 2,
+            per_thread,
+            width=w,
+            label="per thread-sec",
+            edgecolor="black",
+        )
 
         for bx in (b1, b2):
             for rect in bx:
                 h = rect.get_height()
                 if h > 0:
-                    ax.text(rect.get_x() + rect.get_width() / 2, h, f"{h:,.2f}", ha="center", va="bottom", fontsize=8)
+                    ax.text(
+                        rect.get_x() + rect.get_width() / 2,
+                        h,
+                        f"{h:,.2f}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                    )
 
         ax.set_xticks(x, xlabels)
         ax.set_ylabel("tokens / second")
@@ -765,21 +999,31 @@ def plot_token_rates_by_model(
 
     # Header/subtitle/footer
     if context:
-        header = f"{context.get('agent','')}: {context.get('thread_id','')}".strip(" :")
+        header = (
+            f"{context.get('agent', '')}: {context.get('thread_id', '')}".strip(
+                " :"
+            )
+        )
         if header:
             fig.suptitle(header, fontsize=14, y=0.98)
     if title:
         fig.text(0.5, 0.94, title, ha="center", fontsize=12)
 
     if context:
-        is_super = (str(context.get("agent") or "") == "SUPER")
+        is_super = str(context.get("agent") or "") == "SUPER"
 
         s, e = context.get("started_at"), context.get("ended_at")
-        llm_sum = sum(float(llm_seconds_by_model.get(m, 0.0) or 0.0) for m in models)
+        llm_sum = sum(
+            float(llm_seconds_by_model.get(m, 0.0) or 0.0) for m in models
+        )
 
         # Only show overlap note when we are actually showing a single window denominator
         overlap_note = ""
-        if (not is_super) and window_seconds > 0 and llm_sum > window_seconds * 1.05:
+        if (
+            (not is_super)
+            and window_seconds > 0
+            and llm_sum > window_seconds * 1.05
+        ):
             overlap_note = f"  Note: LLM sum exceeds window → parallel LLM work (~{llm_sum / window_seconds:.2f}× overlap)."
 
         # Hide the global start→end line for SUPER aggregates
@@ -807,10 +1051,15 @@ def plot_tokens_by_agent_stacked(
     title: str = "LLM Token Totals by Agent (thread)",
     footer_lines: List[str] | None = None,
 ) -> str:
-    import numpy as np
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    cats = ["input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens"]
+    cats = [
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cached_tokens",
+    ]
     pretty = {
         "input_tokens": "input tokens",
         "output_tokens": "output tokens",
@@ -836,7 +1085,9 @@ def plot_tokens_by_agent_stacked(
     # Build stacked series
     series = []
     for k in cats:
-        series.append([int(totals_by_agent.get(a, {}).get(k, 0) or 0) for a in agents])
+        series.append([
+            int(totals_by_agent.get(a, {}).get(k, 0) or 0) for a in agents
+        ])
 
     totals_per_agent = [sum(vals) for vals in zip(*series)]
     max_total = max(totals_per_agent) if totals_per_agent else 0
@@ -848,7 +1099,14 @@ def plot_tokens_by_agent_stacked(
     bottoms = np.zeros(len(agents), dtype=float)
     bars_all = []
     for k, vals in zip(cats, series):
-        b = ax.bar(x, vals, width=width, bottom=bottoms, edgecolor="black", label=pretty[k])
+        b = ax.bar(
+            x,
+            vals,
+            width=width,
+            bottom=bottoms,
+            edgecolor="black",
+            label=pretty[k],
+        )
         bars_all.append(b)
         bottoms = bottoms + np.array(vals, dtype=float)
 
@@ -862,17 +1120,36 @@ def plot_tokens_by_agent_stacked(
     # Annotate totals on top of each stack (only if > 0)
     for xi, tot in enumerate(totals_per_agent):
         if tot > 0:
-            ax.text(xi, tot, f"{tot:,}", ha="center", va="bottom", fontsize="x-small")
+            ax.text(
+                xi,
+                tot,
+                f"{tot:,}",
+                ha="center",
+                va="bottom",
+                fontsize="x-small",
+            )
 
     # Legend outside
-    ax.legend(loc="upper left", bbox_to_anchor=(1.005, 1.0), frameon=False, fontsize="small")
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.005, 1.0),
+        frameon=False,
+        fontsize="small",
+    )
 
     # Title / footer
     fig.suptitle(title, y=0.97)
     y0 = 0.08
     if footer_lines:
         for i, line in enumerate(footer_lines):
-            fig.text(0.5, y0 + i * 0.035, line, ha="center", va="center", fontsize="x-small")
+            fig.text(
+                0.5,
+                y0 + i * 0.035,
+                line,
+                ha="center",
+                va="center",
+                fontsize="x-small",
+            )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -888,11 +1165,15 @@ def plot_tps_by_agent_grouped(
     title: str = "Tokens per second by Agent (thread)",
     footer_lines: List[str] | None = None,
 ) -> str:
-    import numpy as np
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    cats = ["input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens"]
-    pretty = [c.replace("_", " ") for c in cats]
+    cats = [
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cached_tokens",
+    ]
 
     if not totals_by_agent:
         fig = plt.figure(figsize=(10, 2.0))
@@ -910,7 +1191,9 @@ def plot_tps_by_agent_grouped(
 
     def _rate_sum(agent: str, denom: float) -> List[float]:
         denom = float(denom or 0.0)
-        vals = [int(totals_by_agent.get(agent, {}).get(k, 0) or 0) for k in cats]
+        vals = [
+            int(totals_by_agent.get(agent, {}).get(k, 0) or 0) for k in cats
+        ]
         if denom <= 0:
             return [0.0 for _ in vals]
         return [v / denom for v in vals]
@@ -920,7 +1203,6 @@ def plot_tps_by_agent_grouped(
 
     # Prepare bars
     n_agents = len(agents)
-    n_cats = len(cats)
     x = np.arange(n_agents)
     width = 0.38
 
@@ -940,26 +1222,57 @@ def plot_tps_by_agent_grouped(
     per_llm_total = [sum(vals) for vals in per_llm]
     per_thr_total = [sum(vals) for vals in per_thr]
 
-    b1 = ax.bar(x - width/2, per_llm_total, width=width, label="per LLM-sec (sum)", edgecolor="black")
-    b2 = ax.bar(x + width/2, per_thr_total, width=width, label="per thread-sec", edgecolor="black")
+    b1 = ax.bar(
+        x - width / 2,
+        per_llm_total,
+        width=width,
+        label="per LLM-sec (sum)",
+        edgecolor="black",
+    )
+    b2 = ax.bar(
+        x + width / 2,
+        per_thr_total,
+        width=width,
+        label="per thread-sec",
+        edgecolor="black",
+    )
 
     for bars in (b1, b2):
         for rect in bars:
             h = rect.get_height()
             if h > 0:
-                ax.text(rect.get_x() + rect.get_width()/2, h, f"{h:,.2f}", ha="center", va="bottom", fontsize="x-small")
+                ax.text(
+                    rect.get_x() + rect.get_width() / 2,
+                    h,
+                    f"{h:,.2f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize="x-small",
+                )
 
     ax.set_xticks(x)
     ax.set_xticklabels(agents, rotation=28, ha="right")
     ax.set_ylabel("tokens / second", fontsize="small")
     ax.tick_params(labelsize="small")
-    ax.legend(loc="upper left", bbox_to_anchor=(1.005, 1.0), frameon=False, fontsize="small")
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.005, 1.0),
+        frameon=False,
+        fontsize="small",
+    )
 
     fig.suptitle(title, y=0.97)
     y0 = 0.08
     if footer_lines:
         for i, line in enumerate(footer_lines):
-            fig.text(0.5, y0 + i * 0.035, line, ha="center", va="center", fontsize="x-small")
+            fig.text(
+                0.5,
+                y0 + i * 0.035,
+                line,
+                ha="center",
+                va="center",
+                fontsize="x-small",
+            )
 
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

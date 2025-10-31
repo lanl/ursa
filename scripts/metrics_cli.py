@@ -343,7 +343,7 @@ def _aggregate_super_across_dirs(
         sessions = scan_directory_for_threads(d)
         for _tid, runs in (sessions or {}).items():
             # time breakdown per thread
-            t_total, parts, ctx = extract_thread_time_breakdown(
+            t_total, parts, _ = extract_thread_time_breakdown(
                 runs, group_llm=group_llm
             )
             total_all += float(t_total or 0.0)
