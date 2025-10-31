@@ -28,6 +28,8 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.logo_generator import kickoff_logo
+
 
 ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # use macOS Keychain
 litellm.client_session = httpx.Client(verify=ctx, timeout=30)
@@ -706,10 +708,12 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
 
     # Initialize the agents
     planner = PlanningAgent(
-        llm=model, checkpointer=planner_checkpointer
+        llm=model, checkpointer=planner_checkpointer,
+        enable_metrics=True, metrics_dir = Path(workspace) / "ursa_metrics"
     )  # include checkpointer
     executor = ExecutionAgent(
-        llm=model, checkpointer=executor_checkpointer
+        llm=model, checkpointer=executor_checkpointer,
+        enable_metrics=True, metrics_dir = Path(workspace) / "ursa_metrics"
     )  # include checkpointer
     # Use the workspace as the thread id (one thread per workspace)
     thread_id = Path(workspace).name
@@ -751,7 +755,7 @@ def setup_workspace(
             "Make sure to pass this string to restart using --workspace <this workspace string>"
         )
         # https://pypi.org/project/randomname/
-        workspace = f"{project}_{randomname.get_name(noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit', 'plants'))}"
+        workspace = f"{project}_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
     else:
         workspace = user_specified_workspace
         print(f"User specified workspace: {workspace}")
@@ -1054,6 +1058,66 @@ def main(
                 border_style="blue",
             )
         )
+
+        # ---- One-time project logo kickoff (per workspace) -----------------
+        # Use run_meta.json to ensure we do this only once for this workspace.
+        meta = load_run_meta(workspace)
+        if not meta.get("logo_created"):
+            try:
+                _ = kickoff_logo(
+                    problem_text=problem,
+                    workspace=workspace,
+                    out_dir=workspace,
+                    size="1536x1024",
+                    background="opaque",
+                    quality="high",
+                    n=4,
+                    style="random-scene",  # 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', 'brutalist'
+                    console=console,
+                    on_done=lambda p: console.print(
+                        Panel.fit(
+                            f"[bold yellow]Project art saved:[/] {p}",
+                            border_style="yellow",
+                        )
+                    ),
+                    on_error=lambda e: console.print(
+                        Panel.fit(
+                            f"[bold red]Art generation failed:[/] {e}",
+                            border_style="red",
+                        )
+                    ),
+                )
+                _ = kickoff_logo(
+                    problem_text=problem,
+                    workspace=workspace,
+                    out_dir=workspace,
+                    size="1024x1024",
+                    background="opaque",
+                    quality="high",
+                    n=4,
+                    style="mascot",  # 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', 'brutalist'
+                    console=console,
+                    on_done=lambda p: console.print(
+                        Panel.fit(
+                            f"[bold yellow]Project mascot art saved:[/] {p}",
+                            border_style="yellow",
+                        )
+                    ),
+                    on_error=lambda e: console.print(
+                        Panel.fit(
+                            f"[bold red]Art mascot generation failed:[/] {e}",
+                            border_style="red",
+                        )
+                    ),
+                )
+
+            finally:
+                # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
+                # Remove this flag manually if you want to re-generate art for this workspace.
+                save_run_meta(workspace, logo_created=True)
+        # --------------------------------------------------------------------
+
+
 
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(
