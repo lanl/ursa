@@ -103,7 +103,6 @@ class HITL:
                 case str(), None:
                     self.emb_api_key = self.llm_api_key
 
-        # TODO: Check that this and mcp still work.
         self.model = init_chat_model(
             model=self.llm_model_name,
             max_completion_tokens=self.max_completion_tokens,
