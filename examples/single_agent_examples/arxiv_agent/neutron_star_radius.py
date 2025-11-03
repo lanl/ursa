@@ -6,7 +6,7 @@ from ursa.agents import ArxivAgent
 
 
 def main():
-    llm = ChatOpenAI(model="o3", max_completion_tokens=20000)
+    llm = ChatOpenAI(model="gpt-5-mini", max_completion_tokens=20000)
 
     Path("workspace").mkdir(exist_ok=True)
     agent = ArxivAgent(

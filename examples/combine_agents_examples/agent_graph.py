@@ -54,7 +54,7 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 
 
 model = ChatOpenAI(
-    model="o3",
+    model="gpt-5-mini",
     max_completion_tokens=50000,
 )
 embedding = OpenAIEmbeddings()

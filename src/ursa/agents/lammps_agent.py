@@ -52,7 +52,7 @@ class LammpsAgent(BaseAgent):
         workspace: str = "./workspace",
         lammps_cmd: str = "lmp_mpi",
         mpirun_cmd: str = "mpirun",
-        tiktoken_model: str = "o3",
+        tiktoken_model: str = "gpt-5-mini",
         max_tokens: int = 200000,
         **kwargs,
     ):
