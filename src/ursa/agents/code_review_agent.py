@@ -342,7 +342,9 @@ def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
 
 
 def main():
-    code_review_agent = CodeReviewAgent(llm=init_chat_model("openai:gpt-5-mini"))
+    code_review_agent = CodeReviewAgent(
+        llm=init_chat_model("openai:gpt-5-mini")
+    )
     initial_state = {
         "messages": [],
         "project_prompt": "Find a city with as least 10 vowels in its name.",
