@@ -1,3 +1,0 @@
-- [ ] replace 'openai/' with 'openai:'
-- [ ] remove ChatLiteLLM and litellm with langchain `init_chat_model`
-- [ ] remove litellm embeddings, if any
