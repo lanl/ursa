@@ -362,7 +362,7 @@ def should_continue(state: OptimizerState) -> Literal["error", "continue"]:
 
 def main():
     model = ChatOpenAI(
-        model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
+        model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2
     )
     execution_agent = OptimizationAgent(llm=model)
     # execution_agent = execution_agent.bind_tools(feasibility_checker)

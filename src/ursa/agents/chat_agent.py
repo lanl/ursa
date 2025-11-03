@@ -47,7 +47,7 @@ class ChatAgent(BaseAgent):
 
 def main():
     model = ChatOpenAI(
-        model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
+        model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2
     )
     websearcher = ChatAgent(llm=model)
     problem_string = "What is your name?"

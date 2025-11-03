@@ -42,7 +42,9 @@ class HypothesizerState(TypedDict):
 
 class HypothesizerAgent(BaseAgent):
     def __init__(
-        self, llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"), **kwargs
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        **kwargs,
     ):
         super().__init__(llm, **kwargs)
         self.hypothesizer_prompt = hypothesizer_prompt
@@ -524,7 +526,7 @@ def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
 #     """
 #     Takes the LaTeX in state["summary_report"] and tries to compile it to a PDF
 #     named with the model and timestamp, e.g.:
-#     summary_report_gpt-4o-mini_Mar_15_2025_8:59am.pdf
+#     summary_report_gpt-5-mini_Mar_15_2025_8:59am.pdf
 #     """
 #     print(f"[DEBUG] Entering compile_summary_to_pdf.")
 
@@ -537,7 +539,7 @@ def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
 #         return state
 
 #     # Create a dynamic filename using the LLM model name & a timestamp
-#     # e.g. "summary_report_gpt-4o-mini_Mar_15_2025_08:59AM.pdf"
+#     # e.g. "summary_report_gpt-5-mini_Mar_15_2025_08:59AM.pdf"
 #     # timestamp_str = datetime.now().strftime("%b_%d_%Y_%I:%M%p")
 #     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 

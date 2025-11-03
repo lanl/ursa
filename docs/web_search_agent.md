@@ -8,11 +8,11 @@
 from ursa.agents import WebSearchAgent
 from langchain_openai import ChatOpenAI
 
-# Initialize with default model (gpt-4o-mini)
+# Initialize with default model (gpt-5-mini)
 websearcher = WebSearchAgent()
 
 # Or initialize with a custom model
-model = ChatOpenAI(model="gpt-4o", max_completion_tokens=10000)
+model = ChatOpenAI(model="gpt-5-mini", max_completion_tokens=10000)
 websearcher = WebSearchAgent(llm=model)
 
 # Run a web search query
