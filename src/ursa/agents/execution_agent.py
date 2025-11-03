@@ -482,7 +482,7 @@ class ExecutionAgent(BaseAgent):
 
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-4o-mini"),
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
         **kwargs,

@@ -15,7 +15,7 @@ def main(mode: str):
         # Define a simple problem
         problem = "Find a city with as least 10 vowels in its name."
         model = init_chat_model(
-            model="openai:o3" if mode == "prod" else "ollama:llama3.1:8b",
+            model="openai:gpt-5-mini" if mode == "prod" else "ollama:llama3.1:8b",
             max_completion_tokens=10000 if mode == "prod" else 4000,
             max_retries=2,
         )

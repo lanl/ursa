@@ -33,7 +33,7 @@ print("Sources:", sources)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | init_chat_model("openai:gpt-4o-mini") | The language model to use for web search |
+| `llm` | `BaseChatModel` | init_chat_model("openai:gpt-5-mini") | The language model to use for web search |
 | `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
 
 ### Run Method
@@ -66,7 +66,7 @@ from ursa.agents import WebSearchAgent
 
 # Initialize with custom parameters
 websearcher = WebSearchAgent(
-    llm=init_chat_model("openai:gpt-4o"),
+    llm=init_chat_model("openai:gpt-5-mini"),
     url="https://www.example.com"  # Custom URL for internet connectivity check
 )
 

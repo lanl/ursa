@@ -43,7 +43,7 @@ class LammpsAgent(BaseAgent):
     def __init__(
         self,
         llm: BaseChatModel = init_chat_model(
-            model="openai:gpt-5", max_completion_tokens=200000
+            model="openai:gpt-5-mini", max_completion_tokens=200000
         ),
         max_potentials: int = 5,
         max_fix_attempts: int = 10,

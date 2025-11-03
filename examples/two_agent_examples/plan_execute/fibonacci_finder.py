@@ -36,7 +36,7 @@ problem = (
 
 
 # Init the model
-model = init_chat_model(model="openai:o3")
+model = init_chat_model(model="openai:gpt-5-mini")
 
 # Setup checkpointing
 db_path = Path(workspace) / "checkpoint.db"

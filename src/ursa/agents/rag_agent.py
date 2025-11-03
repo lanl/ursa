@@ -40,7 +40,7 @@ class RAGAgent(BaseAgent):
     def __init__(
         self,
         embedding: Embeddings,
-        llm: BaseChatModel = init_chat_model("openai:o3-mini"),
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         return_k: int = 10,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,

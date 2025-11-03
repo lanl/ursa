@@ -9,7 +9,7 @@ from ursa.observability.timing import render_session_summary
 
 def test_execution_agent():
     execution_agent = ExecutionAgent(
-        llm=init_chat_model(model="openai:gpt-4o-mini")
+        llm=init_chat_model(model="openai:gpt-5-mini")
     )
     problem_string = "Write and execute a minimal python script to print the first 10 integers."
     inputs = {

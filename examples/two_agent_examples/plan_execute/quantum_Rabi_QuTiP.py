@@ -24,7 +24,7 @@ def main():
     """
     try:
         model = init_chat_model(
-            model="openai:gpt-5", max_completion_tokens=20000, max_retries=2
+            model="openai:gpt-5-mini", max_completion_tokens=20000, max_retries=2
         )
 
         init = {"messages": [HumanMessage(content=problem)]}

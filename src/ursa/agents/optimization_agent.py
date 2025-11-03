@@ -47,7 +47,7 @@ class OptimizerState(TypedDict):
 class OptimizationAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-4o"),
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         *args,
         **kwargs,
     ):

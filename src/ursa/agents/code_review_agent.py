@@ -53,7 +53,7 @@ class CodeReviewState(TypedDict):
 class CodeReviewAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-4o-mini"),
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
@@ -342,7 +342,7 @@ def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
 
 
 def main():
-    code_review_agent = CodeReviewAgent(llm=init_chat_model("openai:o3-mini"))
+    code_review_agent = CodeReviewAgent(llm=init_chat_model("openai:gpt-5-mini"))
     initial_state = {
         "messages": [],
         "project_prompt": "Find a city with as least 10 vowels in its name.",

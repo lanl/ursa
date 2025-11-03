@@ -727,7 +727,7 @@ def setup_llm(model_name: str):
 def setup_workspace(
     user_specified_workspace: str | None,
     project: str = "run",
-    model_name: str = "openai:o3-mini",
+    model_name: str = "openai:gpt-5-mini",
 ) -> str:
     if user_specified_workspace is None:
         print("No workspace specified, creating one for this project!")
@@ -1422,9 +1422,9 @@ def parse_args_and_user_inputs():
     DEFAULT_MODELS = tuple(
         models_cfg.get("choices")
         or (
-            "openai:gpt-5",
-            "openai:o3",
-            "openai:o3-mini",
+            "openai:gpt-5-mini",
+            "openai:gpt-5-mini",
+            "openai:gpt-5-mini",
         )
     )
     DEFAULT_MODEL = models_cfg.get("default")  # may be None

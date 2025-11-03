@@ -34,7 +34,7 @@ def remove_surrogates(text: str) -> str:
 class MaterialsProjectAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:o3-mini"),
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         summarize: bool = True,
         max_results: int = 3,
         database_path: str = "mp_database",

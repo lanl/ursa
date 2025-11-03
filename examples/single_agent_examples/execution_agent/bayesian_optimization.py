@@ -18,7 +18,7 @@ Optimize the six-hump camel function.
 """
 
 model = init_chat_model(
-    model="openai:o3",
+    model="openai:gpt-5-mini",
     max_completion_tokens=30000,
 )
 

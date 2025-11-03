@@ -43,7 +43,7 @@ class WebSearchState(TypedDict):
 class WebSearchAgentLegacy(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-4o-mini"),
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         **kwargs,
     ):
         super().__init__(llm, **kwargs)

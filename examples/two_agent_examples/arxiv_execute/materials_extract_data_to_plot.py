@@ -9,7 +9,7 @@ from ursa.observability.timing import render_session_summary
 
 def main():
     tid = f"run-{uuid4().hex[:8]}"
-    model = init_chat_model(model="openai:o3", max_completion_tokens=50000)
+    model = init_chat_model(model="openai:gpt-5-mini", max_completion_tokens=50000)
 
     agent = ArxivAgent(
         llm=model,

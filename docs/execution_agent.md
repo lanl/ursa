@@ -23,7 +23,7 @@ When initializing `ExecutionAgent`, you can customize its behavior with these pa
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-4o-mini")` | The LLM model to use |
+| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5-mini")` | The LLM model to use |
 | `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
 
 ## Features

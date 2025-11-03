@@ -137,8 +137,8 @@ def main(model_name: str):
 if __name__ == "__main__":
     # ── interactive model picker ───────────────────────────────────────
     DEFAULT_MODELS = (
-        "openai:o3",
-        "openai:o3-mini",
+        "openai:gpt-5-mini",
+        "openai:gpt-5-mini",
     )
 
     try:
