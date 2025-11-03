@@ -59,7 +59,7 @@ Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
 [build-system]
-requires = ["setuptools>=74.1", "setuptools-git-versioning>=2.0,<3"]
+requires = ["setuptools>=74.1,<80", "setuptools-git-versioning>=2.0,<3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools-git-versioning]
