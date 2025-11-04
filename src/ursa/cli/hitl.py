@@ -21,6 +21,7 @@ from ursa.agents import (
     ArxivAgent,
     ChatAgent,
     ExecutionAgent,
+    HypothesizerAgent,
     PlanningAgent,
     RecallAgent,
     WebSearchAgent,
@@ -135,6 +136,7 @@ class HITL:
         self.arxiv_state = []
         self.chatter_state = {"messages": []}
         self.executor_state = {}
+        self.hypothesizer_state = {}
         self.planner_state = {}
         self.websearcher_state = []
 
@@ -185,6 +187,18 @@ class HITL:
             agent_memory=self.memory,
             thread_id=self.thread_id + "_executor",
             safe_codes=self.safe_codes,
+        )
+
+    @cached_property
+    def hypothesizer(self) -> HypothesizerAgent:
+        edb_path = self.workspace / "checkpoint.db"
+        edb_path.parent.mkdir(parents=True, exist_ok=True)
+        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
+        self.executor_checkpointer = SqliteSaver(econn)
+        return HypothesizerAgent(
+            llm=self.model,
+            checkpointer=self.executor_checkpointer,
+            thread_id=self.thread_id + "_hypothesizer",
         )
 
     @cached_property
@@ -299,6 +313,20 @@ class HITL:
         # return f"[{self.model.model_name}]: {self.last_agent_result}"
         return f"{self.last_agent_result}"
 
+    def run_hypothesizer(self, prompt: str) -> str:
+        question = f"The last agent output was: {self.last_agent_result}\n\nThe user stated: {prompt}"
+
+        self.hypothesizer_state = self.hypothesizer.invoke(
+            prompt=question,
+            max_iterations=2,
+        )
+
+        solution = self.hypothesizer_state.get(
+            "solution", "Hypothesizer failed to return a solution"
+        )
+        self.update_last_agent_result(solution)
+        return f"[Hypothesizer Agent Output]:\n {self.last_agent_result}"
+
     def run_planner(self, prompt: str) -> str:
         self.planner_state.setdefault("messages", [])
         self.planner_state["messages"].append(
@@ -411,6 +439,12 @@ class UrsaRepl(Cmd):
     def do_recall(self, _: str):
         """Run RecallAgent"""
         self.show(self.run_agent("Recall Agent", self.hitl.run_rememberer))
+
+    def do_hypothesize(self, _: str):
+        """Run HypothesizerAgent"""
+        self.show(
+            self.run_agent("Hypothesizer Agent", self.hitl.run_hypothesizer)
+        )
 
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
