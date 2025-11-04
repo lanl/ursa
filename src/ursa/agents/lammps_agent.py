@@ -1,9 +1,10 @@
 import json
 import os
 import subprocess
-from typing import Any, Dict, List, Mapping, Optional, TypedDict
+from typing import Any, Mapping, Optional, TypedDict
 
 import tiktoken
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
@@ -20,14 +21,14 @@ except Exception:
 
 class LammpsState(TypedDict, total=False):
     simulation_task: str
-    elements: List[str]
+    elements: list[str]
     template: Optional[str]
     chosen_potential: Optional[Any]
 
-    matches: List[Any]
+    matches: list[Any]
     idx: int
-    summaries: List[str]
-    full_texts: List[str]
+    summaries: list[str]
+    full_texts: list[str]
     summaries_combined: str
 
     input_script: str
@@ -41,7 +42,9 @@ class LammpsState(TypedDict, total=False):
 class LammpsAgent(BaseAgent):
     def __init__(
         self,
-        llm,
+        llm: BaseChatModel = init_chat_model(
+            model="openai:gpt-5-mini", max_completion_tokens=200000
+        ),
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,
@@ -49,7 +52,7 @@ class LammpsAgent(BaseAgent):
         workspace: str = "./workspace",
         lammps_cmd: str = "lmp_mpi",
         mpirun_cmd: str = "mpirun",
-        tiktoken_model: str = "o3",
+        tiktoken_model: str = "gpt-5-mini",
         max_tokens: int = 200000,
         **kwargs,
     ):
@@ -157,7 +160,7 @@ class LammpsAgent(BaseAgent):
         self._action = self._build_graph()
 
     @staticmethod
-    def _safe_json_loads(s: str) -> Dict[str, Any]:
+    def _safe_json_loads(s: str) -> dict[str, Any]:
         s = s.strip()
         if s.startswith("```"):
             s = s.strip("`")

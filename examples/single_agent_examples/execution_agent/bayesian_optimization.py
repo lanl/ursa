@@ -1,5 +1,5 @@
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 from langchain_openai import OpenAIEmbeddings
 
 from ursa.agents import ExecutionAgent
@@ -17,9 +17,9 @@ Optimize the six-hump camel function.
     Carry out the optimization and report the results.
 """
 
-model = ChatLiteLLM(
-    model="openai/o3",
-    max_tokens=30000,
+model = init_chat_model(
+    model="openai:gpt-5-mini",
+    max_completion_tokens=30000,
 )
 
 embedding_kwargs = None

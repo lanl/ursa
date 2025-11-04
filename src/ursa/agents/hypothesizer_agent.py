@@ -3,10 +3,10 @@ import ast
 # from langchain_community.tools import TavilySearchResults
 # from textwrap                  import dedent
 from datetime import datetime
-from typing import Any, List, Literal, Mapping, TypedDict
+from typing import Any, Literal, Mapping, TypedDict
 
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.tools import DuckDuckGoSearchResults
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph
 
@@ -32,16 +32,20 @@ class HypothesizerState(TypedDict):
     question_search_query: str
     current_iteration: int
     max_iterations: int
-    agent1_solution: List[str]  # List to store each iteration of solutions
-    agent2_critiques: List[str]  # List to store critiques
-    agent3_perspectives: List[str]  # List to store competitor perspectives
+    agent1_solution: list[str]  # List to store each iteration of solutions
+    agent2_critiques: list[str]  # List to store critiques
+    agent3_perspectives: list[str]  # List to store competitor perspectives
     solution: str  # Refined solution
     summary_report: str  # the final summarized report
-    visited_sites: List[str]
+    visited_sites: list[str]
 
 
 class HypothesizerAgent(BaseAgent):
-    def __init__(self, llm: str | BaseChatModel = "openai/o3-mini", **kwargs):
+    def __init__(
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        **kwargs,
+    ):
         super().__init__(llm, **kwargs)
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
@@ -522,7 +526,7 @@ def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
 #     """
 #     Takes the LaTeX in state["summary_report"] and tries to compile it to a PDF
 #     named with the model and timestamp, e.g.:
-#     summary_report_gpt-4o-mini_Mar_15_2025_8:59am.pdf
+#     summary_report_gpt-5-mini_Mar_15_2025_8:59am.pdf
 #     """
 #     print(f"[DEBUG] Entering compile_summary_to_pdf.")
 
@@ -535,7 +539,7 @@ def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
 #         return state
 
 #     # Create a dynamic filename using the LLM model name & a timestamp
-#     # e.g. "summary_report_gpt-4o-mini_Mar_15_2025_08:59AM.pdf"
+#     # e.g. "summary_report_gpt-5-mini_Mar_15_2025_08:59AM.pdf"
 #     # timestamp_str = datetime.now().strftime("%b_%d_%Y_%I:%M%p")
 #     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 

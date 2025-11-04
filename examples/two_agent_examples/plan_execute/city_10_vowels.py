@@ -1,7 +1,7 @@
 import sys
 
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
@@ -14,9 +14,11 @@ def main(mode: str):
     try:
         # Define a simple problem
         problem = "Find a city with as least 10 vowels in its name."
-        model = ChatLiteLLM(
-            model="openai/o3" if mode == "prod" else "ollama_chat/llama3.1:8b",
-            max_tokens=10000 if mode == "prod" else 4000,
+        model = init_chat_model(
+            model="openai:gpt-5-mini"
+            if mode == "prod"
+            else "ollama:llama3.1:8b",
+            max_completion_tokens=10000 if mode == "prod" else 4000,
             max_retries=2,
         )
         init = {"messages": [HumanMessage(content=problem)]}

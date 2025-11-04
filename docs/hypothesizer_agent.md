@@ -26,8 +26,8 @@ print(solution)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | str or BaseChatModel | "openai/o3-mini" | The language model to use for all agents |
-| `**kwargs` | dict | {} | Additional parameters passed to the base agent |
+| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5-mini")` | The language model to use for all agents |
+| `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
 
 ### Run Method
 
@@ -70,9 +70,10 @@ The agent produces:
 
 ```python
 from ursa.agents import HypothesizerAgent
+from langchain.chat_models import init_chat_model
 
 # Initialize with a specific LLM
-agent = HypothesizerAgent(llm="openai/gpt-4o")
+agent = HypothesizerAgent(llm=init_chat_model("openai:gpt-5-mini"))
 
 # Run with 5 iterations
 result = agent.invoke(

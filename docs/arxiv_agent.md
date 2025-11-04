@@ -26,7 +26,7 @@ When initializing `ArxivAgent`, you can customize its behavior with these parame
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | str | "openai/o3-mini" | The LLM model to use for summarization |
+| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5-mini")` | The LLM model to use for summarization |
 | `summarize` | bool | True | Whether to summarize the papers or just fetch them |
 | `process_images` | bool | True | Whether to extract and describe images from papers |
 | `max_results` | int | 3 | Maximum number of papers to fetch from arXiv |
@@ -40,8 +40,11 @@ When initializing `ArxivAgent`, you can customize its behavior with these parame
 ### Customizing the Agent
 
 ```python
+from langchain.chat_models import init_chat_model
+from ursa.agents import ArxivAgent
+
 agent = ArxivAgent(
-    llm="openai/o3",  # Use a more powerful model
+    llm=init_chat_model("openai:gpt-5-mini"),  # Use a more powerful model
     max_results=5,       # Fetch more papers
     process_images=False,  # Skip image processing to save time
     download_papers=False  # Use only papers already in database_path

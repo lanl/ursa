@@ -3,20 +3,19 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any, Mapping
+from typing import Any, Mapping, TypedDict
 from urllib.parse import quote
 
 import feedparser
 import pymupdf
 import requests
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
 from PIL import Image
 from tqdm import tqdm
-from typing_extensions import List, TypedDict
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
@@ -35,8 +34,8 @@ class PaperMetadata(TypedDict):
 class PaperState(TypedDict, total=False):
     query: str
     context: str
-    papers: List[PaperMetadata]
-    summaries: List[str]
+    papers: list[PaperMetadata]
+    summaries: list[str]
     final_summary: str
 
 
@@ -82,7 +81,7 @@ def describe_image(image: Image.Image) -> str:
 
 def extract_and_describe_images(
     pdf_path: str, max_images: int = 5
-) -> List[str]:
+) -> list[str]:
     doc = pymupdf.open(pdf_path)
     descriptions = []
     image_count = 0
@@ -122,7 +121,7 @@ def remove_surrogates(text: str) -> str:
 class ArxivAgentLegacy(BaseAgent):
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/o3-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         summarize: bool = True,
         process_images=True,
         max_results: int = 3,
@@ -149,7 +148,7 @@ class ArxivAgentLegacy(BaseAgent):
 
         os.makedirs(self.summaries_path, exist_ok=True)
 
-    def _fetch_papers(self, query: str) -> List[PaperMetadata]:
+    def _fetch_papers(self, query: str) -> list[PaperMetadata]:
         if self.download_papers:
             encoded_query = quote(query)
             url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results={self.max_results}"

@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI
 from ursa.agents.optimization_agent import OptimizationAgent
 
 model = ChatOpenAI(
-    model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
+    model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2
 )
 
 problem_string = """

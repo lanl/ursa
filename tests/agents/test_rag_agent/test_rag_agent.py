@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from langchain_ollama import OllamaEmbeddings
+from langchain.embeddings import init_embeddings
 
 from ursa.agents import RAGAgent
 from ursa.observability.timing import render_session_summary
@@ -13,11 +13,10 @@ def test_rag_agent():
     summary_file = summary_dir / "RAG_summary.txt"
 
     agent = RAGAgent(
-        embedding=OllamaEmbeddings(model="nomic-embed-text"),
+        embedding=init_embeddings(model="ollama:nomic-embed-text"),
         database_path="tests/tiny-corpus",
         summaries_path=str(summary_dir),
         vectorstore_path=str(vectorstore_dir),
-        enable_metrics=True,
     )
     agent.invoke(context="What is AIBD?")
     render_session_summary(agent.thread_id)

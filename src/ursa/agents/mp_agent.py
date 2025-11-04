@@ -2,14 +2,14 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, Mapping
+from typing import Any, Mapping, TypedDict
 
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
 from mp_api.client import MPRester
 from tqdm import tqdm
-from typing_extensions import List, TypedDict
 
 from .base import BaseAgent
 
@@ -22,8 +22,8 @@ class PaperMetadata(TypedDict):
 class PaperState(TypedDict, total=False):
     query: str
     context: str
-    papers: List[PaperMetadata]
-    summaries: List[str]
+    papers: list[PaperMetadata]
+    summaries: list[str]
     final_summary: str
 
 
@@ -34,7 +34,7 @@ def remove_surrogates(text: str) -> str:
 class MaterialsProjectAgent(BaseAgent):
     def __init__(
         self,
-        llm="openai/o3-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         summarize: bool = True,
         max_results: int = 3,
         database_path: str = "mp_database",
@@ -52,7 +52,7 @@ class MaterialsProjectAgent(BaseAgent):
 
         self._action = self._build_graph()
 
-    def _fetch_node(self, state: Dict) -> Dict:
+    def _fetch_node(self, state: dict) -> dict:
         f = state["query"]
         els = f["elements"]  # e.g. ["Ga","In"]
         bg = (f["band_gap_min"], f["band_gap_max"])
@@ -79,7 +79,7 @@ class MaterialsProjectAgent(BaseAgent):
 
         return {**state, "materials": mats}
 
-    def _summarize_node(self, state: Dict) -> Dict:
+    def _summarize_node(self, state: dict) -> dict:
         """Summarize each material via LLM over its metadata."""
         # prompt template
         prompt = ChatPromptTemplate.from_template("""
@@ -122,7 +122,7 @@ You are a materials-science assistant. Given the following metadata about a mate
 
         return {**state, "summaries": summaries}
 
-    def _aggregate_node(self, state: Dict) -> Dict:
+    def _aggregate_node(self, state: dict) -> dict:
         """Combine all summaries into a single, coherent answer."""
         combined = "\n\n----\n\n".join(
             f"[{i + 1}] {m['material_id']}\n\n{summary}"

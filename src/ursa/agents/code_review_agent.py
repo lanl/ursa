@@ -1,14 +1,13 @@
 import os
 import subprocess
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypedDict
 
-from langchain_core.language_models import BaseChatModel
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
-from typing_extensions import TypedDict
 
 from ..prompt_library.code_review_prompts import (
     get_code_review_prompt,
@@ -53,7 +52,9 @@ class CodeReviewState(TypedDict):
 
 class CodeReviewAgent(BaseAgent):
     def __init__(
-        self, llm: str | BaseChatModel = "openai/gpt-4o-mini", **kwargs
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        **kwargs,
     ):
         super().__init__(llm, **kwargs)
         print("### WORK IN PROGRESS ###")
@@ -341,7 +342,9 @@ def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
 
 
 def main():
-    code_review_agent = CodeReviewAgent(llm="openai/o3-mini")
+    code_review_agent = CodeReviewAgent(
+        llm=init_chat_model("openai:gpt-5-mini")
+    )
     initial_state = {
         "messages": [],
         "project_prompt": "Find a city with as least 10 vowels in its name.",

@@ -33,13 +33,12 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping, Optional
 
 import randomname
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
-    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -48,7 +47,6 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
-from litellm.exceptions import ContentPolicyViolationError
 
 # Rich
 from rich import get_console
@@ -437,7 +435,7 @@ class ExecutionAgent(BaseAgent):
     persist summaries.
 
     Args:
-        llm (str | BaseChatModel): Model identifier or bound chat model
+        llm (BaseChatModel): Model identifier or bound chat model
             instance. If a string is provided, the BaseAgent initializer will
             resolve it.
         agent_memory (Any | AgentMemory, optional): Memory backend used to
@@ -484,7 +482,7 @@ class ExecutionAgent(BaseAgent):
 
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/gpt-4o-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
         **kwargs,
@@ -499,7 +497,6 @@ class ExecutionAgent(BaseAgent):
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
-
         self._action = self._build_graph()
 
     # Define the function that calls the model
@@ -574,7 +571,7 @@ class ExecutionAgent(BaseAgent):
             response = self.llm.invoke(
                 new_state["messages"], self.build_config(tags=["agent"])
             )
-        except ContentPolicyViolationError as e:
+        except Exception as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
@@ -608,7 +605,7 @@ class ExecutionAgent(BaseAgent):
                 messages, self.build_config(tags=["summarize"])
             )
             response_content = response.content
-        except ContentPolicyViolationError as e:
+        except Exception as e:
             print("Error: ", e, " ", messages[-1].content)
 
         # 3) Optionally persist salient details to the memory backend.
@@ -777,24 +774,3 @@ class ExecutionAgent(BaseAgent):
         raise AttributeError(
             "Use .stream(...) or .invoke(...); direct .action access is unsupported."
         )
-
-
-# Single module test execution
-def main():
-    execution_agent = ExecutionAgent()
-    problem_string = (
-        "Write and execute a python script to print the first 10 integers."
-    )
-    inputs = {
-        "messages": [HumanMessage(content=problem_string)]
-    }  # , "workspace":"dummy_test"}
-    result = execution_agent.invoke(
-        inputs,
-        config={"configurable": {"thread_id": execution_agent.thread_id}},
-    )
-    print(result["messages"][-1].content)
-    return result
-
-
-if __name__ == "__main__":
-    main()

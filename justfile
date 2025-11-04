@@ -94,3 +94,7 @@ shell:
             --unset-env='*' \
             --set-env \
             -- bash
+
+pygrep pattern:
+    conda run --live-stream -n base watch \
+        grep --exclude-dir=__pycache__ --exclude-dir=.venv -r '{{ pattern }}'
