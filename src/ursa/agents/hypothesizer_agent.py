@@ -5,10 +5,15 @@ import ast
 from datetime import datetime
 from typing import Any, List, Literal, Mapping, TypedDict
 
-from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph
+
+try:
+    from ddgs import DDGS  # pip install duckduckgo-search
+except Exception:
+    DDGS = None
+
 
 from ..prompt_library.hypothesizer_prompts import (
     competitor_prompt,
@@ -46,9 +51,7 @@ class HypothesizerAgent(BaseAgent):
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
         self.competitor_prompt = competitor_prompt
-        self.search_tool = DuckDuckGoSearchResults(
-            output_format="json", num_results=10
-        )
+        self.search_tool = DDGS()
         # self.search_tool = TavilySearchResults(
         #     max_results=10, search_depth="advanced", include_answer=False
         # )
@@ -87,7 +90,9 @@ class HypothesizerAgent(BaseAgent):
         ).content
         if '"' in search_query:
             search_query = search_query.split('"')[1]
-        raw_search_results = self.search_tool.invoke(search_query)
+        raw_search_results = self.search_tool.text(
+            search_query, backend="duckduckgo"
+        )
 
         # Parse the results if possible, so we can collect URLs
         new_state = state.copy()
@@ -104,7 +109,7 @@ class HypothesizerAgent(BaseAgent):
             for item in results_list:
                 link = item.get("link")
                 if link:
-                    print(f"[DEBUG] Appending visited link: {link}")
+                    # print(f"[DEBUG] Appending visited link: {link}")
                     new_state["visited_sites"].append(link)
         except (ValueError, SyntaxError, TypeError):
             # If it's not valid Python syntax or something else goes wrong
@@ -146,7 +151,9 @@ class HypothesizerAgent(BaseAgent):
 
         fact_check_query = f"fact check {state['question_search_query']} solution effectiveness"
 
-        raw_search_results = self.search_tool.invoke(fact_check_query)
+        raw_search_results = self.search_tool.text(
+            fact_check_query, backend="duckduckgo"
+        )
 
         # Parse the results if possible, so we can collect URLs
         new_state = state.copy()
@@ -162,7 +169,7 @@ class HypothesizerAgent(BaseAgent):
             for item in results_list:
                 link = item.get("link")
                 if link:
-                    print(f"[DEBUG] Appending visited link: {link}")
+                    # print(f"[DEBUG] Appending visited link: {link}")
                     new_state["visited_sites"].append(link)
         except (ValueError, SyntaxError, TypeError):
             # If it's not valid Python syntax or something else goes wrong
@@ -209,7 +216,9 @@ class HypothesizerAgent(BaseAgent):
             f"competitor responses to {state['question_search_query']}"
         )
 
-        raw_search_results = self.search_tool.invoke(competitor_search_query)
+        raw_search_results = self.search_tool.text(
+            competitor_search_query, backend="duckduckgo"
+        )
 
         # Parse the results if possible, so we can collect URLs
         new_state = state.copy()
@@ -225,7 +234,7 @@ class HypothesizerAgent(BaseAgent):
             for item in results_list:
                 link = item.get("link")
                 if link:
-                    print(f"[DEBUG] Appending visited link: {link}")
+                    # print(f"[DEBUG] Appending visited link: {link}")
                     new_state["visited_sites"].append(link)
         except (ValueError, SyntaxError, TypeError):
             # If it's not valid Python syntax or something else goes wrong
@@ -302,10 +311,10 @@ class HypothesizerAgent(BaseAgent):
         self, state: HypothesizerState
     ) -> HypothesizerState:
         new_state = state.copy()
-        all_sites = new_state.get("visited_sites", [])
-        print("[DEBUG] Visited Sites:")
-        for s in all_sites:
-            print("  ", s)
+        # all_sites = new_state.get("visited_sites", [])
+        # print("[DEBUG] Visited Sites:")
+        # for s in all_sites:
+        #     print("  ", s)
         return new_state
 
     def summarize_process_as_latex(
@@ -388,22 +397,23 @@ class HypothesizerAgent(BaseAgent):
         # It must include the overall solution in full, not summarized, but reformatted for appropriate
         # LaTeX. The summarization is for the other steps.
 
-        all_visited_sites = state.get("visited_sites", [])
+        # all_visited_sites = state.get("visited_sites", [])
         # (Optional) remove duplicates by converting to a set, then back to a list
-        visited_sites_unique = list(set(all_visited_sites))
-        if visited_sites_unique:
-            websites_latex = "\\section*{Websites Visited}\\begin{itemize}\n"
-            for url in visited_sites_unique:
-                print(f"We visited: {url}")
-                # Use \url{} to handle special characters in URLs
-                websites_latex += f"\\item \\url{{{url}}}\n"
-            websites_latex += "\\end{itemize}\n\n"
-        else:
-            # If no sites visited, or the list is empty
-            websites_latex = (
-                "\\section*{Websites Visited}\nNo sites were visited.\n\n"
-            )
-        print(websites_latex)
+        # visited_sites_unique = list(set(all_visited_sites))
+        # if visited_sites_unique:
+        #     websites_latex = "\\section*{Websites Visited}\\begin{itemize}\n"
+        #     for url in visited_sites_unique:
+        #         print(f"We visited: {url}")
+        #         # Use \url{} to handle special characters in URLs
+        #         websites_latex += f"\\item \\url{{{url}}}\n"
+        #     websites_latex += "\\end{itemize}\n\n"
+        # else:
+        #     # If no sites visited, or the list is empty
+        #     websites_latex = (
+        #         "\\section*{Websites Visited}\nNo sites were visited.\n\n"
+        #     )
+        # print(websites_latex)
+        websites_latex = ""
 
         # Ask the LLM to produce *only* LaTeX content
         latex_response = self.llm.invoke(prompt)
@@ -495,6 +505,7 @@ class HypothesizerAgent(BaseAgent):
         if "prompt" not in inputs:
             raise KeyError("'prompt' is a required arguments")
 
+        inputs["question"] = inputs["prompt"]
         inputs["max_iterations"] = inputs.get("max_iterations", 3)
         inputs["current_iteration"] = 0
         inputs["agent1_solution"] = []
