@@ -5,12 +5,13 @@ from functools import cached_property
 from threading import Lock
 from typing import Any, Mapping, TypedDict
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.embeddings import Embeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_core.embeddings import Embeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph
 from tqdm import tqdm
 
@@ -39,7 +40,7 @@ class RAGAgent(BaseAgent):
     def __init__(
         self,
         embedding: Embeddings,
-        llm="openai/o3-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         return_k: int = 10,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,

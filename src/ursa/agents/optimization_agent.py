@@ -1,15 +1,15 @@
 import os
 import pprint
 import subprocess
-from typing import Annotated, Any, Dict, List, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping, TypedDict
 
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import InjectedState
-from typing_extensions import TypedDict
 
 from ..prompt_library.optimization_prompts import (
     code_generator_prompt,
@@ -40,12 +40,17 @@ class OptimizerState(TypedDict):
     problem_spec: ProblemSpec
     solver: SolverSpec
     code: str
-    problem_diagnostic: List[Dict]
+    problem_diagnostic: list[dict]
     summary: str
 
 
 class OptimizationAgent(BaseAgent):
-    def __init__(self, llm="OpenAI/gpt-4o", *args, **kwargs):
+    def __init__(
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        *args,
+        **kwargs,
+    ):
         super().__init__(llm, *args, **kwargs)
         self.extractor_prompt = extractor_prompt
         self.explainer_prompt = explainer_prompt
@@ -357,7 +362,7 @@ def should_continue(state: OptimizerState) -> Literal["error", "continue"]:
 
 def main():
     model = ChatOpenAI(
-        model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
+        model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2
     )
     execution_agent = OptimizationAgent(llm=model)
     # execution_agent = execution_agent.bind_tools(feasibility_checker)

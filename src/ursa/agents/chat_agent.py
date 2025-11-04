@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Mapping
 
-from langchain_core.language_models import BaseChatModel
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
@@ -16,7 +16,9 @@ class ChatState(TypedDict):
 
 class ChatAgent(BaseAgent):
     def __init__(
-        self, llm: str | BaseChatModel = "openai/gpt-4o-mini", **kwargs
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        **kwargs,
     ):
         super().__init__(llm, **kwargs)
         self._build_graph()
@@ -45,7 +47,7 @@ class ChatAgent(BaseAgent):
 
 def main():
     model = ChatOpenAI(
-        model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
+        model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2
     )
     websearcher = ChatAgent(llm=model)
     problem_string = "What is your name?"

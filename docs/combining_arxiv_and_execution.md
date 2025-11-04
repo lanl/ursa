@@ -12,13 +12,13 @@ This workflow enables you to:
 ## Basic Usage
 
 ```python
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 from ursa.agents import ArxivAgent, ExecutionAgent
 
 # Initialize the language model
-model = ChatLiteLLM(
-    model="openai/o3",
+model = init_chat_model(
+    model="openai:gpt-5-mini",
     max_tokens=50000,
 )
 

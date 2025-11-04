@@ -8,8 +8,8 @@ benchmarks them against each other and verifies the results mach.
 import sqlite3
 from pathlib import Path
 
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
@@ -39,7 +39,7 @@ Compare the timing for all three methods on the first million integers, and chec
 ]
 
 # Init the model
-model = ChatLiteLLM(model="openai/o3")
+model = init_chat_model(model="openai:gpt-5-mini")
 
 # Setup checkpointing
 db_path = Path(workspace) / "checkpoint.db"

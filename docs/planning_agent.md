@@ -23,8 +23,8 @@ When initializing `PlanningAgent`, you can customize its behavior with these par
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | str or BaseChatModel | "openai/gpt-4o-mini" | The LLM model to use for planning |
-| `**kwargs` | dict | {} | Additional parameters passed to the base agent |
+| `llm` | BaseChatModel | `init_chat_model("openai:gpt-5-mini")` | The LLM model to use for planning |
+| `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
 
 ## Features
 

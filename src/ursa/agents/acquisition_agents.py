@@ -16,8 +16,8 @@ import feedparser
 # PDF & Vision extras (match your existing stack)
 import pymupdf
 import requests
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
@@ -204,7 +204,7 @@ class BaseAcquisitionAgent(BaseAgent):
 
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/o3-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         *,
         summarize: bool = True,
         rag_embedding=None,
@@ -729,7 +729,7 @@ class ArxivAgent(BaseAcquisitionAgent):
 
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/o3-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         *,
         process_images: bool = True,
         max_results: int = 3,

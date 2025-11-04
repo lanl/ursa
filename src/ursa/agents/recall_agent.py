@@ -1,5 +1,6 @@
 from typing import Any, Mapping, TypedDict
 
+from langchain.chat_models import BaseChatModel
 from langgraph.graph import StateGraph
 
 from .base import BaseAgent
@@ -11,7 +12,7 @@ class RecallState(TypedDict):
 
 
 class RecallAgent(BaseAgent):
-    def __init__(self, llm, memory, **kwargs):
+    def __init__(self, llm: BaseChatModel, memory, **kwargs):
         super().__init__(llm, **kwargs)
         self.memorydb = memory
         self._action = self._build_graph()

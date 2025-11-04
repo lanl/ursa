@@ -1,16 +1,16 @@
+from uuid import uuid4
+
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.observability.timing import render_session_summary
 
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
 
 def main():
-    model = ChatOpenAI(
-        model="o3",
-        max_tokens=50000,
+    tid = f"run-{uuid4().hex[:8]}"
+    model = init_chat_model(
+        model="openai:gpt-5-mini", max_completion_tokens=50000
     )
 
     agent = ArxivAgent(
@@ -22,16 +22,16 @@ def main():
         summaries_path="database_summaries_materials1",
         vectorstore_path="vectorstores_materials1",
         download_papers=True,
+        thread_id=tid,
     )
-    agent.thread_id = tid
 
     result = agent.invoke(
         arxiv_search_query="high entropy alloy hardness",
         context="What data and uncertainties are reported for hardness of the high entropy alloy and how that that compare to other alloys?",
     )
     print(result)
-    executor = ExecutionAgent(llm=model)
-    executor.thread_id = tid
+    executor = ExecutionAgent(llm=model, thread_id=tid)
+
     exe_plan = f"""
     The following is the summaries of research papers on the high entropy alloy hardness: 
     {result}

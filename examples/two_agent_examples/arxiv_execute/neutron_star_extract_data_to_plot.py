@@ -1,15 +1,16 @@
+from uuid import uuid4
+
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.observability.timing import render_session_summary
 
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
 
 def main():
-    model = ChatOpenAI(
-        model="gpt-5",
+    tid = f"run-{uuid4().hex[:8]}"
+    model = init_chat_model(
+        model="openai:gpt-5-mini",
         max_completion_tokens=50000,
     )
 
@@ -21,7 +22,7 @@ def main():
         database_path="arxiv_papers_neutron_star",
         summaries_path="arxiv_summaries_neutron_star",
         vectorstore_path="arxiv_vectorstores_neutron_star",
-        download_papers=True,
+        download=True,
     )
     agent.thread_id = tid
 

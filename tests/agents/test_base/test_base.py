@@ -19,12 +19,12 @@ from ursa.agents.base import BaseAgent
 class TinyCountingModel(BaseChatModel):
     """
     Offline fake chat model:
-      - Pretends to be "openai/o3" (so it matches pricing.json keys)
+      - Pretends to be "openai:o3" (so it matches pricing.json keys)
       - Emits small token usage numbers (4 in, 5 out)
       - Never calls any external APIs
     """
 
-    model: str = "openai/o3"
+    model: str = "openai:o3"
 
     @property
     def _llm_type(self) -> str:
@@ -111,14 +111,14 @@ class TestAgent(BaseAgent):
 @pytest.fixture
 def pricing_file(tmp_path: Path) -> Path:
     """
-    Create a tiny pricing.json that matches the fake model ("openai/o3").
+    Create a tiny pricing.json that matches the fake model ("openai:o3").
     Prices are per 1K tokens.
       input:  $0.002 / 1K
       output: $0.008 / 1K
     """
     data = {
         "_note": "Test pricing file for unit test",
-        "openai/o3": {
+        "openai:o3": {
             "input_per_1k": 0.002,
             "output_per_1k": 0.008,
             "cached_input_multiplier": 0.25,
@@ -179,7 +179,7 @@ def test_base_agent_metrics_and_pricing(
     # Pick the last event
     ev = payload["llm_events"][-1]
     assert ev["ok"] is True
-    assert ev["metadata"]["model"] == "openai/o3"
+    assert ev["metadata"]["model"] == "openai:o3"
 
     # Usage rollup should reflect our fake numbers
     roll = ev["metrics"]["usage_rollup"]
@@ -199,7 +199,7 @@ def test_base_agent_metrics_and_pricing(
     total_usd = payload["costs"]["total_usd"]
     by_model = payload["costs"]["by_model_usd"]
     assert pytest.approx(total_usd, rel=1e-9, abs=1e-9) == 0.000048
-    assert pytest.approx(by_model["openai/o3"], rel=1e-9, abs=1e-9) == 0.000048
+    assert pytest.approx(by_model["openai:o3"], rel=1e-9, abs=1e-9) == 0.000048
 
     # Per-event cost details should be annotated as computed
     assert ev["metrics"]["cost_source"] == "computed"
