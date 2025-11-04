@@ -61,6 +61,7 @@ class HITL:
     emb_api_key: Optional[str]
     share_key: bool
     thread_id: str
+    safe_codes: list[str]
     arxiv_summarize: bool
     arxiv_process_images: bool
     arxiv_max_results: int
@@ -183,6 +184,7 @@ class HITL:
             checkpointer=self.executor_checkpointer,
             agent_memory=self.memory,
             thread_id=self.thread_id + "_executor",
+            safe_codes=self.safe_codes,
         )
 
     @cached_property

@@ -68,6 +68,13 @@ def run(
         str,
         Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID"),
     ] = "ursa_cli",
+    safe_codes: Annotated[
+        list[str],
+        Option(
+            help="Programming languages that the execution agent can trust by default.",
+            envvar="URSA_THREAD_ID",
+        ),
+    ] = ["python", "julia"],
     arxiv_summarize: Annotated[
         bool,
         Option(
@@ -125,6 +132,7 @@ def run(
         emb_api_key=emb_api_key,
         share_key=share_key,
         thread_id=thread_id,
+        safe_codes=safe_codes,
         arxiv_summarize=arxiv_summarize,
         arxiv_process_images=arxiv_process_images,
         arxiv_max_results=arxiv_max_results,
@@ -224,7 +232,14 @@ def serve(
     thread_id: Annotated[
         str,
         Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID"),
-    ] = "ursa_cli",
+    ] = "ursa_mcp",
+    safe_codes: Annotated[
+        list[str],
+        Option(
+            help="Programming languages that the execution agent can trust by default.",
+            envvar="URSA_THREAD_ID",
+        ),
+    ] = ["python", "julia"],
     arxiv_summarize: Annotated[
         bool,
         Option(
@@ -293,6 +308,7 @@ def serve(
         emb_api_key=emb_api_key,
         share_key=share_key,
         thread_id=thread_id,
+        safe_codes=safe_codes,
         arxiv_summarize=arxiv_summarize,
         arxiv_process_images=arxiv_process_images,
         arxiv_max_results=arxiv_max_results,
