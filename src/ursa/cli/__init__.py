@@ -19,7 +19,7 @@ def run(
             help=(
                 "Model provider and name of LLM to use for agent tasks. "
                 "Use format <provider>:<model-name>. "
-                "For example 'openai:gpt-5-mini'. "
+                "For example 'openai:gpt-5'. "
                 "See https://reference.langchain.com/python/langchain/models/?h=init_chat_model#langchain.chat_models.init_chat_model"
             ),
             envvar="URSA_LLM_NAME",
@@ -184,7 +184,7 @@ def serve(
             help=(
                 "Model provider and name of LLM to use for agent tasks. "
                 "Use format <provider>:<model-name>. "
-                "For example 'openai:gpt-5-mini'. "
+                "For example 'openai:gpt-5'. "
                 "See https://reference.langchain.com/python/langchain/models/?h=init_chat_model#langchain.chat_models.init_chat_model"
             ),
         ),
