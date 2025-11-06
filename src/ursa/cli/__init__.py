@@ -24,7 +24,7 @@ def run(
             ),
             envvar="URSA_LLM_NAME",
         ),
-    ] = "openai:gpt-5-mini",
+    ] = "openai:gpt-5",
     llm_base_url: Annotated[
         str, Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL")
     ] = None,
@@ -188,7 +188,7 @@ def serve(
                 "See https://reference.langchain.com/python/langchain/models/?h=init_chat_model#langchain.chat_models.init_chat_model"
             ),
         ),
-    ] = "openai:gpt-5-mini",
+    ] = "openai:gpt-5",
     llm_base_url: Annotated[
         Optional[str],
         Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL"),
