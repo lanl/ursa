@@ -128,6 +128,7 @@ class BaseAgent(ABC):
         metrics_dir: str = ".ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
         thread_id: Optional[str] = None,
+        **kwargs,
     ):
         self.llm = llm
         """Initializes the base agent with a language model and optional configurations.
