@@ -1,5 +1,5 @@
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 
@@ -23,8 +23,10 @@ def main():
     queried to solve the problem step by step.
     """
     try:
-        model = ChatOpenAI(
-            model="gpt-5", max_completion_tokens=20000, max_retries=2
+        model = init_chat_model(
+            model="openai:gpt-5-mini",
+            max_completion_tokens=20000,
+            max_retries=2,
         )
 
         init = {"messages": [HumanMessage(content=problem)]}

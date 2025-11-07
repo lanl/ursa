@@ -1,16 +1,16 @@
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from typing import Annotated, Any, List, Mapping, Optional
+from typing import Annotated, Any, Mapping
 
 import requests
 from bs4 import BeautifulSoup
+from langchain.agents import create_agent
+from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.messages import HumanMessage, SystemMessage
 from langchain_community.tools import DuckDuckGoSearchResults
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import InjectedState, create_react_agent
+from langgraph.prebuilt import InjectedState
 from pydantic import Field
 from typing_extensions import TypedDict
 
@@ -21,20 +21,14 @@ from ..prompt_library.websearch_prompts import (
 )
 from .base import BaseAgent
 
-# --- ANSI color codes ---
-BLUE = "\033[1;34m"
-RED = "\033[1;31m"
-GREEN = "\033[92m"
-RESET = "\033[0m"
-
 
 class WebSearchState(TypedDict):
     websearch_query: str
     messages: Annotated[list, add_messages]
-    urls_visited: List[str]
-    max_websearch_steps: Optional[int] = Field(
-        default=100, description="Maximum number of websearch steps"
-    )
+    urls_visited: list[str]
+    max_websearch_steps: Annotated[
+        int, Field(default=100, description="Maximum number of websearch steps")
+    ]
     remaining_steps: int
     is_last_step: bool
     model: Any
@@ -48,7 +42,9 @@ class WebSearchState(TypedDict):
 
 class WebSearchAgentLegacy(BaseAgent):
     def __init__(
-        self, llm: str | BaseChatModel = "openai/gpt-4o-mini", **kwargs
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        **kwargs,
     ):
         super().__init__(llm, **kwargs)
         self.websearch_prompt = websearch_prompt
@@ -117,11 +113,11 @@ class WebSearchAgentLegacy(BaseAgent):
         # return dict(**state, thread_id=self.thread_id)
 
     def _create_react(self, state: WebSearchState) -> WebSearchState:
-        react_agent = create_react_agent(
+        react_agent = create_agent(
             self.llm,
             self.tools,
             state_schema=WebSearchState,
-            prompt=self.websearch_prompt,
+            system_prompt=self.websearch_prompt,
         )
         return react_agent.invoke(state)
 
@@ -198,36 +194,3 @@ def should_continue(state: WebSearchState):
     if "[APPROVED]" in state["messages"][-1].content:
         return "_response_node"
     return "_create_react"
-
-
-def main():
-    model = ChatOpenAI(
-        model="gpt-4o", max_tokens=10000, timeout=None, max_retries=2
-    )
-    websearcher = WebSearchAgentLegacy(llm=model)
-    problem_string = "Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?"
-    inputs = {
-        "messages": [HumanMessage(content=problem_string)],
-        "model": model,
-    }
-    result = websearcher.invoke(
-        inputs,
-        {
-            "recursion_limit": 10000,
-            "configurable": {"thread_id": 42},
-        },
-    )
-
-    colors = [BLUE, RED]
-    for ii, x in enumerate(result["messages"][:-1]):
-        if not isinstance(x, ToolMessage):
-            print(f"{colors[ii % 2]}" + x.content + f"{RESET}")
-
-    print(80 * "#")
-    print(f"{GREEN}" + result["messages"][-1].content + f"{RESET}")
-    print("Citations: ", result["urls_visited"])
-    return result
-
-
-if __name__ == "__main__":
-    main()

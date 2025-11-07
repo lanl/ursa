@@ -11,7 +11,7 @@ def main():
     callback_handler = OpenAICallbackHandler()
 
     llm = ChatOpenAI(
-        model="o3",
+        model="gpt-5-mini",
         max_tokens=10000,
         timeout=None,
         max_retries=2,

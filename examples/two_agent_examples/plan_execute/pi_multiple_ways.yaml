@@ -19,10 +19,10 @@ project: pi_multiple_ways
 # things are stochastic after all :).
 models:
   choices:
-    - openai/gpt-5
-    - openai/o3
-    - openai/o3-mini
-  default: openai/o3-mini
+    - "openai:gpt-5"
+    - "openai:o3"
+    - "openai:o3-mini"
+  default: "openai:o3-mini"
 
 # planning_mode must either be 'single' or 'heirarchical'
 # single is one pass through planning and then it executes each
@@ -40,22 +40,24 @@ problem: |
   Your task is to create and test at least 5 different ways of calculating Pi in Python.
   For each method, run your test and save data files (e.g. JSON, CSV, your choice)
   related to convergence tests for that method.  The final output should be a web page
-  with a short explanation of each method, an evaluation of which got closer to the
-  correct value for Pi, and a single plot which shows all results with the calculated
-  value for Pi on the y-axis, x-axis will be the number of steps taken in that 
-  method to get that result.
+  with a short explanation of each method, an evaluation of both (1) how quickly (time)
+  and (2) how many iterations/steps each method took to reach convergence.  Time and
+  iterations should be plotted as bar plots.  Also make a 3rd plot, a line plot, showing
+  on a single plot each of the methods converging to the known value for Pi.  For this
+  3rd plot, the y-axis should be the currently calculated value for Pi and the x-axis is
+  the number of steps to reach that result.
 
   CONSTRAINTS:
+    * Select a value, epsilon, for close enough to convergence.  Record it, and note it
+      in the web page report.
+    * All methods should be run until convergence.  For each, note the number of iterations
+      required to reach convergence and also the time.
     * Plots should be attractive, colorful (e.g. each method a different color), and
       created using Seaborn plotting library.
     * No method should be allowed to for more than 5 minutes max.
     * Before running any methods, but after deciding what 5 methods you will use,
       you must hypothesize and save to hypothesis.txt a brief description of your
       hypothesis which method will perform the best.
-    * While we discuss the x-axis being the number of steps, obviously different
-      methods may take more/less time to take a step.  You must save that information
-      as well and produce a bar chart which presents the time/step for each
-      method.
     * The line plot should include a dashed, black line at the known value for Pi
       via numpy.
     * Be careful with your line plot, it's possible (likely?) that early estimates will be
@@ -63,8 +65,12 @@ problem: |
       the y-axis scale focuses on the region of interest, not just the worst values.
       For example, if an estimate is 10.0 and then all the rest of the estimates after
       near 3.14 - the plot scale will be zoomed out so far that we cannot see the "action"
-      down near 3.14.
-    * Web page must present the 2 plots, a discussion of each method, the hypothesis,
+      down near 3.14.  You might consider limiting the y-axis to be "around" 3.14 but with enough
+      "give" to show the prediction using each method converging.
+    * Web page must present the 3 plots, a discussion of each method, the hypothesis,
       and an analysis of results (e.g. whether you validated or refuted your
       hypothesis).
     * Do not display any plots to the user's screen - all plots must be saved to disk!
+    * ***You must actually RUN the analysis*** Do not just write it and instruct the user to.
+      Write the code, execute it, plot the results based on saved output, generate the web
+      page report using the hypothesis.txt and images generated!

@@ -1,4 +1,4 @@
-from langchain_litellm import ChatLiteLLM
+from langchain.chat_models import init_chat_model
 
 from ursa.agents import WebSearchAgent
 
@@ -8,7 +8,7 @@ from ursa.agents import WebSearchAgent
 problem = "Find a city with as least 10 vowels in its name."
 
 # Choose the LLM and
-model = ChatLiteLLM(model="openai/gpt-5", max_completion_tokens=20000)
+model = init_chat_model(model="openai:gpt-5-mini", max_completion_tokens=20000)
 
 # Initialize the agent
 websearcher = WebSearchAgent(llm=model, enable_metrics=True)

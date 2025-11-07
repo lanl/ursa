@@ -584,6 +584,7 @@ class PerLLMTimer(BaseCallbackHandler):
             time.perf_counter(),
             tags or [],
             metadata or {},
+            time.time(),  # wall-clock start (epoch seconds)
         )
 
     def _extract_metrics(self, response) -> dict:
@@ -733,10 +734,11 @@ class PerLLMTimer(BaseCallbackHandler):
         return out
 
     def on_llm_end(self, response, *, run_id, **kwargs):
-        name, t0, tags, metadata = self._starts.pop(
-            run_id, ("llm:unknown", time.perf_counter(), [], {})
+        name, t0, tags, metadata, wall_t0 = self._starts.pop(
+            run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
         )
         ms = (time.perf_counter() - t0) * 1000.0
+        wall_t1 = time.time()
         self.agg.add(name, ms, True)
         metrics = self._extract_metrics(response)
         self.samples.append({
@@ -745,7 +747,9 @@ class PerLLMTimer(BaseCallbackHandler):
             "ok": True,
             "tags": tags,
             "metadata": metadata,
-            "metrics": metrics,  # <- ALL captured metrics live here
+            "metrics": metrics,
+            "t_start": wall_t0,
+            "t_end": wall_t1,  # <— add these
         })
 
     def on_llm_error(self, error, *, run_id, **kwargs):
@@ -1071,6 +1075,13 @@ class Telemetry:
     # ---------- JSON/export helpers ----------
     def begin_run(self, *, agent: str, thread_id: str) -> None:
         """Call at the start of BaseAgent.invoke()."""
+
+        # --- reset per-run aggregators so each run is isolated ---
+        self.tool = PerToolTimer()
+        self.runnable = PerRunnableTimer()
+        self.llm = PerLLMTimer()
+        # --------------------------------------------------------------
+
         self.context.clear()
         self.context.update({
             "agent": agent,
@@ -1161,17 +1172,31 @@ class Telemetry:
         }
 
     def _totals(self, tables: dict) -> dict:
-        tot = {k: sum(r["total_s"] for r in v) for k, v in tables.items()}
-        unattributed = max(
-            0.0,
-            tot.get("runnable", 0.0)
-            - (tot.get("llm", 0.0) + tot.get("tool", 0.0)),
+        runnable_rows = tables.get("runnable") or []
+
+        # choose the single root graph row (fallback to 0.0 if missing)
+        graph_rows = [
+            r
+            for r in runnable_rows
+            if str(r.get("name", "")).startswith("graph:")
+        ]
+        graph_total = max(
+            (float(r.get("total_s") or 0.0) for r in graph_rows),
+            default=0.0,
         )
+
+        llm_total = sum(
+            float(r.get("total_s") or 0.0) for r in (tables.get("llm") or [])
+        )
+        tool_total = sum(
+            float(r.get("total_s") or 0.0) for r in (tables.get("tool") or [])
+        )
+
         return {
-            "graph_total_s": tot.get("runnable", 0.0),
-            "llm_total_s": tot.get("llm", 0.0),
-            "tool_total_s": tot.get("tool", 0.0),
-            "unattributed_s": unattributed,
+            "graph_total_s": graph_total,
+            "llm_total_s": llm_total,
+            "tool_total_s": tool_total,
+            "unattributed_s": max(0.0, graph_total - (llm_total + tool_total)),
         }
 
     def _ensure_dir(self, path: str) -> None:
@@ -1336,7 +1361,7 @@ class Telemetry:
             saved_path = self._save_json(payload, filepath=filepath)
 
         # --- Build Rich renderables ---
-        console = get_console()
+        # console = get_console()
 
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
@@ -1391,14 +1416,14 @@ class Telemetry:
                 Text.from_markup(pricing_str),
             ]  # <- parse markup
 
-        panel = Panel.fit(
-            Group(*renderables),  # <- pass a single renderable
-            title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
-            border_style="bright_magenta",
-            padding=(1, 2),
-            box=HEAVY,  # <- beefy border with corners
-        )
-        console.print(panel)
+        # panel = Panel.fit(
+        #     Group(*renderables),  # <- pass a single renderable
+        #     title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
+        #     border_style="bright_magenta",
+        #     padding=(1, 2),
+        #     box=HEAVY,  # <- beefy border with corners
+        # )
+        # console.print(panel)
 
         _session_ingest(payload)
 

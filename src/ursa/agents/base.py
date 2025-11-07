@@ -30,13 +30,12 @@ from typing import (
 )
 from uuid import uuid4
 
-from langchain_core.language_models.chat_models import BaseChatModel
+from langchain.chat_models import BaseChatModel
 from langchain_core.load import dumps
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import (
     RunnableLambda,
 )
-from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 
@@ -123,46 +122,26 @@ class BaseAgent(ABC):
 
     def __init__(
         self,
-        llm: str | BaseChatModel,
-        checkpointer: BaseCheckpointSaver = None,
-        enable_metrics: bool = False,  # default to enabling metrics
+        llm: BaseChatModel,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
+        enable_metrics: bool = True,
         metrics_dir: str = ".ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
         thread_id: Optional[str] = None,
         **kwargs,
     ):
+        self.llm = llm
         """Initializes the base agent with a language model and optional configurations.
 
         Args:
-            llm: Either a string in the format "provider/model" or a BaseChatModel
-                 instance.
+            llm: a BaseChatModel instance.
             checkpointer: Optional checkpoint saver for persisting agent state.
             enable_metrics: Whether to collect performance and usage metrics.
             metrics_dir: Directory path where metrics will be saved.
             autosave_metrics: Whether to automatically save metrics to disk.
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
-            **kwargs: Additional keyword arguments passed to the LLM initialization.
         """
-        match llm:
-            case BaseChatModel():
-                self.llm = llm
-
-            case str():
-                self.llm_provider, self.llm_model = llm.split("/")
-                self.llm = ChatLiteLLM(
-                    model=llm,
-                    max_tokens=kwargs.pop("max_tokens", 10000),
-                    max_retries=kwargs.pop("max_retries", 2),
-                    **kwargs,
-                )
-
-            case _:
-                raise TypeError(
-                    "llm argument must be a string with the provider and model, or a "
-                    "BaseChatModel instance."
-                )
-
         self.thread_id = thread_id or uuid4().hex
         self.checkpointer = checkpointer
         self.telemetry = Telemetry(

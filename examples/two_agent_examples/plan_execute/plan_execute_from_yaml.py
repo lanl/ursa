@@ -4,19 +4,15 @@ import argparse
 import hashlib
 import json
 import sqlite3
-import ssl
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
 
-import httpx
-import litellm
 import randomname
-import truststore
 import yaml
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # rich console stuff for beautification
@@ -28,18 +24,7 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
-
-ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # use macOS Keychain
-litellm.client_session = httpx.Client(verify=ctx, timeout=30)
-
-
-# removing this since we're doing checkpoint/restart from the same thread-id
-# so instead, we're going to just use the thread-id as the
-# workspace.  this limits us to only having one checkpoint/restart per
-# run (since it's using the same workspace / directory), but that seems
-# likely the normal mode of use
-# tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
+from ursa.util.logo_generator import kickoff_logo
 
 console = get_console()  # always returns the same instance
 
@@ -706,10 +691,16 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
 
     # Initialize the agents
     planner = PlanningAgent(
-        llm=model, checkpointer=planner_checkpointer
+        llm=model,
+        checkpointer=planner_checkpointer,
+        enable_metrics=True,
+        metrics_dir=Path(workspace) / "ursa_metrics",
     )  # include checkpointer
     executor = ExecutionAgent(
-        llm=model, checkpointer=executor_checkpointer
+        llm=model,
+        checkpointer=executor_checkpointer,
+        enable_metrics=True,
+        metrics_dir=Path(workspace) / "ursa_metrics",
     )  # include checkpointer
     # Use the workspace as the thread id (one thread per workspace)
     thread_id = Path(workspace).name
@@ -727,10 +718,10 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     )
 
 
-def setup_llm(model_name):
-    model = ChatLiteLLM(
+def setup_llm(model_name: str):
+    model = init_chat_model(
         model=model_name,
-        max_tokens=10000,
+        max_completion_tokens=10000,
         max_retries=2,
         model_kwargs={
             # "reasoning": {"effort": "high"},
@@ -743,7 +734,7 @@ def setup_llm(model_name):
 def setup_workspace(
     user_specified_workspace: str | None,
     project: str = "run",
-    model_name: str = "openai/o3-mini",
+    model_name: str = "openai:gpt-5-mini",
 ) -> str:
     if user_specified_workspace is None:
         print("No workspace specified, creating one for this project!")
@@ -751,7 +742,7 @@ def setup_workspace(
             "Make sure to pass this string to restart using --workspace <this workspace string>"
         )
         # https://pypi.org/project/randomname/
-        workspace = f"{project}_{randomname.get_name(noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit', 'plants'))}"
+        workspace = f"{project}_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
     else:
         workspace = user_specified_workspace
         print(f"User specified workspace: {workspace}")
@@ -1054,6 +1045,64 @@ def main(
                 border_style="blue",
             )
         )
+
+        # ---- One-time project logo kickoff (per workspace) -----------------
+        # Use run_meta.json to ensure we do this only once for this workspace.
+        meta = load_run_meta(workspace)
+        if not meta.get("logo_created"):
+            try:
+                _ = kickoff_logo(
+                    problem_text=problem,
+                    workspace=workspace,
+                    out_dir=workspace,
+                    size="1536x1024",
+                    background="opaque",
+                    quality="high",
+                    n=4,
+                    style="random-scene",  # 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', 'brutalist'
+                    console=console,
+                    on_done=lambda p: console.print(
+                        Panel.fit(
+                            f"[bold yellow]Project art saved:[/] {p}",
+                            border_style="yellow",
+                        )
+                    ),
+                    on_error=lambda e: console.print(
+                        Panel.fit(
+                            f"[bold red]Art generation failed:[/] {e}",
+                            border_style="red",
+                        )
+                    ),
+                )
+                _ = kickoff_logo(
+                    problem_text=problem,
+                    workspace=workspace,
+                    out_dir=workspace,
+                    size="1024x1024",
+                    background="opaque",
+                    quality="high",
+                    n=4,
+                    style="mascot",  # 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', 'brutalist'
+                    console=console,
+                    on_done=lambda p: console.print(
+                        Panel.fit(
+                            f"[bold yellow]Project mascot art saved:[/] {p}",
+                            border_style="yellow",
+                        )
+                    ),
+                    on_error=lambda e: console.print(
+                        Panel.fit(
+                            f"[bold red]Art mascot generation failed:[/] {e}",
+                            border_style="red",
+                        )
+                    ),
+                )
+
+            finally:
+                # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
+                # Remove this flag manually if you want to re-generate art for this workspace.
+                save_run_meta(workspace, logo_created=True)
+        # --------------------------------------------------------------------
 
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(
@@ -1438,9 +1487,9 @@ def parse_args_and_user_inputs():
     DEFAULT_MODELS = tuple(
         models_cfg.get("choices")
         or (
-            "openai/gpt-5",
-            "openai/o3",
-            "openai/o3-mini",
+            "openai:gpt-5-mini",
+            "openai:gpt-5-mini",
+            "openai:gpt-5-mini",
         )
     )
     DEFAULT_MODEL = models_cfg.get("default")  # may be None

@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
+from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import ExecutionAgent, PlanningAgent
@@ -16,14 +16,15 @@ def main():
         problem = "Find a city with as least 10 vowels in its name."
         workspace = "city_vowel_test"
 
-        planner_model = ChatOpenAI(
-            model="o3",
-            max_tokens=10000,
+        planner_model = init_chat_model(
+            model="openai:gpt-5-mini",
+            max_completion_tokens=10000,
             max_retries=2,
         )
-        executor_model = ChatOpenAI(
-            model="o3",
-            max_tokens=10000,
+
+        executor_model = init_chat_model(
+            model="openai:gpt-5-mini",
+            max_completion_tokens=10000,
             max_retries=2,
         )
 

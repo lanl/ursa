@@ -1,8 +1,8 @@
 import sys
 
 import randomname
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 
 # rich console stuff for beautification
 from rich.console import Console
@@ -38,7 +38,6 @@ lines around bars and any other additions you think are interesting.
 workspace = f"fruit_sales_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
 
 workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
 # Create a logo for this run (saved as <workspace>/<something>.png
@@ -69,9 +68,9 @@ _ = kickoff_logo(
 def main(model_name: str):
     """Run a simple example of an agent."""
     try:
-        model = ChatLiteLLM(
+        model = init_chat_model(
             model=model_name,
-            max_tokens=10000,
+            max_completion_tokens=10000,
             max_retries=2,
         )
 
@@ -108,7 +107,6 @@ def main(model_name: str):
         # Initialize the agent
         # no planning agent for this one - let's YOLO and go risk it
         executor = ExecutionAgent(llm=model)
-        executor.thread_id = tid
 
         final_results = executor.invoke(
             {
@@ -124,7 +122,7 @@ def main(model_name: str):
 
         last_step_summary = final_results["messages"][-1].content
 
-        render_session_summary(tid)
+        render_session_summary(executor.thread_id)
 
         return last_step_summary, workspace
 
@@ -139,8 +137,8 @@ def main(model_name: str):
 if __name__ == "__main__":
     # ── interactive model picker ───────────────────────────────────────
     DEFAULT_MODELS = (
-        "openai/o3",
-        "openai/o3-mini",
+        "openai:gpt-5-mini",
+        "openai:gpt-5-mini",
     )
 
     try:

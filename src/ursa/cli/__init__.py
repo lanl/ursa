@@ -16,12 +16,18 @@ def run(
     llm_model_name: Annotated[
         str,
         Option(
-            help="Name of LLM to use for agent tasks", envvar="URSA_LLM_NAME"
+            help=(
+                "Model provider and name of LLM to use for agent tasks. "
+                "Use format <provider>:<model-name>. "
+                "For example 'openai:gpt-5'. "
+                "See https://reference.langchain.com/python/langchain/models/?h=init_chat_model#langchain.chat_models.init_chat_model"
+            ),
+            envvar="URSA_LLM_NAME",
         ),
-    ] = "gpt-5",
+    ] = "openai:gpt-5",
     llm_base_url: Annotated[
         str, Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL")
-    ] = "https://api.openai.com/v1",
+    ] = None,
     llm_api_key: Annotated[
         Optional[str],
         Option(help="API key for LLM", envvar="URSA_LLM_API_KEY"),
@@ -30,12 +36,21 @@ def run(
         int, Option(help="Maximum tokens for LLM to output")
     ] = 50000,
     emb_model_name: Annotated[
-        str, Option(help="Embedding model name", envvar="URSA_EMB_NAME")
-    ] = "text-embedding-3-small",
-    emb_base_url: Annotated[
         str,
+        Option(
+            help=(
+                "Model provider and Embedding model name. "
+                "Use format <provider>:<embedding-model-name>. "
+                "For example, 'openai:text-embedding-3-small'. "
+                "See: https://reference.langchain.com/python/langchain/embeddings/?h=init_embeddings#langchain.embeddings.init_embeddings"
+            ),
+            envvar="URSA_EMB_NAME",
+        ),
+    ] = "openai:text-embedding-3-small",
+    emb_base_url: Annotated[
+        Optional[str],
         Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
-    ] = "https://api.openai.com/v1",
+    ] = None,
     emb_api_key: Annotated[
         Optional[str],
         Option(help="API key for embedding model", envvar="URSA_EMB_API_KEY"),
@@ -53,6 +68,13 @@ def run(
         str,
         Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID"),
     ] = "ursa_cli",
+    safe_codes: Annotated[
+        list[str],
+        Option(
+            help="Programming languages that the execution agent can trust by default.",
+            envvar="URSA_THREAD_ID",
+        ),
+    ] = ["python", "julia"],
     arxiv_summarize: Annotated[
         bool,
         Option(
@@ -110,6 +132,7 @@ def run(
         emb_api_key=emb_api_key,
         share_key=share_key,
         thread_id=thread_id,
+        safe_codes=safe_codes,
         arxiv_summarize=arxiv_summarize,
         arxiv_process_images=arxiv_process_images,
         arxiv_max_results=arxiv_max_results,
@@ -158,12 +181,18 @@ def serve(
     llm_model_name: Annotated[
         str,
         Option(
-            help="Name of LLM to use for agent tasks", envvar="URSA_LLM_NAME"
+            help=(
+                "Model provider and name of LLM to use for agent tasks. "
+                "Use format <provider>:<model-name>. "
+                "For example 'openai:gpt-5'. "
+                "See https://reference.langchain.com/python/langchain/models/?h=init_chat_model#langchain.chat_models.init_chat_model"
+            ),
         ),
-    ] = "gpt-5",
+    ] = "openai:gpt-5",
     llm_base_url: Annotated[
-        str, Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL")
-    ] = "https://api.openai.com/v1",
+        Optional[str],
+        Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL"),
+    ] = None,
     llm_api_key: Annotated[
         Optional[str],
         Option(help="API key for LLM", envvar="URSA_LLM_API_KEY"),
@@ -172,12 +201,21 @@ def serve(
         int, Option(help="Maximum tokens for LLM to output")
     ] = 50000,
     emb_model_name: Annotated[
-        str, Option(help="Embedding model name", envvar="URSA_EMB_NAME")
-    ] = "text-embedding-3-small",
-    emb_base_url: Annotated[
         str,
+        Option(
+            help=(
+                "Model provider and Embedding model name. "
+                "Use format <provider>:<embedding-model-name>. "
+                "For example, 'openai:text-embedding-3-small'. "
+                "See: https://reference.langchain.com/python/langchain/embeddings/?h=init_embeddings#langchain.embeddings.init_embeddings"
+            ),
+            envvar="URSA_EMB_NAME",
+        ),
+    ] = "openai:text-embedding-3-small",
+    emb_base_url: Annotated[
+        Optional[str],
         Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
-    ] = "https://api.openai.com/v1",
+    ] = None,
     emb_api_key: Annotated[
         Optional[str],
         Option(help="API key for embedding model", envvar="URSA_EMB_API_KEY"),
@@ -194,7 +232,14 @@ def serve(
     thread_id: Annotated[
         str,
         Option(help="Thread ID for persistance", envvar="URSA_THREAD_ID"),
-    ] = "ursa_cli",
+    ] = "ursa_mcp",
+    safe_codes: Annotated[
+        list[str],
+        Option(
+            help="Programming languages that the execution agent can trust by default.",
+            envvar="URSA_THREAD_ID",
+        ),
+    ] = ["python", "julia"],
     arxiv_summarize: Annotated[
         bool,
         Option(
@@ -241,7 +286,7 @@ def serve(
     with console.status("[grey50]Starting ursa MCP server ..."):
         from ursa.cli.hitl import HITL
 
-    app_path = "ursa.cli.hitl:mcp_app"
+    app_path = "ursa.cli.hitl_api:mcp_app"
 
     try:
         import uvicorn
@@ -263,6 +308,7 @@ def serve(
         emb_api_key=emb_api_key,
         share_key=share_key,
         thread_id=thread_id,
+        safe_codes=safe_codes,
         arxiv_summarize=arxiv_summarize,
         arxiv_process_images=arxiv_process_images,
         arxiv_max_results=arxiv_max_results,

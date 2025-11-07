@@ -33,13 +33,12 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping, Optional
 
 import randomname
+from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
-    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -48,7 +47,6 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
-from litellm.exceptions import ContentPolicyViolationError
 
 # Rich
 from rich import get_console
@@ -58,7 +56,7 @@ from typing_extensions import TypedDict
 
 from ..prompt_library.execution_prompts import (
     executor_prompt,
-    safety_prompt,
+    get_safety_prompt,
     summarize_prompt,
 )
 from ..util.diff_renderer import DiffRenderer
@@ -336,7 +334,8 @@ def write_code(
 
     # Append the file to the list in agent's state for later reference
     file_list = state.get("code_files", [])
-    file_list.append(filename)
+    if filename not in file_list:
+        file_list.append(filename)
 
     # Create a tool message to send back to acknowledge success.
     msg = ToolMessage(
@@ -420,6 +419,11 @@ def edit_code(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
         f"[green]File updated:[/] {code_file}"
     )
+    file_list = state.get("code_files", [])
+    if code_file not in file_list:
+        file_list.append(filename)
+    state["code_files"] = file_list
+
     return f"File {filename} updated successfully."
 
 
@@ -437,7 +441,7 @@ class ExecutionAgent(BaseAgent):
     persist summaries.
 
     Args:
-        llm (str | BaseChatModel): Model identifier or bound chat model
+        llm (BaseChatModel): Model identifier or bound chat model
             instance. If a string is provided, the BaseAgent initializer will
             resolve it.
         agent_memory (Any | AgentMemory, optional): Memory backend used to
@@ -449,8 +453,8 @@ class ExecutionAgent(BaseAgent):
             configuration, checkpointer).
 
     Attributes:
-        safety_prompt (str): Prompt used to evaluate safety of shell
-            commands.
+        safe_codes (list[str]): List of trusted programming languages for the
+            agent. Defaults to python and julia
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
         summarize_prompt (str): Prompt used to request concise summaries for
@@ -470,6 +474,9 @@ class ExecutionAgent(BaseAgent):
             interactions to the memory backend.
         safety_check(state): Validate pending run_cmd calls via the safety
             prompt and append ToolMessages for unsafe commands.
+        get_safety_prompt(query, safe_codes, created_files): Get the LLM prompt for safety_check
+            that includes an editable list of available programming languages and gets the context
+            of files that the agent has generated and can trust.
         _build_graph(): Construct and compile the StateGraph for the agent
             loop.
         _invoke(inputs, recursion_limit=...): Internal entry that invokes the
@@ -484,7 +491,7 @@ class ExecutionAgent(BaseAgent):
 
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/gpt-4o-mini",
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
         **kwargs,
@@ -492,14 +499,14 @@ class ExecutionAgent(BaseAgent):
         """ExecutionAgent class initialization."""
         super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
-        self.safety_prompt = safety_prompt
+        self.safe_codes = kwargs.get("safe_codes", ["python", "julia"])
+        self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
-
         self._action = self._build_graph()
 
     # Define the function that calls the model
@@ -574,7 +581,7 @@ class ExecutionAgent(BaseAgent):
             response = self.llm.invoke(
                 new_state["messages"], self.build_config(tags=["agent"])
             )
-        except ContentPolicyViolationError as e:
+        except Exception as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
@@ -608,7 +615,7 @@ class ExecutionAgent(BaseAgent):
                 messages, self.build_config(tags=["summarize"])
             )
             response_content = response.content
-        except ContentPolicyViolationError as e:
+        except Exception as e:
             print("Error: ", e, " ", messages[-1].content)
 
         # 3) Optionally persist salient details to the memory backend.
@@ -674,7 +681,9 @@ class ExecutionAgent(BaseAgent):
 
             query = tool_call["args"]["query"]
             safety_result = self.llm.invoke(
-                self.safety_prompt + query,
+                self.get_safety_prompt(
+                    query, self.safe_codes, new_state.get("code_files", [])
+                ),
                 self.build_config(tags=["safety_check"]),
             )
 
@@ -777,24 +786,3 @@ class ExecutionAgent(BaseAgent):
         raise AttributeError(
             "Use .stream(...) or .invoke(...); direct .action access is unsupported."
         )
-
-
-# Single module test execution
-def main():
-    execution_agent = ExecutionAgent()
-    problem_string = (
-        "Write and execute a python script to print the first 10 integers."
-    )
-    inputs = {
-        "messages": [HumanMessage(content=problem_string)]
-    }  # , "workspace":"dummy_test"}
-    result = execution_agent.invoke(
-        inputs,
-        config={"configurable": {"thread_id": execution_agent.thread_id}},
-    )
-    print(result["messages"][-1].content)
-    return result
-
-
-if __name__ == "__main__":
-    main()

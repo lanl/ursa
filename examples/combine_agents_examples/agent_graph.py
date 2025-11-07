@@ -54,8 +54,8 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 
 
 model = ChatOpenAI(
-    model="o3",
-    max_tokens=50000,
+    model="gpt-5-mini",
+    max_completion_tokens=50000,
 )
 embedding = OpenAIEmbeddings()
 memory = AgentMemory(embedding_model=embedding)
@@ -134,7 +134,7 @@ class State(TypedDict):
 class CombinedAgent(BaseAgent):
     def __init__(
         self,
-        llm: str | BaseChatModel = "openai/gpt-4o-mini",
+        llm: BaseChatModel,
         log_state: bool = False,
         **kwargs,
     ):

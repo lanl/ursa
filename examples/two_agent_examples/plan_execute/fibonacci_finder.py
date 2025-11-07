@@ -8,8 +8,8 @@ Fibonacci number, then explains which approach is the best.
 import sqlite3
 from pathlib import Path
 
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
@@ -36,7 +36,7 @@ problem = (
 
 
 # Init the model
-model = ChatOpenAI(model="o3")
+model = init_chat_model(model="openai:gpt-5-mini")
 
 # Setup checkpointing
 db_path = Path(workspace) / "checkpoint.db"

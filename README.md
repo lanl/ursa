@@ -146,6 +146,12 @@ You can get a list of available command line options via
 ursa serve --help
 ```
 
+For API documentation, after `ursa serve`, go to your browser at
+
+```
+http://localhost:8000/docs
+```
+
 ## Sandboxing
 The Execution Agent is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
 and execute code has the potential to cause problems like:
