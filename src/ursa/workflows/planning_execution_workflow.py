@@ -3,7 +3,7 @@ from langchain_core.messages import HumanMessage
 from rich import get_console
 from rich.panel import Panel
 
-from ursa.agents.base import BaseAgent
+from ursa.workflows.base_workflow import BaseWorkflow
 
 """
 The Planning-Executor workflow is a workflow that composes two agents in a for-loop:
@@ -18,24 +18,14 @@ console = get_console()
 #     but it is required because this inherits BaseAgent which needs it. It inherits it
 #     so that it can inherit the metric structure, etc. We should probably have a
 #     BaseWorkflow class that acts like BaseAgent but for workflows.
-class PlanningExecutorWorkflow(BaseAgent):
-    def __init__(self, llm, planner, executor, workspace, **kwargs):
-        super().__init__(llm=llm, **kwargs)
+class PlanningExecutorWorkflow(BaseWorkflow):
+    def __init__(self, planner, executor, workspace, **kwargs):
+        super().__init__(**kwargs)
         self.planner = planner
         self.executor = executor
         self.workspace = workspace
         self._adopt(self.planner)
         self._adopt(self.executor)
-
-    def _adopt(
-        self, child
-    ):  # this should probably be in a more general place then here
-        # import pdb; pdb.set_trace()
-        child.telemetry = self.telemetry
-        try:
-            child.thread_id = self.thread_id  # if present in your base
-        except AttributeError:
-            pass
 
     def _invoke(self, task: str, **kw):
         ## debug code to be deleted
@@ -115,14 +105,11 @@ def main():
 
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.sqlite import SqliteSaver
-    from rich import get_console
 
     from ursa.agents import ExecutionAgent, PlanningAgent
     from ursa.observability.timing import render_session_summary
 
     tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
-    console = get_console()
 
     # Define the workspace
     workspace = "example_fibonacci_finder"
@@ -164,7 +151,6 @@ def main():
         planner=planner,
         executor=executor,
         workspace=workspace,
-        console=console,
         enable_metrics=True,
     )
     agent.thread_id = tid
