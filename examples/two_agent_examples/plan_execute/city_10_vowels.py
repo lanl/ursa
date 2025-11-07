@@ -50,8 +50,7 @@ def main():
             thread_id="city_vowel_test_planner",
         )
 
-        agent = PlanningExecutorWorkflow(
-            llm=executor_model,
+        workflow = PlanningExecutorWorkflow(
             planner=planner,
             executor=executor,
             workspace=workspace,
@@ -59,9 +58,9 @@ def main():
             thread_id="city_vowel_test_workflow",
         )
 
-        final_results = agent.invoke(problem)
+        final_results = workflow.invoke(problem)
 
-        render_session_summary(agent.thread_id)
+        render_session_summary(workflow.thread_id)
 
         return final_results
 
@@ -74,7 +73,7 @@ def main():
 
 
 if __name__ == "__main__":
-    final_output = main()  # dev or prod
+    final_output = main()
     print("=" * 80)
     print("=" * 80)
     print("=" * 80)

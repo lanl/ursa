@@ -14,10 +14,6 @@ The Planning-Executor workflow is a workflow that composes two agents in a for-l
 console = get_console()
 
 
-# LLM shouldnt need to be an argument here because only the sub-agents use the LLM
-#     but it is required because this inherits BaseAgent which needs it. It inherits it
-#     so that it can inherit the metric structure, etc. We should probably have a
-#     BaseWorkflow class that acts like BaseAgent but for workflows.
 class PlanningExecutorWorkflow(BaseWorkflow):
     def __init__(self, planner, executor, workspace, **kwargs):
         super().__init__(**kwargs)
@@ -28,11 +24,6 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self._adopt(self.executor)
 
     def _invoke(self, task: str, **kw):
-        ## debug code to be deleted
-        # import pdb; pdb.set_trace()
-        # self.llm.invoke("hello",config=cfg)
-        # return(0)
-
         with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
             spinner="point",
@@ -63,12 +54,13 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                 f"Previous-step summary:\n"
                 f"{last_step_summary}\n\n"
                 f"Current step:\n"
-                f"{step}"
+                f"{step}\n\n"
+                "Execute this step and report results for the executor of the next step."
+                "Do not use placeholders."
+                "Run commands to execute code generated for the step if applicable."
+                "Only address the current step. Stay in your lane."
             )
 
-            # console.print(
-            #     f"[bold orange3 on black]Solving Step {step['id']}:[/]\n[orange3 on black]{step_prompt}[/]"
-            # )
             console.print(
                 Panel(
                     step_prompt,
@@ -78,7 +70,6 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                 )
             )
 
-            # Invoke the agent
             result = self.executor.invoke(
                 {
                     "messages": [HumanMessage(content=step_prompt)],
@@ -103,7 +94,7 @@ def main():
     import sqlite3
     from pathlib import Path
 
-    from langchain_openai import ChatOpenAI
+    from langchain.chat_models import init_chat_model
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     from ursa.agents import ExecutionAgent, PlanningAgent
@@ -124,13 +115,8 @@ def main():
         f"benchmark and compare the approaches then explain which one is the best."
     )
 
-    # Init the models
-    #     Need separate models for planner and executor because the executor
-    #     binds tools to the LLM. The planner isn't built to handle tool calls,
-    #     so if it has tools and tried to call them in the planner, the workflow
-    #     errors out.
-    executor_model = ChatOpenAI(model="o4-mini")
-    planner_model = ChatOpenAI(model="o4-mini")
+    executor_model = init_chat_model(model="openai:o4-mini")
+    planner_model = init_chat_model(model="openai:o4-mini")
 
     # Setup checkpointing
     db_path = Path(workspace) / "checkpoint.db"
@@ -147,7 +133,6 @@ def main():
     )
 
     agent = PlanningExecutorWorkflow(
-        llm=planner_model,
         planner=planner,
         executor=executor,
         workspace=workspace,
@@ -155,8 +140,6 @@ def main():
     )
     agent.thread_id = tid
 
-    agent(
-        problem, raw_debug=True
-    )  # raw_debug=True doesn't seem to trigger anything.
+    agent.invoke(problem)
 
     render_session_summary(tid)

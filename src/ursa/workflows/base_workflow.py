@@ -146,15 +146,6 @@ class BaseWorkflow(ABC):
             "callbacks": self.telemetry.callbacks,
         }
 
-        # Try to determine the model name from either direct or nested attributes
-        model_name = getattr(self, "llm_model", None) or getattr(
-            getattr(self, "llm", None), "model", None
-        )
-
-        # Add model name to metadata if available
-        if model_name:
-            base["metadata"]["model"] = model_name
-
         # Handle configurable dictionary overrides by merging with base configurable
         if "configurable" in overrides and isinstance(
             overrides["configurable"], dict
