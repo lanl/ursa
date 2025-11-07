@@ -1,48 +1,68 @@
-import sys
+import sqlite3
+from pathlib import Path
 
-from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.workflows import PlanningExecutorWorkflow
 
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
-
-def main(mode: str):
+def main():
     """Run a simple example of an agent."""
     try:
         # Define a simple problem
         problem = "Find a city with as least 10 vowels in its name."
-        model = ChatLiteLLM(
-            model="openai/o3" if mode == "prod" else "ollama_chat/llama3.1:8b",
-            max_tokens=10000 if mode == "prod" else 4000,
+        workspace = "city_vowel_test"
+
+        planner_model = ChatOpenAI(
+            model="o3",
+            max_tokens=10000,
             max_retries=2,
         )
-        init = {"messages": [HumanMessage(content=problem)]}
+        executor_model = ChatOpenAI(
+            model="o3",
+            max_tokens=10000,
+            max_retries=2,
+        )
 
         print(f"\nSolving problem: {problem}\n")
 
-        # Initialize the agent
-        planner = PlanningAgent(llm=model)
-        executor = ExecutionAgent(llm=model)
-        planner.thread_id = tid
-        executor.thread_id = tid
+        # Setup checkpointing
+        db_path = Path(workspace) / "checkpoint.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        checkpointer = SqliteSaver(conn)
 
-        # Solve the problem
-        planning_output = planner.invoke(init)
-        print(planning_output["messages"][-1].content)
-        planning_output["workspace"] = "workspace_cityVowels"
-        final_results = executor.invoke(
-            planning_output, config={"recursion_limit": 100000}
+        # Init the agents with the model and checkpointer
+        executor = ExecutionAgent(
+            llm=executor_model,
+            checkpointer=checkpointer,
+            enable_metrics=True,
+            thread_id="city_vowel_test_executor",
         )
-        for x in final_results["messages"]:
-            print(x.content)
-        # print(final_results["messages"][-1].content)
+        planner = PlanningAgent(
+            llm=planner_model,
+            checkpointer=checkpointer,
+            enable_metrics=True,
+            thread_id="city_vowel_test_planner",
+        )
 
-        render_session_summary(tid)
+        agent = PlanningExecutorWorkflow(
+            llm=executor_model,
+            planner=planner,
+            executor=executor,
+            workspace=workspace,
+            enable_metrics=True,
+            thread_id="city_vowel_test_workflow",
+        )
 
-        return final_results["messages"][-1].content
+        final_results = agent.invoke(problem)
+
+        render_session_summary(agent.thread_id)
+
+        return final_results
 
     except Exception as e:
         print(f"Error in example: {str(e)}")
@@ -53,8 +73,7 @@ def main(mode: str):
 
 
 if __name__ == "__main__":
-    mode = "dev" if sys.argv[-1] == "dev" else "prod"
-    final_output = main(mode=mode)  # dev or prod
+    final_output = main()  # dev or prod
     print("=" * 80)
     print("=" * 80)
     print("=" * 80)

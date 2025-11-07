@@ -1,23 +1,31 @@
 # planning_executor.py
 from langchain_core.messages import HumanMessage
+from rich import get_console
 from rich.panel import Panel
 
 from ursa.agents.base import BaseAgent
 
-"""The PlanningExecutor agent is a simple compositional agent that takes user input, develops a plan, and then executes the plan."""
+"""
+The Planning-Executor workflow is a workflow that composes two agents in a for-loop:
+  - The planning agent takes the user input, develops a step-by-step plan as a list
+  - The list is passed, entry by entry to an execution agent to carry out the plan.
+"""
+
+console = get_console()
 
 
-class PlanningExecutorAgent(BaseAgent):
-    def __init__(
-        self, llm, planner, executor, workspace, console=None, **kwargs
-    ):
+# LLM shouldnt need to be an argument here because only the sub-agents use the LLM
+#     but it is required because this inherits BaseAgent which needs it. It inherits it
+#     so that it can inherit the metric structure, etc. We should probably have a
+#     BaseWorkflow class that acts like BaseAgent but for workflows.
+class PlanningExecutorWorkflow(BaseAgent):
+    def __init__(self, llm, planner, executor, workspace, **kwargs):
         super().__init__(llm=llm, **kwargs)
         self.planner = planner
         self.executor = executor
         self.workspace = workspace
         self._adopt(self.planner)
         self._adopt(self.executor)
-        self.console = console or (lambda *_: None)
 
     def _adopt(
         self, child
@@ -35,7 +43,7 @@ class PlanningExecutorAgent(BaseAgent):
         # self.llm.invoke("hello",config=cfg)
         # return(0)
 
-        with self.console.status(
+        with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
             spinner="point",
             spinner_style="deep_pink1",
@@ -47,11 +55,12 @@ class PlanningExecutorAgent(BaseAgent):
                 "messages": [HumanMessage(content=planner_prompt)]
             })
 
-            self.console.print(
+            console.print(
                 Panel(
                     planning_output["messages"][-1].content,
-                    title="[bold yellow1]:clipboard: Plan",
-                    border_style="yellow1",
+                    title="[bold yellow1 on black]:clipboard: Plan",
+                    border_style="yellow1 on black",
+                    style="yellow1 on black",
                 )
             )
 
@@ -67,8 +76,16 @@ class PlanningExecutorAgent(BaseAgent):
                 f"{step}"
             )
 
-            self.console.print(
-                f"[bold orange3]Solving Step {step['id']}:[/]\n[orange3]{step_prompt}[/]"
+            # console.print(
+            #     f"[bold orange3 on black]Solving Step {step['id']}:[/]\n[orange3 on black]{step_prompt}[/]"
+            # )
+            console.print(
+                Panel(
+                    step_prompt,
+                    title=f"[bold orange3 on black]Solving Step {step['id']}",
+                    border_style="orange3 on black",
+                    style="orange3 on black",
+                )
             )
 
             # Invoke the agent
@@ -81,13 +98,15 @@ class PlanningExecutorAgent(BaseAgent):
 
             last_step_summary = result["messages"][-1].content
 
-            self.console.print(
+            console.print(
                 Panel(
                     last_step_summary,
                     title=f"Step {i + 1} Final Response",
-                    border_style="orange3",
+                    border_style="orange3 on black",
+                    style="orange3 on black",
                 )
             )
+        return last_step_summary
 
 
 def main():
@@ -118,8 +137,13 @@ def main():
         f"benchmark and compare the approaches then explain which one is the best."
     )
 
-    # Init the model
-    model = ChatOpenAI(model="o4-mini")
+    # Init the models
+    #     Need separate models for planner and executor because the executor
+    #     binds tools to the LLM. The planner isn't built to handle tool calls,
+    #     so if it has tools and tried to call them in the planner, the workflow
+    #     errors out.
+    executor_model = ChatOpenAI(model="o4-mini")
+    planner_model = ChatOpenAI(model="o4-mini")
 
     # Setup checkpointing
     db_path = Path(workspace) / "checkpoint.db"
@@ -129,14 +153,14 @@ def main():
 
     # Init the agents with the model and checkpointer
     executor = ExecutionAgent(
-        llm=model, checkpointer=checkpointer, enable_metrics=True
+        llm=executor_model, checkpointer=checkpointer, enable_metrics=True
     )
     planner = PlanningAgent(
-        llm=model, checkpointer=checkpointer, enable_metrics=True
+        llm=planner_model, checkpointer=checkpointer, enable_metrics=True
     )
 
-    agent = PlanningExecutorAgent(
-        llm=model,
+    agent = PlanningExecutorWorkflow(
+        llm=planner_model,
         planner=planner,
         executor=executor,
         workspace=workspace,
