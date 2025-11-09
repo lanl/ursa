@@ -13,6 +13,7 @@ from .arxiv_agent import PaperState as PaperState
 from .base import BaseAgent as BaseAgent
 from .base import BaseChatModel as BaseChatModel
 from .chat_agent import ChatAgent as ChatAgent
+from .chat_agent import ChatWithToolsAgent as ChatWithToolsAgent
 from .chat_agent import ChatState as ChatState
 from .code_review_agent import CodeReviewAgent as CodeReviewAgent
 from .code_review_agent import CodeReviewState as CodeReviewState

@@ -5,6 +5,9 @@ from typing import Annotated, Optional
 from rich.console import Console
 from typer import Exit, Option, Typer, colors, secho
 
+from langchain.tools import tool
+from langgraph.prebuilt import ToolNode
+
 app = Typer()
 
 
@@ -318,6 +321,50 @@ def serve(
         arxiv_download_papers=arxiv_download_papers,
         ssl_verify=ssl_verify,
     )
+    @tool
+    def call_arxiver(query:str)->str:
+        """
+        Call the URSA ArXiv Agent to query the arxiv on a topic and summarize in the context of your query
+
+        Arguments:
+            query: query to be given to the agent
+
+        Returns:
+            str: summary of the papers from the arxiv
+        """
+        return hitl.run_arxiv(query)
+    @tool
+    def call_executor(query:str)->str:
+        """
+        Call the URSA Executor Agent to write and run code and run system commands to address the given query
+
+        Arguments:
+            query: query to be given to the agent
+
+        Returns:
+            str: summary of the work that the agent carried out.
+
+        Artifacts:
+            Generates code and other information in the set workspace
+        """
+        return hitl.run_executor(query)
+    @tool
+    def call_websearcher(query:str)->str:
+        """
+        Call the URSA Web Searcher Agent to perform a web search to learn about a topic and summarize in the context of your query
+
+        Arguments:
+            query: query to be given to the agent
+
+        Returns:
+            str: summary of the websites
+        """
+        return hitl.run_websearcher(query)
+    tool_list = [call_arxiver, call_executor, call_websearcher]
+    hitl.chatter.llm = hitl.chatter.llm.bind_tools(tool_list)
+    hitl.chatter.tool_node = ToolNode(tool_list)
+    hitl.chatter._build_graph()
+
     module_name, var_name = app_path.split(":")
     mod = importlib.import_module(module_name)
     asgi_app = getattr(mod, var_name)

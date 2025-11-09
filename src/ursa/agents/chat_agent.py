@@ -2,8 +2,9 @@ from typing import Annotated, Any, Mapping
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
 from .base import BaseAgent
@@ -44,6 +45,49 @@ class ChatAgent(BaseAgent):
         )
         return self._action.invoke(inputs, config)
 
+
+def should_continue(state: ChatState) -> str:
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+    return "end"
+
+class ChatWithToolsAgent(BaseAgent):
+    def __init__(
+        self,
+        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        **kwargs,
+    ):
+        super().__init__(llm, **kwargs)
+        self.tool_node = ToolNode([])
+        self._build_graph()
+
+    def _response_node(self, state: ChatState) -> ChatState:
+        res = self.llm.invoke(
+            state["messages"], {"configurable": {"thread_id": self.thread_id}}
+        )
+        return {"messages": [res]}
+
+    def _build_graph(self):
+        graph = StateGraph(ChatState)
+        self.add_node(graph, self._response_node)
+        self.add_node(graph, self.tool_node, "tools")
+        graph.set_entry_point("_response_node")
+        graph.add_conditional_edges(
+            "_response_node",
+            should_continue,
+            {"tools": "tools", "end": END}
+        )
+        graph.add_edge("tools", "_response_node")
+        self._action = graph.compile(checkpointer=self.checkpointer)
+
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
+    ):
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+        return self._action.invoke(inputs, config)
 
 def main():
     model = ChatOpenAI(

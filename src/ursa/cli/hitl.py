@@ -19,7 +19,7 @@ from typer import Typer
 
 from ursa.agents import (
     ArxivAgent,
-    ChatAgent,
+    ChatWithToolsAgent,
     ExecutionAgent,
     HypothesizerAgent,
     PlanningAgent,
@@ -164,12 +164,12 @@ class HITL:
         )
 
     @cached_property
-    def chatter(self) -> ChatAgent:
+    def chatter(self) -> ChatWithToolsAgent:
         edb_path = self.workspace / "checkpoint.db"
         edb_path.parent.mkdir(parents=True, exist_ok=True)
         econn = sqlite3.connect(str(edb_path), check_same_thread=False)
         self.chatter_checkpointer = SqliteSaver(econn)
-        return ChatAgent(
+        return ChatWithToolsAgent(
             llm=self.model,
             checkpointer=self.chatter_checkpointer,
             thread_id=self.thread_id + "_chatter",
