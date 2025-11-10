@@ -1055,11 +1055,15 @@ def main(
                     problem_text=problem,
                     workspace=workspace,
                     out_dir=workspace,
-                    size="1536x1024",
+                    # let aspect pick a good size automatically; or keep size if you prefer
+                    # size="1536x1024",
                     background="opaque",
                     quality="high",
                     n=4,
                     style="random",
+                    mode="scene",
+                    aspect="wide",  # optional, auto-sets to a wide rectangle
+                    style_intensity="overt",  # optional, stronger systle signaling
                     console=console,
                     on_done=lambda p: console.print(
                         Panel.fit(

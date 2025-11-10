@@ -45,10 +45,11 @@ _BORDER_COLOR = "bright_cyan"  # distinct from slug & workspace
 # Variety-driven prompt pools
 # ---------------------------
 
+# Legacy "logo" meta (kept for backwards compatibility)
 META_TEMPLATE = (
     "Design a logo-ready symbol for '{workspace}'. Favor a strong silhouette and clear negative space. "
     "Use {render_mode} and a {composition} composition with a {palette_rule} palette. "
-    "Nod subtly to {style} via {style_cues} (choose a couple, avoid clichés). "
+    "Nod subtly to {style} via {style_cues}. "
     "Optional mood only: {problem_text}. {glyphs_rule} {wildcard} {system_hint}"
 )
 
@@ -164,15 +165,6 @@ STYLE_CUES = {
     ],
 }
 
-# Optional “don’t do this cliché this time” guardrails per style
-CLICHE_BANS = {
-    "horror": ["Do not use dripping blood."],
-    "sci-fi": ["Avoid starfields and rocket silhouettes."],
-    "cyberpunk": ["Skip city skylines and katakana signage."],
-    "noir": ["No rain or venetian blinds this time."],
-    "synthwave": ["Avoid palm trees and 80s grid sunsets."],
-}
-
 WILDCARDS = [
     "Introduce an unexpected but relevant metaphor or material.",
     "Consider how the mark could tessellate into a repeatable pattern.",
@@ -187,6 +179,60 @@ SYSTEM_HINTS = [
     "Design for recognizability at 16×16 and at poster scale.",
     "Bias toward bold silhouette over surface detail.",
 ]
+
+# ---------------------------
+# New: Scene-first prompt pools
+# ---------------------------
+
+STYLE_OBJECTS = {
+    # Concrete, unmistakable set-pieces for overt style signaling
+    "steampunk": [
+        "polished brass and riveted steel",
+        "visible interlocking gears with sharp teeth",
+        "pressure gauges with needles and glass reflections",
+        "pistons and exposed pipework venting steam",
+        "Victorian filigree panels and leather straps",
+    ],
+    # Add more styles’ objects over time as needed
+}
+
+CAMERAS = [
+    "low-angle hero shot",
+    "wide-angle 24mm",
+    "isometric cutaway",
+    "bird's-eye parallax",
+]
+
+COMPOSITIONS_SCENE = [
+    "rule-of-thirds focal point with leading lines",
+    "hero subject centered amid busy environment",
+    "crowded workshop tableau",
+    "cutaway cross-section of a machine room",
+]
+
+PALETTES_SCENE = [
+    "warm brass and leather with cool teal shadows",
+    "sepia smoke with scarlet accent lights",
+    "noir metals with warm brass pops",
+]
+
+SCENE_WILDCARDS = [
+    "Let steam and dust catch light beams for depth.",
+    "Add fine wear—scratches, fingerprints, and soot—to metals.",
+    "Stage foreground pipes to create natural framing.",
+]
+
+SCENE_TEMPLATE = (
+    "Create a full-frame illustration (not a logo) for '{workspace}'. "
+    "Use a {composition} composition and {camera} camera angle with cinematic lighting and atmospheric depth. "
+    "{style_strength} {style} unmistakable at first glance through: {style_objects}. "
+    "Include a coherent background environment; avoid borders or sticker outlines. "
+    "Palette: {palette_rule}. Mood (optional): {problem_text}. {wildcard}"
+)
+
+# ---------------------------
+# Helpers
+# ---------------------------
 
 
 def _glyphs_rule(allow_text: bool) -> str:
@@ -209,6 +255,43 @@ def _choose_style_slug(style: str | None) -> str:
     return s if s in STYLE_CUES else random.choice(list(STYLE_CUES.keys()))
 
 
+def _style_strength_phrase(level: str) -> str:
+    return {
+        "subtle": "Include gentle references to",
+        "clear": "Make the influence of",
+        "overt": "Make the aesthetic of",
+    }.get(level, "Make the aesthetic of")
+
+
+SUPPORTED_SIZES = {"1024x1024", "1024x1536", "1536x1024", "auto"}
+
+
+def _size_for(aspect: str, mode: str) -> str:
+    """
+    Prefer cinematic rectangles for scenes; keep square for logos.
+    Returns only API-supported sizes.
+    """
+    if aspect == "wide":
+        return "1536x1024"
+    if aspect == "tall":
+        return "1024x1536"
+    return "1024x1024"
+
+
+def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
+    """
+    If size is None or invalid, pick a sensible API-supported default based on aspect/mode.
+    """
+    if not size or size not in SUPPORTED_SIZES:
+        return _size_for(aspect, mode)
+    return size
+
+
+# ---------------------------
+# Prompt builders
+# ---------------------------
+
+
 def _build_logo_prompt(
     *,
     style_slug: str,
@@ -216,7 +299,6 @@ def _build_logo_prompt(
     gist: str,
     allow_text: bool,
     palette: str | None,
-    n_directions: int,
 ) -> str:
     render = random.choice(RENDER_MODES)
     comp = random.choice(COMPOSITIONS)
@@ -225,10 +307,6 @@ def _build_logo_prompt(
     wildcard = random.choice(WILDCARDS)
     system_hint = random.choice(SYSTEM_HINTS)
     glyphs_rule = _glyphs_rule(allow_text)
-
-    ban = ""
-    if style_slug in CLICHE_BANS and random.random() < 0.6:
-        ban = CLICHE_BANS[style_slug][0]  # single succinct ban
 
     meta = META_TEMPLATE.format(
         workspace=workspace,
@@ -243,12 +321,43 @@ def _build_logo_prompt(
         system_hint=system_hint,
     )
 
-    # Encourage divergent outputs when requesting multiple images
-    diversity_note = ""
-    if n_directions and n_directions > 1:
-        diversity_note = f" Produce {n_directions} distinct symbol directions that would never be confused with one another."
+    return f"{meta}".strip()
 
-    return f"{meta} {ban} {diversity_note}".strip()
+
+def _build_scene_prompt(
+    *,
+    style_slug: str,
+    workspace: str,
+    gist: str,
+    palette: Optional[str],
+    style_intensity: str = "overt",
+) -> str:
+    comp = random.choice(COMPOSITIONS_SCENE)
+    camera = random.choice(CAMERAS)
+    palette_rule = palette or random.choice(PALETTES_SCENE)
+    style_strength = _style_strength_phrase(style_intensity)
+
+    # Prefer concrete objects; fall back to generic cues if necessary
+    objects_pool = (
+        STYLE_OBJECTS.get(style_slug)
+        or STYLE_CUES.get(style_slug)
+        or ["signature motifs"]
+    )
+    k = min(4, len(objects_pool))
+    style_objects = ", ".join(random.sample(objects_pool, k=k))
+    wildcard = random.choice(SCENE_WILDCARDS)
+
+    return SCENE_TEMPLATE.format(
+        workspace=workspace,
+        composition=comp,
+        camera=camera,
+        style_strength=style_strength,
+        style=style_slug,
+        style_objects=style_objects,
+        palette_rule=palette_rule,
+        problem_text=gist,
+        wildcard=wildcard,
+    ).strip()
 
 
 def _render_prompt_panel(
@@ -257,15 +366,19 @@ def _render_prompt_panel(
     style_slug: str,
     workspace: str,
     prompt: str,
+    extra_title: str | None = None,
 ):
     c = console or _DEFAULT_CONSOLE
     slug_color = _STYLE_COLORS.get(style_slug, "bright_yellow")
 
-    title = (
-        f"[bold {slug_color}]style: {style_slug}[/bold {slug_color}] "
-        f"[dim]•[/dim] "
-        f"[bold {_WORKSPACE_COLOR}]workspace: {workspace}[/bold {_WORKSPACE_COLOR}]"
-    )
+    title_bits = [
+        f"[bold {slug_color}]style: {style_slug}[/bold {slug_color}]",
+        f"[dim]•[/dim] [bold {_WORKSPACE_COLOR}]workspace: {workspace}[/bold {_WORKSPACE_COLOR}]",
+    ]
+    if extra_title:
+        title_bits.append(f"[dim]•[/dim] {extra_title}")
+
+    title = " ".join(title_bits)
 
     body = Text()
     body.append(prompt, style="bright_white")  # prompt text color
@@ -286,10 +399,11 @@ def _craft_logo_prompt(
     style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
-    n_directions: int = 1,
+    mode: str = "logo",  # NEW: "logo" | "scene"
+    style_intensity: str = "overt",  # NEW: "subtle" | "clear" | "overt"
 ) -> tuple[str, str]:
     """
-    Builds a less-prescriptive, variety-heavy prompt.
+    Builds either a logo-style prompt (legacy) or a scene-style prompt (new).
     Retains special handling for sticker/mascot.
     Returns (prompt, style_slug)
     """
@@ -299,7 +413,7 @@ def _craft_logo_prompt(
         if line.strip()
     )
 
-    # Special path: sticker/mascot request
+    # Special path: sticker/mascot request (unchanged)
     if style in {"sticker", "mascot"}:
         prompt = (
             f"Create a die-cut sticker with a solid white background, a strong black border surrounding the white "
@@ -308,15 +422,25 @@ def _craft_logo_prompt(
         ).strip()
         return prompt, "sticker"
 
-    # Resolve style and build meta-template prompt with randomized knobs
+    # Resolve style and build appropriate prompt
     style_slug = _choose_style_slug(style)
+    if mode == "scene":
+        prompt = _build_scene_prompt(
+            style_slug=style_slug,
+            workspace=workspace,
+            gist=gist,
+            palette=palette,
+            style_intensity=style_intensity,
+        )
+        return prompt, style_slug
+
+    # Legacy logo path
     prompt = _build_logo_prompt(
         style_slug=style_slug,
         workspace=workspace,
         gist=gist,
         allow_text=allow_text,
         palette=palette,
-        n_directions=n_directions,
     )
     return prompt, style_slug
 
@@ -344,6 +468,11 @@ def _compose_filenames(
     return main, alts
 
 
+# ---------------------------
+# Public API
+# ---------------------------
+
+
 def generate_logo_sync(
     *,
     problem_text: str,
@@ -351,7 +480,7 @@ def generate_logo_sync(
     out_dir: str | Path,
     filename: str | None = None,
     model: str = "gpt-image-1",
-    size: str = "1024x1024",
+    size: str | None = None,  # NEW: allow None → computed from aspect/mode
     background: str = "opaque",
     quality: str = "high",
     n: int = 1,
@@ -359,8 +488,15 @@ def generate_logo_sync(
     style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
+    mode: str = "logo",  # NEW
+    aspect: str = "square",  # NEW: "wide" | "tall" | "square"
+    style_intensity: str = "overt",  # NEW
     console: Optional[Console] = None,
 ) -> Path:
+    """
+    Generate an image. Default behavior matches previous versions (logo/sticker).
+    To create a cinematic illustration, set mode='scene' and consider aspect='wide'.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -370,15 +506,18 @@ def generate_logo_sync(
         style=style,
         allow_text=allow_text,
         palette=palette,
-        n_directions=n,  # <-- tell the prompt how many distinct directions are requested
+        mode=mode,
+        style_intensity=style_intensity,
     )
 
     # Pretty console output
+    extra_title = f"[bold magenta]mode: {mode}[/bold magenta] [dim]•[/dim] aspect: {aspect}"
     _render_prompt_panel(
         console=console,
         style_slug=style_slug,
         workspace=workspace,
         prompt=prompt,
+        extra_title=extra_title,
     )
 
     main_path, alt_paths = _compose_filenames(out_dir, style_slug, filename, n)
@@ -386,13 +525,18 @@ def generate_logo_sync(
         return main_path
 
     client = OpenAI()
+
+    final_size = _normalize_size(size, aspect, mode)
+    # Scenes tend to look odd with transparent backgrounds; force opaque.
+    final_background = "opaque" if mode == "scene" else background
+
     kwargs = dict(
         model=model,
         prompt=prompt,
-        size=size,
+        size=final_size,
         n=n,
         quality=quality,
-        background=background,
+        background=final_background,
     )
     try:
         resp = client.images.generate(**kwargs)
@@ -415,7 +559,7 @@ def kickoff_logo(
     out_dir: str | Path,
     filename: str | None = None,
     model: str = "gpt-image-1",
-    size: str = "1024x1024",
+    size: str | None = None,  # allow None → computed from aspect/mode
     background: str = "opaque",
     quality: str = "high",
     n: int = 4,
@@ -425,6 +569,9 @@ def kickoff_logo(
     style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
+    mode: str = "logo",  # NEW
+    aspect: str = "square",  # NEW
+    style_intensity: str = "overt",  # NEW
     console: Optional[Console] = None,
 ):
     def _job() -> Path:
@@ -442,6 +589,9 @@ def kickoff_logo(
             style=style,
             allow_text=allow_text,
             palette=palette,
+            mode=mode,
+            aspect=aspect,
+            style_intensity=style_intensity,
             console=console,
         )
 
