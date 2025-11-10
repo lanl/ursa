@@ -1487,9 +1487,10 @@ def parse_args_and_user_inputs():
     DEFAULT_MODELS = tuple(
         models_cfg.get("choices")
         or (
+            "openai:gpt-5",
             "openai:gpt-5-mini",
-            "openai:gpt-5-mini",
-            "openai:gpt-5-mini",
+            "openai:o3",
+            "openai:o3-mini",
         )
     )
     DEFAULT_MODEL = models_cfg.get("default")  # may be None
