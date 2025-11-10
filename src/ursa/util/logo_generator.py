@@ -16,92 +16,6 @@ from rich.text import Text
 # Reuse a small thread pool so callers can "fire-and-continue" with one line.
 _EXEC = ThreadPoolExecutor(max_workers=2, thread_name_prefix="logo-gen")
 
-# Style presets focused on interesting visuals (not “corporate logo” vibes)
-_STYLE_PRESETS = {
-    "sigil": (
-        "Create an abstract, geometric tech sigil with a strong silhouette. "
-        "Flat/vector look (no photorealism), bold shapes, striking negative space, "
-        "centered composition, crisp edges, subtle shading only."
-    ),
-    "patch": (
-        "Create a circular mission-patch style emblem. Clean iconography, thick outline, "
-        "limited retro palette, slight grain for texture, centered composition."
-    ),
-    "mascot": (
-        "Create a cute minimalist mascot sticker. Simple shapes, flat shading, high saturation, "
-        "bold outline, front-facing, playful expression, slight drop shadow."
-    ),
-    "gradient-glyph": (
-        "Create a minimalist glyph centered on a vibrant synthetic gradient background. "
-        "High contrast, soft glow, glassy highlights, simple geometry."
-    ),
-    "brutalist": (
-        "Create a stark brutalist composition: heavy blocks, asymmetric layout, coarse texture/grain, "
-        "limited palette, experimental shapes, poster-tile look."
-    ),
-}
-
-
-# Distinct, bombastic styles; slug drives the filename stem.
-_SCENE_TEMPLATES = [
-    (
-        "horror",
-        "Create a dramatic horror-movie scene that is FIRST AND FOREMOST a visual interpretation of '{workspace}'. Cinematic lighting, fog, high contrast. Do not render text. Secondary mood only: {problem_text}.",
-    ),
-    (
-        "sci-fi",
-        "Create an epic sci-fi space-opera vista centered on the essence of '{workspace}'. Grand scale, atmospheric perspective, plausible materials. No text. Secondary cues: {problem_text}.",
-    ),
-    (
-        "cyberpunk",
-        "Create a neon-soaked cyberpunk night scene whose core concept is '{workspace}'. Wet streets, reflections, dense atmosphere. No words or logos. Secondary vibe: {problem_text}.",
-    ),
-    (
-        "comic",
-        "Create a bold comic-book splash composition that visually interprets '{workspace}'. Dynamic angles, inked linework, halftone shading, punchy colors. No lettering. Mood only: {problem_text}.",
-    ),
-    (
-        "fantasy",
-        "Create a high-fantasy illustration that channels the spirit of '{workspace}'. Heroic scale, dramatic lighting, painterly detail. No text. Secondary tone: {problem_text}.",
-    ),
-    (
-        "renaissance",
-        "Create a Renaissance-style oil painting where the allegorical subject embodies '{workspace}'. Rich chiaroscuro, period palette. No text. Secondary context: {problem_text}.",
-    ),
-    # ("baroque",     "Create a Baroque dramatic scene focused on the essence of '{workspace}'. Sweeping motion, strong chiaroscuro, theatrical staging. No text. Secondary mood: {problem_text}."),
-    (
-        "anime",
-        "Create an anime-style key visual that interprets '{workspace}'. Cel-shaded clarity, striking silhouette, cinematic framing. No typography. Secondary vibe: {problem_text}.",
-    ),
-    (
-        "mecha",
-        "Create a large-scale mecha/industrial hangar scene expressing '{workspace}'. Massive machinery, moody backlight, realistic wear. No text. Secondary mood: {problem_text}.",
-    ),
-    (
-        "steampunk",
-        "Create a steampunk laboratory tableau inspired by '{workspace}'. Brass, valves, gauges, warm/cool interplay. No labels or text. Secondary tone: {problem_text}.",
-    ),
-    # ("art-deco",    "Create an Art-Deco poster-like image whose geometry and ornamentation embody '{workspace}'. Symmetry, sunbursts, stepped forms, elegant palette. No text. Secondary mood: {problem_text}."),
-    (
-        "ukiyoe",
-        "Create a Ukiyo-e woodblock-print style scene that interprets '{workspace}'. Flat shapes, bold contour lines, patterned waves/sky. No text. Secondary vibe: {problem_text}.",
-    ),
-    (
-        "surreal",
-        "Create a surrealist composition that makes '{workspace}' feel dreamlike and uncanny. Naturalistic rendering of unreal scenes. No text. Secondary cues: {problem_text}.",
-    ),
-    (
-        "noir",
-        "Create a film-noir scene centered on '{workspace}'. High-contrast lighting, rain-slick streets, venetian-blind shadows. No words. Secondary vibe: {problem_text}.",
-    ),
-    (
-        "synthwave",
-        "Create a vaporwave/synthwave scene where the energy of '{workspace}' leads. Retro-futurist gradients, nostalgic glow. No text. Secondary mood: {problem_text}.",
-    ),
-    # ("watercolor",  "Create a watercolor concept-art piece that captures the spirit of '{workspace}'. Soft washes, visible brush texture. No text. Secondary tone: {problem_text}."),
-]
-
-
 # Optional: a default console if one isn’t passed in
 _DEFAULT_CONSOLE = Console()
 
@@ -112,27 +26,229 @@ _STYLE_COLORS = {
     "cyberpunk": "magenta",
     "comic": "yellow",
     "fantasy": "green",
-    "renaissance": "gold3",
-    "baroque": "orange3",
     "anime": "deep_sky_blue1",
     "mecha": "steel_blue",
     "steampunk": "dark_goldenrod",
-    "art-deco": "bright_cyan",
     "ukiyoe": "light_sky_blue1",
     "surreal": "plum1",
     "noir": "grey70",
     "synthwave": "hot_pink",
-    "watercolor": "aquamarine1",
-    # logo-like fallbacks
-    "sigil": "white",
-    "patch": "bright_white",
     "mascot": "bright_magenta",
-    "gradient-glyph": "bright_blue",
-    "brutalist": "bright_red",
+    "sticker": "bright_magenta",
+    "random": "bright_yellow",
 }
 
 _WORKSPACE_COLOR = "bright_green"  # distinct from slug, border, and prompt
 _BORDER_COLOR = "bright_cyan"  # distinct from slug & workspace
+
+# ---------------------------
+# Variety-driven prompt pools
+# ---------------------------
+
+META_TEMPLATE = (
+    "Design a logo-ready symbol for '{workspace}'. Favor a strong silhouette and clear negative space. "
+    "Use {render_mode} and a {composition} composition with a {palette_rule} palette. "
+    "Nod subtly to {style} via {style_cues} (choose a couple, avoid clichés). "
+    "Optional mood only: {problem_text}. {glyphs_rule} {wildcard} {system_hint}"
+)
+
+RENDER_MODES = [
+    "flat vector shapes",
+    "paper cutout",
+    "linocut print",
+    "stippled ink",
+    "ceramic glaze texture",
+    "folded origami",
+    "wireframe mesh",
+    "brushed metal",
+    "neon tubing",
+    "knitted yarn",
+    "mosaic tiles",
+    "laser-cut plywood",
+    "light painting",
+]
+
+COMPOSITIONS = [
+    "strict symmetry",
+    "radial burst",
+    "off-center tension",
+    "stacked vertical",
+    "nested negative space",
+    "interlocking shapes",
+    "spiral growth",
+    "tilted diagonal",
+]
+
+PALETTE_RULES = [
+    "monochrome",
+    "duotone",
+    "triadic accent",
+    "black/white with a single shock color",
+    "muted naturals",
+    "warm metallics",
+    "cool grayscale with neon accent",
+]
+
+STYLE_CUES = {
+    "horror": [
+        "elongated shadows",
+        "organic asymmetry",
+        "eroded edges",
+        "subtle unease",
+    ],
+    "sci-fi": [
+        "modular geometry",
+        "specular highlights",
+        "gridded logic",
+        "soft glow",
+    ],
+    "cyberpunk": [
+        "dense layering",
+        "wet sheen",
+        "electric micro-accents",
+        "overlapping signage shapes",
+    ],
+    "comic": [
+        "bold contour",
+        "snap motion shapes",
+        "halftone texture",
+        "exaggerated foreshortening",
+    ],
+    "fantasy": [
+        "ornamental motifs",
+        "heroic scale cues",
+        "mythic symmetry",
+        "carved relief feel",
+    ],
+    "anime": [
+        "silhouette clarity",
+        "clean cel edges",
+        "dramatic framing",
+        "speed lines",
+    ],
+    "mecha": [
+        "panel seams",
+        "industrial joints",
+        "mechanical symmetry",
+        "maintenance patina",
+    ],
+    "steampunk": [
+        "valve/gear hints",
+        "brass/oxidized contrast",
+        "pressure-gauge arcs",
+        "Victorian filigree shapes",
+    ],
+    "ukiyoe": [
+        "flat planes",
+        "patterned waves/sky",
+        "bold contour rhythm",
+        "asymmetric balance",
+    ],
+    "surreal": [
+        "scale paradox",
+        "unexpected juxtapositions",
+        "floating forms",
+        "uncanny calm",
+    ],
+    "noir": [
+        "hard light cuts",
+        "oblique lattice angles",
+        "rain sheen",
+        "deep shadow masses",
+    ],
+    "synthwave": [
+        "retro gradients",
+        "sunset discs",
+        "hazy horizon",
+        "wire grid hint",
+    ],
+}
+
+# Optional “don’t do this cliché this time” guardrails per style
+CLICHE_BANS = {
+    "horror": ["Do not use dripping blood."],
+    "sci-fi": ["Avoid starfields and rocket silhouettes."],
+    "cyberpunk": ["Skip city skylines and katakana signage."],
+    "noir": ["No rain or venetian blinds this time."],
+    "synthwave": ["Avoid palm trees and 80s grid sunsets."],
+}
+
+WILDCARDS = [
+    "Introduce an unexpected but relevant metaphor or material.",
+    "Consider how the mark could tessellate into a repeatable pattern.",
+    "Hide a secondary icon in negative space.",
+    "Let exactly one edge break the expected geometry.",
+    "Constrain yourself to three primitive shapes total.",
+    "Make the letterform (if any) only visible on second glance.",
+]
+
+SYSTEM_HINTS = [
+    "Prefer forms that can be redrawn in ≤12 vector paths.",
+    "Design for recognizability at 16×16 and at poster scale.",
+    "Bias toward bold silhouette over surface detail.",
+]
+
+
+def _glyphs_rule(allow_text: bool) -> str:
+    if allow_text:
+        return "Letterforms are allowed; keep any words minimal and integrated into the symbol."
+    # Softer than “No text” → allows abstract glyphs/monograms
+    return "Avoid readable words; abstract glyphs/monograms are allowed if they strengthen the mark."
+
+
+def _choose_style_slug(style: str | None) -> str:
+    """
+    Resolve a requested style to a known slug; if unknown or generic (e.g., 'sticker'),
+    choose a random one from STYLE_CUES.
+    """
+    if not style:
+        return random.choice(list(STYLE_CUES.keys()))
+    s = style.strip().lower()
+    if s in {"random"}:
+        return random.choice(list(STYLE_CUES.keys()))
+    return s if s in STYLE_CUES else random.choice(list(STYLE_CUES.keys()))
+
+
+def _build_logo_prompt(
+    *,
+    style_slug: str,
+    workspace: str,
+    gist: str,
+    allow_text: bool,
+    palette: str | None,
+    n_directions: int,
+) -> str:
+    render = random.choice(RENDER_MODES)
+    comp = random.choice(COMPOSITIONS)
+    palette_rule = palette if palette else random.choice(PALETTE_RULES)
+    cues = ", ".join(random.sample(STYLE_CUES[style_slug], k=2))
+    wildcard = random.choice(WILDCARDS)
+    system_hint = random.choice(SYSTEM_HINTS)
+    glyphs_rule = _glyphs_rule(allow_text)
+
+    ban = ""
+    if style_slug in CLICHE_BANS and random.random() < 0.6:
+        ban = CLICHE_BANS[style_slug][0]  # single succinct ban
+
+    meta = META_TEMPLATE.format(
+        workspace=workspace,
+        render_mode=render,
+        composition=comp,
+        palette_rule=palette_rule,
+        style=style_slug,
+        style_cues=cues,
+        problem_text=gist,
+        glyphs_rule=glyphs_rule,
+        wildcard=wildcard,
+        system_hint=system_hint,
+    )
+
+    # Encourage divergent outputs when requesting multiple images
+    diversity_note = ""
+    if n_directions and n_directions > 1:
+        diversity_note = f" Produce {n_directions} distinct symbol directions that would never be confused with one another."
+
+    return f"{meta} {ban} {diversity_note}".strip()
 
 
 def _render_prompt_panel(
@@ -167,43 +283,41 @@ def _craft_logo_prompt(
     problem_text: str,
     workspace: str,
     *,
-    style: str = "sigil",
+    style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
+    n_directions: int = 1,
 ) -> tuple[str, str]:
+    """
+    Builds a less-prescriptive, variety-heavy prompt.
+    Retains special handling for sticker/mascot.
+    Returns (prompt, style_slug)
+    """
     gist = " ".join(
         line.strip()
         for line in problem_text.strip().splitlines()
         if line.strip()
     )
-    txt_rule = (
-        "Do not render any text, letters, numbers, logos, or watermarks."
-        if not allow_text
-        else "If text appears, limit it to a subtle single-letter monogram; avoid words/logos."
-    )
-    palette_rule = f" Palette hint: {palette}." if palette else ""
 
-    # Random cinematic/genre scene → pick a (slug, template)
-    if style in {"random", "random-scene"}:
-        style_slug, tpl = random.choice(_SCENE_TEMPLATES)
+    # Special path: sticker/mascot request
+    if style in {"sticker", "mascot"}:
         prompt = (
-            f"Create an image that is FIRST AND FOREMOST a visual interpretation of '{workspace}'. "
-            f"{tpl.format(workspace=workspace, problem_text=gist)} "
-            f"Treat the following as SECONDARY mood cues only (do not depict literally): {gist}. "
-            f"The final image should clearly read as an evocative take on '{workspace}'. {txt_rule}{palette_rule}"
+            f"Create a die-cut sticker with a solid white background, a strong black border surrounding the white "
+            f"die-cut border, and no shadow. The sticker image should be a 'mascot' related to the "
+            f"topic: `{workspace}`."
         ).strip()
+        return prompt, "sticker"
 
-        return prompt, style_slug
-
-    # Logo-like presets → use the given style key as the slug
-    style_slug = style
-    base = _STYLE_PRESETS.get(style, _STYLE_PRESETS["sigil"])
-    prompt = (
-        f"{base} {txt_rule} "
-        f"PRIMARY CONCEPT: the essence/energy of '{workspace}' (use as inspiration only; do not render text). "
-        f"SECONDARY CONTEXT for tone only: {gist}. "
-        f"The piece should feel like a visual interpretation of '{workspace}'.{palette_rule}"
-    ).strip()
+    # Resolve style and build meta-template prompt with randomized knobs
+    style_slug = _choose_style_slug(style)
+    prompt = _build_logo_prompt(
+        style_slug=style_slug,
+        workspace=workspace,
+        gist=gist,
+        allow_text=allow_text,
+        palette=palette,
+        n_directions=n_directions,
+    )
     return prompt, style_slug
 
 
@@ -242,10 +356,10 @@ def generate_logo_sync(
     quality: str = "high",
     n: int = 1,
     overwrite: bool = False,
-    style: str = "sigil",
+    style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
-    console: Optional[Console] = None,  # <-- NEW
+    console: Optional[Console] = None,
 ) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -256,6 +370,7 @@ def generate_logo_sync(
         style=style,
         allow_text=allow_text,
         palette=palette,
+        n_directions=n,  # <-- tell the prompt how many distinct directions are requested
     )
 
     # Pretty console output
@@ -282,6 +397,7 @@ def generate_logo_sync(
     try:
         resp = client.images.generate(**kwargs)
     except Exception:
+        # Some models ignore/forbid background=; retry without it
         kwargs.pop("background", None)
         resp = client.images.generate(**kwargs)
 
@@ -306,7 +422,7 @@ def kickoff_logo(
     overwrite: bool = False,
     on_done=None,
     on_error=None,
-    style: str = "sigil",
+    style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
     console: Optional[Console] = None,
@@ -326,7 +442,7 @@ def kickoff_logo(
             style=style,
             allow_text=allow_text,
             palette=palette,
-            console=console,  # pass it down
+            console=console,
         )
 
     fut = _EXEC.submit(_job)
