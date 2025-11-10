@@ -125,7 +125,7 @@ class BaseAgent(ABC):
         llm: BaseChatModel,
         checkpointer: Optional[BaseCheckpointSaver] = None,
         enable_metrics: bool = True,
-        metrics_dir: str = ".ursa_metrics",  # dir to save metrics, with a default
+        metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
         thread_id: Optional[str] = None,
         **kwargs,

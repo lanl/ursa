@@ -237,7 +237,7 @@ ch-run -W ursa \
 
 * [`ruff`](https://docs.astral.sh/ruff/)
     * An extremely fast Python linter and code formatter, written in Rust.
-    * After installing `uv`, you can install just ruff `uv tool install ruff`
+    * After installing `uv`, you can install ruff with `uv tool install ruff`
 
 * [`just`](https://github.com/casey/just)
     * A modern way to save and run project-specific commands

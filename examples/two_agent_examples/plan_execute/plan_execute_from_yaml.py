@@ -1059,7 +1059,7 @@ def main(
                     background="opaque",
                     quality="high",
                     n=4,
-                    style="random-scene",  # 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', 'brutalist'
+                    style="random",
                     console=console,
                     on_done=lambda p: console.print(
                         Panel.fit(
@@ -1082,17 +1082,17 @@ def main(
                     background="opaque",
                     quality="high",
                     n=4,
-                    style="mascot",  # 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', 'brutalist'
+                    style="sticker",
                     console=console,
                     on_done=lambda p: console.print(
                         Panel.fit(
-                            f"[bold yellow]Project mascot art saved:[/] {p}",
+                            f"[bold yellow]Project sticker art saved:[/] {p}",
                             border_style="yellow",
                         )
                     ),
                     on_error=lambda e: console.print(
                         Panel.fit(
-                            f"[bold red]Art mascot generation failed:[/] {e}",
+                            f"[bold red]Art sticker generation failed:[/] {e}",
                             border_style="red",
                         )
                     ),
