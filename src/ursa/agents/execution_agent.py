@@ -30,10 +30,11 @@ import os
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Literal, Mapping, Optional
+from typing import Annotated, Any, Callable, Literal, Mapping, Optional
 
 import randomname
 from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.tools import StructuredTool, Tool
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
@@ -108,6 +109,15 @@ class ExecutionState(TypedDict):
 
 
 # Helper functions
+def convert_to_tool(fn):
+    if isinstance(fn, StructuredTool):
+        return fn
+    else:
+        return Tool.from_function(
+            func=fn, name=fn.__name__, description=fn.__doc__
+        )
+
+
 def _strip_fences(snippet: str) -> str:
     """Remove markdown fences from a code snippet.
 
@@ -762,6 +772,45 @@ class ExecutionAgent(BaseAgent):
 
         # Compile and return the executable graph (optionally with a checkpointer).
         return graph.compile(checkpointer=self.checkpointer)
+
+    def add_mcp_tool(
+        self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
+    ) -> None:
+        print("Not working yet. In progress!")
+        return None
+
+    def add_tool(
+        self, new_tools: Callable[..., Any] | list[Callable[..., Any]]
+    ) -> None:
+        if isinstance(new_tools, list):
+            new_tools = [convert_to_tool(x) for x in new_tools]
+            self.tools.extend(new_tools)
+        elif callable(new_tools):
+            new_tools = convert_to_tool(new_tools)
+            self.tools.append(new_tools)
+        else:
+            raise TypeError("Expected a callable or a list of callables.")
+        self.tool_node = ToolNode(self.tools)
+        self.llm = self.llm.bind_tools(self.tools)
+        self._action = self._build_graph()
+
+    def list_tools(self) -> None:
+        print(
+            f"Available tool names are: {','.join([x.name for x in self.tools])}."
+        )
+
+    def remove_tools(self, cut_tools: str | list[str]) -> None:
+        if isinstance(cut_tools, list):
+            self.tools = [x for x in self.tools if x.name not in cut_tools]
+        elif isinstance(cut_tools, str):
+            self.tools = [x for x in self.tools if x.name != cut_tools]
+        else:
+            raise TypeError(
+                "Expected a string or a list of strings describing the tools to remove."
+            )
+        self.tool_node = ToolNode(self.tools)
+        self.llm = self.llm.bind_tools(self.tools)
+        self._action = self._build_graph()
 
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
