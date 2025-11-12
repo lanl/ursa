@@ -775,7 +775,6 @@ class ExecutionAgent(BaseAgent):
     async def add_mcp_tool(
         self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
     ) -> None:
-        print("Not working yet. In progress!")
         client = MultiServerMCPClient(mcp_tools)
         tools = await client.get_tools()
         print(tools)
