@@ -25,16 +25,14 @@ Entry points:
 - main() shows a minimal demo that writes and runs a script.
 """
 
-import os
-
 # from langchain_core.runnables.graph import MermaidDrawMethod
+import os
 import subprocess
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, Mapping, Optional
 
 import randomname
 from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.tools import StructuredTool, Tool
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
@@ -43,7 +41,8 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.tools import InjectedToolCallId, tool
+from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
@@ -113,7 +112,7 @@ def convert_to_tool(fn):
     if isinstance(fn, StructuredTool):
         return fn
     else:
-        return Tool.from_function(
+        return StructuredTool.from_function(
             func=fn, name=fn.__name__, description=fn.__doc__
         )
 
@@ -773,11 +772,15 @@ class ExecutionAgent(BaseAgent):
         # Compile and return the executable graph (optionally with a checkpointer).
         return graph.compile(checkpointer=self.checkpointer)
 
-    def add_mcp_tool(
+    async def add_mcp_tool(
         self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
     ) -> None:
         print("Not working yet. In progress!")
-        return None
+        client = MultiServerMCPClient(mcp_tools)
+        tools = await client.get_tools()
+        print(tools)
+        print([x.name for x in tools])
+        self.add_tool(tools)
 
     def add_tool(
         self, new_tools: Callable[..., Any] | list[Callable[..., Any]]
@@ -799,7 +802,7 @@ class ExecutionAgent(BaseAgent):
             f"Available tool names are: {','.join([x.name for x in self.tools])}."
         )
 
-    def remove_tools(self, cut_tools: str | list[str]) -> None:
+    def remove_tool(self, cut_tools: str | list[str]) -> None:
         if isinstance(cut_tools, list):
             self.tools = [x for x in self.tools if x.name not in cut_tools]
         elif isinstance(cut_tools, str):
@@ -827,6 +830,22 @@ class ExecutionAgent(BaseAgent):
 
         # Delegate execution to the compiled graph.
         return self._action.invoke(inputs, config)
+
+    def _ainvoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
+    ):
+        """Invoke the compiled graph with inputs under a specified recursion limit.
+
+        This method builds a LangGraph config with the provided recursion limit
+        and a "graph" tag, then delegates to the compiled graph's invoke method.
+        """
+        # Build invocation config with a generous recursion limit for long runs.
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+
+        # Delegate execution to the compiled graph.
+        return self._action.ainvoke(inputs, config)
 
     # This property is trying to stop people bypassing invoke
     @property
