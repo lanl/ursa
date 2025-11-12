@@ -694,12 +694,7 @@ class ExecutionAgent(BaseAgent):
 
         # 4) Optionally write state to disk for debugging/auditing.
         if self.log_state:
-            save_state = state.copy()
-            # Append the summary as an AI message for a complete trace.
-            save_state["messages"] = save_state["messages"] + [
-                AIMessage(content=response_content)
-            ]
-            self.write_state("execution_agent.json", save_state)
+            self.write_state("execution_agent.json", new_state)
 
         # 5) Return a partial state update with only the summary content.
         return new_state
