@@ -777,8 +777,6 @@ class ExecutionAgent(BaseAgent):
     ) -> None:
         client = MultiServerMCPClient(mcp_tools)
         tools = await client.get_tools()
-        print(tools)
-        print([x.name for x in tools])
         self.add_tool(tools)
 
     def add_tool(

@@ -485,7 +485,6 @@ class BaseAgent(ABC):
         """Subclasses implement the actual work against normalized inputs."""
         ...
 
-    @abstractmethod
     def _ainvoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
         """Subclasses implement the actual work against normalized inputs."""
         ...
