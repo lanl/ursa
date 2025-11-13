@@ -459,15 +459,6 @@ class PerRunnableTimer(BaseCallbackHandler):
             if len(parts) == 4:
                 node_base = parts[3]
 
-        # namespace + snake casing for safety
-        def _to_snake(s: str) -> str:
-            import re
-
-            s = str(s)
-            s = re.sub(r"(?<!^)(?=[A-Z])", "_", s)
-            s = s.replace("-", "_").replace(" ", "_")
-            return s.lower()
-
         namespace = _to_snake(namespace)
         qualified = f"{namespace}:{node_base}"
         name = f"node:{qualified}"
