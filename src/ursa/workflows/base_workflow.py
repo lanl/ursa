@@ -64,7 +64,6 @@ class BaseWorkflow(ABC):
     """
 
     def __init__(self, **kwargs):
-        print("Hello")
         pass
 
     # NOTE: The `invoke` method uses the PEP 570 `/,*` notation to explicitly state which

@@ -83,8 +83,6 @@ class SimulationUseWorkflow(BaseWorkflow):
         self.workspace = workspace
         self.tool_schema = code_schema_prompt
         self.tool_description = tool_description
-        self._adopt(self.planner)
-        self._adopt(self.executor)
 
     def _invoke(self, task: str, **kw):
         with console.status(
@@ -162,12 +160,15 @@ class SimulationUseWorkflow(BaseWorkflow):
 def main():
     import sqlite3
     from pathlib import Path
+    from uuid import uuid4
 
     from langchain.chat_models import init_chat_model
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     from ursa.agents import ExecutionAgent, PlanningAgent
     from ursa.observability.timing import render_session_summary
+
+    tid = "run-" + uuid4().hex[:8]
 
     # Define the workspace
     workspace = "example_dcopf_use"
@@ -185,9 +186,12 @@ def main():
     executor = ExecutionAgent(
         llm=executor_model, checkpointer=checkpointer, enable_metrics=True
     )
+    executor.thread_id = tid
+
     planner = PlanningAgent(
         llm=planner_model, checkpointer=checkpointer, enable_metrics=True
     )
+    planner.thread_id = tid
 
     problem = (
         "Your task is to perform a parameter sweep of a complex computational model. "
@@ -236,6 +240,10 @@ def main():
         enable_metrics=True,
     )
 
-    workflow.invoke(problem)  # raw_debug=True doesn't seem to trigger anything.
+    workflow(problem)  # raw_debug=True doesn't seem to trigger anything.
 
-    render_session_summary(workflow.thread_id)
+    render_session_summary(tid)
+
+
+if __name__ == "__main__":
+    main()
