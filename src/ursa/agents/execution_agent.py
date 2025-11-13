@@ -785,7 +785,9 @@ class ExecutionAgent(BaseAgent):
         if isinstance(new_tools, list):
             new_tools = [convert_to_tool(x) for x in new_tools]
             self.tools.extend(new_tools)
-        elif callable(new_tools):
+        elif isinstance(new_tools, StructuredTool) or isinstance(
+            new_tools, Callable
+        ):
             new_tools = convert_to_tool(new_tools)
             self.tools.append(new_tools)
         else:
