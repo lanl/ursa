@@ -480,7 +480,7 @@ def generate_logo_sync(
     out_dir: str | Path,
     filename: str | None = None,
     model: str = "gpt-image-1",
-    size: str | None = None,  # NEW: allow None → computed from aspect/mode
+    size: str | None = None,
     background: str = "opaque",
     quality: str = "high",
     n: int = 1,
@@ -488,10 +488,12 @@ def generate_logo_sync(
     style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
-    mode: str = "logo",  # NEW
-    aspect: str = "square",  # NEW: "wide" | "tall" | "square"
-    style_intensity: str = "overt",  # NEW
+    mode: str = "logo",
+    aspect: str = "square",
+    style_intensity: str = "overt",
     console: Optional[Console] = None,
+    image_model_provider: str = "openai",
+    image_provider_kwargs: Optional[dict] = None,
 ) -> Path:
     """
     Generate an image. Default behavior matches previous versions (logo/sticker).
@@ -524,7 +526,14 @@ def generate_logo_sync(
     if main_path.exists() and not overwrite:
         return main_path
 
-    client = OpenAI()
+    # this is how we'll pass through a vision model and provider/url/endpoint
+    client_kwargs = {}
+    if image_provider_kwargs:
+        # Only pass through safe/known kwargs
+        for k in ("api_key", "base_url", "organization"):
+            if k in image_provider_kwargs and image_provider_kwargs[k]:
+                client_kwargs[k] = image_provider_kwargs[k]
+    client = OpenAI(**client_kwargs)
 
     final_size = _normalize_size(size, aspect, mode)
     # Scenes tend to look odd with transparent backgrounds; force opaque.
@@ -569,18 +578,23 @@ def kickoff_logo(
     style: str = "sticker",
     allow_text: bool = False,
     palette: str | None = None,
-    mode: str = "logo",  # NEW
-    aspect: str = "square",  # NEW
-    style_intensity: str = "overt",  # NEW
+    mode: str = "logo",
+    aspect: str = "square",
+    style_intensity: str = "overt",
     console: Optional[Console] = None,
+    image_model: Optional[str] = None,
+    image_model_provider: str = "openai",
+    image_provider_kwargs: Optional[dict] = None,
 ):
+    _final_model = image_model or model
+
     def _job() -> Path:
         return generate_logo_sync(
             problem_text=problem_text,
             workspace=workspace,
             out_dir=out_dir,
             filename=filename,
-            model=model,
+            model=_final_model,
             size=size,
             background=background,
             quality=quality,
@@ -593,6 +607,8 @@ def kickoff_logo(
             aspect=aspect,
             style_intensity=style_intensity,
             console=console,
+            image_model_provider=image_model_provider,
+            image_provider_kwargs=image_provider_kwargs,
         )
 
     fut = _EXEC.submit(_job)

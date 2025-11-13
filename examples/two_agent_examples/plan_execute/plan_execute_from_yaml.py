@@ -2,7 +2,9 @@ import argparse
 
 # needed for checkpoint / restart
 import hashlib
+import importlib
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -215,6 +217,14 @@ def render_plan_steps_rich(plan_steps, highlight_index: int | None = None):
 #########################################################################
 # BEGIN: Helpers for execution agent checkpoint/restart
 #########################################################################
+
+
+def _ckpt_dir(workspace: str) -> Path:
+    p = Path(workspace) / "checkpoints"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 # --- execution progress tracking (per workspace) ---
 def _progress_file(workspace: str) -> Path:
     return Path(workspace) / "executor_progress.json"
@@ -259,6 +269,7 @@ def snapshot_sqlite_db(src_path: Path, dst_path: Path) -> None:
     """
     import sqlite3
 
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
     src_uri = f"file:{Path(src_path).resolve().as_posix()}?mode=ro"
     src = dst = None
     try:
@@ -415,17 +426,19 @@ def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
 
 def list_executor_checkpoints(workspace: str) -> list[Path]:
     ws = Path(workspace)
+    ckdir = _ckpt_dir(workspace)
     seen = {}
-    # Only checkpoint-named files
-    for pat in ("executor_checkpoint_*.db", "executor_checkpoint.db"):
-        for p in ws.glob(pat):
-            seen[p.resolve()] = p
+    # Prefer new location
+    for base in (ckdir, ws):
+        for pat in ("executor_checkpoint_*.db", "executor_checkpoint.db"):
+            for p in base.glob(pat):
+                seen[p.resolve()] = p
     return sorted(seen.values(), key=_ckpt_sort_key)
 
 
 def choose_checkpoint(workspace: str, timeout: int = 60) -> Path | None:
     ckpts = list_executor_checkpoints(workspace)
-    default = Path(workspace) / "executor_checkpoint.db"
+    default = _ckpt_dir(workspace) / "executor_checkpoint.db"
 
     print("\nAvailable executor checkpoints:")
     if ckpts:
@@ -481,7 +494,14 @@ def resolve_resume_checkpoint(
     if resume_from:
         p = Path(resume_from)
         if not p.is_absolute():
-            p = Path(workspace) / resume_from
+            # try checkpoints/ first, then root (legacy)
+            cand = _ckpt_dir(workspace) / p
+            if cand.exists():
+                print(
+                    f"[resume] Using checkpoint from CLI (checkpoints): {cand.name}"
+                )
+                return cand
+            p = Path(workspace) / p
         if p.exists():
             print(f"[resume] Using checkpoint from CLI: {p.name}")
             return p
@@ -493,7 +513,7 @@ def resolve_resume_checkpoint(
 
 # --- restore selected snapshot into live executor DB (prior to opening it) ---
 def restore_executor_from_snapshot(workspace: str, snapshot: Path) -> None:
-    live = Path(workspace) / "executor_checkpoint.db"
+    live = _ckpt_dir(workspace) / "executor_checkpoint.db"
     if not snapshot.exists():
         print(
             f"[resume] No snapshot to restore (missing: {snapshot}); starting fresh."
@@ -679,13 +699,11 @@ def _print_next_step(prefix: str, next_zero: int, total: int, workspace: str):
 
 def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     # first, setup checkpoint / recover pathways
-    edb_path = Path(workspace) / "executor_checkpoint.db"
-    edb_path.parent.mkdir(parents=True, exist_ok=True)
+    edb_path = _ckpt_dir(workspace) / "executor_checkpoint.db"
     econn = sqlite3.connect(str(edb_path), check_same_thread=False)
     executor_checkpointer = SqliteSaver(econn)
 
-    pdb_path = Path(workspace) / "planner_checkpoint.db"
-    pdb_path.parent.mkdir(parents=True, exist_ok=True)
+    pdb_path = _ckpt_dir(workspace) / "planner_checkpoint.db"
     pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
     planner_checkpointer = SqliteSaver(pconn)
 
@@ -718,15 +736,51 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     )
 
 
-def setup_llm(model_name: str):
+def _resolve_model_choice(model_choice: str, models_cfg: dict):
+    """
+    Accepts strings like 'openai:gpt-5-mini' or 'metis:gpt-oss-120b-131072'.
+    Looks up per-provider settings from cfg.models.providers.
+    Returns: model_provider, model_name, extra_kwargs_for_init
+    """
+    if ":" in model_choice:
+        alias, pure_model = model_choice.split(":", 1)
+    else:
+        alias, pure_model = "openai", model_choice  # back-compat default
+
+    providers = (models_cfg or {}).get("providers", {})
+    prov = providers.get(alias, {})
+
+    # Which LangChain integration to use (eg "openai", "mistral", etc.)
+    model_provider = prov.get("model_provider", alias)
+
+    # auth: prefer env var; optionally load via function if configured
+    api_key = None
+    if prov.get("api_key_env"):
+        api_key = os.getenv(prov["api_key_env"])
+    if not api_key and prov.get("token_loader"):
+        mod, fn = prov["token_loader"].rsplit(".", 1)
+        api_key = getattr(importlib.import_module(mod), fn)()
+
+    extra = {}
+    if prov.get("base_url"):
+        extra["base_url"] = prov["base_url"]
+    if api_key:
+        # For ChatOpenAI this is "api_key"
+        extra["api_key"] = api_key
+
+    return model_provider, pure_model, extra
+
+
+def setup_llm(model_choice: str, models_cfg: dict | None = None):
+    provider, pure_model, extra = _resolve_model_choice(
+        model_choice, models_cfg or {}
+    )
     model = init_chat_model(
-        model=model_name,
+        model=pure_model,
+        model_provider=provider,  # <-- lets langchain pick the right integration
         max_completion_tokens=10000,
         max_retries=2,
-        model_kwargs={
-            # "reasoning": {"effort": "high"},
-        },
-        # temperature=0.2,
+        **extra,  # <-- base_url, api_key, etc. flow through
     )
     return model
 
@@ -1011,8 +1065,8 @@ def main(
         project = getattr(config, "project", "run")
         symlinkdict = getattr(config, "symlink", {}) or None
 
-        # sets up the LLM, model parameters, etc.
-        model = setup_llm(model_name)
+        # sets up the LLM, model parameters, providers, endpoints, etc.
+        model = setup_llm(model_name, getattr(config, "models", {}) or {})
         # sets up the workspace, run config json, etc.
         workspace = setup_workspace(
             user_specified_workspace, project, model_name
@@ -1049,21 +1103,45 @@ def main(
         # ---- One-time project logo kickoff (per workspace) -----------------
         # Use run_meta.json to ensure we do this only once for this workspace.
         meta = load_run_meta(workspace)
-        if not meta.get("logo_created"):
+        # MINIMAL CONFIG
+        logo_cfg = getattr(cfg, "logo", {}) or {}
+        logo_enabled = bool(logo_cfg.get("enabled", True))
+
+        if logo_enabled and not meta.get("logo_created"):
+            scene_style = logo_cfg.get(
+                "scene", "random"
+            )  # noir/sci-fi/etc or "random"
+            stickers_enabled = bool(logo_cfg.get("stickers", True))
+            n_variants = int(logo_cfg.get("n", 4))
+            logo_model_choice = logo_cfg.get("model", "openai:gpt-image-1")
+
+            # pick the model string & a providers map
+            providers = (getattr(cfg, "models", {}) or {}).get(
+                "providers", {}
+            ) or {}
+
+            v_provider, v_model, v_extra = _resolve_model_choice(
+                logo_model_choice, {"providers": providers}
+            )
+            scene_dir = Path(workspace) / "logo_art" / "scenes"
+            sticker_dir = Path(workspace) / "logo_art" / "stickers"
             try:
+                # SCENE artwork — uses existing defaults for everything else
                 _ = kickoff_logo(
                     problem_text=problem,
                     workspace=workspace,
-                    out_dir=workspace,
-                    # let aspect pick a good size automatically; or keep size if you prefer
-                    # size="1536x1024",
+                    out_dir=scene_dir,
+                    # size omitted (auto with aspect)
                     background="opaque",
                     quality="high",
-                    n=4,
-                    style="random",
+                    n=n_variants,
+                    style=scene_style,  # <- only knob exposed via YAML
                     mode="scene",
-                    aspect="wide",  # optional, auto-sets to a wide rectangle
-                    style_intensity="overt",  # optional, stronger systle signaling
+                    aspect="wide",
+                    style_intensity="overt",
+                    image_model=v_model,
+                    image_model_provider=v_provider,
+                    image_provider_kwargs=v_extra,
                     console=console,
                     on_done=lambda p: console.print(
                         Panel.fit(
@@ -1078,29 +1156,35 @@ def main(
                         )
                     ),
                 )
-                _ = kickoff_logo(
-                    problem_text=problem,
-                    workspace=workspace,
-                    out_dir=workspace,
-                    size="1024x1024",
-                    background="opaque",
-                    quality="high",
-                    n=4,
-                    style="sticker",
-                    console=console,
-                    on_done=lambda p: console.print(
-                        Panel.fit(
-                            f"[bold yellow]Project sticker art saved:[/] {p}",
-                            border_style="yellow",
-                        )
-                    ),
-                    on_error=lambda e: console.print(
-                        Panel.fit(
-                            f"[bold red]Art sticker generation failed:[/] {e}",
-                            border_style="red",
-                        )
-                    ),
-                )
+
+                # STICKER artwork — optional
+                if stickers_enabled:
+                    _ = kickoff_logo(
+                        problem_text=problem,
+                        workspace=workspace,
+                        out_dir=sticker_dir,
+                        size="1024x1024",
+                        background="opaque",
+                        quality="high",
+                        n=n_variants,
+                        style="sticker",
+                        image_model=v_model,
+                        image_model_provider=v_provider,
+                        image_provider_kwargs=v_extra,
+                        console=console,
+                        on_done=lambda p: console.print(
+                            Panel.fit(
+                                f"[bold yellow]Project sticker art saved:[/] {p}",
+                                border_style="yellow",
+                            )
+                        ),
+                        on_error=lambda e: console.print(
+                            Panel.fit(
+                                f"[bold red]Art sticker generation failed:[/] {e}",
+                                border_style="red",
+                            )
+                        ),
+                    )
 
             finally:
                 # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
@@ -1289,7 +1373,7 @@ def main(
                             next_idx
                         )  # just-finished sub-step (1-based)
                         snapshot_path = (
-                            Path(workspace)
+                            _ckpt_dir(workspace)
                             / f"executor_checkpoint_{main_no}_{sub_no}.db"
                         )
                         snapshot_sqlite_db(edb_path, snapshot_path)
@@ -1400,7 +1484,7 @@ def main(
                         try:
                             step_no = m + 1
                             snapshot_path = (
-                                Path(workspace)
+                                _ckpt_dir(workspace)
                                 / f"executor_checkpoint_{step_no}.db"
                             )
                             snapshot_sqlite_db(edb_path, snapshot_path)
