@@ -1,27 +1,24 @@
-# planning_executor.py
 from langchain_core.messages import HumanMessage
 from rich import get_console
 from rich.panel import Panel
 
 from ursa.workflows.base_workflow import BaseWorkflow
 
-"""
-The Planning-Executor workflow is a workflow that composes two agents in a for-loop:
-  - The planning agent takes the user input, develops a step-by-step plan as a list
-  - The list is passed, entry by entry to an execution agent to carry out the plan.
-"""
-
 console = get_console()
 
 
 class PlanningExecutorWorkflow(BaseWorkflow):
+    """
+    The Planning-Executor workflow is a workflow that composes two agents in a for-loop:
+        - The planning agent takes the user input, develops a step-by-step plan as a list
+        - The list is passed, entry by entry to an execution agent to carry out the plan.
+    """
+
     def __init__(self, planner, executor, workspace, **kwargs):
         super().__init__(**kwargs)
         self.planner = planner
         self.executor = executor
         self.workspace = workspace
-        self._adopt(self.planner)
-        self._adopt(self.executor)
 
     def _invoke(self, task: str, **kw):
         with console.status(
@@ -93,6 +90,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
 def main():
     import sqlite3
     from pathlib import Path
+    from uuid import uuid4
 
     from langchain.chat_models import init_chat_model
     from langgraph.checkpoint.sqlite import SqliteSaver
@@ -100,7 +98,7 @@ def main():
     from ursa.agents import ExecutionAgent, PlanningAgent
     from ursa.observability.timing import render_session_summary
 
-    tid = "run-" + __import__("uuid").uuid4().hex[:8]
+    tid = "run-" + uuid4().hex[:8]
 
     # Define the workspace
     workspace = "example_fibonacci_finder"
@@ -128,18 +126,23 @@ def main():
     executor = ExecutionAgent(
         llm=executor_model, checkpointer=checkpointer, enable_metrics=True
     )
+    executor.thread_id = tid
+
     planner = PlanningAgent(
         llm=planner_model, checkpointer=checkpointer, enable_metrics=True
     )
+    planner.thread_id = tid
 
-    agent = PlanningExecutorWorkflow(
+    workflow = PlanningExecutorWorkflow(
         planner=planner,
         executor=executor,
         workspace=workspace,
-        enable_metrics=True,
     )
-    agent.thread_id = tid
 
-    agent.invoke(problem)
+    workflow(problem)
 
     render_session_summary(tid)
+
+
+if __name__ == "__main__":
+    main()
