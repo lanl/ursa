@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable, Dict, Iterable, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from langchain_core.callbacks import BaseCallbackHandler
 from rich import get_console
@@ -899,41 +899,6 @@ def timed_tool(tool_name: str, sink: _Agg | None = None):
 # ---------------------------------
 #         Rendering helpers
 # ---------------------------------
-
-
-def render_table(
-    title: str, rows: Iterable[Tuple[str, int, float, float, float]]
-) -> str:
-    # rows: (name, count, total_s, avg_ms, max_ms)
-    out = []
-    out.append(f"\n{title}")
-    out.append(
-        "┏{0}┳{1}┳{2}┳{3}┳{4}┓".format(
-            "━" * 30, "━" * 7, "━" * 11, "━" * 10, "━" * 10
-        )
-    )
-    out.append(
-        "┃ {0:<28} ┃ {1:>5} ┃ {2:>9} ┃ {3:>8} ┃ {4:>8} ┃".format(
-            "Name", "Count", "Total(s)", "Avg(ms)", "Max(ms)"
-        )
-    )
-    out.append(
-        "┡{0}╇{1}╇{2}╇{3}╇{4}┩".format(
-            "━" * 30, "━" * 7, "━" * 11, "━" * 10, "━" * 10
-        )
-    )
-    for name, cnt, tot_s, avg_ms, max_ms in rows:
-        out.append(
-            "│ {0:<28} │ {1:>5} │ {2:>9.2f} │ {3:>8.0f} │ {4:>8.0f} │".format(
-                name[:28], cnt, tot_s, avg_ms, max_ms
-            )
-        )
-    out.append(
-        "└{0}┴{1}┴{2}┴{3}┴{4}┘".format(
-            "─" * 30, "─" * 7, "─" * 11, "─" * 10, "─" * 10
-        )
-    )
-    return "\n".join(out)
 
 
 def _parse_iso(timestamp: str | None):
