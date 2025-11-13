@@ -1071,9 +1071,6 @@ def _plain_table(rows):
     return "\n".join(lines)
 
 
-# ---------------------------------
-#          Facade to use
-# ---------------------------------
 @dataclass
 class Telemetry:
     enable: bool = True
@@ -1376,9 +1373,6 @@ class Telemetry:
         if do_save:
             saved_path = self._save_json(payload, filepath=filepath)
 
-        # --- Build Rich renderables ---
-        # console = get_console()
-
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
         header_lines.append(
@@ -1432,51 +1426,4 @@ class Telemetry:
                 Text.from_markup(pricing_str),
             ]  # <- parse markup
 
-        # panel = Panel.fit(
-        #     Group(*renderables),  # <- pass a single renderable
-        #     title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
-        #     border_style="bright_magenta",
-        #     padding=(1, 2),
-        #     box=HEAVY,  # <- beefy border with corners
-        # )
-        # console.print(panel)
-
         _session_ingest(payload)
-
-        # parts = []
-        # parts.append(f"{agent_label} • thread {thread_id} • run {run_id}")
-        # if start_dt and end_dt:
-        #     parts.append(f"{started_at} → {ended_at}   wall: {wall_secs:.2f}s")
-        # parts.append("\nPer-Node / Runnable Timing\n" + _plain_table(r_rows))
-        # parts.append("\nPer-Tool Timing\n" + _plain_table(t_rows))
-        # parts.append("\nPer-LLM Timing\n" + _plain_table(l_rows))
-        # parts.append(
-        #     "\nAttribution\n"
-        #     + (f"  Total run (wall): {wall_secs:.2f}s\n" if wall_secs is not None else "")
-        #     + f"  LLM total: {llm_total:.2f}s\n"
-        #     + f"  Tool total: {tool_total:.2f}s\n"
-        #     + (f"  Unattributed: {unattributed:.2f}s\n" if unattributed is not None else "")
-        #     + f"  Graph bucket sum (overlaps): {graph_bucket_sum:.2f}s"
-        # )
-        # if pricing_text_lines:
-        #     sanitized = []
-        #     for line in pricing_text_lines:
-        #         sanitized.append(
-        #             line.replace("[bold]", "")
-        #                 .replace("[/bold]", "")
-        #                 .replace("[dim]", "")
-        #                 .replace("[/dim]", "")
-        #                 .replace("[bold green]", "")
-        #                 .replace("[/bold green]", "")
-        #         )
-        #     parts.append("\n" + "\n".join(sanitized))
-        # if saved_path:
-        #     parts.append(f"\nSaved metrics JSON to: {saved_path}")
-
-        # include_raw = self.debug_raw if raw is None else raw
-        # if include_raw:
-        #     import pprint as _pp
-        #     parts.append("\nRaw Debug Snapshot\n" + _pp.pformat(self._snapshot(), sort_dicts=True, width=120))
-
-        # return ""
-        # # return "\n".join(parts)
