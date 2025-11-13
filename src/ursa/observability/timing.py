@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import collections
-import datetime
 import importlib
 import json
 import os
@@ -11,6 +10,7 @@ import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import wraps
 from threading import Lock
 from typing import Any, Callable, Dict, List, Tuple
@@ -102,8 +102,6 @@ class SessionRollup:
     ended_at: str | None = None
 
     def ingest(self, payload: dict) -> None:
-        from datetime import datetime
-
         def p(timestamp):
             try:
                 return datetime.fromisoformat(
@@ -206,8 +204,6 @@ def render_session_summary(thread_id: str):
         )
         # display elapsed in panel footer text (computing here)
         try:
-            from datetime import datetime
-
             s, e = (
                 datetime.fromisoformat(
                     rollup.started_at.replace("Z", "+00:00")
@@ -237,7 +233,6 @@ def render_session_summary(thread_id: str):
     )
 
     # cost-by-model table (aligned with a smaller schema)
-    from rich.table import Table
 
     t_cost = Table(
         title="Cost by Model (USD)",
@@ -906,7 +901,7 @@ def _parse_iso(timestamp: str | None):
         return None
     # handle both "...Z" and "+00:00"
     try:
-        return datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except Exception:
         return None
 
@@ -1056,9 +1051,7 @@ class Telemetry:
             "agent": agent,
             "thread_id": thread_id,
             "run_id": uuid.uuid4().hex,
-            "started_at": datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
     @property
@@ -1172,7 +1165,7 @@ class Telemetry:
         os.makedirs(path, exist_ok=True)
 
     def _default_filepath(self) -> str:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         agent = (self.context.get("agent") or "agent").replace(" ", "_")
         thread_id = self.context.get("thread_id") or "thread"
         run_id = (self.context.get("run_id") or "run")[:8]
@@ -1211,9 +1204,7 @@ class Telemetry:
         out = {
             "context": {
                 **self.context,
-                "ended_at": datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat(),
+                "ended_at": datetime.now(timezone.utc).isoformat(),
             },
             "tables": tables,
             "totals": self._totals(tables),
