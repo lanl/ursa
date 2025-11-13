@@ -104,9 +104,7 @@ class SessionRollup:
     def ingest(self, payload: dict) -> None:
         def p(timestamp):
             try:
-                return datetime.fromisoformat(
-                    (timestamp or "").replace("Z", "+00:00")
-                )
+                return datetime.fromisoformat(timestamp)
             except Exception:
                 return None
 
@@ -205,10 +203,8 @@ def render_session_summary(thread_id: str):
         # display elapsed in panel footer text (computing here)
         try:
             s, e = (
-                datetime.fromisoformat(
-                    rollup.started_at.replace("Z", "+00:00")
-                ),
-                datetime.fromisoformat(rollup.ended_at.replace("Z", "+00:00")),
+                datetime.fromisoformat(rollup.started_at),
+                datetime.fromisoformat(rollup.ended_at),
             )
             elapsed = max(0.0, (e - s).total_seconds())
         except Exception:
@@ -899,9 +895,8 @@ def timed_tool(tool_name: str, sink: _Agg | None = None):
 def _parse_iso(timestamp: str | None):
     if not timestamp:
         return None
-    # handle both "...Z" and "+00:00"
     try:
-        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        return datetime.fromisoformat(timestamp)
     except Exception:
         return None
 
