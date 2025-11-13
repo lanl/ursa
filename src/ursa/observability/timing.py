@@ -7,13 +7,13 @@ import json
 import os
 import re
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 from threading import Lock
 from typing import Any, Callable, Dict, List, Tuple
+from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
 from rich import get_console
@@ -1050,7 +1050,7 @@ class Telemetry:
         self.context.update({
             "agent": agent,
             "thread_id": thread_id,
-            "run_id": uuid.uuid4().hex,
+            "run_id": uuid4().hex,
             "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
@@ -1267,9 +1267,7 @@ class Telemetry:
         # Lazily create a per-instance short id (stable for the object's lifetime)
         if not hasattr(self, "_short_id"):
             try:
-                import uuid as _uuid
-
-                self._short_id = _uuid.uuid4().hex[:6]
+                self._short_id = uuid4().hex[:6]
             except Exception:
                 self._short_id = format(id(self) & 0xFFFFFF, "06x")
         agent_label = f"{base_label} [{self._short_id}]"
