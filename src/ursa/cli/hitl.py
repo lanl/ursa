@@ -290,7 +290,7 @@ class HITL:
         return f"[Executor Agent Output]:\n {self.last_agent_result}"
 
     def run_rememberer(self, prompt: str) -> str:
-        memory_output = self.rememberer.remember(prompt)
+        memory_output = self.rememberer.invoke(prompt)
         return f"[Rememberer Output]:\n {memory_output}"
 
     def run_chatter(self, prompt: str) -> str:
