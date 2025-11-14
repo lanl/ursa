@@ -517,6 +517,35 @@ class ExecutionAgent(BaseAgent):
             messages_to_keep=messages_to_keep,
         )
 
+    # Check message history length and summarize to shorten the token usage:
+    def _summarize_context(self, state: ExecutionState) -> ExecutionState:
+        summarized_messages = self.context_summarizer.before_model(state, None)
+        if summarized_messages:
+            tokens_before_summarize = self.context_summarizer.token_counter(
+                state["messages"]
+            )
+            state["messages"] = summarized_messages["messages"]
+            tokens_after_summarize = self.context_summarizer.token_counter(
+                state["messages"][1:]
+            )
+            console.print(
+                Panel(
+                    (
+                        f"Summarized Conversation History:\n"
+                        f"Approximate tokens before: {tokens_before_summarize}\n"
+                        f"Approximate tokens after: {tokens_after_summarize}\n"
+                    ),
+                    title="[bold yellow1 on black]:clipboard: Plan",
+                    border_style="yellow1",
+                    style="bold yellow1 on black",
+                )
+            )
+        else:
+            tokens_after_summarize = self.context_summarizer.token_counter(
+                state["messages"]
+            )
+        return state
+
     # Define the function that calls the model
     def query_executor(self, state: ExecutionState) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
@@ -551,33 +580,7 @@ class ExecutionAgent(BaseAgent):
         os.makedirs(new_state["workspace"], exist_ok=True)
 
         # 1.5) Check message history length and summarize to shorten the token usage:
-        summarized_messages = self.context_summarizer.before_model(
-            new_state, None
-        )
-        if summarized_messages:
-            tokens_before_summarize = self.context_summarizer.token_counter(
-                new_state["messages"]
-            )
-            new_state["messages"] = summarized_messages["messages"]
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                new_state["messages"][1:]
-            )
-            console.print(
-                Panel(
-                    (
-                        f"Summarized Conversation History:\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
-                    ),
-                    title="[bold yellow1 on black]:clipboard: Plan",
-                    border_style="yellow1",
-                    style="bold yellow1 on black",
-                )
-            )
-        else:
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                new_state["messages"]
-            )
+        new_state = self._summarize_context(new_state)
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
@@ -645,34 +648,8 @@ class ExecutionAgent(BaseAgent):
         """
         new_state = state.copy()
 
-        # 1.5) Check message history length and summarize to shorten the token usage:
-        summarized_messages = self.context_summarizer.before_model(
-            new_state, None
-        )
-        if summarized_messages:
-            tokens_before_summarize = self.context_summarizer.token_counter(
-                new_state["messages"]
-            )
-            new_state["messages"] = summarized_messages["messages"]
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                new_state["messages"][1:]
-            )
-            console.print(
-                Panel(
-                    (
-                        f"Summarized Conversation History:\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
-                    ),
-                    title="[bold yellow1 on black]:clipboard: Plan",
-                    border_style="yellow1",
-                    style="bold yellow1 on black",
-                )
-            )
-        else:
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                new_state["messages"]
-            )
+        # 0) Check message history length and summarize to shorten the token usage:
+        new_state = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
         messages = [SystemMessage(content=summarize_prompt)] + new_state[
@@ -740,33 +717,7 @@ class ExecutionAgent(BaseAgent):
         last_msg = new_state["messages"][-1]
 
         # 1.5) Check message history length and summarize to shorten the token usage:
-        summarized_messages = self.context_summarizer.before_model(
-            new_state, None
-        )
-        if summarized_messages:
-            tokens_before_summarize = self.context_summarizer.token_counter(
-                new_state["messages"]
-            )
-            new_state["messages"] = summarized_messages["messages"]
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                new_state["messages"][1:]
-            )
-            console.print(
-                Panel(
-                    (
-                        f"Summarized Conversation History:\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
-                    ),
-                    title="[bold yellow1 on black]:clipboard: Plan",
-                    border_style="yellow1",
-                    style="bold yellow1 on black",
-                )
-            )
-        else:
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                new_state["messages"]
-            )
+        new_state = self._summarize_context(new_state)
 
         # 2) Evaluate any pending run_cmd tool calls for safety.
         tool_responses: list[ToolMessage] = []
