@@ -495,10 +495,12 @@ class ExecutionAgent(BaseAgent):
         llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
+        tokens_before_summarize: int = 50000,
+        messages_to_keep: int = 20,
         **kwargs,
     ):
         """ExecutionAgent class initialization."""
-        super().__init__(llm, **kwargs)
+        super().__init__(llm)
         self.agent_memory = agent_memory
         self.safe_codes = kwargs.get("safe_codes", ["python", "julia"])
         self.get_safety_prompt = get_safety_prompt
@@ -511,10 +513,8 @@ class ExecutionAgent(BaseAgent):
         self._action = self._build_graph()
         self.context_summarizer = SummarizationMiddleware(
             model=self.llm,
-            max_tokens_before_summary=kwargs.get(
-                "tokens_before_summarize", 50000
-            ),
-            messages_to_keep=kwargs.get("messages_to_keep", 20),
+            max_tokens_before_summary=tokens_before_summarize,
+            messages_to_keep=messages_to_keep,
         )
 
     # Define the function that calls the model
