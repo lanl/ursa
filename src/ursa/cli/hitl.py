@@ -26,6 +26,8 @@ from ursa.agents import (
     RecallAgent,
     WebSearchAgent,
 )
+from ursa.cli.config import Settings
+from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
 
 app = Typer()
@@ -33,8 +35,8 @@ app = Typer()
 ursa_banner = r"""
   __  ________________ _
  / / / / ___/ ___/ __ `/
-/ /_/ / /  (__  ) /_/ / 
-\__,_/_/  /____/\__,_/  
+/ /_/ / /  (__  ) /_/ /
+\__,_/_/  /____/\__,_/
 """
 
 
@@ -71,6 +73,7 @@ class HITL:
     arxiv_vectorstore_path: Optional[Path]
     arxiv_download_papers: bool
     ssl_verify: bool
+    settings: Settings
 
     def _make_kwargs(self, **kwargs):
         # NOTE: This is required instead of setting to None because of
@@ -104,6 +107,9 @@ class HITL:
                     self.llm_api_key = self.emb_api_key
                 case str(), None:
                     self.emb_api_key = self.llm_api_key
+
+        # Start MCP Client
+        self.mcp_client = start_mcp_client(self.settings.mcp_servers)
 
         self.model = init_chat_model(
             model=self.llm_model_name,
@@ -364,6 +370,32 @@ class HITL:
             return f"[WebSearch Agent Output]:\n {self.last_agent_result}"
         else:
             raise RuntimeError("Unexpected error while running WebSearchAgent!")
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "HITL":
+        instance = cls(
+            workspace=settings.workspace,
+            llm_model_name=settings.llm_model_name,
+            llm_base_url=settings.llm_base_url,
+            llm_api_key=settings.llm_api_key,
+            max_completion_tokens=settings.max_completion_tokens,
+            emb_model_name=settings.emb_model_name,
+            emb_base_url=settings.emb_base_url,
+            emb_api_key=settings.emb_api_key,
+            share_key=settings.share_key,
+            safe_codes=settings.safe_codes,
+            thread_id=settings.thread_id,
+            arxiv_summarize=settings.arxiv_summarize,
+            arxiv_process_images=settings.arxiv_process_images,
+            arxiv_max_results=settings.arxiv_max_results,
+            arxiv_database_path=settings.arxiv_database_path,
+            arxiv_summaries_path=settings.arxiv_summaries_path,
+            arxiv_vectorstore_path=settings.arxiv_vectorstore_path,
+            arxiv_download_papers=settings.arxiv_download_papers,
+            ssl_verify=settings.ssl_verify,
+            settings=settings,
+        )
+        return instance
 
 
 class UrsaRepl(Cmd):

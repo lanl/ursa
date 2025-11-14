@@ -1,0 +1,33 @@
+[project]
+name = "molfm-mcp"
+version = "0.1.0"
+description = "MCP-Server for Molecular Foundation Models"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.20.0",
+    "openbabel-wheel>=3.1.1.22",
+    "pubchempy>=1.0.5",
+    "pydantic>=2.12.0",
+    "rdkit>=2025.9.1",
+    "requests>=2.32.5",
+    "smirk>=0.1.1",
+    "torch>=2.9.0",
+    "transformers>=4.40,<4.57",
+    "typer>=0.19.2",
+    "ursa-ai",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+ursa-ai = { workspace = true }
+smirk = { git = "https://github.com/BattModels/smirk.git" }
+
+[project.scripts]
+molfm-mcp = "molfm_mcp.cli:app"
