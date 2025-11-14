@@ -17,7 +17,6 @@ integration capabilities while only needing to implement the core _invoke method
 
 import re
 from abc import ABC, abstractmethod
-from contextvars import ContextVar
 from typing import (
     Any,
     Callable,
@@ -44,7 +43,6 @@ from ursa.observability.timing import (
 )
 
 InputLike = Union[str, Mapping[str, Any]]
-_INVOKE_DEPTH = ContextVar("_INVOKE_DEPTH", default=0)
 
 
 def _to_snake(s: str) -> str:
@@ -109,6 +107,9 @@ class BaseAgent(ABC):
             ...
     ```
     """
+
+    # This will be shared across all BaseAgent instances.
+    _invoke_depth: int = 0
 
     _TELEMETRY_KW = {
         "raw_debug",
@@ -297,12 +298,12 @@ class BaseAgent(ABC):
             TypeError: If both positional inputs and non-control keyword arguments are
                 provided simultaneously.
         """
-        # Track invocation depth to manage nested agent calls
-        depth = _INVOKE_DEPTH.get()
-        _INVOKE_DEPTH.set(depth + 1)
+
+        BaseAgent._invoke_depth += 1
+
         try:
             # Start telemetry tracking for the top-level invocation
-            if depth == 0:
+            if BaseAgent._invoke_depth == 1:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
@@ -342,11 +343,10 @@ class BaseAgent(ABC):
 
         finally:
             # Clean up the invocation depth tracking
-            new_depth = _INVOKE_DEPTH.get() - 1
-            _INVOKE_DEPTH.set(new_depth)
+            BaseAgent._invoke_depth -= 1
 
             # For the top-level invocation, finalize telemetry and generate outputs
-            if new_depth == 0:
+            if BaseAgent._invoke_depth == 0:
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
@@ -398,11 +398,11 @@ class BaseAgent(ABC):
                 provided simultaneously.
         """
         # Track invocation depth to manage nested agent calls
-        depth = _INVOKE_DEPTH.get()
-        _INVOKE_DEPTH.set(depth + 1)
+        BaseAgent._invoke_depth += 1
+
         try:
             # Start telemetry tracking for the top-level invocation
-            if depth == 0:
+            if BaseAgent._invoke_depth == 1:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
@@ -442,11 +442,10 @@ class BaseAgent(ABC):
 
         finally:
             # Clean up the invocation depth tracking
-            new_depth = _INVOKE_DEPTH.get() - 1
-            _INVOKE_DEPTH.set(new_depth)
+            BaseAgent._invoke_depth -= 1
 
             # For the top-level invocation, finalize telemetry and generate outputs
-            if new_depth == 0:
+            if BaseAgent._invoke_depth == 0:
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
@@ -543,12 +542,11 @@ class BaseAgent(ABC):
             and ensure telemetry is only rendered once at the top level.
         """
         # Track invocation depth to handle nested agent calls
-        depth = _INVOKE_DEPTH.get()
-        _INVOKE_DEPTH.set(depth + 1)
+        BaseAgent._invoke_depth += 1
 
         try:
             # Start telemetry tracking for top-level invocations only
-            if depth == 0:
+            if BaseAgent._invoke_depth == 1:
                 self.telemetry.begin_run(
                     agent=self.name, thread_id=self.thread_id
                 )
@@ -559,11 +557,10 @@ class BaseAgent(ABC):
 
         finally:
             # Decrement invocation depth when exiting
-            new_depth = _INVOKE_DEPTH.get() - 1
-            _INVOKE_DEPTH.set(new_depth)
+            BaseAgent._invoke_depth -= 1
 
             # Render telemetry data only for top-level invocations
-            if new_depth == 0:
+            if BaseAgent._invoke_depth == 0:
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
