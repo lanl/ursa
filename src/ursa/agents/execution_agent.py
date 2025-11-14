@@ -503,6 +503,7 @@ class ExecutionAgent(BaseAgent):
         llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
+        extra_tools: Optional[list[Callable[..., Any]]] = None,
         **kwargs,
     ):
         """ExecutionAgent class initialization."""
@@ -513,6 +514,9 @@ class ExecutionAgent(BaseAgent):
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
+        self.extra_tools = extra_tools
+        if self.extra_tools is not None:
+            self.tools.extend(self.extra_tools)
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
@@ -783,13 +787,11 @@ class ExecutionAgent(BaseAgent):
         self, new_tools: Callable[..., Any] | list[Callable[..., Any]]
     ) -> None:
         if isinstance(new_tools, list):
-            new_tools = [convert_to_tool(x) for x in new_tools]
-            self.tools.extend(new_tools)
+            self.tools.extend([convert_to_tool(x) for x in new_tools])
         elif isinstance(new_tools, StructuredTool) or isinstance(
             new_tools, Callable
         ):
-            new_tools = convert_to_tool(new_tools)
-            self.tools.append(new_tools)
+            self.tools.append(convert_to_tool(new_tools))
         else:
             raise TypeError("Expected a callable or a list of callables.")
         self.tool_node = ToolNode(self.tools)
@@ -798,21 +800,21 @@ class ExecutionAgent(BaseAgent):
 
     def list_tools(self) -> None:
         print(
-            f"Available tool names are: {','.join([x.name for x in self.tools])}."
+            f"Available tool names are: {', '.join([x.name for x in self.tools])}."
         )
 
     def remove_tool(self, cut_tools: str | list[str]) -> None:
-        if isinstance(cut_tools, list):
+        if isinstance(cut_tools, str):
+            self.remove_tool([cut_tools])
+        elif isinstance(cut_tools, list):
             self.tools = [x for x in self.tools if x.name not in cut_tools]
-        elif isinstance(cut_tools, str):
-            self.tools = [x for x in self.tools if x.name != cut_tools]
+            self.tool_node = ToolNode(self.tools)
+            self.llm = self.llm.bind_tools(self.tools)
+            self._action = self._build_graph()
         else:
             raise TypeError(
                 "Expected a string or a list of strings describing the tools to remove."
             )
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
-        self._action = self._build_graph()
 
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
