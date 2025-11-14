@@ -1,9 +1,9 @@
 from pathlib import Path
-from threading import Lock
 from textwrap import dedent
+from threading import Lock
 
 import torch
-from pydantic import Field, BaseModel
+from pydantic import BaseModel, Field
 from transformers import DataCollatorWithPadding
 
 from ursa.tools.fm_base_tool import TorchModuleTool

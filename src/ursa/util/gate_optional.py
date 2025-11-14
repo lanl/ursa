@@ -1,6 +1,6 @@
-from typing import Iterable
-import inspect
 import functools
+import inspect
+from typing import Iterable
 
 
 def require_optional(mods: str | Iterable[str], *, extra: str | None = None):

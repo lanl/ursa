@@ -5,7 +5,6 @@ import pytest
 
 from ursa.tools import fm_base_tool
 
-
 try:
     import torch
     from torch import nn
@@ -13,7 +12,9 @@ except ModuleNotFoundError:
     torch = None
     nn = None  # type: ignore[assignment]
 
-requires_torch = pytest.mark.skipif(torch is None, reason="PyTorch is not installed")
+requires_torch = pytest.mark.skipif(
+    torch is None, reason="PyTorch is not installed"
+)
 
 
 if torch is not None:
@@ -96,7 +97,9 @@ def test_fastmcp_add_basetool_warns_on_duplicate(monkeypatch, caplog):
     caplog.set_level(logging.WARNING)
 
     replacement_tool = SimpleNamespace(name="duplicate-tool")
-    monkeypatch.setattr(fm_base_tool, "to_fastmcp", lambda tool: replacement_tool)
+    monkeypatch.setattr(
+        fm_base_tool, "to_fastmcp", lambda tool: replacement_tool
+    )
 
     result = fm_base_tool.fastmcp_add_basetool(server, object())
 
@@ -112,7 +115,9 @@ def test_batch_as_completed_processes_batches():
         and DoubleModule is not None
     )  # for static type checkers
     model = DoubleModule()
-    tool = DummyTorchModuleTool(fm=model, batch_size=2, device=torch.device("cpu"))
+    tool = DummyTorchModuleTool(
+        fm=model, batch_size=2, device=torch.device("cpu")
+    )
 
     outputs = list(
         tool.batch_as_completed([{"value": 1}, {"value": 2}, {"value": 3}])
@@ -130,7 +135,9 @@ def test_batch_returns_list():
         and DoubleModule is not None
     )  # for static type checkers
     model = DoubleModule()
-    tool = DummyTorchModuleTool(fm=model, batch_size=2, device=torch.device("cpu"))
+    tool = DummyTorchModuleTool(
+        fm=model, batch_size=2, device=torch.device("cpu")
+    )
 
     outputs = tool.batch([{"value": 4}, {"value": 5}])
 

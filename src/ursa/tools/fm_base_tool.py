@@ -1,12 +1,12 @@
 import logging
-
 from itertools import islice
 from typing import TYPE_CHECKING, Any, Iterable, Sequence
 
-from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
-from langchain_mcp_adapters.tools import FastMCPTool, FuncMetadata, to_fastmcp
+from langchain_mcp_adapters.tools import to_fastmcp
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, Field
+
 from ..util.gate_optional import needs
 
 if TYPE_CHECKING:

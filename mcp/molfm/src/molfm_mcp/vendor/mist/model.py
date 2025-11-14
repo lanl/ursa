@@ -2,11 +2,10 @@
 import json
 from pathlib import Path
 
-import smirk
+import torch
+from safetensors.torch import load_model, save_model
 from smirk import SmirkTokenizerFast  # noqa: F401
 from smirk import SmirkTokenizerFast as SmirkTokenizer  # noqa: F401
-import torch
-from safetensors.torch import save_model, load_model
 from torch import nn
 from transformers import (
     AutoConfig,
