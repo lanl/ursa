@@ -286,7 +286,7 @@ def serve(
     with console.status("[grey50]Starting ursa MCP server ..."):
         from ursa.cli.hitl import HITL
 
-    app_path = "ursa.cli.hitl_api:mcp_app"
+    app_path = "ursa.cli.hitl_mcp:mcp_http_app"
 
     try:
         import uvicorn
@@ -320,8 +320,10 @@ def serve(
     )
     module_name, var_name = app_path.split(":")
     mod = importlib.import_module(module_name)
+    if hasattr(mod, "set_hitl"):
+        mod.set_hitl(hitl)
+
     asgi_app = getattr(mod, var_name)
-    asgi_app.state.hitl = hitl
 
     config = uvicorn.Config(
         app=asgi_app,
