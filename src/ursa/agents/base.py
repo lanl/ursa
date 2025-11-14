@@ -355,6 +355,106 @@ class BaseAgent(ABC):
                     save_raw_records=save_raw_records,
                 )
 
+    # NOTE: The `ainvoke` method uses the PEP 570 `/,*` notation to explicitly state which
+    # arguments can and cannot be passed as positional or keyword arguments.
+    @final
+    def ainvoke(
+        self,
+        inputs: Optional[InputLike] = None,
+        /,
+        *,
+        raw_debug: bool = False,
+        save_json: Optional[bool] = None,
+        metrics_path: Optional[str] = None,
+        save_raw_snapshot: Optional[bool] = None,
+        save_raw_records: Optional[bool] = None,
+        config: Optional[dict] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Executes the agent with the provided inputs and configuration.
+
+        This is the main entry point for agent execution. It handles input normalization,
+        telemetry tracking, and proper execution context management. The method supports
+        flexible input formats - either as a positional argument or as keyword arguments.
+
+        Args:
+            inputs: Optional positional input to the agent. If provided, all non-control
+                keyword arguments will be rejected to avoid ambiguity.
+            raw_debug: If True, displays raw telemetry data for debugging purposes.
+            save_json: If True, saves telemetry data as JSON.
+            metrics_path: Optional file path where telemetry metrics should be saved.
+            save_raw_snapshot: If True, saves a raw snapshot of the telemetry data.
+            save_raw_records: If True, saves raw telemetry records.
+            config: Optional configuration dictionary to override default settings.
+            **kwargs: Additional keyword arguments that can be either:
+                - Input parameters (when no positional input is provided)
+                - Control parameters recognized by the agent
+
+        Returns:
+            The result of the agent's execution.
+
+        Raises:
+            TypeError: If both positional inputs and non-control keyword arguments are
+                provided simultaneously.
+        """
+        # Track invocation depth to manage nested agent calls
+        depth = _INVOKE_DEPTH.get()
+        _INVOKE_DEPTH.set(depth + 1)
+        try:
+            # Start telemetry tracking for the top-level invocation
+            if depth == 0:
+                self.telemetry.begin_run(
+                    agent=self.name, thread_id=self.thread_id
+                )
+
+            # Handle the case where inputs are provided as keyword arguments
+            if inputs is None:
+                # Separate kwargs into input parameters and control parameters
+                kw_inputs: dict[str, Any] = {}
+                control_kwargs: dict[str, Any] = {}
+                for k, v in kwargs.items():
+                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
+                        control_kwargs[k] = v
+                    else:
+                        kw_inputs[k] = v
+                inputs = kw_inputs
+
+                # Only control kwargs remain for further processing
+                kwargs = control_kwargs
+
+            # Handle the case where inputs are provided as a positional argument
+            else:
+                # Ensure no ambiguous keyword arguments are present
+                for k in kwargs.keys():
+                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
+                        raise TypeError(
+                            f"Unexpected keyword argument '{k}'. "
+                            "Pass inputs as a single mapping or omit the positional "
+                            "inputs and pass them as keyword arguments."
+                        )
+
+            # Allow subclasses to normalize or transform the input format
+            normalized = self._normalize_inputs(inputs)
+
+            # Delegate to the subclass implementation with the normalized inputs
+            # and any control parameters
+            return self._ainvoke(normalized, config=config, **kwargs)
+
+        finally:
+            # Clean up the invocation depth tracking
+            new_depth = _INVOKE_DEPTH.get() - 1
+            _INVOKE_DEPTH.set(new_depth)
+
+            # For the top-level invocation, finalize telemetry and generate outputs
+            if new_depth == 0:
+                self.telemetry.render(
+                    raw=raw_debug,
+                    save_json=save_json,
+                    filepath=metrics_path,
+                    save_raw_snapshot=save_raw_snapshot,
+                    save_raw_records=save_raw_records,
+                )
+
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         """Normalizes various input formats into a standardized mapping.
 
@@ -382,6 +482,10 @@ class BaseAgent(ABC):
 
     @abstractmethod
     def _invoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
+        """Subclasses implement the actual work against normalized inputs."""
+        ...
+
+    def _ainvoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
         """Subclasses implement the actual work against normalized inputs."""
         ...
 
