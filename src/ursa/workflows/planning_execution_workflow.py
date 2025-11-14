@@ -1,4 +1,8 @@
+import sqlite3
+from pathlib import Path
+
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
 
@@ -19,6 +23,15 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self.planner = planner
         self.executor = executor
         self.workspace = workspace
+
+        # Setup checkpointing
+        db_path = Path(workspace) / "checkpoint.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        checkpointer = SqliteSaver(conn)
+
+        self.planner.checkpointer = checkpointer
+        self.executor.checkpointer = checkpointer
 
     def _invoke(self, task: str, **kw):
         with console.status(
@@ -88,12 +101,9 @@ class PlanningExecutorWorkflow(BaseWorkflow):
 
 
 def main():
-    import sqlite3
-    from pathlib import Path
     from uuid import uuid4
 
     from langchain.chat_models import init_chat_model
-    from langgraph.checkpoint.sqlite import SqliteSaver
 
     from ursa.agents import ExecutionAgent, PlanningAgent
     from ursa.observability.timing import render_session_summary
@@ -113,34 +123,25 @@ def main():
         f"benchmark and compare the approaches then explain which one is the best."
     )
 
-    executor_model = init_chat_model(model="openai:o4-mini")
+    # Setup Planning Agent
     planner_model = init_chat_model(model="openai:o4-mini")
-
-    # Setup checkpointing
-    db_path = Path(workspace) / "checkpoint.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
-
-    # Init the agents with the model and checkpointer
-    executor = ExecutionAgent(
-        llm=executor_model, checkpointer=checkpointer, enable_metrics=True
-    )
-    executor.thread_id = tid
-
-    planner = PlanningAgent(
-        llm=planner_model, checkpointer=checkpointer, enable_metrics=True
-    )
+    planner = PlanningAgent(llm=planner_model, enable_metrics=True)
     planner.thread_id = tid
 
+    # Setup Execution Agent
+    executor_model = init_chat_model(model="openai:o4-mini")
+    executor = ExecutionAgent(llm=executor_model, enable_metrics=True)
+    executor.thread_id = tid
+
+    # Initialize workflow
     workflow = PlanningExecutorWorkflow(
-        planner=planner,
-        executor=executor,
-        workspace=workspace,
+        planner=planner, executor=executor, workspace=workspace
     )
 
+    # Run problem through the workflow
     workflow(problem)
 
+    # Print agent telemetry data
     render_session_summary(tid)
 
 
