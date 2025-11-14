@@ -1,8 +1,4 @@
-import sqlite3
-from pathlib import Path
-
 from langchain.chat_models import init_chat_model
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
@@ -14,19 +10,9 @@ workspace = "example_dcopf_use"
 executor_model = init_chat_model(model="openai:o3")
 planner_model = init_chat_model(model="openai:o3")
 
-# Setup checkpointing
-db_path = Path(workspace) / "checkpoint.db"
-db_path.parent.mkdir(parents=True, exist_ok=True)
-conn = sqlite3.connect(str(db_path), check_same_thread=False)
-checkpointer = SqliteSaver(conn)
-
 # Init the agents with the model and checkpointer
-executor = ExecutionAgent(
-    llm=executor_model, checkpointer=checkpointer, enable_metrics=True
-)
-planner = PlanningAgent(
-    llm=planner_model, checkpointer=checkpointer, enable_metrics=True
-)
+executor = ExecutionAgent(llm=executor_model, enable_metrics=True)
+planner = PlanningAgent(llm=planner_model, enable_metrics=True)
 
 problem = (
     "Your task is to perform a parameter sweep of a complex computational model. "
@@ -71,9 +57,8 @@ workflow = SimulationUseWorkflow(
     executor=executor,
     workspace=workspace,
     tool_description=tool_description,
-    enable_metrics=True,
 )
 
-workflow.invoke(problem)  # raw_debug=True doesn't seem to trigger anything.
+workflow(problem)
 
 render_session_summary(workflow.thread_id)

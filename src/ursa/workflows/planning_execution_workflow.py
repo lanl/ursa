@@ -119,19 +119,21 @@ def main():
     problem = (
         f"Create a single python script to compute the Fibonacci \n"
         f"number at position {index_to_find} in the sequence.\n\n"
-        f"Compute the answer through more than one distinct technique, \n"
-        f"benchmark and compare the approaches then explain which one is the best."
+        # f"Compute the answer through more than one distinct technique, \n"
+        # f"benchmark and compare the approaches then explain which one is the best."
     )
 
     # Setup Planning Agent
     planner_model = init_chat_model(model="openai:o4-mini")
-    planner = PlanningAgent(llm=planner_model, enable_metrics=True)
-    planner.thread_id = tid
+    planner = PlanningAgent(
+        llm=planner_model, enable_metrics=True, thread_id=tid
+    )
 
     # Setup Execution Agent
     executor_model = init_chat_model(model="openai:o4-mini")
-    executor = ExecutionAgent(llm=executor_model, enable_metrics=True)
-    executor.thread_id = tid
+    executor = ExecutionAgent(
+        llm=executor_model, enable_metrics=True, thread_id=tid
+    )
 
     # Initialize workflow
     workflow = PlanningExecutorWorkflow(

@@ -1,8 +1,6 @@
-import sqlite3
-from pathlib import Path
+from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
@@ -11,6 +9,9 @@ from ursa.workflows import PlanningExecutorWorkflow
 
 def main():
     """Run a simple example of an agent."""
+
+    tid = "run-" + uuid4().hex[:8]
+
     try:
         # Define a simple problem
         problem = "Find a city with as least 10 vowels in its name."
@@ -30,37 +31,26 @@ def main():
 
         print(f"\nSolving problem: {problem}\n")
 
-        # Setup checkpointing
-        db_path = Path(workspace) / "checkpoint.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
-
         # Init the agents with the model and checkpointer
         executor = ExecutionAgent(
             llm=executor_model,
-            checkpointer=checkpointer,
             enable_metrics=True,
-            thread_id="city_vowel_test_executor",
+            thread_id=tid,
         )
+
         planner = PlanningAgent(
             llm=planner_model,
-            checkpointer=checkpointer,
             enable_metrics=True,
-            thread_id="city_vowel_test_planner",
+            thread_id=tid,
         )
 
         workflow = PlanningExecutorWorkflow(
-            planner=planner,
-            executor=executor,
-            workspace=workspace,
-            enable_metrics=True,
-            thread_id="city_vowel_test_workflow",
+            planner=planner, executor=executor, workspace=workspace
         )
 
-        final_results = workflow.invoke(problem)
+        final_results = workflow(problem)
 
-        render_session_summary(workflow.thread_id)
+        render_session_summary(tid)
 
         return final_results
 
