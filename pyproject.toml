@@ -39,6 +39,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.0",
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
+    "langchain-mcp-adapters>=0.1.12,<0.2",
 ]
 classifiers = [
     "Operating System :: OS Independent",

@@ -25,12 +25,11 @@ Entry points:
 - main() shows a minimal demo that writes and runs a script.
 """
 
-import os
-
 # from langchain_core.runnables.graph import MermaidDrawMethod
+import os
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Literal, Mapping, Optional
+from typing import Annotated, Any, Callable, Literal, Mapping, Optional
 
 import randomname
 from langchain.chat_models import BaseChatModel, init_chat_model
@@ -42,7 +41,8 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.tools import InjectedToolCallId, tool
+from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
@@ -108,6 +108,15 @@ class ExecutionState(TypedDict):
 
 
 # Helper functions
+def convert_to_tool(fn):
+    if isinstance(fn, StructuredTool):
+        return fn
+    else:
+        return StructuredTool.from_function(
+            func=fn, name=fn.__name__, description=fn.__doc__
+        )
+
+
 def _strip_fences(snippet: str) -> str:
     """Remove markdown fences from a code snippet.
 
@@ -494,6 +503,7 @@ class ExecutionAgent(BaseAgent):
         llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
+        extra_tools: Optional[list[Callable[..., Any]]] = None,
         **kwargs,
     ):
         """ExecutionAgent class initialization."""
@@ -504,6 +514,9 @@ class ExecutionAgent(BaseAgent):
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
         self.tools = [run_cmd, write_code, edit_code, search_tool]
+        self.extra_tools = extra_tools
+        if self.extra_tools is not None:
+            self.tools.extend(self.extra_tools)
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
@@ -763,6 +776,46 @@ class ExecutionAgent(BaseAgent):
         # Compile and return the executable graph (optionally with a checkpointer).
         return graph.compile(checkpointer=self.checkpointer)
 
+    async def add_mcp_tool(
+        self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
+    ) -> None:
+        client = MultiServerMCPClient(mcp_tools)
+        tools = await client.get_tools()
+        self.add_tool(tools)
+
+    def add_tool(
+        self, new_tools: Callable[..., Any] | list[Callable[..., Any]]
+    ) -> None:
+        if isinstance(new_tools, list):
+            self.tools.extend([convert_to_tool(x) for x in new_tools])
+        elif isinstance(new_tools, StructuredTool) or isinstance(
+            new_tools, Callable
+        ):
+            self.tools.append(convert_to_tool(new_tools))
+        else:
+            raise TypeError("Expected a callable or a list of callables.")
+        self.tool_node = ToolNode(self.tools)
+        self.llm = self.llm.bind_tools(self.tools)
+        self._action = self._build_graph()
+
+    def list_tools(self) -> None:
+        print(
+            f"Available tool names are: {', '.join([x.name for x in self.tools])}."
+        )
+
+    def remove_tool(self, cut_tools: str | list[str]) -> None:
+        if isinstance(cut_tools, str):
+            self.remove_tool([cut_tools])
+        elif isinstance(cut_tools, list):
+            self.tools = [x for x in self.tools if x.name not in cut_tools]
+            self.tool_node = ToolNode(self.tools)
+            self.llm = self.llm.bind_tools(self.tools)
+            self._action = self._build_graph()
+        else:
+            raise TypeError(
+                "Expected a string or a list of strings describing the tools to remove."
+            )
+
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
     ):
@@ -778,6 +831,22 @@ class ExecutionAgent(BaseAgent):
 
         # Delegate execution to the compiled graph.
         return self._action.invoke(inputs, config)
+
+    def _ainvoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
+    ):
+        """Invoke the compiled graph with inputs under a specified recursion limit.
+
+        This method builds a LangGraph config with the provided recursion limit
+        and a "graph" tag, then delegates to the compiled graph's invoke method.
+        """
+        # Build invocation config with a generous recursion limit for long runs.
+        config = self.build_config(
+            recursion_limit=recursion_limit, tags=["graph"]
+        )
+
+        # Delegate execution to the compiled graph.
+        return self._action.ainvoke(inputs, config)
 
     # This property is trying to stop people bypassing invoke
     @property
