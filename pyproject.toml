@@ -85,6 +85,12 @@ pycodestyle.max-doc-length = 80
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
 
+[tool.uv.workspace]
+members = [
+    ".",
+    "mcp/molfm",
+]
+
 [dependency-groups]
 dev = [
     "notebook>=7.3.3",
