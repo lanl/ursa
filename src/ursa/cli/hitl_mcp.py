@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -10,9 +12,7 @@ from dataclasses import dataclass
 from mcp.server.fastmcp import Context, FastMCP  # convenience wrapper
 from mcp.server.session import ServerSession
 
-# ---- Your dependency type (the thing that runs work) ----
-# Import the HITL type just for type hints; the CLI will construct it.
-from ursa.cli.hitl import HITL  # noqa: F401
+from ursa.cli.hitl import HITL
 
 # ---- App-scoped state injection via MCP lifespan ----
 
@@ -50,49 +50,107 @@ mcp = FastMCP(
 )
 
 
+async def _heartbeat(ctx: Context, label: str, interval: float = 5.0) -> None:
+    """
+    Periodically stream bytes so HTTP clients don't hit read timeouts.
+    - If the client provided a progressToken, report structured progress.
+    - Otherwise, send lightweight log messages.
+    """
+    tick = 0
+    try:
+        while True:
+            tick += 1
+            seconds = int(tick * interval)
+            # Try structured progress first (no-op if client didn't send a token)
+            try:
+                ctx.report_progress(tick, message=f"{label}… t={seconds}s")
+            except Exception:
+                # Fallback: log line still streams bytes
+                ctx.info(f"{label}… t={seconds}s")
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            ctx.info(f"{label}… finishing")
+        raise
+
+
+async def _run_with_keepalive(
+    ctx: Context[ServerSession, AppCtx], label: str, fn, *args, **kwargs
+):
+    """
+    Run a blocking HITL function in a worker thread while emitting keepalive bytes.
+    """
+    hb = asyncio.create_task(_heartbeat(ctx, label, interval=5.0))
+    try:
+        # Run the (likely blocking) HITL method in a thread so the loop can stream logs/progress.
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    finally:
+        hb.cancel()
+        with contextlib.suppress(Exception):
+            await hb
+
+
+def _hitl(ctx: Context[ServerSession, AppCtx]) -> HITL:
+    return ctx.request_context.lifespan_context.hitl
+
+
 # Each tool is a thin shim to your HITL methods. The type hints become the tool's JSON Schema.
 @mcp.tool(
     description="Search for papers on arXiv and summarize in the query context."
 )
-def arxiv(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_arxiv(query)
+async def arxiv(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "ArxivAgent processing", _hitl(ctx).run_arxiv, query
+    )
 
 
 @mcp.tool(description="Build a step-by-step plan to solve the user's problem.")
-def plan(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_planner(query)
+async def plan(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "PlanningAgent processing", _hitl(ctx).run_planner, query
+    )
 
 
 @mcp.tool(
     description="Execute a ReAct agent that can write/edit code & run commands."
 )
-def execute(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_executor(query)
+async def execute(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "ExecuteAgent processing", _hitl(ctx).run_executor, query
+    )
 
 
 @mcp.tool(description="Search the web and summarize results in context.")
-def web(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_websearcher(query)
+async def web(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "WebSearchAgent processing", _hitl(ctx).run_websearcher, query
+    )
 
 
 @mcp.tool(description="Recall prior execution steps from memory (RAG).")
-def recall(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_rememberer(query)
+async def recall(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "RecallAgent processing", _hitl(ctx).run_rememberer, query
+    )
 
 
 @mcp.tool(description="Deep reasoning to propose an approach.")
-def hypothesize(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_hypothesizer(query)
+async def hypothesize(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "HypothesizerAgent processing", _hitl(ctx).run_hypothesizer, query
+    )
 
 
 @mcp.tool(description="Direct chat with the hosted LLM.")
-def chat(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
-    return ctx.request_context.lifespan_context.hitl.run_chatter(query)
+async def chat(query: str, ctx: Context[ServerSession, AppCtx]) -> str:
+    return await _run_with_keepalive(
+        ctx, "ChatAgent processing", _hitl(ctx).run_chatter, query
+    )
 
 
 # Optional: a quick ping/health tool (some clients call this)
 @mcp.tool(description="Liveness check.")
-def ping(input: str = "ok") -> str:
+def ping(_: str = "ok") -> str:
     return "pong"
 
 
