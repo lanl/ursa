@@ -634,6 +634,9 @@ class ExecutionAgent(BaseAgent):
             new_state["messages"].append(response)
         except Exception as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
+            new_state["messages"].append(
+                AIMessage(content=f"Response error {e}")
+            )
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
         if self.log_state:
@@ -702,6 +705,9 @@ class ExecutionAgent(BaseAgent):
             new_state["messages"].append(response)
         except Exception as e:
             print("Error: ", e, " ", messages[-1].content)
+            new_state["messages"].append(
+                AIMessage(content=f"Response error {e}")
+            )
 
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
