@@ -39,13 +39,13 @@ from langchain_community.tools import (
 )  # TavilySearchResults,
 from langchain_core.messages import (
     AIMessage,
+    AnyMessage,
     SystemMessage,
     ToolMessage,
 )
 from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
 
@@ -101,7 +101,7 @@ class ExecutionState(TypedDict):
       is_linked).
     """
 
-    messages: Annotated[list, add_messages]
+    messages: list[AnyMessage]
     current_progress: str
     code_files: list[str]
     workspace: str
@@ -668,9 +668,12 @@ class ExecutionAgent(BaseAgent):
         new_state = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
-        messages = [SystemMessage(content=summarize_prompt)] + new_state[
-            "messages"
-        ]
+        messages = (
+            new_state["messages"]
+            if isinstance(new_state["messages"][0], SystemMessage)
+            else [SystemMessage(content=summarize_prompt)]
+            + new_state["messages"]
+        )
 
         # 2) Invoke the LLM to generate a summary; capture content even on failure.
         response_content = ""
