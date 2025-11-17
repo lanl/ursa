@@ -17,7 +17,6 @@ import feedparser
 import pymupdf
 import requests
 from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
@@ -32,6 +31,7 @@ from ursa.util.parse import (
     _get_soup,
     _is_pdf_response,
     extract_main_text_only,
+    read_pdf_text,
     resolve_pdf_from_osti_record,
 )
 
@@ -94,12 +94,6 @@ def _download(url: str, dest_path: str, timeout: int = 20) -> str:
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(r.raw, f)
     return dest_path
-
-
-def _load_pdf_text(path: str) -> str:
-    loader = PyPDFLoader(path)
-    pages = loader.load()
-    return "\n".join(p.page_content for p in pages)
 
 
 # def _basic_readable_text_from_html(html: str) -> str:
@@ -278,7 +272,7 @@ class BaseAcquisitionAgent(BaseAgent):
                     full_text = ""
                     try:
                         if fname.lower().endswith(".pdf"):
-                            full_text = _load_pdf_text(local_path)
+                            full_text = read_pdf_text(local_path)
                         else:
                             with open(
                                 local_path,
@@ -298,7 +292,7 @@ class BaseAcquisitionAgent(BaseAgent):
             return items
 
         # Normal path: search → materialize each
-        with ThreadPoolExecutor(max_workers=min(32, max(1, len(hits)))) as ex:
+        with ThreadPoolExecutor(max_workers=min(4, max(1, len(hits)))) as ex:
             futures = [
                 ex.submit(self._materialize, h)
                 for h in hits
@@ -351,7 +345,7 @@ class BaseAcquisitionAgent(BaseAgent):
                 f.write(summary)
             return i, summary
 
-        with ThreadPoolExecutor(max_workers=min(32, len(state["items"]))) as ex:
+        with ThreadPoolExecutor(max_workers=min(4, len(state["items"]))) as ex:
             futures = [
                 ex.submit(process, i, it) for i, it in enumerate(state["items"])
             ]
@@ -528,7 +522,7 @@ class WebSearchAgent(BaseAcquisitionAgent):
                     self.database_path, _safe_filename(item_id) + ".pdf"
                 )
                 _download(url, local_path)
-                full_text = _load_pdf_text(local_path)
+                full_text = read_pdf_text(local_path)
             else:
                 r = requests.get(url, headers=headers, timeout=20)
                 r.raise_for_status()
@@ -656,13 +650,7 @@ class OSTIAgent(BaseAcquisitionAgent):
                         _download_stream_to(local_path, r)
                         # Extract PDF text
                         try:
-                            from langchain_community.document_loaders import (
-                                PyPDFLoader,
-                            )
-
-                            loader = PyPDFLoader(local_path)
-                            pages = loader.load()
-                            full_text = "\n".join(p.page_content for p in pages)
+                            full_text = read_pdf_text(local_path)
                         except Exception as e:
                             full_text = (
                                 f"[Downloaded but text extraction failed: {e}]"
@@ -799,7 +787,7 @@ class ArxivAgent(BaseAcquisitionAgent):
         full_text = ""
         try:
             _download(pdf_url, local_path)
-            full_text = _load_pdf_text(local_path)
+            full_text = read_pdf_text(local_path)
         except Exception as e:
             full_text = f"[Error loading ArXiv {arxiv_id}: {e}]"
         full_text = self._postprocess_text(full_text, local_path)
