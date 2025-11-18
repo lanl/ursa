@@ -1,11 +1,82 @@
 import importlib
+import inspect
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Any, Dict, Optional
 
 from rich.console import Console
 from typer import Exit, Option, Typer, colors, secho
 
+from ursa.cli.config import Settings
+
 app = Typer()
+
+
+def _parameter_defaults(func) -> Dict[str, Any]:
+    """Return a mapping of parameter defaults for a callable."""
+
+    signature = inspect.signature(func)
+    defaults: Dict[str, Any] = {}
+    for name, param in signature.parameters.items():
+        if param.default is not inspect._empty:
+            defaults[name] = param.default
+    return defaults
+
+
+def _build_settings(
+    config_file: Optional[Path],
+    cli_values: Dict[str, Any],
+    defaults: Dict[str, Any],
+) -> Settings:
+    """Load settings from YAML (if provided) and overlay CLI overrides."""
+
+    file_values: Dict[str, Any] = {}
+    if config_file is not None:
+        config_path = config_file.expanduser()
+        if not config_path.exists():
+            secho(
+                f"Config file '{config_path}' not found.",
+                fg=colors.RED,
+            )
+            raise Exit(code=1)
+        try:
+            import yaml
+        except ImportError as exc:
+            secho(
+                "PyYAML is required to load configuration files. "
+                "Install with: pip install pyyaml",
+                fg=colors.RED,
+            )
+            raise Exit(code=1) from exc
+
+        try:
+            loaded = yaml.safe_load(config_path.read_text())
+        except (OSError, yaml.YAMLError) as exc:
+            secho(
+                f"Failed to read config file '{config_path}': {exc}",
+                fg=colors.RED,
+            )
+            raise Exit(code=1) from exc
+
+        if loaded is None:
+            file_values = {}
+        elif isinstance(loaded, dict):
+            file_values = loaded
+        else:
+            secho(
+                "The YAML configuration must contain a top-level mapping.",
+                fg=colors.RED,
+            )
+            raise Exit(code=1)
+
+    settings = Settings(**file_values)
+    overrides = {
+        key: value
+        for key, value in cli_values.items()
+        if key not in defaults or value != defaults[key]
+    }
+    if overrides:
+        settings = settings.model_copy(update=overrides)
+    return settings
 
 
 @app.command(help="Start ursa REPL")
@@ -13,6 +84,15 @@ def run(
     workspace: Annotated[
         Path, Option(help="Directory to store ursa ouput")
     ] = Path("ursa_workspace"),
+    config_file: Annotated[
+        Optional[Path],
+        Option(
+            "--config",
+            "-c",
+            help="Path to YAML settings file.",
+            envvar="URSA_CONFIG_FILE",
+        ),
+    ] = None,
     llm_model_name: Annotated[
         str,
         Option(
@@ -121,27 +201,34 @@ def run(
     with console.status("[grey50]Loading ursa ..."):
         from ursa.cli.hitl import HITL, UrsaRepl
 
-    hitl = HITL(
-        workspace=workspace,
-        llm_model_name=llm_model_name,
-        llm_base_url=llm_base_url,
-        llm_api_key=llm_api_key,
-        max_completion_tokens=max_completion_tokens,
-        emb_model_name=emb_model_name,
-        emb_base_url=emb_base_url,
-        emb_api_key=emb_api_key,
-        share_key=share_key,
-        thread_id=thread_id,
-        safe_codes=safe_codes,
-        arxiv_summarize=arxiv_summarize,
-        arxiv_process_images=arxiv_process_images,
-        arxiv_max_results=arxiv_max_results,
-        arxiv_database_path=arxiv_database_path,
-        arxiv_summaries_path=arxiv_summaries_path,
-        arxiv_vectorstore_path=arxiv_vectorstore_path,
-        arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+    cli_values = {
+        "workspace": workspace,
+        "llm_model_name": llm_model_name,
+        "llm_base_url": llm_base_url,
+        "llm_api_key": llm_api_key,
+        "max_completion_tokens": max_completion_tokens,
+        "emb_model_name": emb_model_name,
+        "emb_base_url": emb_base_url,
+        "emb_api_key": emb_api_key,
+        "share_key": share_key,
+        "safe_codes": safe_codes,
+        "thread_id": thread_id,
+        "arxiv_summarize": arxiv_summarize,
+        "arxiv_process_images": arxiv_process_images,
+        "arxiv_max_results": arxiv_max_results,
+        "arxiv_database_path": arxiv_database_path,
+        "arxiv_summaries_path": arxiv_summaries_path,
+        "arxiv_vectorstore_path": arxiv_vectorstore_path,
+        "arxiv_download_papers": arxiv_download_papers,
+        "ssl_verify": ssl_verify,
+    }
+
+    settings = _build_settings(
+        config_file=config_file,
+        cli_values=cli_values,
+        defaults=_parameter_defaults(run),
     )
+    hitl = HITL.from_settings(settings)
     UrsaRepl(hitl).run()
 
 
@@ -158,6 +245,15 @@ def serve(
         str,
         Option("--host", help="Bind address.", envvar="URSA_HOST"),
     ] = "127.0.0.1",
+    config_file: Annotated[
+        Optional[Path],
+        Option(
+            "--config",
+            "-c",
+            help="Path to YAML settings file.",
+            envvar="URSA_CONFIG_FILE",
+        ),
+    ] = None,
     port: Annotated[
         int,
         Option("--port", "-p", help="Bind port.", envvar="URSA_PORT"),
@@ -297,27 +393,34 @@ def serve(
         )
         raise Exit(code=1)
 
-    hitl = HITL(
-        workspace=workspace,
-        llm_model_name=llm_model_name,
-        llm_base_url=llm_base_url,
-        llm_api_key=llm_api_key,
-        max_completion_tokens=max_completion_tokens,
-        emb_model_name=emb_model_name,
-        emb_base_url=emb_base_url,
-        emb_api_key=emb_api_key,
-        share_key=share_key,
-        thread_id=thread_id,
-        safe_codes=safe_codes,
-        arxiv_summarize=arxiv_summarize,
-        arxiv_process_images=arxiv_process_images,
-        arxiv_max_results=arxiv_max_results,
-        arxiv_database_path=arxiv_database_path,
-        arxiv_summaries_path=arxiv_summaries_path,
-        arxiv_vectorstore_path=arxiv_vectorstore_path,
-        arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+    cli_values = {
+        "workspace": workspace,
+        "llm_model_name": llm_model_name,
+        "llm_base_url": llm_base_url,
+        "llm_api_key": llm_api_key,
+        "max_completion_tokens": max_completion_tokens,
+        "emb_model_name": emb_model_name,
+        "emb_base_url": emb_base_url,
+        "emb_api_key": emb_api_key,
+        "share_key": share_key,
+        "safe_codes": safe_codes,
+        "thread_id": thread_id,
+        "arxiv_summarize": arxiv_summarize,
+        "arxiv_process_images": arxiv_process_images,
+        "arxiv_max_results": arxiv_max_results,
+        "arxiv_database_path": arxiv_database_path,
+        "arxiv_summaries_path": arxiv_summaries_path,
+        "arxiv_vectorstore_path": arxiv_vectorstore_path,
+        "arxiv_download_papers": arxiv_download_papers,
+        "ssl_verify": ssl_verify,
+    }
+
+    settings = _build_settings(
+        config_file=config_file,
+        cli_values=cli_values,
+        defaults=_parameter_defaults(serve),
     )
+    hitl = HITL.from_settings(settings)
     module_name, var_name = app_path.split(":")
     mod = importlib.import_module(module_name)
     asgi_app = getattr(mod, var_name)

@@ -40,6 +40,9 @@ dependencies = [
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
     "langchain-mcp-adapters>=0.1.12,<0.2",
+    "pydantic-settings>=2.11.0",
+    "pydantic>=2.12.0",
+    "mcp>=1.20.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -82,6 +85,12 @@ pycodestyle.max-doc-length = 80
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
 
+[tool.uv.workspace]
+members = [
+    ".",
+    "mcp/molfm",
+]
+
 [dependency-groups]
 dev = [
     "notebook>=7.3.3",
@@ -103,4 +112,7 @@ opt = [
 ]
 mcp = [
     "fastapi>=0.120.0,<0.121",
+]
+fm = [
+    "torch>=2.9.0",
 ]
