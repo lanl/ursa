@@ -46,6 +46,7 @@ from langchain_core.messages import (
 from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 from langgraph.types import Command
 
@@ -101,7 +102,7 @@ class ExecutionState(TypedDict):
       is_linked).
     """
 
-    messages: list[AnyMessage]
+    messages: Annotated[list[AnyMessage], add_messages]
     current_progress: str
     code_files: list[str]
     workspace: str
