@@ -33,7 +33,7 @@ from typing import Annotated, Any, Callable, Literal, Mapping, Optional
 
 import randomname
 from langchain.agents.middleware import SummarizationMiddleware
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_community.tools import (
     DuckDuckGoSearchResults,
 )  # TavilySearchResults,
@@ -502,7 +502,7 @@ class ExecutionAgent(BaseAgent):
 
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
         extra_tools: Optional[list[Callable[..., Any]]] = None,

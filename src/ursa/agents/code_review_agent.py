@@ -53,7 +53,7 @@ class CodeReviewState(TypedDict):
 class CodeReviewAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
