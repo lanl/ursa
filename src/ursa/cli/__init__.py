@@ -147,9 +147,9 @@ def run(
 
 @app.command()
 def version() -> None:
-    from importlib.metadata import version as get_version
+    from ursa import __version__
 
-    print(get_version("ursa-ai"))
+    print(__version__)
 
 
 @app.command(help="Start MCP server to serve ursa agents")
