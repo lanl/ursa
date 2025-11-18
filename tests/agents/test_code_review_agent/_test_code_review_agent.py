@@ -3,7 +3,6 @@
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import CodeReviewAgent
-from ursa.observability.timing import render_session_summary
 
 
 def test_code_review_agent():
