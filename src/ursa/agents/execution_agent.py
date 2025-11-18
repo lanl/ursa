@@ -508,12 +508,13 @@ class ExecutionAgent(BaseAgent):
         extra_tools: Optional[list[Callable[..., Any]]] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
+        safe_codes: Optional[list[str]] = None,
         **kwargs,
     ):
         """ExecutionAgent class initialization."""
-        super().__init__(llm)
+        super().__init__(llm, **kwargs)
         self.agent_memory = agent_memory
-        self.safe_codes = kwargs.get("safe_codes", ["python", "julia"])
+        self.safe_codes = safe_codes or ["python", "julia"]
         self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
