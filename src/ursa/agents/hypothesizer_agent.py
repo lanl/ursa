@@ -5,7 +5,7 @@ import ast
 from datetime import datetime
 from typing import Any, Literal, Mapping, TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph
 
@@ -48,7 +48,7 @@ class HypothesizerState(TypedDict):
 class HypothesizerAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         **kwargs,
     ):
         super().__init__(llm, **kwargs)

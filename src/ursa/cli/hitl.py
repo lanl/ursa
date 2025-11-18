@@ -117,19 +117,28 @@ class HITL:
             ),
         )
 
-        self.embedding = init_embeddings(
-            model=self.emb_model_name,
-            **self._make_kwargs(
-                http_client=None
-                if self.ssl_verify
-                else httpx.Client(verify=False),
-                base_url=self.emb_base_url,
-                api_key=self.emb_api_key,
-            ),
+        self.embedding = (
+            init_embeddings(
+                model=self.emb_model_name,
+                **self._make_kwargs(
+                    http_client=None
+                    if self.ssl_verify
+                    else httpx.Client(verify=False),
+                    base_url=self.emb_base_url,
+                    api_key=self.emb_api_key,
+                ),
+            )
+            if self.emb_model_name
+            else None
         )
 
-        self.memory = AgentMemory(
-            embedding_model=self.embedding, path=str(self.workspace / "memory")
+        self.memory = (
+            AgentMemory(
+                embedding_model=self.embedding,
+                path=str(self.workspace / "memory"),
+            )
+            if self.embedding
+            else None
         )
 
         self.last_agent_result = ""
@@ -231,7 +240,11 @@ class HITL:
 
     @cached_property
     def rememberer(self) -> RecallAgent:
-        return RecallAgent(llm=self.model, memory=self.memory)
+        return (
+            RecallAgent(llm=self.model, memory=self.memory)
+            if self.memory
+            else None
+        )
 
     def run_arxiv(self, prompt: str) -> str:
         llm_search_query = self.model.invoke(
@@ -290,7 +303,7 @@ class HITL:
         return f"[Executor Agent Output]:\n {self.last_agent_result}"
 
     def run_rememberer(self, prompt: str) -> str:
-        memory_output = self.rememberer.remember(prompt)
+        memory_output = self.rememberer.invoke(prompt) if self.memory else None
         return f"[Rememberer Output]:\n {memory_output}"
 
     def run_chatter(self, prompt: str) -> str:

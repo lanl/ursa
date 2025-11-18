@@ -3,7 +3,7 @@ import pprint
 import subprocess
 from typing import Annotated, Any, Literal, Mapping, TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
@@ -47,7 +47,7 @@ class OptimizerState(TypedDict):
 class OptimizationAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         *args,
         **kwargs,
     ):

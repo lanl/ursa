@@ -46,7 +46,7 @@ def run(
             ),
             envvar="URSA_EMB_NAME",
         ),
-    ] = "openai:text-embedding-3-small",
+    ] = None,
     emb_base_url: Annotated[
         Optional[str],
         Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
@@ -211,7 +211,7 @@ def serve(
             ),
             envvar="URSA_EMB_NAME",
         ),
-    ] = "openai:text-embedding-3-small",
+    ] = None,
     emb_base_url: Annotated[
         Optional[str],
         Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
