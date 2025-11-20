@@ -33,7 +33,7 @@ When initializing `ArxivAgent`, you can customize its behavior with these parame
 | `database_path` | str | 'arxiv_papers' | Directory to store downloaded PDFs |
 | `summaries_path` | str | 'arxiv_generated_summaries' | Directory to store paper summaries |
 | `vectorstore_path` | str | 'arxiv_vectorstores' | Directory to store vector embeddings |
-| `download_papers` | bool | True | Whether to download papers or use existing ones |
+| `download` | bool | True | Whether to download papers or use existing ones |
 
 ## Advanced Usage
 
@@ -47,7 +47,7 @@ agent = ArxivAgent(
     llm=init_chat_model("openai:gpt-5-mini"),  # Use a more powerful model
     max_results=5,       # Fetch more papers
     process_images=False,  # Skip image processing to save time
-    download_papers=False  # Use only papers already in database_path
+    download=False  # Use only papers already in database_path
 )
 ```
 

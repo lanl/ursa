@@ -169,7 +169,7 @@ class HITL:
             vectorstore_path=self.get_path(
                 self.arxiv_vectorstore_path, "arxiv_vectorstores"
             ),
-            download_papers=self.arxiv_download_papers,
+            download=self.arxiv_download_papers,
         )
 
     @cached_property
