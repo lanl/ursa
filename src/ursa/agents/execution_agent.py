@@ -39,11 +39,11 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.tools import StructuredTool, tool
+from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import InjectedState, ToolNode
+from langgraph.prebuilt import ToolNode
 
 # Rich
 from rich import get_console
@@ -55,14 +55,13 @@ from ..prompt_library.execution_prompts import (
     get_safety_prompt,
     summarize_prompt,
 )
-from ..tools import edit_code, run_command, write_code
+from ..tools import edit_code, read_file, run_command, write_code
 from ..tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
     run_web_search,
 )
 from ..util.memory_logger import AgentMemory
-from ..util.parse import read_pdf_text, read_text_file
 from .base import BaseAgent
 
 console = get_console()  # always returns the same instance
@@ -146,28 +145,6 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
         message = state["messages"][index]
 
     return "safe"
-
-
-# Tools for ExecutionAgent
-@tool
-def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
-    """
-    Reads in a file with a given filename into a string. Can read in PDF
-    or files that are text/ASCII. Uses a PDF parser if the filename ends
-    with .pdf (case-insensitive)
-
-    Args:
-        filename: string filename to read in
-    """
-    workspace_dir = state["workspace"]
-    full_filename = os.path.join(workspace_dir, filename)
-
-    print("[READING]: ", full_filename)
-    if full_filename.lower().endswith(".pdf"):
-        file_contents = read_pdf_text(full_filename)
-    else:
-        file_contents = read_text_file(full_filename)
-    return file_contents
 
 
 # Main module class

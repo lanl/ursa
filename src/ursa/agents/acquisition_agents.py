@@ -499,7 +499,7 @@ class WebSearchAgent(BaseAcquisitionAgent):
         results: List[Dict[str, Any]] = []
         with DDGS() as ddgs:
             for r in ddgs.text(
-                query, max_results=self.max_results, backend="duckduckgo"
+                query, max_results=self.max_results, backend="auto"
             ):
                 # r keys typically: title, href, body
                 results.append(r)
