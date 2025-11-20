@@ -70,7 +70,8 @@ class HITL:
     arxiv_summaries_path: Optional[Path]
     arxiv_vectorstore_path: Optional[Path]
     arxiv_download_papers: bool
-    ssl_verify: bool
+    ssl_verify_llm: bool
+    ssl_verify_emb: bool
 
     def _make_kwargs(self, **kwargs):
         # NOTE: This is required instead of setting to None because of
@@ -110,7 +111,7 @@ class HITL:
             max_completion_tokens=self.max_completion_tokens,
             **self._make_kwargs(
                 http_client=None
-                if self.ssl_verify
+                if self.ssl_verify_llm
                 else httpx.Client(verify=False),
                 base_url=self.llm_base_url,
                 api_key=self.llm_api_key,
@@ -122,7 +123,7 @@ class HITL:
                 model=self.emb_model_name,
                 **self._make_kwargs(
                     http_client=None
-                    if self.ssl_verify
+                    if self.ssl_verify_emb
                     else httpx.Client(verify=False),
                     base_url=self.emb_base_url,
                     api_key=self.emb_api_key,

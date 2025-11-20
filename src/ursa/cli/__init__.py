@@ -114,8 +114,14 @@ def run(
             help="Whether or not to allow ArxivAgent to download ArXiv papers."
         ),
     ] = True,
-    ssl_verify: Annotated[
-        bool, Option(help="Whether or not to verify SSL certificates.")
+    ssl_verify_llm: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates for LLM.")
+    ] = True,
+    ssl_verify_emb: Annotated[
+        bool,
+        Option(
+            help="Whether or not to verify SSL certificates for embedding model."
+        ),
     ] = True,
 ) -> None:
     console = Console()
@@ -141,7 +147,8 @@ def run(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+        ssl_verify_llm=ssl_verify_llm,
+        ssl_verify_emb=ssl_verify_emb,
     )
     UrsaRepl(hitl).run()
 
@@ -279,8 +286,14 @@ def serve(
             help="Whether or not to allow ArxivAgent to download ArXiv papers."
         ),
     ] = True,
-    ssl_verify: Annotated[
-        bool, Option(help="Whether or not to verify SSL certificates.")
+    ssl_verify_llm: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates for LLM.")
+    ] = True,
+    ssl_verify_emb: Annotated[
+        bool,
+        Option(
+            help="Whether or not to verify SSL certificates for embedding model."
+        ),
     ] = True,
 ) -> None:
     console = Console()
@@ -317,7 +330,8 @@ def serve(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+        ssl_verify_llm=ssl_verify_llm,
+        ssl_verify_emb=ssl_verify_emb,
     )
     module_name, var_name = app_path.split(":")
     mod = importlib.import_module(module_name)
