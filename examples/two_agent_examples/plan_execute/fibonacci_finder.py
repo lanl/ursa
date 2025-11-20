@@ -69,13 +69,16 @@ with console.status(
     planner_prompt = f"Break this down into one step per technique:\n{problem}"
 
     planning_output = planner.invoke(
-        {"messages": [HumanMessage(content=planner_prompt)]},
+        {
+            "messages": [HumanMessage(content=planner_prompt)],
+            "reflection_steps": 3,
+        },
         config=planner_config,
     )
 
     console.print(
         Panel(
-            planning_output["messages"][-1].content,
+            planning_output["plan_steps"],
             title="[bold yellow1]:clipboard: Plan",
             border_style="yellow1",
         )
