@@ -1,9 +1,10 @@
 from pathlib import Path
 from textwrap import dedent
 from threading import Lock
+from typing import Annotated, Any
 
 import torch
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SkipValidation
 from transformers import DataCollatorWithPadding
 
 from ursa.tools.fm_base_tool import TorchModuleTool
@@ -18,10 +19,9 @@ class Molecule(BaseModel):
 
 class MistModel(TorchModuleTool):
     channels: list[str]
-    tokenizer_lock: Lock = Field(default_factory=lambda: Lock())
+    tokenizer_lock: Annotated[Any, SkipValidation()] = Field(default_factory=Lock)
 
-    args_schema: type[BaseModel] = Field(default=Molecule)
-    output_schema: type[BaseModel] = Field(default=MolecularProperties)
+    args_schema: type[BaseModel] = Molecule
 
     @classmethod
     def get_description(cls, channels: list[dict] | None):
@@ -72,13 +72,21 @@ class MistModel(TorchModuleTool):
             device=device,
         )
 
-    def preprocess(self, molecules: list[Molecule]):
+    def preprocess(self, molecules: list[Molecule] | list[dict[str, Any]]):
+        normalized: list[Molecule] = []
+        for mol in molecules:
+            if isinstance(mol, Molecule):
+                normalized.append(mol)
+            elif isinstance(mol, dict):
+                normalized.append(Molecule(**mol))
+            else:
+                raise TypeError(f"Unsupported molecule payload: {type(mol)}")
         with self.tokenizer_lock:
             collate_fn = DataCollatorWithPadding(self.fm.tokenizer)
-            smis = [mol.smi for mol in molecules]
+            smis = [mol.smi for mol in normalized]
             tokens = collate_fn(self.fm.tokenizer(smis))
         tokens = {k: v.to(self.device) for k, v in tokens.items()}
-        return {"molecules": molecules, **tokens}
+        return {"molecules": normalized, **tokens}
 
     def _forward(self, model_input):
         molecules = model_input.pop("molecules")
@@ -86,14 +94,17 @@ class MistModel(TorchModuleTool):
         return {"molecules": molecules, "output": y}
 
     def postprocess(self, model_output):
-        properties = {}
         y = model_output["output"]
         molecules = model_output["molecules"]
-        for mol, y in zip(molecules, y):
-            for v, chn in zip(y, self.fm.channels):
+        for mol, predictions in zip(molecules, y):
+            properties: dict[str, Property] = {}
+            for value, chn in zip(predictions, self.fm.channels):
                 if chn["name"] not in self.channels:
-                    pass
+                    continue
                 properties[chn["name"]] = Property(
-                    value=v, units=chn.get("units", None)
+                    value=value, units=chn.get("units", None)
                 )
             yield MolecularProperties(molecule=mol.smi, properties=properties)
+
+    def get_output_schema(self, config=None):  # noqa: ANN001
+        return MolecularProperties

@@ -49,11 +49,7 @@ class TorchModuleTool(BaseTool):
 
     # A Pydantic Model defining the input to fm
     # `preprocess` will get a list[args_schema] as it's input
-    args_schema: type[BaseModel] = Field(default=GenericIO)
-
-    # A Pydantic model defining the output from the fm
-    # `postprocess` should yield items of this type
-    output_schema: type[BaseModel] = Field(default=GenericIO)
+    args_schema: type[BaseModel] = GenericIO
 
     def _forward(self, model_inputs):
         """Call the model with the result of `preprocess`"""

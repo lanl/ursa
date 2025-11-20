@@ -27,11 +27,46 @@ def mcp(
             help="Include tool to look up SMILES encodings on PubChem"
         ),
     ] = True,
+    transport: Annotated[
+        Literal["stdio", "sse", "streamable-http"],
+        typer.Option(
+            "--transport",
+            "-t",
+            case_sensitive=False,
+            help="Transport to expose the MCP server on",
+        ),
+    ] = "stdio",
+    host: Annotated[
+        str,
+        typer.Option(
+            "--host",
+            help="Host to bind for network transports (ignored for stdio)",
+        ),
+    ] = "localhost",
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            help="Port to bind for network transports (ignored for stdio)",
+        ),
+    ] = 8000,
+    sse_mount_path: Annotated[
+        str,
+        typer.Option(
+            "--sse-mount-path",
+            help="Mount path to serve SSE transport under",
+        ),
+    ] = "/",
 ):
     """Launch an MCP-server for the MIST models in `models_directory`"""
     from .mist import MistModel
 
-    server = FastMCP("mist", log_level=log_level)
+    server = FastMCP(
+        "mist",
+        log_level=log_level,
+        host=host,
+        port=port,
+    )
     models: dict[str, MistModel] = {}
     assert models_directory.is_dir()
     for model_dir in models_directory.iterdir():
@@ -60,7 +95,11 @@ def mcp(
 
         server.tool()(search_pubchem)
 
-    server.run()
+    run_kwargs = {}
+    if transport == "sse":
+        run_kwargs["mount_path"] = sse_mount_path
+
+    server.run(transport=transport, **run_kwargs)
 
 
 @app.command()
