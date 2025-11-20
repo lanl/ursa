@@ -57,7 +57,7 @@ class HITL:
     llm_base_url: Optional[str]
     llm_api_key: Optional[str]
     max_completion_tokens: int
-    emb_model_name: str
+    emb_model_name: Optional[str]
     emb_base_url: Optional[str]
     emb_api_key: Optional[str]
     share_key: bool
@@ -486,21 +486,25 @@ class UrsaRepl(Cmd):
         )
 
         emb_provider, emb_name = get_provider_and_model(
-            self.hitl.llm_model_name
+            self.hitl.emb_model_name
         )
         self.show(
-            f"[dim]*[/] Embedding Model: [emph]{self.hitl.embedding.model} "
+            f"[dim]*[/] Embedding Model: [emph]{emb_name} "
             f"[dim]{self.hitl.emb_base_url or emb_provider}",
             markdown=False,
         )
 
 
-def get_provider_and_model(model_str: str):
+def get_provider_and_model(model_str: Optional[str]):
+    if model_str is None:
+        return "none", "none"
+
     if ":" in model_str:
         provider, model = model_str.split(":", 1)
     else:
         provider = "openai"
         model = model_str
+
     return provider, model
 
 
