@@ -37,7 +37,9 @@ def run_arxiv_search(
             summaries_path=Path("./arxiv_summaries"),
             download=True,
         )
-        console.print(f"[bold blue on black]Searching ArXiv for {query}")
+        console.print(
+            f"[bold cyan on black]Searching ArXiv for [cyan on black]{query}"
+        )
         assert isinstance(query, str)
 
         arxiv_result = agent.invoke(
@@ -46,9 +48,10 @@ def run_arxiv_search(
         )
         console.print(
             Panel(
-                f"[blue on black]{arxiv_result}",
-                title=f"[bold blue on black]ArXiv summary for {query}",
+                f"{arxiv_result}",
+                title=f"[bold cyan on black]ArXiv summary for {query}",
                 border_style="cyan on black",
+                style="cyan on black",
             )
         )
         return f"[ArXiv Agent Output]:\n {arxiv_result}"
@@ -87,7 +90,9 @@ def run_web_search(
             summaries_path=Path("./web_summaries"),
             download=True,
         )
-        console.print(f"[bold blue on black]Searching Web for {query}")
+        console.print(
+            f"[bold cyan on black]Searching Web for [cyan on black]{query}"
+        )
         assert isinstance(query, str)
 
         web_result = agent.invoke(
@@ -96,9 +101,10 @@ def run_web_search(
         )
         console.print(
             Panel(
-                f"[blue on black]{web_result}",
-                title=f"[bold blue on black]Web summary for {query}",
+                f"{web_result}",
+                title=f"[bold cyan on black]Web summary for {query}",
                 border_style="cyan on black",
+                style="cyan on black",
             )
         )
         return f"[Web Search Agent Output]:\n {web_result}"
@@ -139,7 +145,9 @@ def run_osti_search(
             vectorstore_path=Path("./osti_vectorstores"),
             download=True,
         )
-        console.print(f"[bold blue on black]Searching OSTI.gov for {query}")
+        console.print(
+            f"[bold cyan on black]Searching OSTI.gov for [cyan on black]{query}"
+        )
         assert isinstance(query, str)
 
         osti_result = agent.invoke(
@@ -148,9 +156,10 @@ def run_osti_search(
         )
         console.print(
             Panel(
-                f"[blue on black]{osti_result}",
-                title=f"[bold blue on black]OSTI.gov summary for {query}",
+                f"[cyan on black]{osti_result}",
+                title=f"[bold cyan on black]OSTI.gov summary for {query}",
                 border_style="cyan on black",
+                style="cyan on black",
             )
         )
         return f"[OSTI Agent Output]:\n {osti_result}"
