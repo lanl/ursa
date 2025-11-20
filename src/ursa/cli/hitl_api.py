@@ -1,13 +1,14 @@
-from importlib.metadata import version as get_version
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from ursa import __version__
+
 mcp_app = FastAPI(
     title="URSA Server",
     description="Micro-service for hosting URSA to integrate as an MCP tool.",
-    version=get_version("ursa-ai"),
+    version=__version__,
 )
 
 

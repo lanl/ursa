@@ -1,7 +1,9 @@
 from ursa.agents import MaterialsProjectAgent
 
 # make sure your MP_API_KEY is set in env or pass it here
-agent = MaterialsProjectAgent(max_results=5, enable_metrics=True)
+agent = MaterialsProjectAgent(
+    llm="openai:gpt-5-mini", max_results=5, enable_metrics=True
+)
 # example query: 5 stable Ga/In semiconductors with 1.2–2.2 eV gaps
 query = {"elements": ["Ga", "In"], "band_gap_min": 1.2, "band_gap_max": 2.2}
 context = (

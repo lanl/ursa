@@ -2,7 +2,7 @@
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from typing import Annotated, Any, Dict, Iterator, List, Mapping, Optional
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
@@ -31,7 +31,7 @@ class PlanningState(TypedDict):
 class PlanningAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         **kwargs,
     ):
         super().__init__(llm, **kwargs)

@@ -5,7 +5,7 @@ from functools import cached_property
 from threading import Lock
 from typing import Any, Mapping, TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
@@ -40,7 +40,7 @@ class RAGAgent(BaseAgent):
     def __init__(
         self,
         embedding: Embeddings,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         return_k: int = 10,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,

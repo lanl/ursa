@@ -9,7 +9,7 @@ from urllib.parse import quote
 import feedparser
 import pymupdf
 import requests
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -121,7 +121,7 @@ def remove_surrogates(text: str) -> str:
 class ArxivAgentLegacy(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         summarize: bool = True,
         process_images=True,
         max_results: int = 3,
