@@ -57,6 +57,8 @@ from ..prompt_library.execution_prompts import (
 )
 from ..tools import edit_code, run_command, write_code
 from ..tools.search_tools import (
+    run_arxiv_search,
+    run_osti_search,
     run_web_search,
 )
 from ..util.memory_logger import AgentMemory
@@ -254,7 +256,9 @@ class ExecutionAgent(BaseAgent):
             edit_code,
             read_file,
             run_web_search,
-        ]  # , run_osti_search, run_arxiv_search]
+            run_osti_search,
+            run_arxiv_search,
+        ]
         self.extra_tools = extra_tools
         if self.extra_tools is not None:
             self.tools.extend(self.extra_tools)
