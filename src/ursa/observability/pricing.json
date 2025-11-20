@@ -2,11 +2,23 @@
   "_note": "Prices are per 1K tokens; derived from OpenAI's table (originally per 1M). Source: https://platform.openai.com/docs/pricing",
   "local/*": { "input_per_1k": 0.0, "output_per_1k": 0.0, "cached_input_multiplier": 1.0 },
 
+  "gpt-5.1":                     { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+  "openai:gpt-5.1":              { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+
   "gpt-5":                       { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
   "openai:gpt-5":                { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
 
+  "gpt-5-pro":                   { "input_per_1k": 0.01500, "output_per_1k": 0.12,   "cached_input_multiplier": 1.0 },
+  "openai:gpt-5-pro":            { "input_per_1k": 0.01500, "output_per_1k": 0.12,   "cached_input_multiplier": 1.0 },
+
+  "gpt-5.1-mini":                { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
+  "openai:gpt-5.1-mini":         { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
+
   "gpt-5-mini":                  { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
   "openai:gpt-5-mini":           { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
+
+  "gpt-5.1-nano":                { "input_per_1k": 0.00005, "output_per_1k": 0.0004, "cached_input_multiplier": 0.1 },
+  "openai:gpt-5.1-nano":         { "input_per_1k": 0.00005, "output_per_1k": 0.0004, "cached_input_multiplier": 0.1 },
 
   "gpt-5-nano":                  { "input_per_1k": 0.00005, "output_per_1k": 0.0004, "cached_input_multiplier": 0.1 },
   "openai:gpt-5-nano":           { "input_per_1k": 0.00005, "output_per_1k": 0.0004, "cached_input_multiplier": 0.1 },
@@ -14,17 +26,23 @@
   "gpt-5-chat-latest":           { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
   "openai:gpt-5-chat-latest":    { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
 
+  "gpt-5.1-codex":               { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+  "openai:gpt-5.1-codex":        { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
+
+  "gpt-5.1-codex-mini":          { "input_per_1k": 0.00025, "output_per_1k": 0.002,   "cached_input_multiplier": 0.1 },
+  "openai:gpt-5.1-codex-mini":   { "input_per_1k": 0.00025, "output_per_1k": 0.002,   "cached_input_multiplier": 0.1 },
+
   "gpt-5-codex":                 { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
   "openai:gpt-5-codex":          { "input_per_1k": 0.00125, "output_per_1k": 0.01,   "cached_input_multiplier": 0.1 },
 
-  "gpt-4.1":                     { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
-  "openai:gpt-4.1":              { "input_per_1k": 0.002,   "output_per_1k": 0.008,  "cached_input_multiplier": 0.25 },
+  "gpt-4.1":                     { "input_per_1k": 0.003,   "output_per_1k": 0.012,  "cached_input_multiplier": 0.25 },
+  "openai:gpt-4.1":              { "input_per_1k": 0.003,   "output_per_1k": 0.012,  "cached_input_multiplier": 0.25 },
 
-  "gpt-4.1-mini":                { "input_per_1k": 0.0004,  "output_per_1k": 0.0016, "cached_input_multiplier": 0.25 },
-  "openai:gpt-4.1-mini":         { "input_per_1k": 0.0004,  "output_per_1k": 0.0016, "cached_input_multiplier": 0.25 },
+  "gpt-4.1-mini":                { "input_per_1k": 0.0008,  "output_per_1k": 0.0032, "cached_input_multiplier": 0.25 },
+  "openai:gpt-4.1-mini":         { "input_per_1k": 0.0008,  "output_per_1k": 0.0032, "cached_input_multiplier": 0.25 },
 
-  "gpt-4.1-nano":                { "input_per_1k": 0.0001,  "output_per_1k": 0.0004, "cached_input_multiplier": 0.25 },
-  "openai:gpt-4.1-nano":         { "input_per_1k": 0.0001,  "output_per_1k": 0.0004, "cached_input_multiplier": 0.25 },
+  "gpt-4.1-nano":                { "input_per_1k": 0.0002,  "output_per_1k": 0.0008, "cached_input_multiplier": 0.25 },
+  "openai:gpt-4.1-nano":         { "input_per_1k": 0.0002,  "output_per_1k": 0.0008, "cached_input_multiplier": 0.25 },
 
   "gpt-4o":                      { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 0.5 },
   "openai:gpt-4o":               { "input_per_1k": 0.0025,  "output_per_1k": 0.01,   "cached_input_multiplier": 0.5 },
