@@ -35,9 +35,9 @@ def run_arxiv_search(
             # rag_embedding=self.embedding,
             database_path=Path("./arxiv_downloaded"),
             summaries_path=Path("./arxiv_summaries"),
-            download_papers=True,
+            download=True,
         )
-        console.print(f"[bold blue on black]Searching ArXiv for [/bold]{query}")
+        console.print(f"[bold blue on black]Searching ArXiv for {query}")
         assert isinstance(query, str)
 
         arxiv_result = agent.invoke(
@@ -85,9 +85,9 @@ def run_web_search(
             # rag_embedding=self.embedding,
             database_path=Path("./web_downloads"),
             summaries_path=Path("./web_summaries"),
-            download_papers=True,
+            download=True,
         )
-        console.print(f"[bold blue on black]Searching Web for [/bold]{query}")
+        console.print(f"[bold blue on black]Searching Web for {query}")
         assert isinstance(query, str)
 
         web_result = agent.invoke(
@@ -137,11 +137,9 @@ def run_osti_search(
             database_path=Path("./osti_downloaded_papers"),
             summaries_path=Path("./osti_generated_summaries"),
             vectorstore_path=Path("./osti_vectorstores"),
-            download_papers=True,
+            download=True,
         )
-        console.print(
-            f"[bold blue on black]Searching OSTI.gov for [/bold]{query}"
-        )
+        console.print(f"[bold blue on black]Searching OSTI.gov for {query}")
         assert isinstance(query, str)
 
         osti_result = agent.invoke(
