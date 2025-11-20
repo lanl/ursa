@@ -11,9 +11,6 @@
   "gpt-5-pro":                   { "input_per_1k": 0.01500, "output_per_1k": 0.12,   "cached_input_multiplier": 1.0 },
   "openai:gpt-5-pro":            { "input_per_1k": 0.01500, "output_per_1k": 0.12,   "cached_input_multiplier": 1.0 },
 
-  "gpt-5.1-mini":                { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
-  "openai:gpt-5.1-mini":         { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
-
   "gpt-5-mini":                  { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
   "openai:gpt-5-mini":           { "input_per_1k": 0.00025, "output_per_1k": 0.002,  "cached_input_multiplier": 0.1 },
 
