@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 
 from ursa.agents import RAGAgent
@@ -13,6 +14,7 @@ def test_rag_agent():
     summary_file = summary_dir / "RAG_summary.txt"
 
     agent = RAGAgent(
+        llm=init_chat_model(model="openai:gpt-5-nano"),
         embedding=init_embeddings(model="ollama:nomic-embed-text"),
         database_path="tests/tiny-corpus",
         summaries_path=str(summary_dir),

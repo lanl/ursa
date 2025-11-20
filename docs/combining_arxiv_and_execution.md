@@ -31,7 +31,7 @@ arxiv_agent = ArxivAgent(
     database_path="arxiv_papers_materials1",
     summaries_path="arxiv_summaries_materials1",
     vectorstore_path="arxiv_vectorstores_materials1",
-    download_papers=True,
+    download=True,
 )
 
 # Run a search and analysis
@@ -76,7 +76,7 @@ for message in final_results["messages"]:
 | `database_path` | Path to store downloaded papers |
 | `summaries_path` | Path to store paper summaries |
 | `vectorstore_path` | Path to store vector embeddings |
-| `download_papers` | Whether to download full papers (boolean) |
+| `download` | Whether to download full papers (boolean) |
 
 ### ExecutionAgent
 

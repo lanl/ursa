@@ -5,7 +5,7 @@ from typing import Annotated, Any, Mapping
 import requests
 from bs4 import BeautifulSoup
 from langchain.agents import create_agent
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage, SystemMessage
 from langchain_community.tools import DuckDuckGoSearchResults
 from langgraph.graph import StateGraph
@@ -43,7 +43,7 @@ class WebSearchState(TypedDict):
 class WebSearchAgentLegacy(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         **kwargs,
     ):
         super().__init__(llm, **kwargs)

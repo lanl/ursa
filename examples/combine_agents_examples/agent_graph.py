@@ -69,7 +69,7 @@ arxiver = ArxivAgent(
     database_path="database_neutron_star",
     summaries_path="database_summaries_neutron_star",
     vectorstore_path="vectorstores_neutron_star",
-    download_papers=True,
+    download=True,
 )
 
 executor = ExecutionAgent(llm=model)
