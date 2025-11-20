@@ -26,7 +26,8 @@ def run(
         ),
     ] = "openai:gpt-5",
     llm_base_url: Annotated[
-        str, Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL")
+        Optional[str],
+        Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL"),
     ] = None,
     llm_api_key: Annotated[
         Optional[str],
@@ -36,7 +37,7 @@ def run(
         int, Option(help="Maximum tokens for LLM to output")
     ] = 50000,
     emb_model_name: Annotated[
-        str,
+        Optional[str],
         Option(
             help=(
                 "Model provider and Embedding model name. "
@@ -113,8 +114,14 @@ def run(
             help="Whether or not to allow ArxivAgent to download ArXiv papers."
         ),
     ] = True,
-    ssl_verify: Annotated[
-        bool, Option(help="Whether or not to verify SSL certificates.")
+    ssl_verify_llm: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates for LLM.")
+    ] = True,
+    ssl_verify_emb: Annotated[
+        bool,
+        Option(
+            help="Whether or not to verify SSL certificates for embedding model."
+        ),
     ] = True,
 ) -> None:
     console = Console()
@@ -140,7 +147,8 @@ def run(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+        ssl_verify_llm=ssl_verify_llm,
+        ssl_verify_emb=ssl_verify_emb,
     )
     UrsaRepl(hitl).run()
 
@@ -201,7 +209,7 @@ def serve(
         int, Option(help="Maximum tokens for LLM to output")
     ] = 50000,
     emb_model_name: Annotated[
-        str,
+        Optional[str],
         Option(
             help=(
                 "Model provider and Embedding model name. "
@@ -278,8 +286,14 @@ def serve(
             help="Whether or not to allow ArxivAgent to download ArXiv papers."
         ),
     ] = True,
-    ssl_verify: Annotated[
-        bool, Option(help="Whether or not to verify SSL certificates.")
+    ssl_verify_llm: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates for LLM.")
+    ] = True,
+    ssl_verify_emb: Annotated[
+        bool,
+        Option(
+            help="Whether or not to verify SSL certificates for embedding model."
+        ),
     ] = True,
 ) -> None:
     console = Console()
@@ -316,7 +330,8 @@ def serve(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+        ssl_verify_llm=ssl_verify_llm,
+        ssl_verify_emb=ssl_verify_emb,
     )
     module_name, var_name = app_path.split(":")
     mod = importlib.import_module(module_name)
