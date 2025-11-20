@@ -9,12 +9,12 @@ planning_agent = PlanningAgent(
     llm=init_chat_model(model="openai:gpt-5-nano"), enable_metrics=True
 )
 
-problem_string = "Calculate Pi to 1000 decimal places."
-# problem_string = "Create a one step plan for computing 1+1."
+# problem_string = "Calculate Pi to 1000 decimal places."
+problem_string = "Create a one step plan for computing 1+1."
 
 inputs = {
     "messages": [HumanMessage(content=problem_string)],
-    "reflection_steps": 3,
+    "reflection_steps": 1,
 }
 
 result = planning_agent(inputs)

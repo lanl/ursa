@@ -37,6 +37,8 @@ class Plan(BaseModel):
 
 # planning state
 class PlanningState(TypedDict):
+    """Here is the planning state"""
+
     messages: Annotated[list, add_messages]
     plan_steps: Optional[List[PlanStep]] = Field(
         description="Ordered steps in the solution plan"
@@ -78,6 +80,7 @@ class PlanningAgent(BaseAgent):
 
         try:
             json_text = plan_obj.model_dump_json(indent=2)
+
         except Exception as e:
             raise RuntimeError(
                 f"Failed to serialize Plan object with Pydantic v2: {e}"
@@ -111,11 +114,17 @@ class PlanningAgent(BaseAgent):
         self.add_node(graph, self.generation_node, "generate")
         self.add_node(graph, self.reflection_node, "reflect")
         graph.set_entry_point("generate")
-        graph.add_edge("generate", "reflect")
+        graph.add_conditional_edges(
+            "generate",
+            self._wrap_cond(
+                _should_reflect, "should_reflect", "planning_agent"
+            ),
+            {"reflect": "reflect", "END": END},
+        )
         graph.add_conditional_edges(
             "reflect",
             self._wrap_cond(
-                _should_continue, "should_continue", "planning_agent"
+                _should_regenerate, "should_regenerate", "planning_agent"
             ),
             {"generate": "generate", "END": END},
         )
@@ -157,7 +166,17 @@ class PlanningAgent(BaseAgent):
         yield from self._action.stream(inputs, merged)
 
 
-def _should_continue(state: PlanningState):
+def _should_reflect(state: PlanningState):
+    # Hit the reflection cap?
+    steps = state.get("reflection_steps")
+    if steps == 0:
+        print("PlanningAgent: Reached reflection limit")
+        return "END"
+    else:
+        return "reflect"
+
+
+def _should_regenerate(state: PlanningState):
     reviewMaxLength = 0  # 0 = no limit, else some character limit like 300 (only used for console printing)
 
     # Latest reviewer output (if present)
@@ -170,12 +189,6 @@ def _should_continue(state: PlanningState):
         print("PlanningAgent: Plan APPROVED")
         return "END"
 
-    # Hit the reflection cap?
-    steps = state.get("reflection_steps")
-    if steps == 0:
-        print("PlanningAgent: Reached reflection limit")
-        return "END"
-
     # Not approved — print a concise reason before another cycle
     reason = " ".join(last_content.strip().split())  # collapse whitespace
     if reviewMaxLength > 0 and len(reason) > reviewMaxLength:
@@ -183,5 +196,4 @@ def _should_continue(state: PlanningState):
     print(
         f"PlanningAgent: not approved — iterating again. Reviewer notes: {reason}"
     )
-
     return "generate"
