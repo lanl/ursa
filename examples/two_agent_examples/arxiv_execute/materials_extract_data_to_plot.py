@@ -21,7 +21,7 @@ def main():
         database_path="database_materials1",
         summaries_path="database_summaries_materials1",
         vectorstore_path="vectorstores_materials1",
-        download_papers=True,
+        download=True,
         thread_id=tid,
     )
 

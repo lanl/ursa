@@ -22,7 +22,7 @@ def main():
         database_path="arxiv_papers_materials2",
         summaries_path="arxiv_summaries_materials2",
         vectorstore_path="arxiv_vectorstores_materials2",
-        download_papers=True,
+        download=True,
         thread_id=tid,
     )
 

@@ -57,7 +57,7 @@ class HITL:
     llm_base_url: Optional[str]
     llm_api_key: Optional[str]
     max_completion_tokens: int
-    emb_model_name: str
+    emb_model_name: Optional[str]
     emb_base_url: Optional[str]
     emb_api_key: Optional[str]
     share_key: bool
@@ -70,7 +70,8 @@ class HITL:
     arxiv_summaries_path: Optional[Path]
     arxiv_vectorstore_path: Optional[Path]
     arxiv_download_papers: bool
-    ssl_verify: bool
+    ssl_verify_llm: bool
+    ssl_verify_emb: bool
 
     def _make_kwargs(self, **kwargs):
         # NOTE: This is required instead of setting to None because of
@@ -110,7 +111,7 @@ class HITL:
             max_completion_tokens=self.max_completion_tokens,
             **self._make_kwargs(
                 http_client=None
-                if self.ssl_verify
+                if self.ssl_verify_llm
                 else httpx.Client(verify=False),
                 base_url=self.llm_base_url,
                 api_key=self.llm_api_key,
@@ -122,7 +123,7 @@ class HITL:
                 model=self.emb_model_name,
                 **self._make_kwargs(
                     http_client=None
-                    if self.ssl_verify
+                    if self.ssl_verify_emb
                     else httpx.Client(verify=False),
                     base_url=self.emb_base_url,
                     api_key=self.emb_api_key,
@@ -169,7 +170,7 @@ class HITL:
             vectorstore_path=self.get_path(
                 self.arxiv_vectorstore_path, "arxiv_vectorstores"
             ),
-            download_papers=self.arxiv_download_papers,
+            download=self.arxiv_download_papers,
         )
 
     @cached_property
@@ -486,21 +487,25 @@ class UrsaRepl(Cmd):
         )
 
         emb_provider, emb_name = get_provider_and_model(
-            self.hitl.llm_model_name
+            self.hitl.emb_model_name
         )
         self.show(
-            f"[dim]*[/] Embedding Model: [emph]{self.hitl.embedding.model} "
+            f"[dim]*[/] Embedding Model: [emph]{emb_name} "
             f"[dim]{self.hitl.emb_base_url or emb_provider}",
             markdown=False,
         )
 
 
-def get_provider_and_model(model_str: str):
+def get_provider_and_model(model_str: Optional[str]):
+    if model_str is None:
+        return "none", "none"
+
     if ":" in model_str:
         provider, model = model_str.split(":", 1)
     else:
         provider = "openai"
         model = model_str
+
     return provider, model
 
 
