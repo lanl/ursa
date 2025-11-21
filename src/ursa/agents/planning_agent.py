@@ -88,7 +88,7 @@ class PlanningAgent(BaseAgent):
 
         return {
             "messages": [AIMessage(content=json_text)],
-            "plan_steps": plan_obj.steps,
+            "plan_steps": [step.model_dump() for step in plan_obj.steps],
         }
 
     def reflection_node(self, state: PlanningState) -> PlanningState:

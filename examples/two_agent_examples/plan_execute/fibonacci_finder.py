@@ -16,6 +16,7 @@ from rich.panel import Panel
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.plan_renderer import render_plan_steps_rich
 
 tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
@@ -71,18 +72,20 @@ with console.status(
     planning_output = planner.invoke(
         {
             "messages": [HumanMessage(content=planner_prompt)],
-            "reflection_steps": 3,
+            "reflection_steps": 0,
         },
         config=planner_config,
     )
 
-    console.print(
-        Panel(
-            planning_output["plan_steps"],
-            title="[bold yellow1]:clipboard: Plan",
-            border_style="yellow1",
-        )
-    )
+    render_plan_steps_rich(planning_output["plan_steps"])
+
+    # console.print(
+    #     Panel(
+    #         pprint(planning_output["plan_steps"]),
+    #         title="[bold yellow1]:clipboard: Plan",
+    #         border_style="yellow1",
+    #     )
+    # )
 
 # Execution loop
 last_step_summary = "No previous step."
@@ -97,7 +100,7 @@ for i, step in enumerate(planning_output["plan_steps"]):
     )
 
     console.print(
-        f"[bold orange3]Solving Step {step['id']}:[/]\n[orange3]{step_prompt}[/]"
+        f"[bold orange3]Solving Step {i}:[/]\n[orange3]{step_prompt}[/]"
     )
 
     # Invoke the agent
