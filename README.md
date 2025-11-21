@@ -225,7 +225,7 @@ ch-run -W ursa \
     --bind ${PWD}/scripts:/mnt/workspace \
     --cd /app \
     -- bash -c \
-    "uv run /mnt/workspace/integer_sum.py"
+    "uv run /mnt/workspace/my_script.py"
 ```
 
 ## Development Dependencies
