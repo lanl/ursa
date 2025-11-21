@@ -54,12 +54,12 @@ class TinyCountingModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
 
-class TestState(TypedDict, total=False):
+class SpecState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
 
 
 # --- Minimal agent under test (subclasses BaseAgent and makes one LLM call) ---
-class TestAgent(BaseAgent):
+class Agent(BaseAgent):
     def __init__(
         self,
         llm,
@@ -80,7 +80,7 @@ class TestAgent(BaseAgent):
         self.graph = self._build_graph()
         self._action = self.graph
 
-    def _run_impl(self, state: TestState):
+    def _run_impl(self, state: SpecState):
         # Make one LLM call with callbacks + metadata wired in via build_config()
         cfg = self.build_config(tags=["TestAgent"])
         _ = self.llm.invoke(state["messages"], config=cfg)
@@ -88,7 +88,7 @@ class TestAgent(BaseAgent):
         return {"messages": [AIMessage(content="done")]}
 
     def _build_graph(self):
-        builder = StateGraph(TestState)
+        builder = StateGraph(SpecState)
         builder.add_node(
             "run_impl",
             self._wrap_node(self._run_impl, "run_impl", "test"),
@@ -156,7 +156,7 @@ def test_base_agent_metrics_and_pricing(
     monkeypatch.setenv("URSA_PRICING_JSON", str(pricing_file))
 
     # Instantiate agent with metrics enabled and autosave on
-    agent = TestAgent(
+    agent = Agent(
         llm=TinyCountingModel(),
         enable_metrics=True,
         autosave_metrics=True,
@@ -220,7 +220,7 @@ def test_metrics_toggle_off(tmp_path: Path, monkeypatch, pricing_file: Path):
     # Still set pricing, but it shouldn't be used
     monkeypatch.setenv("URSA_PRICING_JSON", str(pricing_file))
 
-    agent = TestAgent(
+    agent = Agent(
         llm=TinyCountingModel(),
         enable_metrics=False,  # <-- disable metrics
         autosave_metrics=True,  # ignored when metrics disabled
