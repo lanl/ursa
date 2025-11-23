@@ -26,10 +26,23 @@ Entry points:
 """
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
+import base64
+import inspect
+import json
 import os
+import secrets
 import subprocess
+import threading
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, Mapping, Optional
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Iterable,
+    Literal,
+    Mapping,
+    Optional,
+)
 
 import randomname
 from langchain.agents.middleware import SummarizationMiddleware
@@ -40,10 +53,16 @@ from langchain_community.tools import (
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
+    BaseMessage,
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
+from langchain_core.tools import (
+    BaseTool,
+    InjectedToolCallId,
+    StructuredTool,
+    tool,
+)
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
@@ -52,8 +71,11 @@ from langgraph.types import Command
 
 # Rich
 from rich import get_console
+from rich.console import Group
+from rich.json import JSON
 from rich.panel import Panel
 from rich.syntax import Syntax
+from rich.table import Table
 from typing_extensions import TypedDict
 
 from ..prompt_library.execution_prompts import (
@@ -89,6 +111,16 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 #                   include_answer=True)
 
 
+def merge_code_files(a: list[str] | None, b: list[str] | None) -> list[str]:
+    a = a or []
+    b = b or []
+    out: list[str] = []
+    for x in a + b:
+        if x not in out:
+            out.append(x)
+    return out
+
+
 # Classes for typing
 class ExecutionState(TypedDict):
     """TypedDict representing the execution agent's mutable run state used by nodes.
@@ -104,19 +136,421 @@ class ExecutionState(TypedDict):
 
     messages: Annotated[list[AnyMessage], add_messages]
     current_progress: str
-    code_files: list[str]
+    code_files: Annotated[
+        list[str], merge_code_files
+    ]  # multiple code files coming in need a reducer
     workspace: str
     symlinkdir: dict
 
 
+# Tool instrumention helper functions
+def _maybe_json_load(s: str):
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+def to_jsonable(x: Any) -> Any:
+    """Recursively convert objects to something JSON-serializable."""
+    if isinstance(x, (str, int, float, bool)) or x is None:
+        return x
+    if isinstance(x, dict):
+        return {str(k): to_jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple, set)):
+        return [to_jsonable(v) for v in x]
+    if isinstance(x, BaseMessage):
+        # keep it compact & safe
+        return {"message_type": x.type, "content": x.content}
+    # pydantic models
+    if hasattr(x, "model_dump"):
+        try:
+            return to_jsonable(x.model_dump())
+        except Exception:
+            pass
+    if hasattr(x, "dict"):
+        try:
+            return to_jsonable(x.dict())
+        except Exception:
+            pass
+    # final fallback
+    return str(x)
+
+
+def normalize_tool_payload(out: Any):
+    """
+    Normalize tool outputs from MCP/LangChain so we can render nicely:
+    - dict/list → return as-is
+    - string that is JSON → parse to dict/list
+    - ["{...}", null] style → unwrap and parse inner JSON
+    - else → return original string
+    """
+    if isinstance(out, (dict, list)):
+        # unwrap ["{...}", null] pattern
+        if (
+            isinstance(out, list)
+            and len(out) == 2
+            and isinstance(out[0], str)
+            and (out[1] is None or isinstance(out[1], (str, int, float)))
+        ):
+            inner = _maybe_json_load(out[0])
+            return inner if inner is not None else out
+        return out
+
+    if isinstance(out, str):
+        parsed = _maybe_json_load(out)
+        if parsed is not None:
+            if (
+                isinstance(parsed, list)
+                and len(parsed) == 2
+                and isinstance(parsed[0], str)
+                and (
+                    parsed[1] is None
+                    or isinstance(parsed[1], (str, int, float))
+                )
+            ):
+                inner = _maybe_json_load(parsed[0])
+                return inner if inner is not None else parsed
+            return parsed
+        return out
+
+    return out
+
+
+def _redact_state(obj: Any) -> Any:
+    """Recursively replace 'state' payloads with a compact summary."""
+    try:
+        # dict → copy & process
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                if k == "state":
+                    if isinstance(v, dict):
+                        summary = {}
+                        ws = v.get("workspace")
+                        if ws:
+                            summary["workspace"] = ws
+                        msgs = v.get("messages")
+                        if isinstance(msgs, list):
+                            summary["messages"] = f"<{len(msgs)} messages>"
+                        cf = v.get("code_files")
+                        if isinstance(cf, list):
+                            summary["code_files"] = f"<{len(cf)} files>"
+                        out[k] = summary or "<SNIPPED>"
+                    else:
+                        out[k] = "<SNIPPED>"
+                else:
+                    out[k] = _redact_state(v)
+            return out
+        # list/tuple/set → process each
+        if isinstance(obj, (list, tuple, set)):
+            t = type(obj)
+            return t(_redact_state(x) for x in obj)
+        # everything else unchanged
+        return obj
+    except Exception:
+        return "<SNIPPED>"
+
+
+def maybe_redact(obj: Any) -> Any:
+    # you almost ALWAYS want this on . . .
+    # default ON; set REDACT_TOOL_STATE=0 to disable
+    if os.getenv("REDACT_TOOL_STATE", "1") == "0":
+        return obj
+    return _redact_state(obj)
+
+
+def unwrap_adapter_result(out: Any):
+    # Case: ["{...json...}", None] from langchain_mcp_adapters (content, artifact)
+    if isinstance(out, list) and len(out) == 2 and (out[1] is None):
+        first = out[0]
+        if isinstance(first, str):
+            try:
+                return json.loads(first)
+            except Exception:
+                return first
+        return first
+    return out
+
+
+MAX_LOG_STRING_CHARS = int(os.getenv("MAX_LOG_STRING_CHARS", "400"))
+
+
+def _clip_string(s: str, limit: int = MAX_LOG_STRING_CHARS) -> str:
+    if len(s) <= limit:
+        return s
+    return s[:limit] + f"\n…[snipped {len(s) - limit} chars]…"
+
+
+def _looks_base64(s: str) -> bool:
+    # Fast-path heuristic: long, limited alphabet
+    if len(s) < 128:
+        return False
+    for ch in s[:2048]:  # don't scan all
+        if not (ch.isalnum() or ch in "+/=\n\r"):
+            return False
+    return True
+
+
+def _approx_decoded_len_from_b64(s: str) -> int:
+    # ≈ 3/4 of non-padding length
+    t = s.rstrip("=\n\r")
+    return (len(t) * 3) // 4
+
+
+def _redact_large_payload(obj: Any) -> Any:
+    """
+    Recursively redact/clip large values in generic tool I/O payloads.
+    - Known base64 fields -> replace with a compact summary
+    - Any very long strings -> clip
+    """
+    try:
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                if (
+                    isinstance(k, str)
+                    and k in _B64_FIELD_NAMES
+                    and isinstance(v, str)
+                ):
+                    approx = _approx_decoded_len_from_b64(v)
+                    out[k] = f"<base64 payload ~{approx} bytes; redacted>"
+                else:
+                    out[k] = _redact_large_payload(v)
+            return out
+
+        if isinstance(obj, (list, tuple, set)):
+            t = type(obj)
+            return t(_redact_large_payload(x) for x in obj)
+
+        if isinstance(obj, str):
+            if (len(obj) > MAX_LOG_STRING_CHARS) and _looks_base64(obj):
+                approx = _approx_decoded_len_from_b64(obj)
+                return f"<probable base64 ~{approx} bytes; redacted>"
+            # generic long-string clipping
+            return _clip_string(obj)
+
+        # everything else
+        return obj
+    except Exception:
+        return "<SNIPPED>"
+
+
+def _render_tool_io(phase: str, name: str, payload, style: str) -> None:
+    payload = maybe_redact(payload)
+    norm = unwrap_adapter_result(payload)
+    norm = normalize_tool_payload(norm)
+    norm = _redact_large_payload(norm)
+    header = f"[{style}]TOOL {phase}[/] [bold]{name}[/]"
+
+    try:
+        if isinstance(norm, (dict, list)):
+            safe = to_jsonable(norm)
+            body = JSON.from_data(safe)
+        elif isinstance(norm, str):
+            looks_jsonish = norm.strip().startswith(("{", "[", '"'))
+            body = Syntax(
+                norm, "json" if looks_jsonish else "text", word_wrap=True
+            )
+        else:
+            body = Syntax(str(to_jsonable(norm)), "text", word_wrap=True)
+    except Exception:
+        # last-resort fallback to avoid crashing the demo
+        body = Syntax(str(norm), "text", word_wrap=True)
+
+    console.print(Panel(Group(header, body), border_style=style))
+
+
+def instrument_tool(struct_tool):
+    """Wrap a StructuredTool so each call prints args & result using Rich.
+    We ALSO sanitize the *result* here before returning, in case the sanitizer
+    wrapper didn’t hook this particular tool shape.
+    """
+    fn = getattr(struct_tool, "func", None)
+    coro = getattr(struct_tool, "coroutine", None)
+    name = getattr(struct_tool, "name", "<tool>")
+
+    def _sanitize_out(out):
+        # Normalize MCP adapter shapes and cache blobs; never return base64.
+        out = unwrap_adapter_result(out)
+        out = normalize_tool_payload(out)
+        out = _extract_and_cache_blobs(out)
+        return out
+
+    # Sync function
+    if fn and not inspect.iscoroutinefunction(fn):
+        orig = fn
+
+        def logged_fn(*args, **kwargs):
+            _render_tool_io("→", name, kwargs or {"args": args}, "cyan")
+            try:
+                raw = orig(*args, **kwargs)
+                safe = _sanitize_out(raw)
+                _render_tool_io("←", name, safe, "green")
+                return safe
+            except Exception as e:
+                _render_tool_io("!", name, {"error": str(e)}, "red")
+                raise
+
+        struct_tool.func = logged_fn
+
+    # Async function
+    if coro and inspect.iscoroutinefunction(coro):
+        orig_coro = coro
+
+        async def logged_coro(*args, **kwargs):
+            _render_tool_io("→", name, kwargs or {"args": args}, "cyan")
+            try:
+                raw = await orig_coro(*args, **kwargs)
+                safe = _sanitize_out(raw)
+                _render_tool_io("←", name, safe, "green")
+                return safe
+            except Exception as e:
+                _render_tool_io("!", name, {"error": str(e)}, "red")
+                raise
+
+        struct_tool.coroutine = logged_coro
+
+    return struct_tool
+
+
+def _render_tool_plan(tool_calls) -> None:
+    """Pretty-print model's planned tool calls."""
+    if not tool_calls:
+        console.print(
+            Panel.fit(
+                "[bold yellow]No tool calls in this step[/]",
+                border_style="yellow",
+            )
+        )
+        return
+
+    tbl = Table(
+        box=None, show_edge=False, show_header=True, header_style="bold magenta"
+    )
+    tbl.add_column("#", style="dim", width=3)
+    tbl.add_column("Tool", style="bold cyan")
+    tbl.add_column("Args", style="white")
+
+    for i, tc in enumerate(tool_calls, 1):
+        name = tc.get("name")
+        args = tc.get("args") or {}
+        tbl.add_row(str(i), f"[cyan]{name}[/]", JSON.from_data(args))
+
+    console.print(
+        Panel(
+            Group("[bold magenta]Model wants to call[/]", tbl),
+            border_style="magenta",
+        )
+    )
+
+
+_B64_FIELD_NAMES = {
+    "bytes_b64",
+    "file_b64",
+    "data_b64",
+    "content_b64",
+    "blob_b64",
+}
+_BLOB_CACHE: dict[str, bytes] = {}
+_BLOB_CACHE_LOCK = threading.Lock()
+_MAX_BLOB_CACHE_BYTES = int(
+    os.getenv("MAX_BLOB_CACHE_BYTES", str(512 * 1024 * 1024))
+)  # 512MB soft cap
+_BLOB_CACHE_SIZE = 0
+
+
+def _new_blob_id() -> str:
+    return "blob_" + secrets.token_hex(8)
+
+
+def _cache_put(b: bytes) -> str:
+    global _BLOB_CACHE_SIZE
+    with _BLOB_CACHE_LOCK:
+        if _BLOB_CACHE_SIZE + len(b) > _MAX_BLOB_CACHE_BYTES:
+            raise RuntimeError("Blob cache capacity exceeded")
+        bid = _new_blob_id()
+        _BLOB_CACHE[bid] = b
+        _BLOB_CACHE_SIZE += len(b)
+        return bid
+
+
+def _cache_get(bid: str) -> bytes:
+    return _BLOB_CACHE[bid]
+
+
+def _cache_del(bid: str) -> None:
+    global _BLOB_CACHE_SIZE
+    with _BLOB_CACHE_LOCK:
+        b = _BLOB_CACHE.pop(bid, None)
+        if b is not None:
+            _BLOB_CACHE_SIZE -= len(b)
+
+
+def _extract_and_cache_blobs(obj):
+    """
+    Walk tool result; for any *known* base64 fields, store bytes and replace with a small ref:
+    {'bytes_b64': 'AAAA...'} -> {'blob_ref': 'blob_ab12', 'bytes': N}
+    Returns the transformed object.
+    """
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k in _B64_FIELD_NAMES and isinstance(v, str):
+                try:
+                    raw = base64.b64decode(v)
+                    bid = _cache_put(raw)
+                    out["blob_ref"] = bid
+                    out["bytes"] = len(raw)
+                    # keep *no* base64 in the message
+                except Exception:
+                    out[k] = v  # if decode fails, leave as-is
+            else:
+                out[k] = _extract_and_cache_blobs(v)
+        return out
+    if isinstance(obj, list):
+        return [_extract_and_cache_blobs(x) for x in obj]
+    return obj
+
+
+def _sanitize_tool_content(obj):
+    out = unwrap_adapter_result(obj)
+    out = normalize_tool_payload(out)
+    out = _extract_and_cache_blobs(
+        out
+    )  # turns ..._b64 into {"blob_ref": "...", "bytes": N}
+    return out
+
+
+def prepare_tool(t, enable_logging: bool):
+    # Normalize
+    tool_obj = t if isinstance(t, BaseTool) else convert_to_tool(t)
+
+    # Optionally add pretty logging
+    if enable_logging:
+        tool_obj = instrument_tool(tool_obj)
+    return tool_obj
+
+
 # Helper functions
 def convert_to_tool(fn):
+    # Already a LangChain tool? Just return it.
+    if isinstance(fn, BaseTool):
+        return fn
+    # StructuredTool specifically (subclass of BaseTool); safe to pass through
     if isinstance(fn, StructuredTool):
         return fn
-    else:
+    # Plain callable -> wrap as StructuredTool
+    if callable(fn):
         return StructuredTool.from_function(
-            func=fn, name=fn.__name__, description=fn.__doc__
+            func=fn,
+            name=getattr(fn, "__name__", "tool"),
+            description=(fn.__doc__ or ""),
         )
+    # Anything else is unsupported
+    raise TypeError(
+        f"Expected a callable or a LangChain tool, got: {type(fn).__name__}"
+    )
 
 
 def _strip_fences(snippet: str) -> str:
@@ -197,6 +631,13 @@ def _fit_streams_to_budget(stdout: str, stderr: str, total_budget: int):
     return stdout_snip, stderr_snip
 
 
+def _last_ai(msgs: list[BaseMessage]) -> AIMessage | None:
+    for m in reversed(msgs):
+        if isinstance(m, AIMessage):
+            return m
+    return None
+
+
 def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
     """Return 'summarize' if no tool calls in the last message, else 'continue'.
 
@@ -207,14 +648,19 @@ def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
         A literal "summarize" if the last message has no tool calls,
         otherwise "continue".
     """
-    messages = state["messages"]
-    last_message = messages[-1]
-    # If there is no tool call, then we finish
-    if not last_message.tool_calls:
-        return "summarize"
-    # Otherwise if there is, we continue
-    else:
-        return "continue"
+    msgs = state.get("messages", []) or []
+    last_ai = _last_ai(msgs)
+    decision = (
+        "continue"
+        if (last_ai and getattr(last_ai, "tool_calls", None))
+        else "summarize"
+    )
+    # TRACE - may be helpful for debugging, uncomment if needed
+    # tc = (last_ai.tool_calls if last_ai else None)
+    # console.print(f"[red][TRACE][/red] should_continue -> {decision}; "
+    #       f"last_ai={'yes' if last_ai else 'no'}; tool_calls={bool(tc)}; "
+    #       f"ids={[t.get('id') for t in (tc or [])]}")
+    return decision
 
 
 def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
@@ -226,17 +672,19 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
         A literal "safe" if no '[UNSAFE]' tags are in the last command,
         otherwise "unsafe".
     """
-    index = -1
-    message = state["messages"][index]
-    # Loop through all the consecutive tool messages in reverse order
-    while isinstance(message, ToolMessage):
-        if "[UNSAFE]" in message.content:
-            return "unsafe"
-
-        index -= 1
-        message = state["messages"][index]
-
-    return "safe"
+    msgs = state.get("messages", []) or []
+    i = len(msgs) - 1
+    unsafe = False
+    while i >= 0 and isinstance(msgs[i], ToolMessage):
+        c = msgs[i].content or ""
+        if "[UNSAFE]" in c:
+            unsafe = True
+            break
+        i -= 1
+    decision = "unsafe" if unsafe else "safe"
+    # TRACE - may be helpful for debugging, uncomment if needed
+    # console.print(f"[red][TRACE][/red] command_safe -> {decision}")
+    return decision
 
 
 # Tools for ExecutionAgent
@@ -438,6 +886,355 @@ def edit_code(
     return f"File {filename} updated successfully."
 
 
+_CODE_LIKE_EXTS = {
+    ".py",
+    ".ipynb",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".sh",
+    ".rb",
+    ".rs",
+    ".go",
+    ".java",
+    ".c",
+    ".h",
+    ".cpp",
+    ".cxx",
+    ".md",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".ini",
+}
+
+
+# Non-code text we’re OK writing via bytes because files can be large:
+def _is_probably_text(b: bytes) -> bool:
+    try:
+        b.decode("utf-8")
+        return True
+    except Exception:
+        return False
+
+
+@tool
+def write_bytes(
+    data_b64: str | None = None,
+    filename: str = "",  # (optional but nice to default, not required)
+    tool_call_id: Annotated[
+        str, InjectedToolCallId
+    ] = "",  # (Injected at runtime)
+    state: Annotated[dict, InjectedState] = {},  # (Injected at runtime)
+    allow_text: bool = False,
+    overwrite: bool = True,
+    blob_ref: str | None = None,
+) -> Command:
+    """
+    Save BYTES to a file inside the agent's workspace (binary-safe).
+
+    Preferred input: `blob_ref` (a handle created by upstream tools where large base64
+    payloads were cached out-of-band). Use `data_b64` only when a blob_ref is not available.
+
+    Use this tool for:
+      • binary data (PDFs, images, zips, parquet, etc.)
+      • large text data files (CSV/TSV/JSONL/NDJSON). For these, set `allow_text=True`.
+
+    Do NOT use this for source code or small human-edited text; use `write_code` instead.
+
+    Parameters
+    ----------
+    blob_ref : str | None
+        Reference to cached bytes (preferred). Produces no large messages.
+    data_b64 : str | None
+        Base64-encoded bytes (fallback when a blob_ref is unavailable).
+    filename : str
+        Path relative to the workspace (e.g., "downloads/file.pdf"). Directories
+        are created as needed.
+    allow_text : bool
+        If True, allows writing texty payloads via bytes (e.g., large .csv/.tsv/.jsonl).
+        If False and the content looks like source/text with a code-like extension,
+        the tool will refuse and advise using `write_code`.
+    overwrite : bool
+        If False and the file already exists, the tool refuses to overwrite.
+
+    Returns
+    -------
+    Command update with:
+      • messages: human-readable confirmation (size, path)
+      • code_files: updated list including `filename`
+
+    Examples
+    --------
+    # Preferred, with blob_ref
+    write_bytes(blob_ref="blob_ab12", filename="downloads/report.pdf")
+
+    # Fallback, with base64 (small payloads only)
+    write_bytes(data_b64="<base64>", filename="downloads/sample.csv", allow_text=True)
+    """
+
+    ws = state["workspace"]
+    path = os.path.join(ws, filename)
+    os.makedirs(os.path.dirname(path) or ws, exist_ok=True)
+
+    # get raw bytes from either blob_ref (preferred) or base64
+    raw = None
+    if blob_ref:
+        try:
+            raw = _cache_get(blob_ref)
+        except KeyError:
+            # If the blob was already consumed (duplicate tool call),
+            # treat it as idempotent if the target file already exists.
+            if os.path.exists(path):
+                files = state.get("code_files", [])
+                if filename not in files:
+                    files.append(filename)
+                msg = ToolMessage(
+                    content=f"File {filename} already exists; assuming prior write succeeded (blob {blob_ref} was already consumed).",
+                    tool_call_id=tool_call_id,
+                )
+                return Command(update={"code_files": files, "messages": [msg]})
+            msg = ToolMessage(
+                content=f"Blob ref {blob_ref} is not available and file {filename} does not exist; cannot write.",
+                tool_call_id=tool_call_id,
+            )
+            return Command(update={"messages": [msg]})
+    elif data_b64:
+        raw = base64.b64decode(data_b64)
+    else:
+        msg = ToolMessage(
+            content="write_bytes requires data_b64 or blob_ref",
+            tool_call_id=tool_call_id,
+        )
+        return Command(update={"messages": [msg]})
+
+    _, ext = os.path.splitext(filename.lower())
+
+    if _is_probably_text(raw) and not allow_text and (ext in _CODE_LIKE_EXTS):
+        msg = ToolMessage(
+            content=(
+                f"Refusing to write probable source/text '{filename}' with write_bytes. "
+                f"Use write_code for code or pass allow_text=True if this is large data."
+            ),
+            tool_call_id=tool_call_id,
+        )
+        return Command(update={"messages": [msg]})
+
+    if os.path.exists(path) and not overwrite:
+        msg = ToolMessage(
+            content=f"File exists, not overwriting: {filename}",
+            tool_call_id=tool_call_id,
+        )
+        return Command(update={"messages": [msg]})
+
+    with open(path, "wb") as f:
+        f.write(raw)
+
+    if blob_ref:
+        _cache_del(blob_ref)
+
+    files = state.get("code_files", [])
+    if filename not in files:
+        files.append(filename)
+
+    msg = ToolMessage(
+        content=(
+            f"Wrote {len(raw)} bytes to {filename} in workspace.  "
+            f"Next step: read the local path '{filename}' (if needed) instead of re-downloading."
+        ),
+        tool_call_id=tool_call_id,
+    )
+    return Command(update={"code_files": files, "messages": [msg]})
+
+
+@tool
+def append_bytes(
+    data_b64: str | None = None,
+    filename: str = "",
+    expected_offset: int = 0,
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    state: Annotated[dict, InjectedState] = {},
+    blob_ref: str | None = None,
+) -> Command:
+    """
+    Append BYTES to an existing file inside the agent's workspace (streaming/chunked writes).
+
+    Use when an upstream tool returns data in multiple chunks (e.g., byte ranges).
+    Call `write_bytes(...)` once to create the file; then call `append_bytes(...)`
+    for each subsequent chunk.
+
+    Preferred input: `blob_ref`. Use `data_b64` only if a blob_ref is not available.
+
+    Parameters
+    ----------
+    blob_ref : str | None
+        Reference to cached bytes for this chunk (preferred).
+    data_b64 : str | None
+        Base64-encoded bytes for this chunk (fallback).
+    filename : str
+        Path relative to the workspace; must already exist if this is not the first chunk.
+    expected_offset : int | None
+        Integrity check. If provided, it must equal the current file size (bytes)
+        before appending; otherwise the append is refused. Use this to catch
+        out-of-order chunks.
+
+    Returns
+    -------
+    Command update with:
+      • messages: confirmation with appended byte count
+      • code_files: updated list including `filename`
+
+    Examples
+    --------
+    # Create file with first chunk
+    write_bytes(blob_ref="blob_0001", filename="downloads/huge.csv", allow_text=True)
+
+    # Append subsequent chunks with integrity checks
+    append_bytes(blob_ref="blob_0002", filename="downloads/huge.csv", expected_offset=1048576)
+    append_bytes(blob_ref="blob_0003", filename="downloads/huge.csv", expected_offset=2097152)
+    """
+    ws = state["workspace"]
+    path = os.path.join(ws, filename)
+    os.makedirs(os.path.dirname(path) or ws, exist_ok=True)
+
+    current = os.path.getsize(path) if os.path.exists(path) else 0
+    if expected_offset is not None and current != expected_offset:
+        msg = ToolMessage(
+            content=f"Offset mismatch: file={current}, expected={expected_offset}. Aborting append.",
+            tool_call_id=tool_call_id,
+        )
+        return Command(update={"messages": [msg]})
+
+    if blob_ref:
+        raw = _cache_get(blob_ref)
+        _cache_del(blob_ref)
+    elif data_b64:
+        raw = base64.b64decode(data_b64)
+    else:
+        msg = ToolMessage(
+            content="append_bytes requires data_b64 or blob_ref",
+            tool_call_id=tool_call_id,
+        )
+        return Command(update={"messages": [msg]})
+
+    with open(path, "ab") as f:
+        f.write(raw)
+
+    files = state.get("code_files", [])
+    if filename not in files:
+        files.append(filename)
+
+    msg = ToolMessage(
+        content=f"Appended {len(raw)} bytes to {filename}.",
+        tool_call_id=tool_call_id,
+    )
+    return Command(update={"code_files": files, "messages": [msg]})
+
+
+def _collect_tool_links(msgs):
+    """Map assistant tool-calls <-> tool messages so we never break pairs."""
+    ai_idx_to_ids = {}
+    id_to_tool_idxs = {}
+    for i, m in enumerate(msgs):
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            ids = [tc.get("id") for tc in m.tool_calls if tc.get("id")]
+            if ids:
+                ai_idx_to_ids[i] = ids
+        if isinstance(m, ToolMessage):
+            tcid = getattr(m, "tool_call_id", None)
+            if tcid:
+                id_to_tool_idxs.setdefault(tcid, []).append(i)
+    return ai_idx_to_ids, id_to_tool_idxs
+
+
+def _shrink_tool_msg(m):
+    """Keep the tool_call_id but replace content with a tiny stub."""
+    return ToolMessage(
+        content="<redacted tool output>",
+        tool_call_id=getattr(m, "tool_call_id", None),
+    )
+
+
+def _size_of_msg(m) -> int:
+    try:
+        if isinstance(m, ToolMessage):
+            c = m.content
+            if isinstance(c, (dict, list)):
+                return len(json.dumps(c))
+            return len(str(c))
+        if isinstance(m, AIMessage):
+            base = len(str(m.content))
+            if getattr(m, "tool_calls", None):
+                base += len(json.dumps(m.tool_calls))
+            return base
+        return len(str(getattr(m, "content", "")))
+    except Exception:
+        return 10000
+
+
+def _scrub_messages_for_llm(msgs: list[AnyMessage]) -> list[AnyMessage]:
+    cleaned: list[AnyMessage] = []
+    for m in msgs:
+        # Only mutate ToolMessage; pass others through unless they contain giant base64 in strings.
+        if isinstance(m, ToolMessage):
+            c = m.content
+            # If dict/list, ensure any residual base64-ish fields are replaced with blob_ref summaries
+            if isinstance(c, (dict, list)):
+                # normalize + sanitize again defensively (cheap + safe)
+                c2 = _extract_and_cache_blobs(
+                    normalize_tool_payload(unwrap_adapter_result(c))
+                )
+                cleaned.append(
+                    ToolMessage(
+                        content=c2,
+                        tool_call_id=getattr(m, "tool_call_id", None),
+                    )
+                )
+                continue
+
+            # If it's a giant base64-y string, nuke it to a placeholder
+            if isinstance(c, str) and len(c) > 10_000 and _looks_base64(c):
+                cleaned.append(
+                    ToolMessage(
+                        content="<redacted binary payload; see blob_ref>",
+                        tool_call_id=getattr(m, "tool_call_id", None),
+                    )
+                )
+                continue
+
+        # Also trim absurdly long *string* content on Human/AI messages (rare but safe)
+        if (
+            hasattr(m, "content")
+            and isinstance(m.content, str)
+            and len(m.content) > 50_000
+        ):
+            trimmed = (
+                m.content[:50_000]
+                + f"\n…[snipped {len(m.content) - 50_000} chars]…"
+            )
+            nm = type(m)(
+                content=trimmed,
+                **{
+                    k: v for k, v in m.__dict__.items() if k not in ("content",)
+                },
+            )
+            cleaned.append(nm)
+            continue
+
+        cleaned.append(m)
+
+    # Enforce a hard cap on the tail to avoid pathological growth
+    MAX_TAIL = 60  # tune to model window, we could modify this
+    if len(cleaned) > MAX_TAIL:
+        # Keep the system prompt (index 0), drop the oldest excess from the middle
+        head = [cleaned[0]]
+        tail = cleaned[-(MAX_TAIL - 1) :]
+        cleaned = head + tail
+    return cleaned
+
+
 # Main module class
 class ExecutionAgent(BaseAgent):
     """Orchestrates model-driven code execution, tool calls, and state management.
@@ -509,21 +1306,41 @@ class ExecutionAgent(BaseAgent):
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         safe_codes: Optional[list[str]] = None,
+        tool_log: Optional[bool] = None,
         **kwargs,
     ):
         """ExecutionAgent class initialization."""
         super().__init__(llm, **kwargs)
+
         self.agent_memory = agent_memory
         self.safe_codes = safe_codes or ["python", "julia"]
         self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
         self.summarize_prompt = summarize_prompt
-        self.tools = [run_cmd, write_code, edit_code, search_tool]
+
+        # opt-in tool logging: env or explicit arg
+        env_val = os.getenv("URSA_AGENT_TOOL_LOG", "0").strip().lower()
+        env_enabled = env_val in ("1", "true", "yes", "on")
+        self.tool_log = bool(tool_log) if tool_log is not None else env_enabled
+
+        base_tools = [
+            run_cmd,
+            write_code,
+            edit_code,
+            write_bytes,
+            append_bytes,
+            search_tool,
+        ]
         self.extra_tools = extra_tools
         if self.extra_tools is not None:
-            self.tools.extend(self.extra_tools)
+            base_tools.extend(self.extra_tools)
+        self.tools = [
+            prepare_tool(t, enable_logging=self.tool_log) for t in base_tools
+        ]
+
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
+
         self.log_state = log_state
         self._action = self._build_graph()
         self.context_summarizer = SummarizationMiddleware(
@@ -532,10 +1349,40 @@ class ExecutionAgent(BaseAgent):
             messages_to_keep=messages_to_keep,
         )
 
+    def _missing_tool_outputs(self, msgs: list[BaseMessage]) -> list[str]:
+        """Return tool_call_ids from the last assistant-with-tools
+        that are not followed by ToolMessages."""
+        last_ai_idx = None
+        last_ids = []
+        for i in range(len(msgs) - 1, -1, -1):
+            m = msgs[i]
+            if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+                ids = [tc.get("id") for tc in m.tool_calls if tc.get("id")]
+                if ids:
+                    last_ai_idx = i
+                    last_ids = ids
+                    break
+        if last_ai_idx is None:
+            return []
+        got = {
+            getattr(m, "tool_call_id", None)
+            for m in msgs[last_ai_idx + 1 :]
+            if isinstance(m, ToolMessage)
+        }
+        return [tid for tid in last_ids if tid not in got]
+
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
+        # Never summarize when the last assistant-with-tools is not fully satisfied.
+        if self._missing_tool_outputs(state["messages"]):
+            return state
+
         summarized_messages = self.context_summarizer.before_model(state, None)
         if summarized_messages:
+            # Print a scrubbed view only (no blobs)
+            safe_view = _scrub_messages_for_llm(state["messages"])
+            print(safe_view)
+
             tokens_before_summarize = self.context_summarizer.token_counter(
                 state["messages"]
             )
@@ -599,7 +1446,13 @@ class ExecutionAgent(BaseAgent):
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
-        if isinstance(sd, dict) and "is_linked" not in sd:
+        if (
+            isinstance(sd, dict)
+            and sd  # ignore empty {}
+            and "is_linked" not in sd
+            and "source" in sd
+            and "dest" in sd
+        ):
             # symlinkdir structure: {"source": "/path/to/src", "dest": "link/name"}
             symlinkdir = sd
 
@@ -621,22 +1474,48 @@ class ExecutionAgent(BaseAgent):
             print(f"{RED}Symlinked {src} (source) --> {dst} (dest)")
             new_state["symlinkdir"]["is_linked"] = True
 
-        # 3) Ensure the executor prompt is the first SystemMessage.
-        if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(
-                content=self.executor_prompt
-            )
+        # 3) Ensure executor prompt is present, but don't clobber an existing SystemMessage.
+        msgs = new_state["messages"] or []
+        if msgs and isinstance(msgs[0], SystemMessage):
+            # Keep the existing system; prepend ours only if it's not already present.
+            if (
+                not msgs[0].content
+                or msgs[0].content.strip() != self.executor_prompt.strip()
+            ):
+                new_state["messages"] = [
+                    SystemMessage(content=self.executor_prompt)
+                ] + msgs
         else:
+            # No system at all → prepend ours
             new_state["messages"] = [
                 SystemMessage(content=self.executor_prompt)
-            ] + state["messages"]
+            ] + msgs
 
         # 4) Invoke the LLM with the prepared message sequence.
         try:
+            # Never call the model while an assistant-with-tools is unresolved.
+            missing = self._missing_tool_outputs(new_state["messages"])
+            if missing:
+                # TRACE - may be helpful for debugging, uncomment if needed
+                # console.print(f"[red][TRACE][/red] query_executor: waiting for tool replies for ids={missing}")
+                return new_state
+
+            scrubbed = _scrub_messages_for_llm(new_state["messages"])
+            # persist the scrubbed history so subsequent turns don't grow again
             response = self.llm.invoke(
-                new_state["messages"], self.build_config(tags=["agent"])
+                scrubbed, self.build_config(tags=["agent"])
             )
+            # TRACE - may be helpful for debugging, uncomment if needed
+            # tcs = getattr(response, "tool_calls", None) or []
+            # console.print(f"[red][TRACE][/red] query_executor: model returned {len(tcs)} tool calls -> "
+            #    f"{[ (t.get('name'), t.get('id')) for t in tcs ]}")
+
+            if self.tool_log:
+                _render_tool_plan(getattr(response, "tool_calls", None))
+
+            # Append the assistant response to canonical state after logging.
             new_state["messages"].append(response)
+
         except Exception as e:
             print("Error: ", e, " ", new_state["messages"][-1].content)
             new_state["messages"].append(
@@ -666,7 +1545,11 @@ class ExecutionAgent(BaseAgent):
         """
         new_state = state.copy()
 
-        # 0) Check message history length and summarize to shorten the token usage:
+        # 0) Skip summarization if last assistant-with-tools isn't satisfied
+        if self._missing_tool_outputs(new_state["messages"]):
+            return new_state
+
+        # 0.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
@@ -680,9 +1563,11 @@ class ExecutionAgent(BaseAgent):
         # 2) Invoke the LLM to generate a summary; capture content even on failure.
         response_content = ""
         try:
+            scrubbed_for_model = _scrub_messages_for_llm(messages)
             response = self.llm.invoke(
-                messages, self.build_config(tags=["summarize"])
+                scrubbed_for_model, self.build_config(tags=["summarize"])
             )
+
             response_content = response.content
             new_state["messages"].append(response)
         except Exception as e:
@@ -694,22 +1579,17 @@ class ExecutionAgent(BaseAgent):
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
             memories: list[str] = []
-            # Collect human/system/tool message content; for AI tool calls, store args.
-            for msg in new_state["messages"]:
-                if not isinstance(msg, AIMessage):
-                    memories.append(msg.content)
-                elif not msg.tool_calls:
-                    memories.append(msg.content)
+            # Use a safe projection for logging
+            safe_view = _scrub_messages_for_llm(new_state["messages"])
+            for msg in safe_view:
+                if isinstance(msg, AIMessage) and msg.tool_calls:
+                    # Log tool names/arg keys but not big payloads
+                    for tc in msg.tool_calls:
+                        memories.append(f"Tool Name: {tc.get('name')}")
+                        for k in tc.get("args") or {}:
+                            memories.append(f"Arg: {k}")
                 else:
-                    tool_strings = []
-                    for tool in msg.tool_calls:
-                        tool_strings.append("Tool Name: " + tool["name"])
-                        for arg_name in tool["args"]:
-                            tool_strings.append(
-                                f"Arg: {str(arg_name)}\nValue: "
-                                f"{str(tool['args'][arg_name])}"
-                            )
-                    memories.append("\n".join(tool_strings))
+                    memories.append(getattr(msg, "content", ""))
             memories.append(response_content)
             self.agent_memory.add_memories(memories)
 
@@ -736,60 +1616,139 @@ class ExecutionAgent(BaseAgent):
             ExecutionState: Either the unchanged state (all safe) or a copy with one
                 or more ToolMessages appended when unsafe commands are detected.
         """
-        # 1) Work on a shallow copy; inspect the most recent model message.
         new_state = state.copy()
+
         last_msg = new_state["messages"][-1]
+        # Only run safety checks when the model is proposing tool calls
+        if not isinstance(last_msg, AIMessage) or not getattr(
+            last_msg, "tool_calls", None
+        ):
+            return new_state
 
-        # 1.5) Check message history length and summarize to shorten the token usage:
-        new_state = self._summarize_context(new_state)
-
-        # 2) Evaluate any pending run_cmd tool calls for safety.
+        # 1) Evaluate pending run_cmd calls (no history needed; use purpose-built system prompt)
         tool_responses: list[ToolMessage] = []
         any_unsafe = False
-        for tool_call in last_msg.tool_calls:
-            if tool_call["name"] != "run_cmd":
+
+        for tc in last_msg.tool_calls:
+            if tc.get("name") != "run_cmd":
                 continue
 
-            query = tool_call["args"]["query"]
+            query = (tc.get("args") or {}).get("query", "")
+            # Build the minimal safety prompt and scrub the view we send to the model
+            safety_msgs = get_safety_prompt(
+                query, self.safe_codes, new_state.get("code_files", [])
+            )
             safety_result = self.llm.invoke(
-                self.get_safety_prompt(
-                    query, self.safe_codes, new_state.get("code_files", [])
-                ),
+                _scrub_messages_for_llm(safety_msgs),
                 self.build_config(tags=["safety_check"]),
             )
 
-            if "[NO]" in safety_result.content:
+            if "[NO]" in (safety_result.content or ""):
                 any_unsafe = True
-                tool_response = (
-                    "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
-                    "For reason: {r}"
-                ).format(q=query, r=safety_result.content)
-                console.print(
-                    "[bold red][WARNING][/bold red] Command deemed unsafe:",
-                    query,
+                tool_responses.append(
+                    ToolMessage(
+                        content=(
+                            "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
+                            "Reasoning: {r}"
+                        ).format(q=query, r=safety_result.content),
+                        tool_call_id=tc.get("id"),
+                    )
                 )
-                # Also surface the model's rationale for transparency.
                 console.print(
-                    "[bold red][WARNING][/bold red] REASON:", tool_response
+                    "[bold red]Command deemed unsafe:[/bold red] ", query
                 )
             else:
-                tool_response = f"Command `{query}` passed safety check."
+                # Optional: you can log/print the pass, but do NOT emit a ToolMessage on success.
                 console.print(
-                    f"[green]Command passed safety check:[/green] {query}"
+                    "[green]Command passed safety check:[/green] ", query
                 )
 
-            tool_responses.append(
-                ToolMessage(
-                    content=tool_response,
-                    tool_call_id=tool_call["id"],
-                )
-            )
-
-        # 3) If any command is unsafe, append all tool responses; otherwise keep state.
-        if any_unsafe:
+        # 2) If any were unsafe, append tool responses now so the planner can react
+        if any_unsafe and tool_responses:
             new_state["messages"].extend(tool_responses)
 
         return new_state
+
+    async def action_with_sanitize_async(self, state: ExecutionState):
+        # TRACE - may be helpful for debugging, uncomment if needed
+        # last_ai = _last_ai(state.get("messages", []) or [])
+        # planned = getattr(last_ai, "tool_calls", None) or []
+        # console.print(f"[red][TRACE][/red] action: entering with {len(planned)} planned calls -> "
+        #    f"{[ (t.get('name'), t.get('id')) for t in planned ]}")
+
+        result = await self.tool_node.ainvoke(state)
+
+        # TRACE - may be helpful for debugging, uncomment if needed
+        # tname = type(result).__name__
+        # preview = None
+        # if isinstance(result, dict):
+        #     preview = list(result.keys())
+        # elif hasattr(result, "update"):
+        #     preview = list((result.update or {}).keys())
+        # console.print(f"[red][TRACE][/red] action: ToolNode returned {tname} with keys={preview}")
+
+        def _sanitize_msg(m):
+            if isinstance(m, ToolMessage):
+                return ToolMessage(
+                    content=_sanitize_tool_content(m.content),
+                    tool_call_id=getattr(m, "tool_call_id", None),
+                )
+            if isinstance(m, BaseMessage):
+                return m
+            return None  # drop
+
+        # 1) Command -> sanitize its update.messages
+        if isinstance(result, Command):
+            upd = dict(result.update or {})
+            msgs = []
+            for m in upd.get("messages") or []:
+                sm = _sanitize_msg(m)
+                if sm is not None:
+                    msgs.append(sm)
+            upd["messages"] = msgs
+            return Command(update=upd)
+
+        # 2) dict -> convert/clean messages in-place
+        if isinstance(result, dict):
+            if "messages" in result:
+                msgs = []
+                for m in list(result["messages"] or []):
+                    sm = _sanitize_msg(m)
+                    if sm is not None:
+                        msgs.append(sm)
+                out = dict(result)
+                out["messages"] = msgs
+                return Command(update=out)
+            return Command(update=result)
+
+        # 3) list -> merge to a single Command(update=...)
+        if isinstance(result, list):
+            merged = {"messages": [], "code_files": []}
+            for item in result:
+                if isinstance(item, Command):
+                    upd = dict(item.update or {})
+                    for f in upd.get("code_files") or []:
+                        if f not in merged["code_files"]:
+                            merged["code_files"].append(f)
+                    for m in upd.get("messages") or []:
+                        sm = _sanitize_msg(m)
+                        if sm is not None:
+                            merged["messages"].append(sm)
+                elif isinstance(item, dict):
+                    for f in item.get("code_files") or []:
+                        if f not in merged["code_files"]:
+                            merged["code_files"].append(f)
+                    for m in item.get("messages") or []:
+                        sm = _sanitize_msg(m)
+                        if sm is not None:
+                            merged["messages"].append(sm)
+                else:
+                    sm = _sanitize_msg(item)
+                    if sm is not None:
+                        merged["messages"].append(sm)
+            return Command(update=merged)
+
+        return result
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
@@ -802,7 +1761,11 @@ class ExecutionAgent(BaseAgent):
         # - "summarize": summary/finalization step
         # - "safety_check": gate for shell command safety
         self.add_node(graph, self.query_executor, "agent")
-        self.add_node(graph, self.tool_node, "action")
+
+        # this will run actions and sanitize their output to keep them in check, helps w/ MCP outputs
+
+        self.add_node(graph, self.action_with_sanitize_async, "action")
+
         self.add_node(graph, self.summarize, "summarize")
         self.add_node(graph, self.safety_check, "safety_check")
 
@@ -842,19 +1805,29 @@ class ExecutionAgent(BaseAgent):
         self.add_tool(tools)
 
     def add_tool(
-        self, new_tools: Callable[..., Any] | list[Callable[..., Any]]
+        self, new_tools: BaseTool | StructuredTool | Any | Iterable[Any]
     ) -> None:
-        if isinstance(new_tools, list):
-            self.tools.extend([convert_to_tool(x) for x in new_tools])
-        elif isinstance(new_tools, StructuredTool) or isinstance(
-            new_tools, Callable
-        ):
-            self.tools.append(convert_to_tool(new_tools))
+        if not isinstance(new_tools, (list, tuple, set)):
+            candidates = [new_tools]
         else:
-            raise TypeError("Expected a callable or a list of callables.")
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
-        self._action = self._build_graph()
+            candidates = list(new_tools)
+
+        existing = {t.name for t in self.tools}
+        prepared = []
+        for t in candidates:
+            tool_obj = prepare_tool(
+                t, enable_logging=self.tool_log
+            )  # ALWAYS sanitize
+            if tool_obj.name in existing:
+                continue
+            prepared.append(tool_obj)
+            existing.add(tool_obj.name)
+
+        if prepared:
+            self.tools.extend(prepared)
+            self.tool_node = ToolNode(self.tools)
+            self.llm = self.llm.bind_tools(self.tools)
+            self._action = self._build_graph()
 
     def list_tools(self) -> None:
         print(
