@@ -26,10 +26,13 @@ Entry points:
 """
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
+# async stuff
+import asyncio
 import base64
 import inspect
 import json
 import os
+import re
 import secrets
 import subprocess
 import threading
@@ -141,6 +144,26 @@ class ExecutionState(TypedDict):
     ]  # multiple code files coming in need a reducer
     workspace: str
     symlinkdir: dict
+
+
+_BG_LOOP = None
+
+
+def _ensure_bg_loop():
+    """Start (or return) a persistent asyncio loop on a background thread."""
+    global _BG_LOOP
+    if _BG_LOOP and _BG_LOOP.is_running():
+        return _BG_LOOP
+    loop = asyncio.new_event_loop()
+
+    def _runner():
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    _BG_LOOP = loop
+    return loop
 
 
 # Tool instrumention helper functions
@@ -1235,6 +1258,31 @@ def _scrub_messages_for_llm(msgs: list[AnyMessage]) -> list[AnyMessage]:
     return cleaned
 
 
+# this stuff deals w/ MCP tool name weirdness, things like . aren't allowed, this allows us
+# to catch and allow them
+_ALLOWED_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _canonical_tool_name(raw: str) -> str:
+    """Make a provider-safe tool name (OpenAI: ^[a-zA-Z0-9_-]+$)."""
+    if not raw:
+        return "tool"
+    nm = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(raw)).strip("_")
+    return nm or "tool"
+
+
+def _dedupe_name(nm: str, existing: set[str]) -> str:
+    """Ensure uniqueness after sanitization."""
+    if nm not in existing:
+        return nm
+    base = nm
+    i = 2
+    while nm in existing:
+        nm = f"{base}_{i}"
+        i += 1
+    return nm
+
+
 # Main module class
 class ExecutionAgent(BaseAgent):
     """Orchestrates model-driven code execution, tool calls, and state management.
@@ -1334,15 +1382,58 @@ class ExecutionAgent(BaseAgent):
         self.extra_tools = extra_tools
         if self.extra_tools is not None:
             base_tools.extend(self.extra_tools)
-        self.tools = [
+
+        # Build + sanitize names + dedupe (so providers like OpenAI accept them)
+        prepared = [
             prepare_tool(t, enable_logging=self.tool_log) for t in base_tools
         ]
+        existing = set()
+        for tool_obj in prepared:
+            orig = tool_obj.name
+            safe = _canonical_tool_name(orig)
+            safe = _dedupe_name(safe, existing)
+            # most LangChain tools allow name reassignment; if not, rebuild
+            try:
+                tool_obj.name = safe
+            except Exception:
+                tool_obj = StructuredTool.from_function(
+                    func=getattr(tool_obj, "func", None)
+                    or getattr(tool_obj, "coroutine", None),
+                    name=safe,
+                    description=getattr(tool_obj, "description", "") or "",
+                )
+            existing.add(tool_obj.name)
 
+        self.tools = prepared
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
 
         self.log_state = log_state
-        self._action = self._build_graph()
+        # Build graphs
+        graph_sync = self._build_graph(use_async_action=False)
+        graph_async = self._build_graph(use_async_action=True)
+
+        def _is_async_cp(cp) -> bool:
+            return hasattr(cp, "aget_tuple") or hasattr(cp, "alist")
+
+        sync_cp = getattr(self, "checkpointer", None)
+
+        # Legacy sync variant (pairs with SqliteSaver etc.)
+        self._action_sync = graph_sync.compile(checkpointer=sync_cp)
+
+        # Async-safe variant (pairs with AsyncSqliteSaver or MemorySaver)
+        try:
+            from langgraph.checkpoint.memory import MemorySaver
+
+            async_cp = sync_cp if _is_async_cp(sync_cp) else MemorySaver()
+        except Exception:
+            async_cp = None
+
+        self._action_async = graph_async.compile(checkpointer=async_cp)
+
+        # Preserve legacy attribute
+        self._action = self._action_sync
+
         self.context_summarizer = SummarizationMiddleware(
             model=self.llm,
             max_tokens_before_summary=tokens_before_summarize,
@@ -1669,6 +1760,15 @@ class ExecutionAgent(BaseAgent):
 
         return new_state
 
+    def action_with_sanitize_sync(self, state: ExecutionState):
+        """Sync adapter for the async tool node; runs the coroutine on
+        the background loop and returns the final result."""
+        loop = _ensure_bg_loop()
+        fut = asyncio.run_coroutine_threadsafe(
+            self.action_with_sanitize_async(state), loop
+        )
+        return fut.result()
+
     async def action_with_sanitize_async(self, state: ExecutionState):
         # TRACE - may be helpful for debugging, uncomment if needed
         # last_ai = _last_ai(state.get("messages", []) or [])
@@ -1750,7 +1850,7 @@ class ExecutionAgent(BaseAgent):
 
         return result
 
-    def _build_graph(self):
+    def _build_graph(self, use_async_action: bool = True):
         """Construct and compile the agent's LangGraph state machine."""
         # Create a graph over the agent's execution state.
         graph = StateGraph(ExecutionState)
@@ -1762,9 +1862,12 @@ class ExecutionAgent(BaseAgent):
         # - "safety_check": gate for shell command safety
         self.add_node(graph, self.query_executor, "agent")
 
-        # this will run actions and sanitize their output to keep them in check, helps w/ MCP outputs
-
-        self.add_node(graph, self.action_with_sanitize_async, "action")
+        if use_async_action:
+            # native async node for ainvoke()
+            self.add_node(graph, self.action_with_sanitize_async, "action")
+        else:
+            # sync adapter so invoke() stays fully sync-safe
+            self.add_node(graph, self.action_with_sanitize_sync, "action")
 
         self.add_node(graph, self.summarize, "summarize")
         self.add_node(graph, self.safety_check, "safety_check")
@@ -1794,8 +1897,8 @@ class ExecutionAgent(BaseAgent):
         # The graph completes at the "summarize" node.
         graph.set_finish_point("summarize")
 
-        # Compile and return the executable graph (optionally with a checkpointer).
-        return graph.compile(checkpointer=self.checkpointer)
+        # Return the uncompiled graph; we'll compile variants in __init__ / add_tool.
+        return graph
 
     async def add_mcp_tool(
         self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
@@ -1812,22 +1915,59 @@ class ExecutionAgent(BaseAgent):
         else:
             candidates = list(new_tools)
 
+        # prepare & sanitize each incoming tool
         existing = {t.name for t in self.tools}
-        prepared = []
+        prepared: list[BaseTool] = []
         for t in candidates:
-            tool_obj = prepare_tool(
-                t, enable_logging=self.tool_log
-            )  # ALWAYS sanitize
+            tool_obj = prepare_tool(t, enable_logging=self.tool_log)
+
+            # sanitize name for provider compatibility
+            orig = tool_obj.name
+            safe = _canonical_tool_name(orig)
+            safe = _dedupe_name(safe, existing)
+
+            try:
+                tool_obj.name = safe
+            except Exception:
+                # some wrappers don't allow assignment: rebuild with the safe name
+                tool_obj = StructuredTool.from_function(
+                    func=getattr(tool_obj, "func", None)
+                    or getattr(tool_obj, "coroutine", None),
+                    name=safe,
+                    description=getattr(tool_obj, "description", "") or "",
+                )
+
             if tool_obj.name in existing:
                 continue
+
             prepared.append(tool_obj)
             existing.add(tool_obj.name)
 
-        if prepared:
-            self.tools.extend(prepared)
-            self.tool_node = ToolNode(self.tools)
-            self.llm = self.llm.bind_tools(self.tools)
-            self._action = self._build_graph()
+        if not prepared:
+            return
+
+        # extend tools and rebind
+        self.tools.extend(prepared)
+        self.tool_node = ToolNode(self.tools)
+        self.llm = self.llm.bind_tools(self.tools)
+
+        # Recompile both graph variants to include the new tools
+        graph_sync = self._build_graph(use_async_action=False)
+        graph_async = self._build_graph(use_async_action=True)
+
+        sync_cp = getattr(self, "checkpointer", None)
+        self._action_sync = graph_sync.compile(checkpointer=sync_cp)
+
+        from langgraph.checkpoint.memory import MemorySaver
+
+        def _is_async_cp(cp) -> bool:
+            return hasattr(cp, "aget_tuple") or hasattr(cp, "alist")
+
+        async_cp = sync_cp if _is_async_cp(sync_cp) else MemorySaver()
+        self._action_async = graph_async.compile(checkpointer=async_cp)
+
+        # preserve legacy default
+        self._action = self._action_sync
 
     def list_tools(self) -> None:
         print(
@@ -1850,18 +1990,51 @@ class ExecutionAgent(BaseAgent):
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
     ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
+        """Run the execution graph with a sync-first, async-fallback strategy.
 
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
+        1) Try the SYNC-compiled graph first (preserves legacy `.invoke(...)` usage).
+        2) On the canonical “Cannot invoke a coroutine function synchronously” error,
+        fall back to the ASYNC-compiled graph, executed on a background event loop.
+        If the configured checkpointer is sync-only (e.g., SqliteSaver), rebind the
+        runnable with an async-safe saver (MemorySaver) **and** remove any per-call
+        `checkpointer` from the config so the rebind is honored.
         """
-        # Build invocation config with a generous recursion limit for long runs.
+
         config = self.build_config(
             recursion_limit=recursion_limit, tags=["graph"]
         )
 
-        # Delegate execution to the compiled graph.
-        return self._action.invoke(inputs, config)
+        # 1) Try SYNC first (keeps old examples working)
+        try:
+            return self._action_sync.invoke(inputs, config)
+        except TypeError as e:
+            if "Cannot invoke a coroutine function synchronously" not in str(e):
+                raise
+
+        # 2) Async fallback — make sure the runnable has an async-safe checkpointer
+        checkpointer = getattr(self, "checkpointer", None)
+        is_async_cp = hasattr(checkpointer, "aget_tuple") or hasattr(
+            checkpointer, "alist"
+        )
+
+        async_action = self._action_async
+        if not is_async_cp:
+            from langgraph.checkpoint.memory import MemorySaver
+
+            async_action = self._action_async.with_config(
+                checkpointer=MemorySaver()
+            )
+
+        # IMPORTANT: remove any per-call checkpointer so we don't override the rebind above
+        cfg2 = dict(config) if isinstance(config, dict) else config
+        if isinstance(cfg2, dict):
+            cfg2.pop("checkpointer", None)
+
+        loop = _ensure_bg_loop()
+        fut = asyncio.run_coroutine_threadsafe(
+            async_action.ainvoke(inputs, cfg2), loop
+        )
+        return fut.result()
 
     def _ainvoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
@@ -1877,7 +2050,7 @@ class ExecutionAgent(BaseAgent):
         )
 
         # Delegate execution to the compiled graph.
-        return self._action.ainvoke(inputs, config)
+        return self._action_async.ainvoke(inputs, config)
 
     # This property is trying to stop people bypassing invoke
     @property
