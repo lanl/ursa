@@ -107,6 +107,11 @@ class Settings(BaseSettings):
         description="Verify SSL certificates when connecting to remote providers.",
         validation_alias="SSL_VERIFY",
     )
+    safe_codes: list[str] = Field(
+        description="Programming languages that the execution agent can trust by default.",
+        validation_alias="URSA_THREAD_ID",
+        default_factory=lambda: ["python", "julia"]
+    )
 
     mcp_servers: dict[str, ServerParameters] = Field(
         default_factory=dict,

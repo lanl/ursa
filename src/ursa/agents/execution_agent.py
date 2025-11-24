@@ -42,7 +42,6 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
@@ -60,6 +59,7 @@ from ..prompt_library.execution_prompts import (
     summarize_prompt,
 )
 from ..util.diff_renderer import DiffRenderer
+from ..util.mcp import ServerParameters, start_mcp_client
 from ..util.memory_logger import AgentMemory
 from .base import BaseAgent
 
@@ -777,9 +777,9 @@ class ExecutionAgent(BaseAgent):
         return graph.compile(checkpointer=self.checkpointer)
 
     async def add_mcp_tool(
-        self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
+        self, mcp_config: dict[str, ServerParameters]
     ) -> None:
-        client = MultiServerMCPClient(mcp_tools)
+        client = start_mcp_client(mcp_config)
         tools = await client.get_tools()
         self.add_tool(tools)
 

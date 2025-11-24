@@ -43,6 +43,8 @@ dependencies = [
     "pydantic-settings>=2.11.0",
     "pydantic>=2.12.0",
     "mcp>=1.20.0",
+    "aiosqlite>=0.21.0",
+    "asyncstdlib>=3.13.1",
 ]
 classifiers = [
     "Operating System :: OS Independent",

@@ -1,14 +1,50 @@
+from typing import Annotated
+
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp.client.session_group import (
-    ServerParameters,
     SseServerParameters,
     StreamableHttpParameters,
 )
+from pydantic import BeforeValidator, ValidationError
 
 from mcp import StdioServerParameters
 
 
-def transport(sp: ServerParameters):
+def validate_server_parameters(config: dict):
+    transport_hint = config.get("transport")
+    payload = {k: v for k, v in config.items() if k != "transport"}
+    if transport_hint == "stdio":
+        return StdioServerParameters(**payload)
+    elif transport_hint == "sse":
+        return SseServerParameters(**payload)
+    elif transport_hint == "streamable_http":
+        return StreamableHttpParameters(**payload)
+    elif transport_hint is None:
+        # Let Pydantic infer (backwards compatibility)
+        for candidate in (
+            StdioServerParameters,
+            StreamableHttpParameters,
+            SseServerParameters,
+        ):
+            try:
+                print(candidate)
+                return candidate(**payload)
+            except ValidationError:
+                continue
+        else:
+            raise ValueError(
+                f"Unable to determine transport for MCP server '{name}'. "
+                "Provide 'transport' with one of: stdio, sse, streamable_http."
+            )
+    else:
+        raise ValueError(
+            f"Unsupported MCP transport '{transport_hint}' for server '{name}'."
+        )
+
+ServerParameters = Annotated[StdioServerParameters | SseServerParameters | StreamableHttpParameters, BeforeValidator(validate_server_parameters)]
+
+
+def transport(sp: ServerParameters) -> str:
     if isinstance(sp, StdioServerParameters):
         return "stdio"
     elif isinstance(sp, StreamableHttpParameters):
@@ -19,7 +55,9 @@ def transport(sp: ServerParameters):
         raise RuntimeError("Transport for {sp} is unknown")
 
 
-def start_mcp_client(server_configs: dict[str, ServerParameters]):
+def start_mcp_client(
+    server_configs: dict[str, ServerParameters],
+) -> MultiServerMCPClient:
     config = {
         server: {**config.model_dump(), "transport": transport(config)}
         for server, config in server_configs.items()
