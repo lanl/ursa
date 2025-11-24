@@ -1197,7 +1197,71 @@ def _size_of_msg(m) -> int:
         return 10000
 
 
+def _strip_orphan_tool_messages(msgs: list[AnyMessage]) -> list[AnyMessage]:
+    """
+    Keep ToolMessages only if there exists *some* earlier Assistant with a matching tool_call id.
+    Never allow the conversation to start with a ToolMessage.
+    Do not drop ToolMessages that are correctly paired, even if other messages appear later.
+    """
+    cleaned: list[AnyMessage] = []
+    seen_tool_ids: set[str] = set()
+
+    # Pass 1: record all assistant tool_call ids seen so far
+    assistant_ids = set()
+    for m in msgs:
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            for tc in m.tool_calls:
+                tid = tc.get("id")
+                if tid:
+                    assistant_ids.add(tid)
+
+    # Pass 2: filter
+    for m in msgs:
+        if isinstance(m, ToolMessage):
+            tcid = getattr(m, "tool_call_id", None)
+            if tcid and tcid in assistant_ids:
+                cleaned.append(m)
+                seen_tool_ids.add(tcid)
+            # else: drop true orphan
+            continue
+
+        cleaned.append(m)
+
+    # Safety: cannot start with ToolMessage
+    while cleaned and isinstance(cleaned[0], ToolMessage):
+        cleaned.pop(0)
+
+    return cleaned
+
+
+def _has_pending_tool_calls(msgs: list) -> bool:
+    """Return True if the last assistant-with-tools still lacks matching ToolMessage(s)."""
+    last_ai_idx = None
+    last_ids = []
+    for i in range(len(msgs) - 1, -1, -1):
+        m = msgs[i]
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            ids = [tc.get("id") for tc in m.tool_calls if tc.get("id")]
+            if ids:
+                last_ai_idx = i
+                last_ids = ids
+                break
+    if last_ai_idx is None:
+        return False
+    got = {
+        getattr(m, "tool_call_id", None)
+        for m in msgs[last_ai_idx + 1 :]
+        if isinstance(m, ToolMessage)
+    }
+    # pending if any id not yet matched by a ToolMessage
+    return any(tid not in got for tid in last_ids)
+
+
 def _scrub_messages_for_llm(msgs: list[AnyMessage]) -> list[AnyMessage]:
+    # If the last assistant-with-tools isn’t fully satisfied, do not alter the list.
+    if _has_pending_tool_calls(msgs):
+        return msgs
+
     cleaned: list[AnyMessage] = []
     for m in msgs:
         # Only mutate ToolMessage; pass others through unless they contain giant base64 in strings.
@@ -1248,13 +1312,65 @@ def _scrub_messages_for_llm(msgs: list[AnyMessage]) -> list[AnyMessage]:
 
         cleaned.append(m)
 
-    # Enforce a hard cap on the tail to avoid pathological growth
-    MAX_TAIL = 60  # tune to model window, we could modify this
+    # First, drop true orphans (but keep valid tool windows intact)
+    cleaned = _strip_orphan_tool_messages(cleaned)
+
+    # Enforce a hard cap without breaking the last tool-call window
+    MAX_TAIL = 60
+
     if len(cleaned) > MAX_TAIL:
-        # Keep the system prompt (index 0), drop the oldest excess from the middle
-        head = [cleaned[0]]
-        tail = cleaned[-(MAX_TAIL - 1) :]
-        cleaned = head + tail
+        # Find the most recent assistant-with-tools and the full block of its replies
+        last_ai_idx = None
+        last_ids = set()
+        for i in range(len(cleaned) - 1, -1, -1):
+            mi = cleaned[i]
+            if isinstance(mi, AIMessage) and getattr(mi, "tool_calls", None):
+                ids = [tc.get("id") for tc in mi.tool_calls if tc.get("id")]
+                if ids:
+                    last_ai_idx = i
+                    last_ids = set(ids)
+                    break
+
+        if last_ai_idx is not None:
+            # Extend tail to include all following ToolMessages that match those ids
+            j = last_ai_idx + 1
+            while (
+                j < len(cleaned)
+                and isinstance(cleaned[j], ToolMessage)
+                and getattr(cleaned[j], "tool_call_id", None) in last_ids
+            ):
+                j += 1
+
+            head = cleaned[:last_ai_idx]
+            tail = cleaned[last_ai_idx:j]
+
+            # If the protected tail alone is bigger than the cap, DO NOT TRIM this turn.
+            # Trimming here would drop required ToolMessages and re-trigger the 400.
+            if len(tail) <= MAX_TAIL:
+                # Keep as much head as fits, but never cut into the protected tail.
+                keep_head_n = MAX_TAIL - len(tail)
+                if keep_head_n <= 0:
+                    cleaned = tail
+                else:
+                    # Preserve the very first message (often a System) + the newest head items
+                    head_keep = []
+                    if head:
+                        head_keep = [head[0]]
+                        needed = keep_head_n - 1  # we already kept head[0]
+                        if needed > 0 and len(head) > 1:
+                            head_keep += head[-needed:]
+                    cleaned = head_keep + tail
+            # else: leave 'cleaned' as-is (skip trimming this round)
+        else:
+            # No pending/last tool window → safe to keep first + newest messages
+            head0 = [cleaned[0]] if cleaned else []
+            tail = (
+                cleaned[-(MAX_TAIL - len(head0)) :]
+                if MAX_TAIL > len(head0)
+                else []
+            )
+            cleaned = head0 + tail
+
     return cleaned
 
 
@@ -1405,34 +1521,16 @@ class ExecutionAgent(BaseAgent):
             existing.add(tool_obj.name)
 
         self.tools = prepared
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
+
+        # this is a catch for tool errors.
+        def _tool_error_handler(e: Exception):
+            # Let ToolNode wrap this into a ToolMessage *with the correct tool_call_id*.
+            return f"[TOOL_ERROR] {type(e).__name__}: {e}"
+
+        self._tool_error_handler = _tool_error_handler
+        self._rebind_tools(self.tools)
 
         self.log_state = log_state
-        # Build graphs
-        graph_sync = self._build_graph(use_async_action=False)
-        graph_async = self._build_graph(use_async_action=True)
-
-        def _is_async_cp(cp) -> bool:
-            return hasattr(cp, "aget_tuple") or hasattr(cp, "alist")
-
-        sync_cp = getattr(self, "checkpointer", None)
-
-        # Legacy sync variant (pairs with SqliteSaver etc.)
-        self._action_sync = graph_sync.compile(checkpointer=sync_cp)
-
-        # Async-safe variant (pairs with AsyncSqliteSaver or MemorySaver)
-        try:
-            from langgraph.checkpoint.memory import MemorySaver
-
-            async_cp = sync_cp if _is_async_cp(sync_cp) else MemorySaver()
-        except Exception:
-            async_cp = None
-
-        self._action_async = graph_async.compile(checkpointer=async_cp)
-
-        # Preserve legacy attribute
-        self._action = self._action_sync
 
         self.context_summarizer = SummarizationMiddleware(
             model=self.llm,
@@ -1464,29 +1562,85 @@ class ExecutionAgent(BaseAgent):
 
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
-        # Never summarize when the last assistant-with-tools is not fully satisfied.
-        if self._missing_tool_outputs(state["messages"]):
+        msgs = state.get("messages", []) or []
+
+        # 1) If any assistant-with-tools still lacks replies → do nothing.
+        if self._missing_tool_outputs(msgs):
             return state
 
-        summarized_messages = self.context_summarizer.before_model(state, None)
-        if summarized_messages:
-            # Print a scrubbed view only (no blobs)
-            safe_view = _scrub_messages_for_llm(state["messages"])
-            print(safe_view)
+        # 2) Compute tokens BEFORE (for the whole sequence as it stands now).
+        try:
+            tokens_before = self.context_summarizer.token_counter(msgs)
+        except Exception:
+            tokens_before = None  # don't let logging failures break execution
 
-            tokens_before_summarize = self.context_summarizer.token_counter(
-                state["messages"]
-            )
-            state["messages"] = summarized_messages["messages"]
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                state["messages"][1:]
-            )
+        # 3) Find the most recent assistant-with-tools and protect its full tool window.
+        last_ai_idx = None
+        last_ids = set()
+        for i in range(len(msgs) - 1, -1, -1):
+            m = msgs[i]
+            if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+                ids = [tc.get("id") for tc in m.tool_calls if tc.get("id")]
+                if ids:
+                    last_ai_idx = i
+                    last_ids = set(ids)
+                    break
+
+        # Build (head, tail) split; NEVER summarize the tail.
+        tail_start = 0 if last_ai_idx is None else last_ai_idx
+        j = tail_start + 1
+        while (
+            j < len(msgs)
+            and isinstance(msgs[j], ToolMessage)
+            and getattr(msgs[j], "tool_call_id", None) in last_ids
+        ):
+            j += 1
+        head = msgs[:tail_start] if tail_start > 0 else msgs[:0]
+        tail = msgs[tail_start:] if tail_start < len(msgs) else []
+
+        if not head:
+            # Nothing to summarize—still emit a panel so operators know why
+            try:
+                tokens_after = self.context_summarizer.token_counter(msgs)
+            except Exception:
+                tokens_after = None
             console.print(
                 Panel(
                     (
-                        f"Summarized Conversation History:\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
+                        "Summarized Conversation History (skipped: protected tail only)\n"
+                        f"Approximate tokens before: {tokens_before}\n"
+                        f"Approximate tokens after:  {tokens_after}\n"
+                    ),
+                    title="[bold yellow1 on black]:clipboard: Plan",
+                    border_style="yellow1",
+                    style="bold yellow1 on black",
+                )
+            )
+            return state
+
+        # 4) Summarize only the head
+        summarized = self.context_summarizer.before_model(
+            {"messages": head}, None
+        )
+
+        if summarized and "messages" in summarized:
+            state["messages"] = summarized["messages"] + tail
+
+            # Match v1 behavior: count AFTER while skipping an initial SystemMessage if present
+            try:
+                msgs_after = state["messages"]
+                if msgs_after and isinstance(msgs_after[0], SystemMessage):
+                    msgs_after = msgs_after[1:]
+                tokens_after = self.context_summarizer.token_counter(msgs_after)
+            except Exception:
+                tokens_after = None
+
+            console.print(
+                Panel(
+                    (
+                        "Summarized Conversation History:\n"
+                        f"Approximate tokens before: {tokens_before}\n"
+                        f"Approximate tokens after:  {tokens_after}\n"
                     ),
                     title="[bold yellow1 on black]:clipboard: Plan",
                     border_style="yellow1",
@@ -1494,9 +1648,24 @@ class ExecutionAgent(BaseAgent):
                 )
             )
         else:
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                state["messages"]
+            # Summarizer chose not to change anything; still report counts
+            try:
+                tokens_after = self.context_summarizer.token_counter(msgs)
+            except Exception:
+                tokens_after = None
+            console.print(
+                Panel(
+                    (
+                        "Summarized Conversation History (no change)\n"
+                        f"Approximate tokens before: {tokens_before}\n"
+                        f"Approximate tokens after:  {tokens_after}\n"
+                    ),
+                    title="[bold yellow1 on black]:clipboard: Plan",
+                    border_style="yellow1",
+                    style="bold yellow1 on black",
+                )
             )
+
         return state
 
     # Define the function that calls the model
@@ -1521,6 +1690,10 @@ class ExecutionAgent(BaseAgent):
                 - "workspace": The resolved workspace path.
         """
         new_state = state.copy()
+
+        # bail out immediately if any pending tool calls
+        if self._missing_tool_outputs(new_state.get("messages", []) or []):
+            return new_state
 
         # 1) Ensure a workspace directory exists, creating a named one if absent.
         if "workspace" not in new_state.keys():
@@ -1771,21 +1944,25 @@ class ExecutionAgent(BaseAgent):
 
     async def action_with_sanitize_async(self, state: ExecutionState):
         # TRACE - may be helpful for debugging, uncomment if needed
-        # last_ai = _last_ai(state.get("messages", []) or [])
-        # planned = getattr(last_ai, "tool_calls", None) or []
-        # console.print(f"[red][TRACE][/red] action: entering with {len(planned)} planned calls -> "
-        #    f"{[ (t.get('name'), t.get('id')) for t in planned ]}")
+        last_ai = _last_ai(state.get("messages", []) or [])
+        planned = getattr(last_ai, "tool_calls", None) or []
+        console.print(
+            f"[red][TRACE][/red] action: entering with {len(planned)} planned calls -> "
+            f"{[(t.get('name'), t.get('id')) for t in planned]}"
+        )
 
         result = await self.tool_node.ainvoke(state)
 
         # TRACE - may be helpful for debugging, uncomment if needed
-        # tname = type(result).__name__
-        # preview = None
-        # if isinstance(result, dict):
-        #     preview = list(result.keys())
-        # elif hasattr(result, "update"):
-        #     preview = list((result.update or {}).keys())
-        # console.print(f"[red][TRACE][/red] action: ToolNode returned {tname} with keys={preview}")
+        tname = type(result).__name__
+        preview = None
+        if isinstance(result, dict):
+            preview = list(result.keys())
+        elif hasattr(result, "update"):
+            preview = list((result.update or {}).keys())
+        console.print(
+            f"[red][TRACE][/red] action: ToolNode returned {tname} with keys={preview}"
+        )
 
         def _sanitize_msg(m):
             if isinstance(m, ToolMessage):
@@ -1848,7 +2025,34 @@ class ExecutionAgent(BaseAgent):
                         merged["messages"].append(sm)
             return Command(update=merged)
 
-        return result
+        # 4) single-message results (the common edge case)
+        if isinstance(result, ToolMessage):
+            sm = _sanitize_msg(result)  # preserves tool_call_id
+            return Command(update={"messages": [sm]})
+
+        if isinstance(result, BaseMessage):
+            return Command(update={"messages": [result]})
+
+        # 5) scalar fallbacks (string/None/other)
+        if isinstance(result, str):
+            # Best-effort: attach as a tool message without an id (better than dropping it)
+            return Command(
+                update={
+                    "messages": [ToolMessage(content=result, tool_call_id=None)]
+                }
+            )
+
+        if result is None:
+            return Command(update={})
+
+        # 6) Unknown type: stringify to a safe ToolMessage stub
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(content=str(result), tool_call_id=None)
+                ]
+            }
+        )
 
     def _build_graph(self, use_async_action: bool = True):
         """Construct and compile the agent's LangGraph state machine."""
@@ -1907,6 +2111,27 @@ class ExecutionAgent(BaseAgent):
         tools = await client.get_tools()
         self.add_tool(tools)
 
+    def _rebind_tools(self, tools):
+        self.tools = list(tools)
+        self.tool_node = ToolNode(
+            self.tools, handle_tool_errors=self._tool_error_handler
+        )
+        self.llm = self.llm.bind_tools(self.tools)
+
+        # recompile both graph variants if you need to (as you already do)
+        graph_sync = self._build_graph(use_async_action=False)
+        graph_async = self._build_graph(use_async_action=True)
+        sync_cp = getattr(self, "checkpointer", None)
+        self._action_sync = graph_sync.compile(checkpointer=sync_cp)
+        from langgraph.checkpoint.memory import MemorySaver
+
+        def _is_async_cp(cp):
+            return hasattr(cp, "aget_tuple") or hasattr(cp, "alist")
+
+        async_cp = sync_cp if _is_async_cp(sync_cp) else MemorySaver()
+        self._action_async = graph_async.compile(checkpointer=async_cp)
+        self._action = self._action_sync
+
     def add_tool(
         self, new_tools: BaseTool | StructuredTool | Any | Iterable[Any]
     ) -> None:
@@ -1946,28 +2171,7 @@ class ExecutionAgent(BaseAgent):
         if not prepared:
             return
 
-        # extend tools and rebind
-        self.tools.extend(prepared)
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
-
-        # Recompile both graph variants to include the new tools
-        graph_sync = self._build_graph(use_async_action=False)
-        graph_async = self._build_graph(use_async_action=True)
-
-        sync_cp = getattr(self, "checkpointer", None)
-        self._action_sync = graph_sync.compile(checkpointer=sync_cp)
-
-        from langgraph.checkpoint.memory import MemorySaver
-
-        def _is_async_cp(cp) -> bool:
-            return hasattr(cp, "aget_tuple") or hasattr(cp, "alist")
-
-        async_cp = sync_cp if _is_async_cp(sync_cp) else MemorySaver()
-        self._action_async = graph_async.compile(checkpointer=async_cp)
-
-        # preserve legacy default
-        self._action = self._action_sync
+        self._rebind_tools(self.tools + prepared)
 
     def list_tools(self) -> None:
         print(
@@ -1975,17 +2179,8 @@ class ExecutionAgent(BaseAgent):
         )
 
     def remove_tool(self, cut_tools: str | list[str]) -> None:
-        if isinstance(cut_tools, str):
-            self.remove_tool([cut_tools])
-        elif isinstance(cut_tools, list):
-            self.tools = [x for x in self.tools if x.name not in cut_tools]
-            self.tool_node = ToolNode(self.tools)
-            self.llm = self.llm.bind_tools(self.tools)
-            self._action = self._build_graph()
-        else:
-            raise TypeError(
-                "Expected a string or a list of strings describing the tools to remove."
-            )
+        names = [cut_tools] if isinstance(cut_tools, str) else list(cut_tools)
+        self._rebind_tools([t for t in self.tools if t.name not in set(names)])
 
     def _invoke(
         self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
