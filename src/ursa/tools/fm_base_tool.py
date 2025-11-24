@@ -1,16 +1,12 @@
 import logging
 from itertools import islice
-from typing import TYPE_CHECKING, Any, Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
+import torch
 from langchain.tools import BaseTool
 from langchain_mcp_adapters.tools import to_fastmcp
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
-
-from ..util.gate_optional import needs
-
-if TYPE_CHECKING:
-    import torch
 
 
 def batched(iterable, n):
@@ -41,9 +37,8 @@ class GenericIO(BaseModel):
     value: Any
 
 
-@needs("torch", extra="fm")
 class TorchModuleTool(BaseTool):
-    fm: "torch.nn.Module"
+    fm: torch.nn.Module
     batch_size: int = 1
     device: "torch.device" = Field(default_factory=current_accelerator)
 
@@ -65,10 +60,10 @@ class TorchModuleTool(BaseTool):
         """Extract the tool output from the model output"""
         yield from model_output
 
-    def batch(self, inputs: list, **kwargs):
+    def batch(self, inputs: list, **kwargs) -> list:
         return list(self.batch_as_completed(inputs, **kwargs))
 
-    def batch_as_completed(self, inputs: Sequence, **kwargs):
+    def batch_as_completed(self, inputs: Sequence, **kwargs) -> Iterable:
         for batch in batched(inputs, n=self.batch_size):
             from torch import inference_mode
 
