@@ -19,7 +19,9 @@ class Molecule(BaseModel):
 
 class MistModel(TorchModuleTool):
     channels: list[str]
-    tokenizer_lock: Annotated[Any, SkipValidation()] = Field(default_factory=Lock)
+    tokenizer_lock: Annotated[Any, SkipValidation()] = Field(
+        default_factory=Lock
+    )
 
     args_schema: type[BaseModel] = Molecule
 

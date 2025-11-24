@@ -1,13 +1,15 @@
-import pytest
 from pathlib import Path
 
+import pytest
 from langchain.embeddings import init_embeddings
 
 from ursa.agents import RAGAgent
 from ursa.observability.timing import render_session_summary
 
+
 def is_ollama():
     import shutil
+
     return shutil.which("ollama") is not None
 
 
