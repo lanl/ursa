@@ -207,6 +207,7 @@ class BaseAcquisitionAgent(BaseAgent):
         database_path: str = "acq_db",
         summaries_path: str = "acq_summaries",
         vectorstore_path: str = "acq_vectorstores",
+        num_threads: int = 4,
         download: bool = True,
         **kwargs,
     ):
@@ -219,6 +220,7 @@ class BaseAcquisitionAgent(BaseAgent):
         self.summaries_path = summaries_path
         self.vectorstore_path = vectorstore_path
         self.download = download
+        self.num_threads = num_threads
 
         os.makedirs(self.database_path, exist_ok=True)
         os.makedirs(self.summaries_path, exist_ok=True)
@@ -292,7 +294,9 @@ class BaseAcquisitionAgent(BaseAgent):
             return items
 
         # Normal path: search → materialize each
-        with ThreadPoolExecutor(max_workers=min(4, max(1, len(hits)))) as ex:
+        with ThreadPoolExecutor(
+            max_workers=min(self.num_threads, max(1, len(hits)))
+        ) as ex:
             futures = [
                 ex.submit(self._materialize, h)
                 for h in hits
@@ -345,7 +349,9 @@ class BaseAcquisitionAgent(BaseAgent):
                 f.write(summary)
             return i, summary
 
-        with ThreadPoolExecutor(max_workers=min(4, len(state["items"]))) as ex:
+        with ThreadPoolExecutor(
+            max_workers=min(self.num_threads, len(state["items"]))
+        ) as ex:
             futures = [
                 ex.submit(process, i, it) for i, it in enumerate(state["items"])
             ]
