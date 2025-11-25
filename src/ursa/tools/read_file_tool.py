@@ -4,7 +4,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
-from ..util.parse import read_pdf_text, read_text_file
+from ursa.util.parse import read_pdf_text, read_text_file
 
 
 # Tools for ExecutionAgent

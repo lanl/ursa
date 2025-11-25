@@ -4,7 +4,7 @@ from langchain.tools import ToolRuntime, tool
 from rich import get_console
 from rich.panel import Panel
 
-from ..agents import ArxivAgent, OSTIAgent, WebSearchAgent
+from ursa.agents import ArxivAgent, OSTIAgent, WebSearchAgent
 
 console = get_console()
 

@@ -50,19 +50,19 @@ from rich import get_console
 from rich.panel import Panel
 from typing_extensions import TypedDict
 
-from ..prompt_library.execution_prompts import (
+from ursa.agents.base import BaseAgent
+from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     get_safety_prompt,
     summarize_prompt,
 )
-from ..tools import edit_code, read_file, run_command, write_code
-from ..tools.search_tools import (
+from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
     run_web_search,
 )
-from ..util.memory_logger import AgentMemory
-from .base import BaseAgent
+from ursa.util.memory_logger import AgentMemory
 
 console = get_console()  # always returns the same instance
 

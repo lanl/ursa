@@ -9,8 +9,8 @@ from rich import get_console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from ..util.diff_renderer import DiffRenderer
-from ..util.parse import read_text_file
+from ursa.util.diff_renderer import DiffRenderer
+from ursa.util.parse import read_text_file
 
 console = get_console()
 
