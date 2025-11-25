@@ -1,12 +1,13 @@
+# from langchain_openai import ChatOpenAI
+from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 from ursa.agents import WebSearchAgentLegacy
 from ursa.observability.timing import render_session_summary
 
 
 def test_websearch_agent():
-    model = ChatOpenAI(model="gpt-5-mini")
+    model = init_chat_model("openai:gpt-5-nano")
     websearcher = WebSearchAgentLegacy(llm=model)
     # problem = "Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?"
     problem = "Who won the 2025 International Chopin Competition? Who are his/her piano teachers?"
