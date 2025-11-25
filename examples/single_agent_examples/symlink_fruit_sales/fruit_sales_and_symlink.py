@@ -1,8 +1,8 @@
 import sys
 
 import randomname
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 
 # rich console stuff for beautification
 from rich.console import Console
@@ -11,6 +11,7 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.logo_generator import kickoff_logo
 
 console = Console()  # global console object
 
@@ -34,17 +35,42 @@ lines around bars and any other additions you think are interesting.
 """
 )
 
-workspace = f"fruit_sales_{randomname.get_name()}"
+workspace = f"fruit_sales_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
+
 workspace_header = f"[cyan] (- [bold cyan]{workspace}[reset][cyan] -) [reset]"
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
+
+
+# Create a logo for this run (saved as <workspace>/<something>.png
+# Fire-and-continue (no blocking)
+_ = kickoff_logo(
+    problem_text=problem,
+    workspace=workspace,
+    out_dir=workspace,
+    size="1536x1024",
+    background="opaque",
+    quality="high",
+    n=4,
+    style="random-scene",  # try: 'random-scene', 'mascot', 'patch', 'sigil', 'gradient-glyph', or 'brutalist'
+    console=console,  # plug in a Rich console if you have it
+    on_done=lambda p: console.print(
+        Panel.fit(
+            f"[bold yellow]Project art saved:[/] {p}", border_style="yellow"
+        )
+    ),
+    on_error=lambda e: console.print(
+        Panel.fit(
+            f"[bold red]Art generation failed:[/] {e}", border_style="red"
+        )
+    ),
+)
 
 
 def main(model_name: str):
     """Run a simple example of an agent."""
     try:
-        model = ChatLiteLLM(
+        model = init_chat_model(
             model=model_name,
-            max_tokens=10000,
+            max_completion_tokens=10000,
             max_retries=2,
         )
 
@@ -81,7 +107,6 @@ def main(model_name: str):
         # Initialize the agent
         # no planning agent for this one - let's YOLO and go risk it
         executor = ExecutionAgent(llm=model)
-        executor.thread_id = tid
 
         final_results = executor.invoke(
             {
@@ -97,7 +122,7 @@ def main(model_name: str):
 
         last_step_summary = final_results["messages"][-1].content
 
-        render_session_summary(tid)
+        render_session_summary(executor.thread_id)
 
         return last_step_summary, workspace
 
@@ -112,8 +137,8 @@ def main(model_name: str):
 if __name__ == "__main__":
     # ── interactive model picker ───────────────────────────────────────
     DEFAULT_MODELS = (
-        "openai/o3",
-        "openai/o3-mini",
+        "openai:gpt-5-mini",
+        "openai:gpt-5-mini",
     )
 
     try:

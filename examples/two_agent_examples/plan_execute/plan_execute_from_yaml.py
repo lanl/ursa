@@ -2,21 +2,19 @@ import argparse
 
 # needed for checkpoint / restart
 import hashlib
+import importlib
 import json
+import os
 import sqlite3
-import ssl
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
 
-import httpx
-import litellm
 import randomname
-import truststore
 import yaml
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_litellm import ChatLiteLLM
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # rich console stuff for beautification
@@ -28,18 +26,7 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
-
-ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # use macOS Keychain
-litellm.client_session = httpx.Client(verify=ctx, timeout=30)
-
-
-# removing this since we're doing checkpoint/restart from the same thread-id
-# so instead, we're going to just use the thread-id as the
-# workspace.  this limits us to only having one checkpoint/restart per
-# run (since it's using the same workspace / directory), but that seems
-# likely the normal mode of use
-# tid = "run-" + __import__("uuid").uuid4().hex[:8]
-
+from ursa.util.logo_generator import kickoff_logo
 
 console = get_console()  # always returns the same instance
 
@@ -230,6 +217,14 @@ def render_plan_steps_rich(plan_steps, highlight_index: int | None = None):
 #########################################################################
 # BEGIN: Helpers for execution agent checkpoint/restart
 #########################################################################
+
+
+def _ckpt_dir(workspace: str) -> Path:
+    p = Path(workspace) / "checkpoints"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 # --- execution progress tracking (per workspace) ---
 def _progress_file(workspace: str) -> Path:
     return Path(workspace) / "executor_progress.json"
@@ -266,6 +261,35 @@ def save_exec_progress(
     p.write_text(json.dumps(payload, indent=2))
 
 
+# --- snapshot a consistent copy of a SQLite db (works even in WAL mode) ---
+def snapshot_sqlite_db(src_path: Path, dst_path: Path) -> None:
+    """
+    Make a consistent copy of the SQLite database at src_path into dst_path,
+    using the sqlite3 backup API. Safe with WAL; no need to copy -wal/-shm.
+    """
+    import sqlite3
+
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    src_uri = f"file:{Path(src_path).resolve().as_posix()}?mode=ro"
+    src = dst = None
+    try:
+        src = sqlite3.connect(src_uri, uri=True)
+        dst = sqlite3.connect(str(dst_path))
+        with dst:
+            src.backup(dst)
+    finally:
+        try:
+            if dst:
+                dst.close()
+        except Exception:
+            pass
+        try:
+            if src:
+                src.close()
+        except Exception:
+            pass
+
+
 def step_to_text(step) -> str:
     if isinstance(step, dict):
         name = (
@@ -277,6 +301,238 @@ def step_to_text(step) -> str:
         desc = step.get("description") or ""
         return f"{name}\n{desc}" if desc else name
     return str(step)
+
+
+# --- parse snapshot filename to indices ---
+def parse_snapshot_indices(p: Path) -> tuple[int | None, int | None]:
+    """
+    executor_5.db / executor_checkpoint_5.db => (5, None)
+    executor_3_2.db / executor_checkpoint_3_2.db => (3, 2)
+    """
+    import re
+
+    m = re.match(
+        r"(?:executor|executor_checkpoint)_(\d+)(?:_(\d+))?\.db$", p.name
+    )
+    if not m:
+        return None, None
+    a = int(m.group(1))
+    b = int(m.group(2)) if m.group(2) else None
+    return a, b
+
+
+def sync_progress_for_snapshot_single(
+    workspace: str, snapshot: Path, plan_sig: str
+) -> None:
+    """
+    For SINGLE mode snapshots, set executor_progress.json so the engine resumes at the right step.
+    executor_<k>.db means 'k' steps completed ⇒ next_index = k (0-based start from k).
+    """
+    k, _ = parse_snapshot_indices(snapshot)
+    if not k:
+        # Not a numbered snapshot (e.g., executor_checkpoint.db) — leave JSON as-is
+        print(
+            "[resume] Using live/default checkpoint; not altering executor_progress.json."
+        )
+        return
+    prog_path = _progress_file(workspace)
+    payload = {
+        "next_index": int(
+            k
+        ),  # start loop at idx=k (i.e., step k+1 in 1-based terms)
+        "plan_hash": str(plan_sig),
+        "last_summary": f"Resumed from snapshot {snapshot.name}",
+    }
+    prog_path.write_text(json.dumps(payload, indent=2))
+    print(
+        f"[resume] Wrote {prog_path.name}: next_index={k}, plan_hash={plan_sig[:8]}. . ."
+    )
+
+
+# --- discover & sort checkpoints in a workspace ---
+def _ckpt_sort_key(p: Path):
+    import re
+
+    name = p.name
+    pat = r"executor_checkpoint_(\d+)(?:_(\d+))?\.db$"
+    m = re.match(pat, name)
+    if m:
+        a = int(m.group(1))
+        b = int(m.group(2) or 0)
+        return (0, a, b, name)  # numbered snapshots first
+    if name == "executor_checkpoint.db":
+        return (1, float("inf"), float("inf"), name)  # live default next
+    # anything else sinks to the bottom (shouldn't appear in our glob)
+    return (2, float("inf"), float("inf"), name)
+
+
+# --- timed input with countdown (POSIX-friendly; auto-fallback if non-interactive) ---
+def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
+    """
+    Read a line with a per-second countdown. Returns:
+      - the user's input (str) if provided,
+      - None if timeout expires,
+      - None if non-interactive or timeout<=0.
+    No bracketed prefixes are printed (clean output for all prompts).
+    """
+    import sys
+    import time
+
+    # Non-interactive or disabled timeout → default immediately (no noisy prefix)
+    try:
+        is_tty = sys.stdin.isatty()
+    except Exception:
+        is_tty = False
+
+    if not is_tty:
+        print("(non-interactive) selecting default . . .")
+        return None
+    if timeout <= 0:
+        print("(timeout disabled) selecting default . . .")
+        return None
+
+    # Show prompt and run a 1s polling loop
+    deadline = time.time() + timeout
+    print(prompt, end="", flush=True)
+
+    try:
+        import select
+
+        while True:
+            remaining = int(max(0, deadline - time.time()))
+            if remaining in {30, 10, 5, 4, 3, 2, 1}:
+                # print a short tick line, then reprint the prompt
+                print(
+                    f"\n{remaining} seconds left . . .  (Ctrl-C to abort)",
+                    flush=True,
+                )
+                print(prompt, end="", flush=True)
+            if remaining <= 0:
+                print()  # newline after prompt
+                return None
+
+            rlist, _, _ = select.select([sys.stdin], [], [], 1.0)
+            if rlist:
+                line = sys.stdin.readline()
+                return None if line is None else line.strip()
+
+    except Exception:
+        # Fallback if select is unavailable
+        try:
+            return input()
+        except KeyboardInterrupt:
+            raise
+
+
+def list_executor_checkpoints(workspace: str) -> list[Path]:
+    ws = Path(workspace)
+    ckdir = _ckpt_dir(workspace)
+    seen = {}
+    # Prefer new location
+    for base in (ckdir, ws):
+        for pat in ("executor_checkpoint_*.db", "executor_checkpoint.db"):
+            for p in base.glob(pat):
+                seen[p.resolve()] = p
+    return sorted(seen.values(), key=_ckpt_sort_key)
+
+
+def choose_checkpoint(workspace: str, timeout: int = 60) -> Path | None:
+    ckpts = list_executor_checkpoints(workspace)
+    default = _ckpt_dir(workspace) / "executor_checkpoint.db"
+
+    print("\nAvailable executor checkpoints:")
+    if ckpts:
+        for i, p in enumerate(ckpts, 1):
+            tag = " (default)" if p.resolve() == default.resolve() else ""
+            print(f"  {i}. {p.name}{tag}")
+        prompt = (
+            f"Select checkpoint [1-{len(ckpts)} or filename] "
+            f"(Enter for default: {default.name}; auto in {timeout}s) > "
+        )
+        sel = timed_input_with_countdown(prompt, timeout)
+    else:
+        print("  (none found)")
+        prompt = (
+            f"Press Enter to start fresh ({default.name}; auto in {timeout}s), "
+            f"or type a checkpoint filename to restore > "
+        )
+        sel = timed_input_with_countdown(prompt, timeout)
+
+    if not sel:
+        return default
+
+    if sel.isdigit() and ckpts:
+        idx = int(sel)
+        if 1 <= idx <= len(ckpts):
+            return ckpts[idx - 1]
+        print(f"[warn] Invalid selection {sel}; using default.")
+        return default
+
+    # If they type a filename, accept it whether or not it matches our filters
+    cand = Path(sel)
+    if not cand.is_absolute():
+        cand = Path(workspace) / sel
+    if cand.exists():
+        # (Optional) warn if it’s a legacy name
+        if cand.name.startswith("executor_") and not cand.name.startswith(
+            "executor_checkpoint_"
+        ):
+            print(
+                f"[warn] Using legacy snapshot name '{cand.name}'. "
+                f"Future runs will prefer 'executor_checkpoint_*.db'."
+            )
+        return cand
+
+    print(f"[warn] '{sel}' not found; using default.")
+    return default
+
+
+# --- resolve resume target (CLI override or interactive) ---
+def resolve_resume_checkpoint(
+    workspace: str, resume_from: str | None, timeout: int
+) -> Path | None:
+    if resume_from:
+        p = Path(resume_from)
+        if not p.is_absolute():
+            # try checkpoints/ first, then root (legacy)
+            cand = _ckpt_dir(workspace) / p
+            if cand.exists():
+                print(
+                    f"[resume] Using checkpoint from CLI (checkpoints): {cand.name}"
+                )
+                return cand
+            p = Path(workspace) / p
+        if p.exists():
+            print(f"[resume] Using checkpoint from CLI: {p.name}")
+            return p
+        print(
+            f"[warn] --resume-from '{resume_from}' not found; falling back to interactive/default."
+        )
+    return choose_checkpoint(workspace, timeout=timeout)
+
+
+# --- restore selected snapshot into live executor DB (prior to opening it) ---
+def restore_executor_from_snapshot(workspace: str, snapshot: Path) -> None:
+    live = _ckpt_dir(workspace) / "executor_checkpoint.db"
+    if not snapshot.exists():
+        print(
+            f"[resume] No snapshot to restore (missing: {snapshot}); starting fresh."
+        )
+        return
+    if snapshot.resolve() == live.resolve():
+        print(f"[resume] Live DB already at desired checkpoint: {live.name}")
+        return
+    try:
+        snapshot_sqlite_db(snapshot, live)  # copy snapshot → live
+        for suffix in ("-wal", "-shm"):
+            side = live.with_name(live.name + suffix)
+            if side.exists():
+                side.unlink()
+        print(f"[resume] Restored: {snapshot.name} → {live.name}")
+    except Exception as e:
+        print(
+            f"[warn] Failed to restore '{snapshot}': {e}. Continuing with current live DB."
+        )
 
 
 #########################################################################
@@ -443,22 +699,26 @@ def _print_next_step(prefix: str, next_zero: int, total: int, workspace: str):
 
 def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     # first, setup checkpoint / recover pathways
-    edb_path = Path(workspace) / "executor_checkpoint.db"
-    edb_path.parent.mkdir(parents=True, exist_ok=True)
+    edb_path = _ckpt_dir(workspace) / "executor_checkpoint.db"
     econn = sqlite3.connect(str(edb_path), check_same_thread=False)
     executor_checkpointer = SqliteSaver(econn)
 
-    pdb_path = Path(workspace) / "planner_checkpoint.db"
-    pdb_path.parent.mkdir(parents=True, exist_ok=True)
+    pdb_path = _ckpt_dir(workspace) / "planner_checkpoint.db"
     pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
     planner_checkpointer = SqliteSaver(pconn)
 
     # Initialize the agents
     planner = PlanningAgent(
-        llm=model, checkpointer=planner_checkpointer
+        llm=model,
+        checkpointer=planner_checkpointer,
+        enable_metrics=True,
+        metrics_dir=Path(workspace) / "ursa_metrics",
     )  # include checkpointer
     executor = ExecutionAgent(
-        llm=model, checkpointer=executor_checkpointer
+        llm=model,
+        checkpointer=executor_checkpointer,
+        enable_metrics=True,
+        metrics_dir=Path(workspace) / "ursa_metrics",
     )  # include checkpointer
     # Use the workspace as the thread id (one thread per workspace)
     thread_id = Path(workspace).name
@@ -476,15 +736,51 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     )
 
 
-def setup_llm(model_name):
-    model = ChatLiteLLM(
-        model=model_name,
-        max_tokens=10000,
+def _resolve_model_choice(model_choice: str, models_cfg: dict):
+    """
+    Accepts strings like 'openai:gpt-5-mini' or 'metis:gpt-oss-120b-131072'.
+    Looks up per-provider settings from cfg.models.providers.
+    Returns: model_provider, model_name, extra_kwargs_for_init
+    """
+    if ":" in model_choice:
+        alias, pure_model = model_choice.split(":", 1)
+    else:
+        alias, pure_model = "openai", model_choice  # back-compat default
+
+    providers = (models_cfg or {}).get("providers", {})
+    prov = providers.get(alias, {})
+
+    # Which LangChain integration to use (eg "openai", "mistral", etc.)
+    model_provider = prov.get("model_provider", alias)
+
+    # auth: prefer env var; optionally load via function if configured
+    api_key = None
+    if prov.get("api_key_env"):
+        api_key = os.getenv(prov["api_key_env"])
+    if not api_key and prov.get("token_loader"):
+        mod, fn = prov["token_loader"].rsplit(".", 1)
+        api_key = getattr(importlib.import_module(mod), fn)()
+
+    extra = {}
+    if prov.get("base_url"):
+        extra["base_url"] = prov["base_url"]
+    if api_key:
+        # For ChatOpenAI this is "api_key"
+        extra["api_key"] = api_key
+
+    return model_provider, pure_model, extra
+
+
+def setup_llm(model_choice: str, models_cfg: dict | None = None):
+    provider, pure_model, extra = _resolve_model_choice(
+        model_choice, models_cfg or {}
+    )
+    model = init_chat_model(
+        model=pure_model,
+        model_provider=provider,  # <-- lets langchain pick the right integration
+        max_completion_tokens=10000,
         max_retries=2,
-        model_kwargs={
-            # "reasoning": {"effort": "high"},
-        },
-        # temperature=0.2,
+        **extra,  # <-- base_url, api_key, etc. flow through
     )
     return model
 
@@ -492,7 +788,7 @@ def setup_llm(model_name):
 def setup_workspace(
     user_specified_workspace: str | None,
     project: str = "run",
-    model_name: str = "openai/o3-mini",
+    model_name: str = "openai:gpt-5-mini",
 ) -> str:
     if user_specified_workspace is None:
         print("No workspace specified, creating one for this project!")
@@ -500,7 +796,7 @@ def setup_workspace(
             "Make sure to pass this string to restart using --workspace <this workspace string>"
         )
         # https://pypi.org/project/randomname/
-        workspace = f"{project}_{randomname.get_name(noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit', 'plants'))}"
+        workspace = f"{project}_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
     else:
         workspace = user_specified_workspace
         print(f"User specified workspace: {workspace}")
@@ -701,7 +997,7 @@ def run_substeps(
             transient=True,
         ) as sub_progress:
             sub_task = sub_progress.add_task(
-                f"Execute sub-step: {step_to_text(current_sub)[:60]} …",
+                f"Execute sub-step: {step_to_text(current_sub)[:60]} . . .",
                 total=1,
                 completed=0,
                 current=1,
@@ -761,18 +1057,38 @@ def main(
     planning_mode: str = "single",
     user_specified_workspace: str = None,
     stepwise_exit: bool = False,
+    resume_from: str | None = None,
+    interactive_timeout: int = 60,
 ):
     try:
         problem = getattr(config, "problem", "")
         project = getattr(config, "project", "run")
         symlinkdict = getattr(config, "symlink", {}) or None
 
-        # sets up the LLM, model parameters, etc.
-        model = setup_llm(model_name)
+        # sets up the LLM, model parameters, providers, endpoints, etc.
+        model = setup_llm(model_name, getattr(config, "models", {}) or {})
         # sets up the workspace, run config json, etc.
         workspace = setup_workspace(
             user_specified_workspace, project, model_name
         )
+
+        # --- decide which checkpoint to start from ---
+        try:
+            chosen_ckpt = resolve_resume_checkpoint(
+                workspace=workspace,
+                resume_from=resume_from,
+                timeout=interactive_timeout,
+            )
+            if chosen_ckpt:
+                restore_executor_from_snapshot(workspace, chosen_ckpt)
+                # (Optional) also print a gentle reminder:
+                print(
+                    "Press Ctrl-C now to abort and rerun with a different --resume-from, if this was unintentional."
+                )
+        except KeyboardInterrupt:
+            print("\nAborted by user before opening databases.")
+            sys.exit(1)
+
         # lock planning_mode per workspace
         planning_mode, mode_locked = lock_or_warn_planning_mode(
             workspace, planning_mode
@@ -784,12 +1100,104 @@ def main(
             )
         )
 
+        # ---- One-time project logo kickoff (per workspace) -----------------
+        # Use run_meta.json to ensure we do this only once for this workspace.
+        meta = load_run_meta(workspace)
+        # MINIMAL CONFIG
+        logo_cfg = getattr(cfg, "logo", {}) or {}
+        logo_enabled = bool(logo_cfg.get("enabled", True))
+
+        if logo_enabled and not meta.get("logo_created"):
+            scene_style = logo_cfg.get(
+                "scene", "random"
+            )  # noir/sci-fi/etc or "random"
+            stickers_enabled = bool(logo_cfg.get("stickers", True))
+            n_variants = int(logo_cfg.get("n", 4))
+            logo_model_choice = logo_cfg.get("model", "openai:gpt-image-1")
+
+            # pick the model string & a providers map
+            providers = (getattr(cfg, "models", {}) or {}).get(
+                "providers", {}
+            ) or {}
+
+            v_provider, v_model, v_extra = _resolve_model_choice(
+                logo_model_choice, {"providers": providers}
+            )
+            scene_dir = Path(workspace) / "logo_art" / "scenes"
+            sticker_dir = Path(workspace) / "logo_art" / "stickers"
+            try:
+                # SCENE artwork — uses existing defaults for everything else
+                _ = kickoff_logo(
+                    problem_text=problem,
+                    workspace=workspace,
+                    out_dir=scene_dir,
+                    # size omitted (auto with aspect)
+                    background="opaque",
+                    quality="high",
+                    n=n_variants,
+                    style=scene_style,  # <- only knob exposed via YAML
+                    mode="scene",
+                    aspect="wide",
+                    style_intensity="overt",
+                    image_model=v_model,
+                    image_model_provider=v_provider,
+                    image_provider_kwargs=v_extra,
+                    console=console,
+                    on_done=lambda p: console.print(
+                        Panel.fit(
+                            f"[bold yellow]Project art saved:[/] {p}",
+                            border_style="yellow",
+                        )
+                    ),
+                    on_error=lambda e: console.print(
+                        Panel.fit(
+                            f"[bold red]Art generation failed:[/] {e}",
+                            border_style="red",
+                        )
+                    ),
+                )
+
+                # STICKER artwork — optional
+                if stickers_enabled:
+                    _ = kickoff_logo(
+                        problem_text=problem,
+                        workspace=workspace,
+                        out_dir=sticker_dir,
+                        size="1024x1024",
+                        background="opaque",
+                        quality="high",
+                        n=n_variants,
+                        style="sticker",
+                        image_model=v_model,
+                        image_model_provider=v_provider,
+                        image_provider_kwargs=v_extra,
+                        console=console,
+                        on_done=lambda p: console.print(
+                            Panel.fit(
+                                f"[bold yellow]Project sticker art saved:[/] {p}",
+                                border_style="yellow",
+                            )
+                        ),
+                        on_error=lambda e: console.print(
+                            Panel.fit(
+                                f"[bold red]Art sticker generation failed:[/] {e}",
+                                border_style="red",
+                            )
+                        ),
+                    )
+
+            finally:
+                # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
+                # Remove this flag manually if you want to re-generate art for this workspace.
+                save_run_meta(workspace, logo_created=True)
+        # --------------------------------------------------------------------
+
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(
             workspace, model
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
-        executor, _, _ = executor_tuple
+        executor, _, edb_path = executor_tuple
 
         # print the problem we're solving in a nice little box / panel
         console.print(
@@ -815,6 +1223,44 @@ def main(
             workspace,
         )
 
+        # If we restored from a numbered snapshot in SINGLE mode, align executor_progress.json
+        if planning_mode == "single" and chosen_ckpt is not None:
+            try:
+                sync_progress_for_snapshot_single(
+                    workspace, chosen_ckpt, plan_sig
+                )
+            except Exception as e:
+                print(
+                    f"[warn] failed to sync progress JSON for {chosen_ckpt.name}: {e}"
+                )
+
+        # --- compute resume indices from chosen snapshot (used for logs + hier priming) ---
+        resume_main_0 = resume_sub_next = None
+        if chosen_ckpt is not None:
+            _m1, _s1 = parse_snapshot_indices(chosen_ckpt)
+            if _m1:
+                resume_main_0 = max(0, _m1 - 1)
+                resume_sub_next = int(_s1) if _s1 is not None else 0
+
+        # Simple resume summary
+        if planning_mode == "single" and chosen_ckpt is not None:
+            k, _ = parse_snapshot_indices(chosen_ckpt)
+            if k is not None:
+                print(
+                    f"[resume] Single mode: next_index={k} (will start at top-level step {k + 1})."
+                )
+        elif (
+            planning_mode == "hierarchical"
+            and chosen_ckpt is not None
+            and resume_main_0 is not None
+        ):
+            human_main = resume_main_0 + 1
+            human_sub = (resume_sub_next + 1) if resume_sub_next else 1
+            print(
+                f"[resume] Hierarchical: MAIN next_index={resume_main_0} (human {human_main}), "
+                f"SUB next_index={resume_sub_next} (human {human_sub})."
+            )
+
         if planning_mode == "hierarchical":
             # ----- MAIN PLAN PROGRESS -----
             hprog = load_hier_progress(workspace)
@@ -830,6 +1276,14 @@ def main(
                     "subs": {},
                 }
                 save_hier_progress(workspace, hprog)
+
+            if resume_main_0 is not None:
+                hprog = save_hier_main_progress(
+                    workspace,
+                    next_index=resume_main_0,
+                    plan_hash=plan_sig,
+                    data=hprog,
+                )
 
             # we could be coming back into this plan at someplace in the middle, so this our start
             # index for THIS instantiation
@@ -874,7 +1328,19 @@ def main(
                     stepwise_exit,
                     hierarchical=True,
                 )
+
                 sub_steps = sub_values.get("plan_steps") or []
+
+                # If we resumed into this main step, set its sub "next_index" before running
+                if (resume_main_0 is not None) and (m_idx == resume_main_0):
+                    target_next = min(resume_sub_next, len(sub_steps))
+                    save_hier_sub_progress(
+                        workspace,
+                        m_idx,
+                        next_index=target_next,
+                        plan_hash=sub_sig,
+                        last_summary=f"Resumed from snapshot {chosen_ckpt.name}",
+                    )
 
                 # closures for reading/writing sub-progress with plan-hash guard
                 def load_progress_h(m):
@@ -894,9 +1360,30 @@ def main(
                     return prog
 
                 def save_progress_h(m, next_idx, last_summary):
+                    # persist hierarchical sub-step progress
                     save_hier_sub_progress(
                         workspace, m, next_idx, sub_sig, last_summary
                     )
+
+                    # snapshot after each completed sub-step:
+                    # m is 0-based main step index; next_idx is the 1-based count of completed sub-steps
+                    try:
+                        main_no = m + 1
+                        sub_no = int(
+                            next_idx
+                        )  # just-finished sub-step (1-based)
+                        snapshot_path = (
+                            _ckpt_dir(workspace)
+                            / f"executor_checkpoint_{main_no}_{sub_no}.db"
+                        )
+                        snapshot_sqlite_db(edb_path, snapshot_path)
+                        print(
+                            f"[checkpoint] saved sub-step snapshot: {snapshot_path.name}"
+                        )
+                    except Exception as e:
+                        print(
+                            f"[warn] failed to snapshot executor DB for main {m + 1} sub {next_idx}: {e}"
+                        )
 
                 _ = run_substeps(
                     executor,
@@ -993,6 +1480,21 @@ def main(
                             plan_hash=plan_sig,
                             last_summary=last_summary,
                         )
+                        # snapshot the executor checkpoint after completing top-level step m (1-based)
+                        try:
+                            step_no = m + 1
+                            snapshot_path = (
+                                _ckpt_dir(workspace)
+                                / f"executor_checkpoint_{step_no}.db"
+                            )
+                            snapshot_sqlite_db(edb_path, snapshot_path)
+                            print(
+                                f"[checkpoint] saved step snapshot: {snapshot_path.name}"
+                            )
+                        except Exception as e:
+                            print(
+                                f"[warn] failed to snapshot executor DB for step {m + 1}: {e}"
+                            )
 
                     prev_summary = run_substeps(
                         executor,
@@ -1039,6 +1541,19 @@ def parse_args_and_user_inputs():
         action="store_true",
         help="Exit after each plan/sub-plan/step checkpoint (demo mode). Default: continue without exiting.",
     )
+    parser.add_argument(
+        "--resume-from",
+        required=False,
+        help="Checkpoint file to restore executor state from (e.g. executor_checkpoint_5.db or executor_checkpoint_3_2.db). "
+        "If omitted, you'll be prompted (with timeout).",
+    )
+    parser.add_argument(
+        "--interactive-timeout",
+        type=int,
+        default=60,
+        help="Seconds to wait at interactive prompts (model/mode/checkpoint) before defaulting. "
+        "Set 0 to default immediately (useful for headless/HPC).",
+    )
     args = parser.parse_args()
 
     # --- load YAML -> dict -> shallow namespace (top-level keys only) ---
@@ -1055,19 +1570,57 @@ def parse_args_and_user_inputs():
         print(f"Error loading YAML: {e}", file=sys.stderr)
         sys.exit(2)
 
-    # ── interactive model picker (from config if provided) ────────────
+    # ── config-driven model choices ────────────
     models_cfg = getattr(cfg, "models", {}) or {}
     DEFAULT_MODELS = tuple(
         models_cfg.get("choices")
         or (
-            "openai/gpt-5",
-            "openai/o3",
-            "openai/o3-mini",
+            "openai:gpt-5",
+            "openai:gpt-5-mini",
+            "openai:o3",
+            "openai:o3-mini",
         )
     )
     DEFAULT_MODEL = models_cfg.get("default")  # may be None
 
-    def _choose_planning_mode_interactive(default_mode: str) -> str:
+    # ── timeout-aware interactive helpers ────────────
+    def _choose_model_interactive(
+        default_models: tuple[str, ...],
+        default_model: str | None,
+        timeout_sec: int,
+    ) -> str:
+        print("\nChoose the model to run with:")
+        for i, m in enumerate(default_models, 1):
+            print(f"  {i}. {m}")
+        if default_model:
+            print(f"(Press Enter for default: {default_model})")
+        else:
+            print(
+                f"(No configured default; Enter will pick: {default_models[0]})"
+            )
+        print("Or type your own model string (Ctrl-C to quit).")
+        print(
+            f"(No response in {timeout_sec}s → default will be selected automatically.)"
+        )
+
+        while True:
+            choice = timed_input_with_countdown("> ", timeout_sec)
+            if choice is None or choice.strip() == "":
+                return default_model or default_models[0]
+            s = choice.strip()
+            if s.isdigit():
+                idx = int(s)
+                if 1 <= idx <= len(default_models):
+                    return default_models[idx - 1]
+                print(
+                    f"Please enter a number 1..{len(default_models)}, a custom model, or press Enter."
+                )
+                continue
+            return s
+
+    def _choose_planning_mode_interactive(
+        default_mode: str, timeout_sec: int
+    ) -> str:
         print("\nSelect planning mode:")
         print(
             "  1. hierarchical  (Plan -> re-plan each step -> execute sub-steps)"
@@ -1077,57 +1630,32 @@ def parse_args_and_user_inputs():
         )
         if default_mode:
             print(f"(Press Enter for default: {default_mode})")
+        print(
+            f"(No response in {timeout_sec}s → default will be selected automatically.)"
+        )
+
         while True:
-            choice = input("> ").strip().lower()
-            if not choice and default_mode:
+            choice = timed_input_with_countdown("> ", timeout_sec)
+            if choice is None or choice.strip() == "":
                 return default_mode
-            if choice.isdigit():
-                if choice == "1":
+            s = choice.strip().lower()
+            if s.isdigit():
+                if s == "1":
                     return "hierarchical"
-                if choice == "2":
+                if s == "2":
                     return "single"
-            if choice in ("hierarchical", "single"):
-                return choice
+            if s in ("hierarchical", "single"):
+                return s
             print("Please enter 1, 2, 'hierarchical', or 'single'.")
 
     try:
-        print("\nChoose the model to run with:")
-        for i, m in enumerate(DEFAULT_MODELS, 1):
-            print(f"  {i}. {m}")
-        if DEFAULT_MODEL:
-            print(f"(Press Enter for default: {DEFAULT_MODEL})")
-        print("Or type your own model string (Ctrl-C to quit):")
+        # Model (CLI didn’t provide a model string variable elsewhere, so pick interactively)
+        model = _choose_model_interactive(
+            DEFAULT_MODELS, DEFAULT_MODEL, args.interactive_timeout
+        )
 
-        while True:
-            choice = input("> ").strip()
-
-            if not choice and DEFAULT_MODEL:
-                model = DEFAULT_MODEL
-                break
-
-            if choice.isdigit():
-                idx = int(choice)
-                if 1 <= idx <= len(DEFAULT_MODELS):
-                    model = DEFAULT_MODELS[idx - 1]
-                    break
-
-            if choice:  # custom model string
-                model = choice
-                break
-
-            valid_nums = ", ".join(
-                str(i) for i in range(1, len(DEFAULT_MODELS) + 1)
-            )
-            if DEFAULT_MODEL:
-                print(
-                    f"Please enter {valid_nums}, a custom model, or press Enter for default."
-                )
-            else:
-                print(f"Please enter {valid_nums} or a custom model.")
-
-        # -- planning-mode resolution: CLI > config > interactive > default --
+        # Planning mode resolution: CLI > config > interactive > default('single')
         config_mode = None
-        # support either cfg.planning.mode or cfg.planning_mode
         planning_cfg = getattr(cfg, "planning", None)
         if isinstance(planning_cfg, dict):
             config_mode = planning_cfg.get("mode")
@@ -1137,7 +1665,9 @@ def parse_args_and_user_inputs():
         planning_mode = (
             args.planning_mode
             or config_mode
-            or _choose_planning_mode_interactive("single")
+            or _choose_planning_mode_interactive(
+                "single", args.interactive_timeout
+            )
         )
 
     except KeyboardInterrupt:
@@ -1183,6 +1713,8 @@ if __name__ == "__main__":
         planning_mode=planning_mode,
         user_specified_workspace=args.workspace,
         stepwise_exit=args.stepwise_exit,
+        resume_from=args.resume_from,
+        interactive_timeout=args.interactive_timeout,
     )
 
     display_final_output(final_output)

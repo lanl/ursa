@@ -11,7 +11,7 @@ def main():
     callback_handler = OpenAICallbackHandler()
 
     llm = ChatOpenAI(
-        model="o3",
+        model="gpt-5-mini",
         max_tokens=10000,
         timeout=None,
         max_retries=2,
@@ -27,7 +27,7 @@ def main():
         database_path="arxiv_HEA_papers",
         summaries_path="arxiv_HEA_summaries",
         vectorstore_path="arxiv_HEA_vectorstores",
-        download_papers=True,
+        download=True,
     )
     agent.thread_id = tid
 

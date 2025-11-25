@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import httpx
+from langchain.chat_models import init_chat_model
+from langchain.embeddings import init_embeddings
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
-from pydantic import SecretStr
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
@@ -19,7 +19,9 @@ from typer import Typer
 
 from ursa.agents import (
     ArxivAgent,
+    ChatAgent,
     ExecutionAgent,
+    HypothesizerAgent,
     PlanningAgent,
     RecallAgent,
     WebSearchAgent,
@@ -48,21 +50,19 @@ def make_console():
     )
 
 
-def wrap_api_key(api_key: Optional[str]) -> Optional[SecretStr]:
-    return None if api_key is None else SecretStr(api_key)
-
-
 @dataclass
 class HITL:
     workspace: Path
     llm_model_name: str
-    llm_base_url: str
+    llm_base_url: Optional[str]
     llm_api_key: Optional[str]
     max_completion_tokens: int
-    emb_model_name: str
-    emb_base_url: str
+    emb_model_name: Optional[str]
+    emb_base_url: Optional[str]
     emb_api_key: Optional[str]
     share_key: bool
+    thread_id: str
+    safe_codes: list[str]
     arxiv_summarize: bool
     arxiv_process_images: bool
     arxiv_max_results: int
@@ -70,7 +70,15 @@ class HITL:
     arxiv_summaries_path: Optional[Path]
     arxiv_vectorstore_path: Optional[Path]
     arxiv_download_papers: bool
-    ssl_verify: bool
+    ssl_verify_llm: bool
+    ssl_verify_emb: bool
+
+    def _make_kwargs(self, **kwargs):
+        # NOTE: This is required instead of setting to None because of
+        # strangeness in init_chat_model.
+        return {
+            key: value for key, value in kwargs.items() if value is not None
+        }
 
     def get_path(self, path: Optional[Path], default_subdir: str) -> str:
         if path is None:
@@ -98,33 +106,49 @@ class HITL:
                 case str(), None:
                     self.emb_api_key = self.llm_api_key
 
-        llm_api_secret = wrap_api_key(self.llm_api_key)
-        emb_api_secret = wrap_api_key(self.emb_api_key)
-
-        self.model = ChatOpenAI(
+        self.model = init_chat_model(
             model=self.llm_model_name,
             max_completion_tokens=self.max_completion_tokens,
-            base_url=self.llm_base_url,
-            api_key=llm_api_secret,
-            http_client=None if self.ssl_verify else httpx.Client(verify=False),
+            **self._make_kwargs(
+                http_client=None
+                if self.ssl_verify_llm
+                else httpx.Client(verify=False),
+                base_url=self.llm_base_url,
+                api_key=self.llm_api_key,
+            ),
         )
 
-        self.embedding = OpenAIEmbeddings(
-            model=self.emb_model_name,
-            base_url=self.emb_base_url,
-            api_key=emb_api_secret,
-            http_client=None if self.ssl_verify else httpx.Client(verify=False),
+        self.embedding = (
+            init_embeddings(
+                model=self.emb_model_name,
+                **self._make_kwargs(
+                    http_client=None
+                    if self.ssl_verify_emb
+                    else httpx.Client(verify=False),
+                    base_url=self.emb_base_url,
+                    api_key=self.emb_api_key,
+                ),
+            )
+            if self.emb_model_name
+            else None
         )
 
-        self.memory = AgentMemory(
-            embedding_model=self.embedding, path=str(self.workspace / "memory")
+        self.memory = (
+            AgentMemory(
+                embedding_model=self.embedding,
+                path=str(self.workspace / "memory"),
+            )
+            if self.embedding
+            else None
         )
 
         self.last_agent_result = ""
         self.arxiv_state = []
+        self.chatter_state = {"messages": []}
         self.executor_state = {}
+        self.hypothesizer_state = {}
         self.planner_state = {}
-        self.websearcher_state = {}
+        self.websearcher_state = []
 
     def update_last_agent_result(self, result: str):
         self.last_agent_result = result
@@ -146,12 +170,24 @@ class HITL:
             vectorstore_path=self.get_path(
                 self.arxiv_vectorstore_path, "arxiv_vectorstores"
             ),
-            download_papers=self.arxiv_download_papers,
+            download=self.arxiv_download_papers,
+        )
+
+    @cached_property
+    def chatter(self) -> ChatAgent:
+        edb_path = self.workspace / "checkpoint.db"
+        edb_path.parent.mkdir(parents=True, exist_ok=True)
+        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
+        self.chatter_checkpointer = SqliteSaver(econn)
+        return ChatAgent(
+            llm=self.model,
+            checkpointer=self.chatter_checkpointer,
+            thread_id=self.thread_id + "_chatter",
         )
 
     @cached_property
     def executor(self) -> ExecutionAgent:
-        edb_path = self.workspace / "executor_checkpoint.db"
+        edb_path = self.workspace / "checkpoint.db"
         edb_path.parent.mkdir(parents=True, exist_ok=True)
         econn = sqlite3.connect(str(edb_path), check_same_thread=False)
         self.executor_checkpointer = SqliteSaver(econn)
@@ -159,36 +195,59 @@ class HITL:
             llm=self.model,
             checkpointer=self.executor_checkpointer,
             agent_memory=self.memory,
+            thread_id=self.thread_id + "_executor",
+            safe_codes=self.safe_codes,
+        )
+
+    @cached_property
+    def hypothesizer(self) -> HypothesizerAgent:
+        edb_path = self.workspace / "checkpoint.db"
+        edb_path.parent.mkdir(parents=True, exist_ok=True)
+        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
+        self.executor_checkpointer = SqliteSaver(econn)
+        return HypothesizerAgent(
+            llm=self.model,
+            checkpointer=self.executor_checkpointer,
+            thread_id=self.thread_id + "_hypothesizer",
         )
 
     @cached_property
     def planner(self) -> PlanningAgent:
-        pdb_path = Path(self.workspace) / "planner_checkpoint.db"
+        pdb_path = Path(self.workspace) / "checkpoint.db"
         pdb_path.parent.mkdir(parents=True, exist_ok=True)
         pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
         self.planner_checkpointer = SqliteSaver(pconn)
         return PlanningAgent(
             llm=self.model,
             checkpointer=self.planner_checkpointer,
+            thread_id=self.thread_id + "_planner",
         )
 
     @cached_property
     def websearcher(self) -> WebSearchAgent:
-        rdb_path = Path(self.workspace) / "websearcher_checkpoint.db"
+        rdb_path = Path(self.workspace) / "checkpoint.db"
         rdb_path.parent.mkdir(parents=True, exist_ok=True)
         rconn = sqlite3.connect(str(rdb_path), check_same_thread=False)
         self.websearcher_checkpointer = SqliteSaver(rconn)
 
         return WebSearchAgent(
             llm=self.model,
+            max_results=10,
+            database_path="web_db",
+            summaries_path="web_summaries",
             checkpointer=self.websearcher_checkpointer,
+            thread_id=self.thread_id + "_websearch",
         )
 
     @cached_property
     def rememberer(self) -> RecallAgent:
-        return RecallAgent(llm=self.model, memory=self.memory)
+        return (
+            RecallAgent(llm=self.model, memory=self.memory)
+            if self.memory
+            else None
+        )
 
-    def run_arvix(self, prompt: str) -> str:
+    def run_arxiv(self, prompt: str) -> str:
         llm_search_query = self.model.invoke(
             f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
         ).content
@@ -245,22 +304,42 @@ class HITL:
         return f"[Executor Agent Output]:\n {self.last_agent_result}"
 
     def run_rememberer(self, prompt: str) -> str:
-        memory_output = self.rememberer.remember(prompt)
+        memory_output = self.rememberer.invoke(prompt) if self.memory else None
         return f"[Rememberer Output]:\n {memory_output}"
 
     def run_chatter(self, prompt: str) -> str:
-        chat_output = self.model.invoke(
-            f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
+        self.chatter_state["messages"].append(
+            HumanMessage(
+                content=f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
+            )
         )
+        self.chatter_state = self.chatter.invoke(
+            self.chatter_state,
+        )
+        chat_output = self.chatter_state["messages"][-1]
 
         if not isinstance(chat_output.content, str):
             raise TypeError(
-                f"chat_output is not a str! Instead, it is: {chat_output}."
+                f"chat_output is not a str! Instead, it is: {type(chat_output.content)}."
             )
 
         self.update_last_agent_result(chat_output.content)
         # return f"[{self.model.model_name}]: {self.last_agent_result}"
         return f"{self.last_agent_result}"
+
+    def run_hypothesizer(self, prompt: str) -> str:
+        question = f"The last agent output was: {self.last_agent_result}\n\nThe user stated: {prompt}"
+
+        self.hypothesizer_state = self.hypothesizer.invoke(
+            prompt=question,
+            max_iterations=2,
+        )
+
+        solution = self.hypothesizer_state.get(
+            "solution", "Hypothesizer failed to return a solution"
+        )
+        self.update_last_agent_result(solution)
+        return f"[Hypothesizer Agent Output]:\n {self.last_agent_result}"
 
     def run_planner(self, prompt: str) -> str:
         self.planner_state.setdefault("messages", [])
@@ -285,35 +364,20 @@ class HITL:
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
     def run_websearcher(self, prompt: str) -> str:
-        if self.websearcher_state:
-            self.websearcher_state["messages"].append(
-                HumanMessage(
-                    f"The last agent output was: {self.last_agent_result}\n"
-                    f"The user stated: {prompt}"
-                )
+        llm_search_query = self.model.invoke(
+            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
+        ).content
+        print("Searching Web for ", llm_search_query)
+        if isinstance(llm_search_query, str):
+            web_result = self.websearcher.invoke(
+                query=llm_search_query,
+                context=prompt,
             )
-            self.websearcher_state = self.websearcher.invoke(
-                self.websearcher_state,
-            )
-            self.update_last_agent_result(
-                self.websearcher_state["messages"][-1].content
-            )
+            self.websearcher_state.append(web_result)
+            self.update_last_agent_result(web_result)
+            return f"[WebSearch Agent Output]:\n {self.last_agent_result}"
         else:
-            self.websearcher_state = {
-                "messages": [
-                    HumanMessage(
-                        f"The last agent output was: {self.last_agent_result}\n"
-                        f"The user stated: {prompt}"
-                    )
-                ]
-            }
-            self.websearcher_state = self.websearcher.invoke(
-                self.websearcher_state,
-            )
-            self.update_last_agent_result(
-                self.websearcher_state["messages"][-1].content
-            )
-        return f"[Planner Agent Output]:\n {self.last_agent_result}"
+            raise RuntimeError("Unexpected error while running WebSearchAgent!")
 
 
 class UrsaRepl(Cmd):
@@ -372,7 +436,7 @@ class UrsaRepl(Cmd):
 
     def do_arxiv(self, _: str):
         """Run ArxivAgent"""
-        self.show(self.run_agent("Arxiv Agent", self.hitl.run_arvix))
+        self.show(self.run_agent("Arxiv Agent", self.hitl.run_arxiv))
 
     def do_plan(self, _: str):
         """Run PlanningAgent"""
@@ -389,6 +453,12 @@ class UrsaRepl(Cmd):
     def do_recall(self, _: str):
         """Run RecallAgent"""
         self.show(self.run_agent("Recall Agent", self.hitl.run_rememberer))
+
+    def do_hypothesize(self, _: str):
+        """Run HypothesizerAgent"""
+        self.show(
+            self.run_agent("Hypothesizer Agent", self.hitl.run_hypothesizer)
+        )
 
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
@@ -407,16 +477,36 @@ class UrsaRepl(Cmd):
 
     def do_models(self, _: str):
         """List models and base urls"""
-        self.show(
-            f"[dim]*[/] LLM: [emph]{self.hitl.model.model_name} "
-            f"[dim]{self.hitl.llm_base_url}",
-            markdown=False,
+        llm_provider, llm_name = get_provider_and_model(
+            self.hitl.llm_model_name
         )
         self.show(
-            f"[dim]*[/] Embedding Model: [emph]{self.hitl.embedding.model} "
-            f"[dim]{self.hitl.emb_base_url}",
+            f"[dim]*[/] LLM: [emph]{llm_name} "
+            f"[dim]{self.hitl.llm_base_url or llm_provider}",
             markdown=False,
         )
+
+        emb_provider, emb_name = get_provider_and_model(
+            self.hitl.emb_model_name
+        )
+        self.show(
+            f"[dim]*[/] Embedding Model: [emph]{emb_name} "
+            f"[dim]{self.hitl.emb_base_url or emb_provider}",
+            markdown=False,
+        )
+
+
+def get_provider_and_model(model_str: Optional[str]):
+    if model_str is None:
+        return "none", "none"
+
+    if ":" in model_str:
+        provider, model = model_str.split(":", 1)
+    else:
+        provider = "openai"
+        model = model_str
+
+    return provider, model
 
 
 # TODO:

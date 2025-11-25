@@ -19,12 +19,12 @@ from ursa.agents.base import BaseAgent
 class TinyCountingModel(BaseChatModel):
     """
     Offline fake chat model:
-      - Pretends to be "openai/o3" (so it matches pricing.json keys)
+      - Pretends to be "openai:o3" (so it matches pricing.json keys)
       - Emits small token usage numbers (4 in, 5 out)
       - Never calls any external APIs
     """
 
-    model: str = "openai/o3"
+    model: str = "openai:o3"
 
     @property
     def _llm_type(self) -> str:
@@ -54,12 +54,12 @@ class TinyCountingModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
 
-class TestState(TypedDict, total=False):
+class SpecState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
 
 
 # --- Minimal agent under test (subclasses BaseAgent and makes one LLM call) ---
-class TestAgent(BaseAgent):
+class Agent(BaseAgent):
     def __init__(
         self,
         llm,
@@ -80,7 +80,7 @@ class TestAgent(BaseAgent):
         self.graph = self._build_graph()
         self._action = self.graph
 
-    def _run_impl(self, state: TestState):
+    def _run_impl(self, state: SpecState):
         # Make one LLM call with callbacks + metadata wired in via build_config()
         cfg = self.build_config(tags=["TestAgent"])
         _ = self.llm.invoke(state["messages"], config=cfg)
@@ -88,7 +88,7 @@ class TestAgent(BaseAgent):
         return {"messages": [AIMessage(content="done")]}
 
     def _build_graph(self):
-        builder = StateGraph(TestState)
+        builder = StateGraph(SpecState)
         builder.add_node(
             "run_impl",
             self._wrap_node(self._run_impl, "run_impl", "test"),
@@ -111,14 +111,14 @@ class TestAgent(BaseAgent):
 @pytest.fixture
 def pricing_file(tmp_path: Path) -> Path:
     """
-    Create a tiny pricing.json that matches the fake model ("openai/o3").
+    Create a tiny pricing.json that matches the fake model ("openai:o3").
     Prices are per 1K tokens.
       input:  $0.002 / 1K
       output: $0.008 / 1K
     """
     data = {
         "_note": "Test pricing file for unit test",
-        "openai/o3": {
+        "openai:o3": {
             "input_per_1k": 0.002,
             "output_per_1k": 0.008,
             "cached_input_multiplier": 0.25,
@@ -156,7 +156,7 @@ def test_base_agent_metrics_and_pricing(
     monkeypatch.setenv("URSA_PRICING_JSON", str(pricing_file))
 
     # Instantiate agent with metrics enabled and autosave on
-    agent = TestAgent(
+    agent = Agent(
         llm=TinyCountingModel(),
         enable_metrics=True,
         autosave_metrics=True,
@@ -179,7 +179,7 @@ def test_base_agent_metrics_and_pricing(
     # Pick the last event
     ev = payload["llm_events"][-1]
     assert ev["ok"] is True
-    assert ev["metadata"]["model"] == "openai/o3"
+    assert ev["metadata"]["model"] == "openai:o3"
 
     # Usage rollup should reflect our fake numbers
     roll = ev["metrics"]["usage_rollup"]
@@ -199,7 +199,7 @@ def test_base_agent_metrics_and_pricing(
     total_usd = payload["costs"]["total_usd"]
     by_model = payload["costs"]["by_model_usd"]
     assert pytest.approx(total_usd, rel=1e-9, abs=1e-9) == 0.000048
-    assert pytest.approx(by_model["openai/o3"], rel=1e-9, abs=1e-9) == 0.000048
+    assert pytest.approx(by_model["openai:o3"], rel=1e-9, abs=1e-9) == 0.000048
 
     # Per-event cost details should be annotated as computed
     assert ev["metrics"]["cost_source"] == "computed"
@@ -220,7 +220,7 @@ def test_metrics_toggle_off(tmp_path: Path, monkeypatch, pricing_file: Path):
     # Still set pricing, but it shouldn't be used
     monkeypatch.setenv("URSA_PRICING_JSON", str(pricing_file))
 
-    agent = TestAgent(
+    agent = Agent(
         llm=TinyCountingModel(),
         enable_metrics=False,  # <-- disable metrics
         autosave_metrics=True,  # ignored when metrics disabled
