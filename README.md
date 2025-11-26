@@ -11,7 +11,19 @@ Composes information flow between agents for planning, code writing and executio
 The original arxiv paper is [here](https://arxiv.org/abs/2506.22653).
 
 ## Installation
-You can install `ursa` via `pip` or `uv`.
+You can install `ursa` via `pip` or `uv`.  It may be helpful to be inside a clean
+conda environment and to use Python 3.11.
+
+
+```
+export URSA_PYTHON_VERSION=3.11  # set your version here, suggest 3.11 or 3.12 for compatibility
+export MY_URSA=ursa              # set as you choose
+conda create -y -n $MY_URSA python=$URSA_PYTHON_VERSION
+conda activate $MY_URSA
+# consider making sure python version is inside this conda env: which python; python --version
+# now install with pip or uv as described below
+# or git clone, pip install -e .
+```
 
 **pip**
 ```bash
@@ -22,6 +34,8 @@ pip install ursa-ai
 ```bash
 uv add ursa-ai
 ```
+
+You may need to `rehash` or restart your shell after `pip`/`uv` install to pick up commands.
 
 ## How to use this code
 Better documentation will be incoming, but for now there are examples in the examples folder that should give
