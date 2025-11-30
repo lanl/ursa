@@ -1,50 +1,58 @@
-import sys
+from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.workflows import PlanningExecutorWorkflow
 
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
-
-def main(mode: str):
+def main():
     """Run a simple example of an agent."""
+
+    tid = "run-" + uuid4().hex[:8]
+
     try:
         # Define a simple problem
         problem = "Find a city with as least 10 vowels in its name."
-        model = init_chat_model(
-            model="openai:gpt-5-mini"
-            if mode == "prod"
-            else "ollama:llama3.1:8b",
-            max_completion_tokens=10000 if mode == "prod" else 4000,
+        workspace = "city_vowel_test"
+
+        planner_model = init_chat_model(
+            model="openai:gpt-5-mini",
+            max_completion_tokens=10000,
             max_retries=2,
         )
-        init = {"messages": [HumanMessage(content=problem)]}
+
+        executor_model = init_chat_model(
+            model="openai:gpt-5-mini",
+            max_completion_tokens=10000,
+            max_retries=2,
+        )
 
         print(f"\nSolving problem: {problem}\n")
 
-        # Initialize the agent
-        planner = PlanningAgent(llm=model)
-        executor = ExecutionAgent(llm=model)
-        planner.thread_id = tid
-        executor.thread_id = tid
-
-        # Solve the problem
-        planning_output = planner.invoke(init)
-        print(planning_output["messages"][-1].content)
-        planning_output["workspace"] = "workspace_cityVowels"
-        final_results = executor.invoke(
-            planning_output, config={"recursion_limit": 100000}
+        # Init the agents with the model and checkpointer
+        executor = ExecutionAgent(
+            llm=executor_model,
+            enable_metrics=True,
+            thread_id=tid,
         )
-        for x in final_results["messages"]:
-            print(x.content)
-        # print(final_results["messages"][-1].content)
+
+        planner = PlanningAgent(
+            llm=planner_model,
+            enable_metrics=True,
+            thread_id=tid,
+        )
+
+        workflow = PlanningExecutorWorkflow(
+            planner=planner, executor=executor, workspace=workspace
+        )
+
+        final_results = workflow(problem)
 
         render_session_summary(tid)
 
-        return final_results["messages"][-1].content
+        return final_results
 
     except Exception as e:
         print(f"Error in example: {str(e)}")
@@ -55,8 +63,7 @@ def main(mode: str):
 
 
 if __name__ == "__main__":
-    mode = "dev" if sys.argv[-1] == "dev" else "prod"
-    final_output = main(mode=mode)  # dev or prod
+    final_output = main()
     print("=" * 80)
     print("=" * 80)
     print("=" * 80)
