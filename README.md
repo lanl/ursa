@@ -18,7 +18,7 @@ currently do not support `python>=3.13`.)
 **uv**
 
 ```sh
-uv init -p 3.12 # or 3.10 or 3.11
+uv init -p 3.12  # or 3.10/3.11
 uv add ursa-ai
 ```
 
@@ -31,7 +31,7 @@ pip install ursa-ai
 **conda with pip install**
 
 ```sh
-conda create -y -n ursa-env python=3.12  # or 3.10 or 3.11
+conda create -y -n ursa-env python=3.12  # or 3.10/3.11
 conda run --live-stream -n ursa-env python -m pip install ursa-ai
 ```
 
