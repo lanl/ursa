@@ -11,36 +11,35 @@ Composes information flow between agents for planning, code writing and executio
 The original arxiv paper is [here](https://arxiv.org/abs/2506.22653).
 
 ## Installation
-You can install `ursa` via `pip` or `uv`.  It may be helpful to be inside a clean
-conda environment and to use Python 3.11.
-
-
-```
-export URSA_PYTHON_VERSION=3.11  # set your version here, suggest 3.11 or 3.12 for compatibility
-export MY_URSA=ursa              # set as you choose
-conda create -y -n $MY_URSA python=$URSA_PYTHON_VERSION
-conda activate $MY_URSA
-# consider making sure python version is inside this conda env: which python; python --version
-# now install with pip or uv as described below
-# or git clone, pip install -e .
-```
-
-**pip**
-```bash
-pip install ursa-ai
-```
+You can install `ursa` via `pip` or `uv`. Installing `ursa` in a clean
+environment with python 3.10-3.12 may be necessary. (Some `ursa` dependencies
+currently do not support `python>=3.13`.)
 
 **uv**
-```bash
+
+```sh
+uv init -p 3.12  # or 3.10, 3.11
 uv add ursa-ai
 ```
 
-You may need to `rehash` or restart your shell after `pip`/`uv` install to pick up commands.
+**pip**
+
+```sh
+pip install ursa-ai
+```
+
+**conda with pip install**
+
+```sh
+conda create -y -n ursa-env python=3.12  # or 3.10, 3.11
+conda run --live-stream -n ursa-env python -m pip install ursa-ai
+```
 
 ## How to use this code
-Better documentation will be incoming, but for now there are examples in the examples folder that should give
-a decent idea for how to set up some basic problems. They also should give some idea of how to pass results from
-one agent to another. I will look to add things with multi-agent graphs, etc. in the future. 
+Better documentation will be incoming, but for examples in the `examples/`
+folder demonstrates how to set up some basic problems. They also should give
+some idea of how to pass results from one agent to another. I will look to add
+things with multi-agent graphs, etc. in the future. 
 
 Documentation for each URSA agent:
 - [Planning Agent](docs/planning_agent.md)
