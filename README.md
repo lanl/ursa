@@ -22,17 +22,17 @@ uv init -p 3.12 # or 3.10 or 3.11
 uv add ursa-ai
 ```
 
+**pip**
+
+```sh
+pip install ursa-ai
+```
+
 **conda with pip install**
 
 ```sh
 conda create -y -n ursa-env python=3.12  # or 3.10 or 3.11
 conda run --live-stream -n ursa-env python -m pip install ursa-ai
-```
-
-**pip**
-
-```sh
-pip install ursa-ai
 ```
 
 ## How to use this code
