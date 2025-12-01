@@ -46,6 +46,7 @@ class LammpsAgent(BaseAgent):
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,
+        ngpus: int = -1,
         mpi_procs: int = 8,
         workspace: str = "./workspace",
         lammps_cmd: str = "lmp_mpi",
@@ -61,6 +62,7 @@ class LammpsAgent(BaseAgent):
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.find_potential_only = find_potential_only
+        self.ngpus = ngpus
         self.mpi_procs = mpi_procs
         self.lammps_cmd = lammps_cmd
         self.mpirun_cmd = mpirun_cmd
@@ -318,21 +320,49 @@ class LammpsAgent(BaseAgent):
 
     def _run_lammps(self, state: LammpsState) -> LammpsState:
         print("Running LAMMPS....")
-        result = subprocess.run(
-            [
-                self.mpirun_cmd,
-                "-np",
-                str(self.mpi_procs),
-                self.lammps_cmd,
-                "-in",
-                "in.lammps",
-            ],
-            cwd=self.workspace,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
+        if self.ngpus >= 0:
+            result = subprocess.run(
+                [
+                    self.mpirun_cmd,
+                    self.lammps_cmd,
+                    "-in",
+                    "in.lammps",
+                    "-k",
+                    "on",
+                    "g",
+                    str(self.ngpus),
+                    "-sf",
+                    "kk",
+                    "-pk",
+                    "kokkos",
+                    "neigh",
+                    "full",
+                    "newton",
+                    "on"
+                ],
+                cwd=self.workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            print(result)
+        else:
+            result = subprocess.run(
+                [
+                    self.mpirun_cmd,
+                    "-np",
+                    str(self.mpi_procs),
+                    self.lammps_cmd,
+                    "-in",
+                    "in.lammps",
+                ],
+                cwd=self.workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
         return {
             **state,
             "run_returncode": result.returncode,
