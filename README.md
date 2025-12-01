@@ -36,11 +36,10 @@ conda run --live-stream -n ursa-env python -m pip install ursa-ai
 ```
 
 ## How to use this code
-Better documentation will be incoming, but for now there are examples in the
-examples folder that should give a decent idea for how to set up some basic
-problems. They also should give some idea of how to pass results from one agent
-to another. I will look to add things with multi-agent graphs, etc. in the
-future. 
+Better documentation will be incoming, but for examples in the `examples/`
+folder demonstrates how to set up some basic problems. They also should give
+some idea of how to pass results from one agent to another. I will look to add
+things with multi-agent graphs, etc. in the future. 
 
 Documentation for each URSA agent:
 - [Planning Agent](docs/planning_agent.md)
