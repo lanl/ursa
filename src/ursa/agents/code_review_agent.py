@@ -2,7 +2,7 @@ import os
 import subprocess
 from typing import Annotated, Literal, TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
@@ -53,7 +53,7 @@ class CodeReviewState(TypedDict):
 class CodeReviewAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
@@ -339,27 +339,3 @@ def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
         return "unsafe"
     else:
         return "safe"
-
-
-def main():
-    code_review_agent = CodeReviewAgent(
-        llm=init_chat_model("openai:gpt-5-mini")
-    )
-    initial_state = {
-        "messages": [],
-        "project_prompt": "Find a city with as least 10 vowels in its name.",
-        "code_files": ["vowel_count.py"],
-        "edited_files": [],
-        "iteration": 0,
-    }
-    result = (
-        code_review_agent.action.invoke(initial_state),
-        {"configurable": {"thread_id": 42}},
-    )
-    for x in result["messages"]:
-        print(x.content)
-    return result
-
-
-if __name__ == "__main__":
-    main()

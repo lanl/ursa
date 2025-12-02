@@ -4,7 +4,7 @@ import subprocess
 from typing import Any, Mapping, Optional, TypedDict
 
 import tiktoken
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
@@ -42,9 +42,7 @@ class LammpsState(TypedDict, total=False):
 class LammpsAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model(
-            model="openai:gpt-5-mini", max_completion_tokens=200000
-        ),
+        llm: BaseChatModel,
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,
