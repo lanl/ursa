@@ -46,6 +46,8 @@ class LammpsAgent(BaseAgent):
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,
+        data_file: str = None,
+        data_max_lines: int = 50,
         ngpus: int = -1,
         mpi_procs: int = 8,
         workspace: str = "./workspace",
@@ -62,6 +64,8 @@ class LammpsAgent(BaseAgent):
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.find_potential_only = find_potential_only
+        self.data_file = data_file
+        self.data_max_lines = data_max_lines
         self.ngpus = ngpus
         self.mpi_procs = mpi_procs
         self.lammps_cmd = lammps_cmd
@@ -115,6 +119,7 @@ class LammpsAgent(BaseAgent):
             | self.str_parser
         )
 
+        
         self.author_chain = (
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
@@ -122,9 +127,13 @@ class LammpsAgent(BaseAgent):
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
                 "Template provided (if any): {template}\n"
+                "If a data file is provided, use it in the input script via the 'read_data' command.\n"
+                "Name of data file (if any): {data_file}\n"
+                "First few lines of data file (if any):\n{data_content}\n"
                 "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
                 "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
+                "IMPORTANT: Properly escape all special characters in the input_script string (use \\n for newlines, \\\\ for backslashes, etc.).\n"
                 "Use this exact schema:\n"
                 "{{\n"
                 '  "input_script": "<string>"\n'
@@ -145,9 +154,13 @@ class LammpsAgent(BaseAgent):
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
                 "Template provided (if any): {template}\n"
+                "If a data file is provided, use it in the input script via the 'read_data' command.\n"
+                "Name of data file (if any): {data_file}\n"
+                "First few lines of data file (if any):\n{data_content}\n"
                 "Ensure that all output data is written only to the './log.lammps' file. Do not create any other output file.\n"
                 "To create the log, use only the 'log ./log.lammps' command. Do not use any other command like 'echo' or 'screen'.\n"
                 "Return your answer **only** as valid JSON, with no extra text or formatting.\n"
+                "IMPORTANT: Properly escape all special characters in the input_script string (use \\n for newlines, \\\\ for backslashes, etc.).\n"
                 "Use this exact schema:\n"
                 "{{\n"
                 '  "input_script": "<string>"\n'
@@ -168,6 +181,33 @@ class LammpsAgent(BaseAgent):
             if i != -1:
                 s = s[i + 1 :].strip()
         return json.loads(s)
+
+    def _read_and_trim_data_file(self, data_file_path: str) -> str:
+        """Read LAMMPS data file and trim to token limit for LLM context."""
+        if os.path.exists(data_file_path):
+            with open(data_file_path, 'r') as f:
+                content = f.read()
+            lines = content.splitlines()
+            if len(lines) > self.data_max_lines:
+                content = "\n".join(lines[:self.data_max_lines])
+                print(f"Data file trimmed from {len(lines)} to {self.data_max_lines} lines")
+            return content
+        else:       
+            return (f"Could not read data file.")
+        
+    def _copy_data_file(self, data_file_path: str) -> str:
+        """Copy data file to workspace and return new path."""
+        if not os.path.exists(data_file_path):
+            raise FileNotFoundError(f"Data file not found: {data_file_path}")
+    
+        filename = os.path.basename(data_file_path)
+        dest_path = os.path.join(self.workspace, filename)
+        with open(data_file_path, 'r') as src:
+            with open(dest_path, 'w') as dst:
+                dst.write(src.read())
+    
+        print(f"Data file copied to workspace: {dest_path}")
+        return dest_path
 
     def _fetch_and_trim_text(self, url: str) -> str:
         downloaded = trafilatura.fetch_url(url)
@@ -198,6 +238,13 @@ class LammpsAgent(BaseAgent):
             raise Exception(
                 "You cannot set find_potential_only=True and also specify your own potential!"
             )
+        
+        if self.data_file:
+            try:
+                self._copy_data_file(self.data_file)
+                print(f"Data file copied to workspace.")
+            except Exception as e:
+                print(f"Warning: Could not process data file: {e}")
 
         if not state.get("chosen_potential"):
             self.potential_summaries_dir = os.path.join(
@@ -307,10 +354,17 @@ class LammpsAgent(BaseAgent):
         print("First attempt at writing LAMMPS input file....")
         state["chosen_potential"].download_files(self.workspace)
         pair_info = state["chosen_potential"].pair_info()
+        
+        data_content = ""
+        if self.data_file:
+            data_content = self._read_and_trim_data_file(self.data_file)
+
         authored_json = self.author_chain.invoke({
             "simulation_task": state["simulation_task"],
             "pair_info": pair_info,
             "template": state["template"],
+            "data_file": self.data_file,
+            "data_content": data_content,
         })
         script_dict = self._safe_json_loads(authored_json)
         input_script = script_dict["input_script"]
@@ -386,12 +440,18 @@ class LammpsAgent(BaseAgent):
         pair_info = state["chosen_potential"].pair_info()
         err_blob = state.get("run_stdout")
 
+        data_content = ""
+        if self.data_file:
+            data_content = self._read_and_trim_data_file(self.data_file)
+
         fixed_json = self.fix_chain.invoke({
             "simulation_task": state["simulation_task"],
             "input_script": state["input_script"],
             "err_message": err_blob,
             "pair_info": pair_info,
             "template": state["template"],
+            "data_file": self.data_file,
+            "data_content": data_content,
         })
         script_dict = self._safe_json_loads(fixed_json)
         new_input = script_dict["input_script"]
