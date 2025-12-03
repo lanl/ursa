@@ -71,9 +71,12 @@ line-length = 80
 preview = true
 
 [tool.ruff.lint]
-extend-select = ["I"]  # W505 (doc-line-too-long); D (pydocstyle)
+extend-select = ["I", "TID", "UP006", "UP007"]  # W505 (doc-line-too-long); D (pydocstyle)
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing_extensions" = { msg = "Use standard typing features instead of `typing_extensions`." }
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]

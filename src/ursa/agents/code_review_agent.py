@@ -9,11 +9,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 
-from ..prompt_library.code_review_prompts import (
+from ursa.prompt_library.code_review_prompts import (
     get_code_review_prompt,
     get_plan_review_prompt,
 )
-from ..prompt_library.execution_prompts import summarize_prompt
+from ursa.prompt_library.execution_prompts import summarize_prompt
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from .base import BaseAgent

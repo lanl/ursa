@@ -1,10 +1,9 @@
-from typing import Annotated, Any, Mapping
+from typing import Annotated, Any, Mapping, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
-from typing_extensions import TypedDict
 
 from .base import BaseAgent
 

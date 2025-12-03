@@ -1,5 +1,5 @@
 import random
-from typing import Annotated, List, Tuple
+from typing import Annotated
 
 import numpy as np
 import sympy as sp
@@ -9,19 +9,19 @@ from sympy.parsing.sympy_parser import parse_expr, standard_transformations
 
 @tool(parse_docstring=True)
 def heuristic_feasibility_check(
-    constraints: Annotated[List[str], "List of strings like 'x0+x1<=5'"],
+    constraints: Annotated[list[str], "List of strings like 'x0+x1<=5'"],
     variable_name: Annotated[
-        List[str], "List of strings like 'x0', 'x1', etc."
+        list[str], "List of strings like 'x0', 'x1', etc."
     ],
     variable_type: Annotated[
-        List[str], "List of strings like 'real', 'integer', 'boolean', etc."
+        list[str], "List of strings like 'real', 'integer', 'boolean', etc."
     ],
     variable_bounds: Annotated[
-        List[List[float]],
+        list[list[float]],
         "List of (lower bound, upper bound) tuples for x0, x1, ...'",
     ],
     samples: Annotated[int, "Number of random sample. Default 10000"] = 10000,
-) -> Tuple[str]:
+) -> tuple[str]:
     """
     A tool for checking feasibility of the constraints.
 

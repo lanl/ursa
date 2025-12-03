@@ -18,7 +18,7 @@ This file exposes a single LangChain tool: `feasibility_check_auto`.
 
 import math
 import random
-from typing import Annotated, Any, Dict, List, Optional, Tuple
+from typing import Annotated, Any, Optional
 
 import sympy as sp
 from langchain_core.tools import tool
@@ -85,8 +85,8 @@ except Exception:
 
 
 def _parse_constraints(
-    constraints: List[str], variable_name: List[str]
-) -> Tuple[List[sp.Symbol], List[sp.Expr]]:
+    constraints: list[str], variable_name: list[str]
+) -> tuple[list[sp.Symbol], list[sp.Expr]]:
     """Parse user constraint strings into SymPy expressions.
 
     Args:
@@ -114,7 +114,7 @@ def _parse_constraints(
     return syms, sympy_cons
 
 
-def _flatten_conjunction(expr: sp.Expr) -> Tuple[List[sp.Expr], bool]:
+def _flatten_conjunction(expr: sp.Expr) -> tuple[list[sp.Expr], bool]:
     """Flatten a conjunction into a list of conjuncts.
 
     If the expression is a chain of ANDs, returns all atomic conjuncts and `False`
@@ -149,7 +149,7 @@ def _flatten_conjunction(expr: sp.Expr) -> Tuple[List[sp.Expr], bool]:
 
 
 def _linear_relational(
-    expr: sp.Expr, symbols: List[sp.Symbol]
+    expr: sp.Expr, symbols: list[sp.Symbol]
 ) -> Optional[bool]:
     """Check whether a relational constraint is linear in the given symbols.
 
@@ -188,8 +188,8 @@ def _has_boolean_logic(expr: sp.Expr) -> bool:
 
 
 def _classify(
-    sympy_cons: List[sp.Expr], symbols: List[sp.Symbol], vtypes: List[str]
-) -> Dict[str, Any]:
+    sympy_cons: list[sp.Expr], symbols: list[sp.Symbol], vtypes: list[str]
+) -> dict[str, Any]:
     """Classify the problem structure for routing.
 
     Args:
@@ -245,8 +245,8 @@ def _is_int_like(x: Optional[float], tol: float = 1e-9) -> bool:
 
 
 def _coeffs_linear(
-    expr: sp.Expr, symbols: List[sp.Symbol]
-) -> Tuple[Dict[str, float], float]:
+    expr: sp.Expr, symbols: list[sp.Symbol]
+) -> tuple[dict[str, float], float]:
     """Extract linear coefficients and constant term of an expression.
 
     The expression is interpreted as:
@@ -263,7 +263,7 @@ def _coeffs_linear(
     Raises:
         ValueError: If non-linearity is detected via second derivatives.
     """
-    coeffs: Dict[str, float] = {}
+    coeffs: dict[str, float] = {}
     for s in symbols:
         if sp.simplify(sp.diff(expr, s, 2)) != 0:
             raise ValueError("Non-linear term detected.")
@@ -275,7 +275,7 @@ def _coeffs_linear(
 
 
 def _all_int_coeffs(
-    coeffs: Dict[str, float], const: float, tol: float = 1e-9
+    coeffs: dict[str, float], const: float, tol: float = 1e-9
 ) -> bool:
     """Return True if all coefficients and the constant are integer-like.
 
@@ -361,7 +361,7 @@ def _eval_relational(
     return False
 
 
-def _eval_bool_expr(e: sp.Expr, env: Dict[sp.Symbol, Any], tol: float) -> bool:
+def _eval_bool_expr(e: sp.Expr, env: dict[sp.Symbol, Any], tol: float) -> bool:
     """Evaluate a boolean/relational SymPy expression under an assignment.
 
     Args:
@@ -402,17 +402,17 @@ def _eval_bool_expr(e: sp.Expr, env: Dict[sp.Symbol, Any], tol: float) -> bool:
 
 
 def _heuristic_feasible(
-    sympy_cons: List[sp.Expr],
-    symbols: List[sp.Symbol],
-    variable_name: List[str],
-    variable_type: List[str],
-    variable_bounds: List[List[Optional[float]]],
+    sympy_cons: list[sp.Expr],
+    symbols: list[sp.Symbol],
+    variable_name: list[str],
+    variable_type: list[str],
+    variable_bounds: list[list[Optional[float]]],
     samples: int = 2000,
     seed: Optional[int] = None,
     tol: float = 1e-8,
     unbounded_radius_real: float = 1e3,
     unbounded_radius_int: int = 10**6,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """Try to find a satisfying assignment via randomized sampling.
 
     Args:
@@ -441,7 +441,7 @@ def _heuristic_feasible(
     sym_by_name = {str(s): s for s in symbols}
 
     for _ in range(samples):
-        env: Dict[sp.Symbol, Any] = {}
+        env: dict[sp.Symbol, Any] = {}
 
         # Sample a point
         for n, t, (lo, hi) in zip(
@@ -473,11 +473,11 @@ def _heuristic_feasible(
 
 
 def _solve_with_pysmt(
-    sympy_cons: List[sp.Expr],
-    symbols: List[sp.Symbol],
-    variable_name: List[str],
-    variable_type: List[str],
-    variable_bounds: List[List[Optional[float]]],
+    sympy_cons: list[sp.Expr],
+    symbols: list[sp.Symbol],
+    variable_name: list[str],
+    variable_type: list[str],
+    variable_bounds: list[list[Optional[float]]],
     solver_name: str = "cvc5",
 ) -> str:
     """Solve via PySMT (SMT backends like cvc5/msat/yices/z3).
@@ -500,7 +500,7 @@ def _solve_with_pysmt(
         return "PySMT not installed. `pip install pysmt` and run `pysmt-install --cvc5` (or other backend)."
 
     # Build PySMT symbols
-    ps_vars: Dict[str, Any] = {}
+    ps_vars: dict[str, Any] = {}
     for n, t in zip(variable_name, variable_type):
         t_l = t.lower()
         if t_l in ("integer", "int"):
@@ -595,11 +595,11 @@ def _solve_with_pysmt(
 
 
 def _solve_with_cpsat_integer_boolean(
-    conjuncts: List[sp.Expr],
-    symbols: List[sp.Symbol],
-    variable_name: List[str],
-    variable_type: List[str],
-    variable_bounds: List[List[Optional[float]]],
+    conjuncts: list[sp.Expr],
+    symbols: list[sp.Symbol],
+    variable_name: list[str],
+    variable_type: list[str],
+    variable_bounds: list[list[Optional[float]]],
 ) -> str:
     """Solve linear integer/boolean feasibility via OR-Tools CP-SAT.
 
@@ -621,7 +621,7 @@ def _solve_with_cpsat_integer_boolean(
         return "OR-Tools CP-SAT not installed. `pip install ortools`."
 
     m = _cpsat.CpModel()
-    name_to_var: Dict[str, Any] = {}
+    name_to_var: dict[str, Any] = {}
 
     # Create int/bool vars
     for n, t, (lo, hi) in zip(variable_name, variable_type, variable_bounds):
@@ -671,11 +671,11 @@ def _solve_with_cpsat_integer_boolean(
 
 
 def _solve_with_cbc_milp(
-    conjuncts: List[sp.Expr],
-    symbols: List[sp.Symbol],
-    variable_name: List[str],
-    variable_type: List[str],
-    variable_bounds: List[List[Optional[float]]],
+    conjuncts: list[sp.Expr],
+    symbols: list[sp.Symbol],
+    variable_name: list[str],
+    variable_type: list[str],
+    variable_bounds: list[list[Optional[float]]],
 ) -> str:
     """Solve linear MILP/LP feasibility via OR-Tools CBC (pywraplp).
 
@@ -701,7 +701,7 @@ def _solve_with_cbc_milp(
     if solver is None:
         return "Failed to create CBC solver. Ensure OR-Tools is properly installed."
 
-    var_objs: Dict[str, Any] = {}
+    var_objs: dict[str, Any] = {}
     for n, t, (lo, hi) in zip(variable_name, variable_type, variable_bounds):
         t_l = t.lower()
         lo_v = -_lp.Solver.infinity() if lo is None else float(lo)
@@ -746,7 +746,7 @@ def _solve_with_cbc_milp(
     solver.Minimize(0)
     status = solver.Solve()
     if status in (_lp.Solver.OPTIMAL, _lp.Solver.FEASIBLE):
-        model: Dict[str, Any] = {}
+        model: dict[str, Any] = {}
         int_like = {
             n
             for n, t in zip(variable_name, variable_type)
@@ -762,10 +762,10 @@ def _solve_with_cbc_milp(
 
 
 def _solve_with_highs_lp(
-    conjuncts: List[sp.Expr],
-    symbols: List[sp.Symbol],
-    variable_name: List[str],
-    variable_bounds: List[List[Optional[float]]],
+    conjuncts: list[sp.Expr],
+    symbols: list[sp.Symbol],
+    variable_name: list[str],
+    variable_bounds: list[list[Optional[float]]],
 ) -> str:
     """Solve pure continuous LP feasibility via SciPy HiGHS.
 
@@ -848,13 +848,13 @@ def _solve_with_highs_lp(
 @tool(parse_docstring=True)
 def feasibility_check_auto(
     constraints: Annotated[
-        List[str],
+        list[str],
         "Constraint strings like 'x0 + 2*x1 <= 5' or '(x0<=3) | (x1>=2)'",
     ],
-    variable_name: Annotated[List[str], "['x0','x1',...]"],
-    variable_type: Annotated[List[str], "['real'|'integer'|'boolean', ...]"],
+    variable_name: Annotated[list[str], "['x0','x1',...]"],
+    variable_type: Annotated[list[str], "['real'|'integer'|'boolean', ...]"],
     variable_bounds: Annotated[
-        List[List[Optional[float]]],
+        list[list[Optional[float]]],
         "[(low, high), ...] (use None for unbounded)",
     ],
     prefer_smt_solver: Annotated[
@@ -975,7 +975,7 @@ def feasibility_check_auto(
         return res
 
     # Linear-only path: collect atomic conjuncts
-    conjuncts: List[sp.Expr] = []
+    conjuncts: list[sp.Expr] = []
     for c in sympy_cons:
         atoms, _ = _flatten_conjunction(c)
         conjuncts.extend(atoms)

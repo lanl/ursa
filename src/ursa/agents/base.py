@@ -24,7 +24,6 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
-    Union,
     final,
 )
 from uuid import uuid4
@@ -42,7 +41,7 @@ from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
 
-InputLike = Union[str, Mapping[str, Any]]
+InputLike = str | Mapping[str, Any]
 
 
 def _to_snake(s: str) -> str:

@@ -6,7 +6,6 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
 
 import matplotlib
 
@@ -75,12 +74,12 @@ class RunRecord:
 # -------------------------------
 #         Directory scan
 # -------------------------------
-def scan_directory_for_threads(dir_path: str) -> Dict[str, List[RunRecord]]:
+def scan_directory_for_threads(dir_path: str) -> dict[str, list[RunRecord]]:
     """
     Scan a directory for metrics JSONs and group them by thread_id.
     Returns: {thread_id: [RunRecord, ...]}
     """
-    sessions: Dict[str, List[RunRecord]] = {}
+    sessions: dict[str, list[RunRecord]] = {}
     for name in sorted(os.listdir(dir_path)):
         if not name.lower().endswith(".json"):
             continue
@@ -114,8 +113,8 @@ def scan_directory_for_threads(dir_path: str) -> Dict[str, List[RunRecord]]:
 
 
 def list_threads_summary(
-    sessions: Dict[str, List[RunRecord]],
-) -> List[Tuple[str, int]]:
+    sessions: dict[str, list[RunRecord]],
+) -> list[tuple[str, int]]:
     """Return [(thread_id, count)] sorted by count desc, then thread_id."""
     out = [(tid, len(runs)) for tid, runs in sessions.items()]
     out.sort(key=lambda t: (-t[1], t[0]))
@@ -139,7 +138,7 @@ def _label_for_run(r: RunRecord, seconds_precision: int = 1) -> str:
 
 
 def plot_thread_timeline(
-    runs: List[RunRecord],
+    runs: list[RunRecord],
     out_path: str,
     *,
     title: str = "Agent runs timeline",
@@ -169,7 +168,7 @@ def plot_thread_timeline(
 
     # Map agents to stable colors
     agents = [r.agent for r in runs]
-    uniq_agents: List[str] = []
+    uniq_agents: list[str] = []
     for a in agents:
         if a not in uniq_agents:
             uniq_agents.append(a)
@@ -463,16 +462,16 @@ def compute_thread_time_bases(runs: list[RunRecord]) -> tuple[float, float]:
 
 def extract_run_tokens_by_model(
     payload: dict,
-) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float]]:
+) -> tuple[dict[str, dict[str, int]], dict[str, float]]:
     """
     Returns:
       tokens_by_model: {model: {input_tokens,...,total_tokens}}
       seconds_by_model: {model: llm_active_seconds_sum}
     """
-    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(
+    tokens_by_model: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
-    seconds_by_model: Dict[str, float] = defaultdict(float)
+    seconds_by_model: dict[str, float] = defaultdict(float)
 
     # 1) tokens by model from llm_events
     for ev in payload.get("llm_events") or []:
@@ -514,16 +513,16 @@ def extract_run_tokens_by_model(
 
 def extract_thread_tokens_by_model(
     runs,
-) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, dict]:
+) -> tuple[dict[str, dict[str, int]], dict[str, float], float, dict]:
     """
     Aggregate by LLM across all runs in a single thread.
     Returns:
       tokens_by_model, seconds_by_model, window_seconds, context
     """
-    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(
+    tokens_by_model: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
-    seconds_by_model: Dict[str, float] = defaultdict(float)
+    seconds_by_model: dict[str, float] = defaultdict(float)
 
     min_start, max_end = None, None
     for r in runs:
@@ -568,17 +567,17 @@ def extract_thread_tokens_by_model(
 
 
 def aggregate_super_tokens_by_model(
-    thread_dirs: List[str],
-) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float, dict]:
+    thread_dirs: list[str],
+) -> tuple[dict[str, dict[str, int]], dict[str, float], float, dict]:
     """
     Walk all thread subdirs and aggregate per-LLM totals and LLM-active seconds.
     Returns:
       tokens_by_model, seconds_by_model, window_seconds, context
     """
-    tokens_by_model: Dict[str, Dict[str, int]] = defaultdict(
+    tokens_by_model: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
-    seconds_by_model: Dict[str, float] = defaultdict(float)
+    seconds_by_model: dict[str, float] = defaultdict(float)
 
     min_start, max_end = None, None
 
@@ -631,8 +630,8 @@ def aggregate_super_tokens_by_model(
 
 
 def extract_thread_token_stats_by_agent(
-    runs: List[RunRecord],
-) -> Tuple[Dict[str, Dict[str, int]], Dict[str, float], float]:
+    runs: list[RunRecord],
+) -> tuple[dict[str, dict[str, int]], dict[str, float], float]:
     """
     Aggregate token totals and LLM-active seconds by AGENT for a single thread.
     Returns:
@@ -641,10 +640,10 @@ def extract_thread_token_stats_by_agent(
         - llm_secs_by_agent: {agent: seconds}
         - thread_window_seconds: (max end - min start) across all runs in this thread
     """
-    totals_by_agent: Dict[str, Dict[str, int]] = defaultdict(
+    totals_by_agent: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
-    llm_secs_by_agent: Dict[str, float] = defaultdict(float)
+    llm_secs_by_agent: dict[str, float] = defaultdict(float)
 
     if not runs:
         return {}, {}, 0.0
@@ -683,9 +682,9 @@ def extract_thread_token_stats_by_agent(
 
 
 def aggregate_super_token_stats_by_agent(
-    sessions: Dict[str, List[RunRecord]],
-) -> Tuple[
-    Dict[str, Dict[str, int]], Dict[str, float], float, Dict[str, float]
+    sessions: dict[str, list[RunRecord]],
+) -> tuple[
+    dict[str, dict[str, int]], dict[str, float], float, dict[str, float]
 ]:
     """
     Aggregate across ALL threads in a directory (non-recursive).
@@ -698,10 +697,10 @@ def aggregate_super_token_stats_by_agent(
         - sum_thread_secs: sum of each thread's (max end - min start)
         - summary: {"n_threads": ..., "n_runs": ..., "sum_thread_secs": ...}
     """
-    totals_by_agent: Dict[str, Dict[str, int]] = defaultdict(
+    totals_by_agent: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
-    llm_secs_by_agent: Dict[str, float] = defaultdict(float)
+    llm_secs_by_agent: dict[str, float] = defaultdict(float)
     sum_thread_secs = 0.0
     n_runs = 0
 
