@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -303,16 +303,16 @@ def render_session_summary(thread_id: str):
 @dataclass
 class _Agg:
     # list of (name, elapsed_ms, ok)
-    records: List[Tuple[str, float, bool]] = field(default_factory=list)
+    records: list[tuple[str, float, bool]] = field(default_factory=list)
     _lock: Lock = field(default_factory=Lock, repr=False)
 
     def add(self, name: str, elapsed_ms: float, ok: bool) -> None:
         with self._lock:
             self.records.append((name, elapsed_ms, ok))
 
-    def buckets(self) -> List[Tuple[str, int, float, float, float]]:
+    def buckets(self) -> list[tuple[str, int, float, float, float]]:
         # -> [(name, count, total_secs, avg_ms, max_ms)]
-        by_name: Dict[str, List[float]] = defaultdict(list)
+        by_name: dict[str, list[float]] = defaultdict(list)
         with self._lock:
             for name, ms, _ok in self.records:
                 by_name[name].append(ms)
@@ -340,7 +340,7 @@ class PerToolTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None):
         self.agg = agg or _Agg()
-        self._starts: Dict[Any, Tuple[str, float]] = {}
+        self._starts: dict[Any, tuple[str, float]] = {}
 
     def _name(self, serialized) -> str:
         # serialized can be None, dict, str, or contain nested ids
@@ -384,7 +384,7 @@ class PerRunnableTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None):
         self.agg = agg or _Agg()
-        self._starts: Dict[Any, Tuple[str, float]] = {}
+        self._starts: dict[Any, tuple[str, float]] = {}
 
     def _name(self, serialized) -> str:
         # serialized can be None, dict, str, or contain nested ids
@@ -541,7 +541,7 @@ class PerLLMTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None, keep_max: int = 1000):
         self.agg = agg or _Agg()
-        self._starts: Dict[Any, Tuple[str, float, list, dict]] = {}
+        self._starts: dict[Any, tuple[str, float, list, dict]] = {}
         self.samples: collections.deque = collections.deque(maxlen=keep_max)
 
     def _name(self, serialized, metadata, tags) -> str:
@@ -1029,7 +1029,7 @@ class Telemetry:
     llm: PerLLMTimer = field(default_factory=PerLLMTimer)
 
     # Run-scoped context we’ll embed in the JSON filename/body
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
 
     # ---------- JSON/export helpers ----------
     def begin_run(self, *, agent: str, thread_id: str) -> None:
@@ -1050,7 +1050,7 @@ class Telemetry:
         })
 
     @property
-    def callbacks(self) -> List[BaseCallbackHandler]:
+    def callbacks(self) -> list[BaseCallbackHandler]:
         return [] if not self.enable else [self.tool, self.runnable, self.llm]
 
     def _snapshot(self) -> dict:

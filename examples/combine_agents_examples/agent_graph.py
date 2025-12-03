@@ -1,5 +1,5 @@
 import os
-from typing import Annotated, Any, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping, TypedDict
 
 import randomname
 from langchain_core.messages import (
@@ -12,7 +12,6 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
-from typing_extensions import TypedDict
 
 from ursa.agents import (
     ArxivAgent,

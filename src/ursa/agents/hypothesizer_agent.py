@@ -15,7 +15,7 @@ except Exception:
     DDGS = None
 
 
-from ..prompt_library.hypothesizer_prompts import (
+from ursa.prompt_library.hypothesizer_prompts import (
     competitor_prompt,
     critic_prompt,
     hypothesizer_prompt,

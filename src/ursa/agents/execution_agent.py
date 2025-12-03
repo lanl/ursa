@@ -28,7 +28,15 @@ Entry points:
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import os
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, Mapping, Optional
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Literal,
+    Mapping,
+    Optional,
+    TypedDict,
+)
 
 import randomname
 from langchain.agents.middleware import SummarizationMiddleware
@@ -48,7 +56,6 @@ from langgraph.prebuilt import ToolNode
 # Rich
 from rich import get_console
 from rich.panel import Panel
-from typing_extensions import TypedDict
 
 from ursa.agents.base import BaseAgent
 from ursa.prompt_library.execution_prompts import (

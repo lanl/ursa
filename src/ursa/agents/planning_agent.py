@@ -1,26 +1,26 @@
 # from langgraph.checkpoint.memory  import MemorySaver
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from typing import Annotated, Any, Dict, Iterator, List, Mapping, Optional
+from typing import Annotated, Any, Iterator, Mapping, Optional, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import Field
-from typing_extensions import TypedDict
 
-from ..prompt_library.planning_prompts import (
+from ursa.prompt_library.planning_prompts import (
     formalize_prompt,
     planner_prompt,
     reflection_prompt,
 )
-from ..util.parse import extract_json
+from ursa.util.parse import extract_json
+
 from .base import BaseAgent
 
 
 class PlanningState(TypedDict):
     messages: Annotated[list, add_messages]
-    plan_steps: List[Dict[str, Any]] = Field(
+    plan_steps: list[dict[str, Any]] = Field(
         default_factory=list, description="Ordered steps in the solution plan"
     )
     reflection_steps: Optional[int] = Field(

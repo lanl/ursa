@@ -8,7 +8,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Mapping, Optional, TypedDict
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -21,7 +21,6 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph
 from PIL import Image
-from typing_extensions import List, TypedDict
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
@@ -55,14 +54,14 @@ class ItemMetadata(TypedDict, total=False):
     url: str
     local_path: str
     full_text: str
-    extra: Dict[str, Any]
+    extra: dict[str, Any]
 
 
 class AcquisitionState(TypedDict, total=False):
     query: str
     context: str
-    items: List[ItemMetadata]
-    summaries: List[str]
+    items: list[ItemMetadata]
+    summaries: list[str]
     final_summary: str
 
 
@@ -151,8 +150,8 @@ def describe_image(image: Image.Image) -> str:
 
 def extract_and_describe_images(
     pdf_path: str, max_images: int = 5
-) -> List[str]:
-    descriptions: List[str] = []
+) -> list[str]:
+    descriptions: list[str] = []
     try:
         doc = pymupdf.open(pdf_path)
     except Exception as e:
@@ -228,13 +227,13 @@ class BaseAcquisitionAgent(BaseAgent):
         self._action = self._build_graph()
 
     # ---- abstract-ish methods ----
-    def _search(self, query: str) -> List[Dict[str, Any]]:
+    def _search(self, query: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def _materialize(self, hit: Dict[str, Any]) -> ItemMetadata:
+    def _materialize(self, hit: dict[str, Any]) -> ItemMetadata:
         raise NotImplementedError
 
-    def _id(self, hit_or_item: Dict[str, Any]) -> str:
+    def _id(self, hit_or_item: dict[str, Any]) -> str:
         raise NotImplementedError
 
     def _citation(self, item: ItemMetadata) -> str:
@@ -242,7 +241,7 @@ class BaseAcquisitionAgent(BaseAgent):
         return item.get("id") or item.get("url", "Unknown Source")
 
     # ---- optional hooks ----
-    def _filter_hit(self, hit: Dict[str, Any]) -> bool:
+    def _filter_hit(self, hit: dict[str, Any]) -> bool:
         return True
 
     def _postprocess_text(self, text: str, local_path: Optional[str]) -> str:
@@ -261,9 +260,9 @@ class BaseAcquisitionAgent(BaseAgent):
         return text
 
     # ---- shared nodes ----
-    def _fetch_items(self, query: str) -> List[ItemMetadata]:
+    def _fetch_items(self, query: str) -> list[ItemMetadata]:
         hits = self._search(query)[: self.max_results] if self.download else []
-        items: List[ItemMetadata] = []
+        items: list[ItemMetadata] = []
 
         # If not downloading/scraping, try to load whatever is cached in database_path.
         if not self.download:
@@ -330,7 +329,7 @@ class BaseAcquisitionAgent(BaseAgent):
         if "items" not in state or not state["items"]:
             return {**state, "summaries": None}
 
-        summaries: List[Optional[str]] = [None] * len(state["items"])
+        summaries: list[Optional[str]] = [None] * len(state["items"])
 
         def process(i: int, item: ItemMetadata):
             item_id = item.get("id", f"item_{i}")
@@ -377,7 +376,7 @@ class BaseAcquisitionAgent(BaseAgent):
         if not state.get("summaries") or not state.get("items"):
             return {**state, "final_summary": None}
 
-        blocks: List[str] = []
+        blocks: list[str] = []
         for idx, (item, summ) in enumerate(
             zip(state["items"], state["summaries"])
         ):  # type: ignore
@@ -488,7 +487,7 @@ class WebSearchAgent(BaseAcquisitionAgent):
                 "duckduckgo-search (DDGS) is required for WebSearchAgentGeneric."
             )
 
-    def _id(self, hit_or_item: Dict[str, Any]) -> str:
+    def _id(self, hit_or_item: dict[str, Any]) -> str:
         url = hit_or_item.get("href") or hit_or_item.get("url") or ""
         return (
             _hash(url)
@@ -501,8 +500,8 @@ class WebSearchAgent(BaseAcquisitionAgent):
         u = item.get("url", "") or ""
         return f"{t} ({u})" if t else (u or item.get("id", "Web result"))
 
-    def _search(self, query: str) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
+    def _search(self, query: str) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         with DDGS() as ddgs:
             for r in ddgs.text(
                 query, max_results=self.max_results, backend="auto"
@@ -511,7 +510,7 @@ class WebSearchAgent(BaseAcquisitionAgent):
                 results.append(r)
         return results
 
-    def _materialize(self, hit: Dict[str, Any]) -> ItemMetadata:
+    def _materialize(self, hit: dict[str, Any]) -> ItemMetadata:
         url = hit.get("href") or hit.get("url")
         title = hit.get("title", "")
         if not url:
@@ -580,7 +579,7 @@ class OSTIAgent(BaseAcquisitionAgent):
         super().__init__(*args, **kwargs)
         self.api_base = api_base
 
-    def _id(self, hit_or_item: Dict[str, Any]) -> str:
+    def _id(self, hit_or_item: dict[str, Any]) -> str:
         if "osti_id" in hit_or_item:
             return str(hit_or_item["osti_id"])
         if "id" in hit_or_item:
@@ -594,7 +593,7 @@ class OSTIAgent(BaseAcquisitionAgent):
         oid = item.get("id", "")
         return f"OSTI {oid}: {t}" if t else f"OSTI {oid}"
 
-    def _search(self, query: str) -> List[Dict[str, Any]]:
+    def _search(self, query: str) -> list[dict[str, Any]]:
         """
         Adjust params to your OSTI setup. This call is intentionally simple;
         add paging/auth as needed.
@@ -624,7 +623,7 @@ class OSTIAgent(BaseAcquisitionAgent):
                 }
             ]
 
-    def _materialize(self, hit: Dict[str, Any]) -> ItemMetadata:
+    def _materialize(self, hit: dict[str, Any]) -> ItemMetadata:
         item_id = self._id(hit)
         title = hit.get("title") or hit.get("title_public", "") or ""
         landing = None
@@ -746,7 +745,7 @@ class ArxivAgent(BaseAcquisitionAgent):
             **kwargs,
         )
 
-    def _id(self, hit_or_item: Dict[str, Any]) -> str:
+    def _id(self, hit_or_item: dict[str, Any]) -> str:
         # hits from arXiv feed have 'id' like ".../abs/XXXX.YYYY"
         arxiv_id = hit_or_item.get("arxiv_id")
         if arxiv_id:
@@ -759,7 +758,7 @@ class ArxivAgent(BaseAcquisitionAgent):
     def _citation(self, item: ItemMetadata) -> str:
         return f"ArXiv ID: {item.get('id', '?')}"
 
-    def _search(self, query: str) -> List[Dict[str, Any]]:
+    def _search(self, query: str) -> list[dict[str, Any]]:
         enc = quote(query)
         url = f"http://export.arxiv.org/api/query?search_query=all:{enc}&start=0&max_results={self.max_results}"
         try:
@@ -785,7 +784,7 @@ class ArxivAgent(BaseAcquisitionAgent):
                 }
             ]
 
-    def _materialize(self, hit: Dict[str, Any]) -> ItemMetadata:
+    def _materialize(self, hit: dict[str, Any]) -> ItemMetadata:
         arxiv_id = self._id(hit)
         title = hit.get("title", "")
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Callable, Dict, Iterable, List, Union
+from typing import Any, Callable, Iterable
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable
 
 
 # --- if you already have your own versions, reuse them ---
-def _parse_args(v: Any) -> Dict[str, Any]:
+def _parse_args(v: Any) -> dict[str, Any]:
     if v is None:
         return {}
     if isinstance(v, dict):
@@ -22,7 +22,7 @@ def _parse_args(v: Any) -> Dict[str, Any]:
     return {"_raw": v}
 
 
-def extract_tool_calls(msg: AIMessage) -> List[Dict[str, Any]]:
+def extract_tool_calls(msg: AIMessage) -> list[dict[str, Any]]:
     # Prefer normalized field
     if msg.tool_calls:
         out = []
@@ -61,7 +61,7 @@ def extract_tool_calls(msg: AIMessage) -> List[Dict[str, Any]]:
 # -----------------------------------------------------------------------------
 
 
-ToolRegistry = Dict[str, Union[Runnable, Callable[..., Any]]]
+ToolRegistry = dict[str, Runnable | Callable[..., Any]]
 
 
 def _stringify_output(x: Any) -> str:
@@ -74,7 +74,7 @@ def _stringify_output(x: Any) -> str:
 
 
 def _invoke_tool(
-    tool: Union[Runnable, Callable[..., Any]], args: Dict[str, Any]
+    tool: Runnable | Callable[..., Any], args: dict[str, Any]
 ) -> Any:
     # Runnable (LangChain tools & chains)
     if isinstance(tool, Runnable):
@@ -89,8 +89,8 @@ def _invoke_tool(
 
 def run_tool_calls(
     ai_msg: AIMessage,
-    tools: Union[ToolRegistry, Iterable[Union[Runnable, Callable[..., Any]]]],
-) -> List[BaseMessage]:
+    tools: ToolRegistry | Iterable[Runnable | Callable[..., Any]],
+) -> list[BaseMessage]:
     """
     Args:
         ai_msg: The LLM's AIMessage containing tool calls.
@@ -116,7 +116,7 @@ def run_tool_calls(
     if not calls:
         return []
 
-    out: List[BaseMessage] = []
+    out: list[BaseMessage] = []
     for call in calls:
         name = call.get("name")
         args = call.get("args", {}) or {}

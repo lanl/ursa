@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import datetime
-from typing import Dict, List, Tuple
 
 from ursa.observability.metrics_charts import (
     compute_attribution,
@@ -71,7 +70,7 @@ def run_all(
       • Per-run (each JSON): lollipop, tokens-bar, tokens-kde
     for every thread discovered under dir_path.
     """
-    sessions: Dict[str, list] = scan_directory_for_threads(dir_path)
+    sessions: dict[str, list] = scan_directory_for_threads(dir_path)
     if not sessions:
         print(f"No thread_ids found in directory: {dir_path!r}")
         return 0
@@ -293,9 +292,9 @@ def run_all(
 # -----------------------
 
 
-def _find_thread_dirs_recursive(root: str) -> List[str]:
+def _find_thread_dirs_recursive(root: str) -> list[str]:
     """Walk the tree and return subdirs that contain at least one thread_id (JSONs)."""
-    found: List[str] = []
+    found: list[str] = []
     for cur, dirs, files in os.walk(root):
         sessions = scan_directory_for_threads(cur)
         if sessions:
@@ -304,10 +303,10 @@ def _find_thread_dirs_recursive(root: str) -> List[str]:
 
 
 def _aggregate_super_across_dirs(
-    thread_dirs: List[str],
+    thread_dirs: list[str],
     *,
     group_llm: bool,
-) -> Tuple[float, float, float, dict, dict, dict]:
+) -> tuple[float, float, float, dict, dict, dict]:
     """
     Returns:
       total_all, llm_total_all, tool_total_all,
@@ -319,7 +318,7 @@ def _aggregate_super_across_dirs(
     llm_total_all = 0.0
     tool_total_all = 0.0
 
-    token_totals_all: Dict[str, int] = {
+    token_totals_all: dict[str, int] = {
         "input_tokens": 0,
         "output_tokens": 0,
         "reasoning_tokens": 0,
@@ -327,7 +326,7 @@ def _aggregate_super_across_dirs(
         "total_tokens": 0,
     }
     # IMPORTANT: dict-of-lists, not a flat list
-    token_samples_all: Dict[str, List[float]] = {
+    token_samples_all: dict[str, list[float]] = {
         "input_tokens": [],
         "output_tokens": [],
         "reasoning_tokens": [],
@@ -524,7 +523,7 @@ def run_all_recursive_with_super(
     # --- SUPER by-AGENT breakdowns (across all discovered thread dirs) ---
     # Build a combined sessions dict that includes runs from every discovered thread dir.
     # Use a composite key to avoid collisions if thread_ids repeat across different subdirs.
-    combined_sessions: Dict[str, List] = {}
+    combined_sessions: dict[str, list] = {}
     for d in thread_dirs:
         sess = scan_directory_for_threads(d) or {}
         for tid, runs in sess.items():

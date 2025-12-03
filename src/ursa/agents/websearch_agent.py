@@ -1,6 +1,6 @@
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from typing import Annotated, Any, Mapping
+from typing import Annotated, Any, Mapping, TypedDict
 
 import requests
 from bs4 import BeautifulSoup
@@ -12,13 +12,13 @@ from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState
 from pydantic import Field
-from typing_extensions import TypedDict
 
-from ..prompt_library.websearch_prompts import (
+from ursa.prompt_library.websearch_prompts import (
     reflection_prompt,
     summarize_prompt,
     websearch_prompt,
 )
+
 from .base import BaseAgent
 
 

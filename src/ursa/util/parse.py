@@ -3,7 +3,7 @@ import os
 import re
 import shutil
 import unicodedata
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import justext
@@ -216,7 +216,7 @@ def resolve_pdf_from_osti_record(
     headers: Optional[dict[str, str]] = None,
     unpaywall_email: Optional[str] = None,
     timeout: int = 25,
-) -> Tuple[Optional[str], Optional[str], str]:
+) -> tuple[Optional[str], Optional[str], str]:
     """
     Returns (pdf_url, landing_used, note)
       - pdf_url: direct downloadable PDF URL if found (or a strong candidate)
