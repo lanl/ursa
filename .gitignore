@@ -30,3 +30,5 @@ arxiv_generated_summaries
 arxiv_papers
 *.sqfs
 ursa_workspace/
+.vscode/settings.json
+scratch/

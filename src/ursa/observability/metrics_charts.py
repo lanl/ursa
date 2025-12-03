@@ -1,7 +1,7 @@
 # charts.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import matplotlib
 
@@ -48,7 +48,7 @@ def compute_llm_wall_seconds(payload: dict) -> float:
     return float(wall)
 
 
-def compute_attribution(payload: Dict[str, Any]) -> Dict[str, float]:
+def compute_attribution(payload: dict[str, Any]) -> dict[str, float]:
     """
     Returns a dict with totals useful for validation/printing:
       total_s        = graph:graph (or any graph:* fallback)
@@ -80,7 +80,7 @@ def compute_attribution(payload: Dict[str, Any]) -> Dict[str, float]:
     }
 
 
-def _extract_context(payload: Dict[str, Any]) -> Dict[str, str]:
+def _extract_context(payload: dict[str, Any]) -> dict[str, str]:
     """Return a normalized context dict with agent/thread/run_id/started/ended."""
     ctx = payload.get("context") or {}
     return {
@@ -104,7 +104,7 @@ def _fmt_iso_pretty(ts: str) -> str:
         return ts
 
 
-def _find_graph_total_seconds(payload: Dict[str, Any]) -> float:
+def _find_graph_total_seconds(payload: dict[str, Any]) -> float:
     """
     Total time = tables.runnable row where name == 'graph:graph'
     Fallback to totals.graph_total_s if needed.
@@ -122,11 +122,11 @@ def _find_graph_total_seconds(payload: Dict[str, Any]) -> float:
 
 
 def _aggregate_tools_seconds(
-    payload: Dict[str, Any],
-) -> List[Tuple[str, float]]:
+    payload: dict[str, Any],
+) -> list[tuple[str, float]]:
     tables = payload.get("tables") or {}
     tool_rows = tables.get("tool") or []
-    out: List[Tuple[str, float]] = []
+    out: list[tuple[str, float]] = []
     for row in tool_rows:
         name = str(row.get("name") or "tool:unknown")
         try:
@@ -138,8 +138,8 @@ def _aggregate_tools_seconds(
 
 
 def _aggregate_llm_seconds(
-    payload: Dict[str, Any], *, group_llm: bool
-) -> List[Tuple[str, float]]:
+    payload: dict[str, Any], *, group_llm: bool
+) -> list[tuple[str, float]]:
     tables = payload.get("tables") or {}
     llm_rows = tables.get("llm") or []
     if group_llm:
@@ -151,7 +151,7 @@ def _aggregate_llm_seconds(
                 pass
         return [("llm:total", total)] if total > 0 else []
     else:
-        out: List[Tuple[str, float]] = []
+        out: list[tuple[str, float]] = []
         for row in llm_rows:
             name = str(row.get("name") or "llm:unknown")
             try:
@@ -163,14 +163,14 @@ def _aggregate_llm_seconds(
 
 
 def extract_time_breakdown(
-    payload: Dict[str, Any], *, group_llm: bool = False
-) -> Tuple[float, List[Tuple[str, float]]]:
+    payload: dict[str, Any], *, group_llm: bool = False
+) -> tuple[float, list[tuple[str, float]]]:
     """
     Returns (total_seconds, parts), where parts is a list of (label, seconds).
     parts = [each tool, each llm (or grouped), "other"] with "other" >= 0.
     """
     total = _find_graph_total_seconds(payload)
-    parts: List[Tuple[str, float]] = []
+    parts: list[tuple[str, float]] = []
     parts.extend(_aggregate_tools_seconds(payload))
     parts.extend(_aggregate_llm_seconds(payload, group_llm=group_llm))
 
@@ -185,13 +185,13 @@ def extract_time_breakdown(
 
 def plot_time_breakdown(
     total: float,
-    parts: List[Tuple[str, float]],
+    parts: list[tuple[str, float]],
     out_path: str,
     *,
     title: str = "",
     chart: str = "pie",  # "pie" or "bar"
     min_label_pct: float = 1.0,
-    context: Dict[str, Any] | None = None,  # NEW
+    context: dict[str, Any] | None = None,  # NEW
 ) -> str:
     labels = [k for k, _ in parts]
     values = [v for _, v in parts]
@@ -317,7 +317,7 @@ def plot_time_breakdown(
 
 def plot_lollipop_time(
     total: float,
-    parts: List[Tuple[str, float]],
+    parts: list[tuple[str, float]],
     out_path: str,
     *,
     title: str = "",
@@ -326,7 +326,7 @@ def plot_lollipop_time(
     show_seconds: bool = True,
     show_percent: bool = True,
     exclude_zero: bool = True,
-    context: Dict[str, Any] | None = None,  # NEW
+    context: dict[str, Any] | None = None,  # NEW
 ) -> str:
     data = [(k, v) for (k, v) in parts if (v > 0 if exclude_zero else True)]
     data.sort(key=lambda kv: kv[1])
@@ -430,8 +430,8 @@ def plot_lollipop_time(
 
 
 def extract_llm_token_stats(
-    payload: Dict[str, Any],
-) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
+    payload: dict[str, Any],
+) -> tuple[dict[str, int], dict[str, list[int]]]:
     """
     Return (totals, samples) for LLM token usage from Telemetry payload.
     - totals: sum across all LLM calls
@@ -489,11 +489,11 @@ def extract_llm_token_stats(
 
 
 def plot_token_totals_bar(
-    totals: Dict[str, int],
+    totals: dict[str, int],
     out_path: str,
     *,
     title: str = "",
-    context: Dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
 ) -> str:
     """
     Horizontal bar chart of token totals by category.
@@ -575,11 +575,11 @@ def plot_token_totals_bar(
 
 
 def plot_token_kde(
-    samples: Dict[str, List[int]],
+    samples: dict[str, list[int]],
     out_path: str,
     *,
     title: str = "",
-    context: Dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
     log_x: bool = False,
     bandwidth: float | None = None,
     fill_alpha: float = 0.15,
@@ -849,7 +849,7 @@ def plot_token_rates_bar(
 
 
 def plot_tokens_bar_by_model(
-    totals_by_model: Dict[str, Dict[str, int]],
+    totals_by_model: dict[str, dict[str, int]],
     out_path: str,
     *,
     title: str = "LLM Token Totals by Category — by model",
@@ -918,8 +918,8 @@ def plot_tokens_bar_by_model(
 
 
 def plot_token_rates_by_model(
-    totals_by_model: Dict[str, Dict[str, int]],
-    llm_seconds_by_model: Dict[str, float],
+    totals_by_model: dict[str, dict[str, int]],
+    llm_seconds_by_model: dict[str, float],
     window_seconds: float,
     out_path: str,
     *,
@@ -1045,11 +1045,11 @@ def plot_token_rates_by_model(
 
 
 def plot_tokens_by_agent_stacked(
-    totals_by_agent: Dict[str, Dict[str, int]],
+    totals_by_agent: dict[str, dict[str, int]],
     out_path: str,
     *,
     title: str = "LLM Token Totals by Agent (thread)",
-    footer_lines: List[str] | None = None,
+    footer_lines: list[str] | None = None,
 ) -> str:
     import matplotlib.pyplot as plt
     import numpy as np
@@ -1157,13 +1157,13 @@ def plot_tokens_by_agent_stacked(
 
 
 def plot_tps_by_agent_grouped(
-    totals_by_agent: Dict[str, Dict[str, int]],
-    llm_secs_by_agent: Dict[str, float],
+    totals_by_agent: dict[str, dict[str, int]],
+    llm_secs_by_agent: dict[str, float],
     thread_window_seconds: float,
     out_path: str,
     *,
     title: str = "Tokens per second by Agent (thread)",
-    footer_lines: List[str] | None = None,
+    footer_lines: list[str] | None = None,
 ) -> str:
     import matplotlib.pyplot as plt
     import numpy as np
@@ -1189,7 +1189,7 @@ def plot_tps_by_agent_grouped(
         reverse=True,
     )
 
-    def _rate_sum(agent: str, denom: float) -> List[float]:
+    def _rate_sum(agent: str, denom: float) -> list[float]:
         denom = float(denom or 0.0)
         vals = [
             int(totals_by_agent.get(agent, {}).get(k, 0) or 0) for k in cats

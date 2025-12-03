@@ -27,7 +27,7 @@ def main():
         database_path="arxiv_HEA_papers",
         summaries_path="arxiv_HEA_summaries",
         vectorstore_path="arxiv_HEA_vectorstores",
-        download_papers=True,
+        download=True,
     )
     agent.thread_id = tid
 

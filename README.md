@@ -11,22 +11,35 @@ Composes information flow between agents for planning, code writing and executio
 The original arxiv paper is [here](https://arxiv.org/abs/2506.22653).
 
 ## Installation
-You can install `ursa` via `pip` or `uv`.
-
-**pip**
-```bash
-pip install ursa-ai
-```
+You can install `ursa` via `pip` or `uv`. Installing `ursa` in a clean
+environment with python 3.10-3.12 may be necessary. (Some `ursa` dependencies
+currently do not support `python>=3.13`.)
 
 **uv**
-```bash
+
+```sh
+uv init -p 3.12  # or 3.10, 3.11
 uv add ursa-ai
 ```
 
+**pip**
+
+```sh
+pip install ursa-ai
+```
+
+**conda with pip install**
+
+```sh
+conda create -y -n ursa-env python=3.12  # or 3.10, 3.11
+conda run --live-stream -n ursa-env python -m pip install ursa-ai
+```
+
 ## How to use this code
-Better documentation will be incoming, but for now there are examples in the examples folder that should give
-a decent idea for how to set up some basic problems. They also should give some idea of how to pass results from
-one agent to another. I will look to add things with multi-agent graphs, etc. in the future. 
+Better documentation will be incoming, but for examples in the `examples/`
+folder demonstrates how to set up some basic problems. They also should give
+some idea of how to pass results from one agent to another. I will look to add
+things with multi-agent graphs, etc. in the future. 
 
 Documentation for each URSA agent:
 - [Planning Agent](docs/planning_agent.md)
@@ -201,7 +214,7 @@ behaviors above for docker.
 
 ```shell
 # Pull the image
-ch-image pull ghcr.io/lanl/ursa
+ch-image pull ghcr.io/lanl/ursa ursa
 
 # Convert image to sqfs, for use on another system
 ch-convert ursa ursa.sqfs
@@ -211,9 +224,10 @@ ch-run -W ursa \
     --unset-env="*" \
     --set-env \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
-    --cd /app \
+    --bind ${PWD}:/mnt/workspace \
+    --cd /mnt/workspace \
     -- bash -c \
-    "uv run examples/single_agent_examples/execution_agnet/integer_sum.py"
+    "uv run --no-sync examples/single_agent_examples/execution_agent/integer_sum.py"
 
 # Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
 mkdir -p scripts
@@ -223,9 +237,9 @@ ch-run -W ursa \
     --set-env \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
     --bind ${PWD}/scripts:/mnt/workspace \
-    --cd /app \
+    --cd /mnt/workspace \
     -- bash -c \
-    "uv run /mnt/workspace/integer_sum.py"
+    "uv run --no-sync my_script.py"
 ```
 
 ## Development Dependencies

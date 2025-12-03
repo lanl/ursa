@@ -1,16 +1,17 @@
-from typing import Annotated, Any, Iterator, List, Mapping, Optional
+from typing import Annotated, Any, Iterator, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
-from typing_extensions import TypedDict
+from typing_extensions import Required  # noqa
 
-from ..prompt_library.planning_prompts import (
+from ursa.prompt_library.planning_prompts import (
     planner_prompt,
     reflection_prompt,
 )
+
 from .base import BaseAgent
 
 
@@ -21,43 +22,45 @@ class PlanStep(BaseModel):
     requires_code: bool = Field(
         description="True if this step needs code to be written/run"
     )
-    expected_outputs: List[str] = Field(
+    expected_outputs: list[str] = Field(
         description="Concrete artifacts or results produced by this step"
     )
-    success_criteria: List[str] = Field(
+    success_criteria: list[str] = Field(
         description="Measurable checks that indicate the step succeeded"
     )
 
 
 class Plan(BaseModel):
-    steps: List[PlanStep] = Field(
+    steps: list[PlanStep] = Field(
         description="Ordered list of steps to solve the problem"
     )
 
 
 # planning state
-class PlanningState(TypedDict):
-    """Here is the planning state"""
+class PlanningState(TypedDict, total=False):
+    """State dictionary for planning agent"""
 
     messages: Annotated[list, add_messages]
-    plan_steps: Optional[List[PlanStep]] = Field(
-        description="Ordered steps in the solution plan"
-    )
-    reflection_steps: Optional[int] = Field(
-        default=3, description="Number of reflection steps"
-    )
+
+    # Ordered steps in the solution plan
+    plan_steps: list[PlanStep]
+
+    # Number of reflection steps
+    reflection_steps: Required[int]
 
 
 class PlanningAgent(BaseAgent):
     def __init__(
         self,
         llm: BaseChatModel,
+        max_reflection_steps: int = 1,
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
         self.planner_prompt = planner_prompt
         self.reflection_prompt = reflection_prompt
         self._action = self._build_graph()
+        self.max_reflection_steps = max_reflection_steps
 
     def generation_node(self, state: PlanningState) -> PlanningState:
         """
@@ -67,15 +70,18 @@ class PlanningAgent(BaseAgent):
 
         print("PlanningAgent: generating . . .")
 
-        messages = state["messages"]
+        messages = cast(list, state.get("messages"))
         if isinstance(messages[0], SystemMessage):
             messages[0] = SystemMessage(content=self.planner_prompt)
         else:
             messages = [SystemMessage(content=self.planner_prompt)] + messages
 
         structured_llm = self.llm.with_structured_output(Plan)
-        plan_obj: Plan = structured_llm.invoke(
-            messages, self.build_config(tags=["planner"])
+        plan_obj = cast(
+            Plan,
+            structured_llm.invoke(
+                messages, self.build_config(tags=["planner"])
+            ),
         )
 
         try:
@@ -88,7 +94,10 @@ class PlanningAgent(BaseAgent):
 
         return {
             "messages": [AIMessage(content=json_text)],
-            "plan_steps": [step.model_dump() for step in plan_obj.steps],
+            "plan_steps": [
+                cast(PlanStep, step.model_dump()) for step in plan_obj.steps
+            ],
+            "reflection_steps": state["reflection_steps"],
         }
 
     def reflection_node(self, state: PlanningState) -> PlanningState:
@@ -131,20 +140,20 @@ class PlanningAgent(BaseAgent):
         return graph.compile(checkpointer=self.checkpointer)
 
     def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
+        self, inputs: dict[str, Any], recursion_limit: int = 999999, **_
     ):
         config = self.build_config(
             recursion_limit=recursion_limit, tags=["planner"]
         )
-        inputs.setdefault("reflection_steps", 1)
+        inputs.setdefault("reflection_steps", self.max_reflection_steps)
         return self._action.invoke(inputs, config)
 
     def _stream(
         self,
-        inputs: Mapping[str, Any],
+        inputs: dict[str, Any],
         *,
         config: dict | None = None,
-        recursion_limit: int = 1000,
+        recursion_limit: int = 999999,
         **_,
     ) -> Iterator[dict]:
         # If you have defaults, merge them here:
@@ -161,14 +170,14 @@ class PlanningAgent(BaseAgent):
         else:
             merged = default
 
-        inputs.setdefault("reflection_steps", 1)
+        inputs.setdefault("reflection_steps", self.max_reflection_steps)
         # Delegate to the compiled graph's stream
         yield from self._action.stream(inputs, merged)
 
 
 def _should_reflect(state: PlanningState):
     # Hit the reflection cap?
-    steps = state.get("reflection_steps")
+    steps = state["reflection_steps"]
     if steps == 0:
         print("PlanningAgent: Reached reflection limit")
         return "END"

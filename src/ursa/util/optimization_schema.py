@@ -1,4 +1,4 @@
-from typing import Any, List, Literal, Optional, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 
 class DecisionVariableType(TypedDict):
@@ -24,7 +24,7 @@ class ParameterType(TypedDict):
 class ObjectiveType(TypedDict):
     sense: Literal["minimize", "maximize"]  # objective sense
     expression_nl: str  # sympy-representable mathematical expression
-    tags: List[
+    tags: list[
         Literal["linear", "quadratic", "nonlinear", "convex", "nonconvex"]
     ]  # objective type
 
@@ -32,7 +32,7 @@ class ObjectiveType(TypedDict):
 class ConstraintType(TypedDict):
     name: str  # constraint name
     expression_nl: str  # sympy-representable mathematical expression
-    tags: List[
+    tags: list[
         Literal[
             "linear",
             "integer",
@@ -55,12 +55,12 @@ class NotesType(TypedDict):
 class ProblemSpec(TypedDict):
     title: str  # name of the problem
     description_nl: str  # natural language description
-    decision_variables: List[
+    decision_variables: list[
         DecisionVariableType
     ]  # list of all decision variables
-    parameters: List[ParameterType]  # list of all parameters
+    parameters: list[ParameterType]  # list of all parameters
     objective: ObjectiveType  # structred objective function details
-    constraints: List[ConstraintType]  # structured constraint details
+    constraints: list[ConstraintType]  # structured constraint details
     problem_class: Optional[str]  # optimization problem class
     latex: Optional[str]  # latex formulation of the problem
     status: Literal["DRAFT", "VERIFIED", "ERROR"]  # problem status
@@ -74,5 +74,5 @@ class SolverSpec(TypedDict):
     license: Optional[
         str
     ]  # License status of the solver (open-source, commercial,etc.)
-    parameters: Optional[List[dict]]  # other parameters relevant to the problem
+    parameters: Optional[list[dict]]  # other parameters relevant to the problem
     notes: Optional[str]  # justifying the choice of solver

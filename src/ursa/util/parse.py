@@ -3,13 +3,14 @@ import os
 import re
 import shutil
 import unicodedata
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import justext
 import requests
 import trafilatura
 from bs4 import BeautifulSoup
+from langchain_community.document_loaders import PyPDFLoader
 
 
 def extract_json(text: str) -> list[dict]:
@@ -215,7 +216,7 @@ def resolve_pdf_from_osti_record(
     headers: Optional[dict[str, str]] = None,
     unpaywall_email: Optional[str] = None,
     timeout: int = 25,
-) -> Tuple[Optional[str], Optional[str], str]:
+) -> tuple[Optional[str], Optional[str], str]:
     """
     Returns (pdf_url, landing_used, note)
       - pdf_url: direct downloadable PDF URL if found (or a strong candidate)
@@ -403,3 +404,21 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     txt = _normalize_ws("\n\n".join(chunks))
     txt = _dedupe_lines(txt)
     return txt[:max_chars]
+
+
+def read_pdf_text(path: str) -> str:
+    loader = PyPDFLoader(path)
+    pages = loader.load()
+    return "\n".join(p.page_content for p in pages)
+
+
+def read_text_file(path: str) -> str:
+    """
+    Reads in a file at a given path into a string
+
+    Args:
+        path: string filename, with path, to read in
+    """
+    with open(path, "r", encoding="utf-8") as file:
+        file_contents = file.read()
+    return file_contents
