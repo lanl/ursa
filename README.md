@@ -214,7 +214,7 @@ behaviors above for docker.
 
 ```shell
 # Pull the image
-ch-image pull ghcr.io/lanl/ursa
+ch-image pull ghcr.io/lanl/ursa ursa
 
 # Convert image to sqfs, for use on another system
 ch-convert ursa ursa.sqfs
@@ -224,9 +224,10 @@ ch-run -W ursa \
     --unset-env="*" \
     --set-env \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
-    --cd /app \
+    --bind ${PWD}:/mnt/workspace \
+    --cd /mnt/workspace \
     -- bash -c \
-    "uv run examples/single_agent_examples/execution_agnet/integer_sum.py"
+    "uv run --no-sync examples/single_agent_examples/execution_agent/integer_sum.py"
 
 # Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
 mkdir -p scripts
@@ -236,9 +237,9 @@ ch-run -W ursa \
     --set-env \
     --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
     --bind ${PWD}/scripts:/mnt/workspace \
-    --cd /app \
+    --cd /mnt/workspace \
     -- bash -c \
-    "uv run /mnt/workspace/my_script.py"
+    "uv run --no-sync my_script.py"
 ```
 
 ## Development Dependencies
