@@ -14,13 +14,12 @@ problem_string = "Create a one step plan for computing 1+1."
 
 inputs = {
     "messages": [HumanMessage(content=problem_string)],
-    "reflection_steps": 1,
+    "reflection_steps": 1,  # if 0, a generation is done once, but no reflection is done.
 }
 
 result = planning_agent(inputs)
 
-result["messages"][-2].pretty_print()
-
-result["messages"][-1].pretty_print()
+for msg in result["messages"]:
+    msg.pretty_print()
 
 render_session_summary(planning_agent.thread_id)
