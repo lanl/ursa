@@ -463,7 +463,7 @@ class UrsaRepl(Cmd):
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
         # Print intro only once.
-        self.show(f"[magenta]{ursa_banner}", markdown=False)
+        self.show(f"[magenta]{ursa_banner}", markdown=False, highlight=False)
         self.show(self._help_message, markdown=False)
 
         while True:
