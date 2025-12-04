@@ -1,0 +1,28 @@
+import os
+
+from langchain.chat_models import init_chat_model
+from langchain.messages import HumanMessage
+
+from ursa.agents import PlanningAgent
+from ursa.observability.timing import render_session_summary
+
+# def test_planning_agent():
+planning_agent = PlanningAgent(
+    llm=init_chat_model(model=os.getenv("URSA_TEST_LLM", "openai:gpt-5-nano")),
+    enable_metrics=True,
+)
+
+# problem_string = "Calculate Pi to 1000 decimal places."
+problem_string = "Create a one step plan for computing 1+1."
+
+inputs = {
+    "messages": [HumanMessage(content=problem_string)],
+    "reflection_steps": 1,  # if 0, a generation is done once, but no reflection is done.
+}
+
+result = planning_agent(inputs)
+
+for msg in result["messages"]:
+    msg.pretty_print()
+
+render_session_summary(planning_agent.thread_id)
