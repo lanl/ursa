@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from langchain.chat_models import init_chat_model
@@ -14,11 +15,17 @@ def test_rag_agent():
     summary_file = summary_dir / "RAG_summary.txt"
 
     agent = RAGAgent(
-        llm=init_chat_model(model="openai:gpt-5-nano"),
-        embedding=init_embeddings(model="ollama:nomic-embed-text"),
+        llm=init_chat_model(
+            model=os.getenv("URSA_TEST_LLM", "openai:gpt-5-nano"), seed=0
+        ),
+        embedding=init_embeddings(
+            model=os.getenv("URSA_TEST_EMB", "ollama:nomic-embed-text")
+        ),
         database_path="tests/tiny-corpus",
         summaries_path=str(summary_dir),
         vectorstore_path=str(vectorstore_dir),
+        chunk_size=800,
+        chunk_overlap=100,
     )
     agent.invoke(context="What is AIBD?")
     render_session_summary(agent.thread_id)
@@ -29,3 +36,4 @@ def test_rag_agent():
         "attraction indian buffet distribution"
         in summary_file.read_text().lower()
     )
+    print(summary_file.read_text())

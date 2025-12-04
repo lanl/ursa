@@ -1,3 +1,4 @@
+import os
 from math import sqrt
 from pathlib import Path
 
@@ -11,7 +12,9 @@ from ursa.observability.timing import render_session_summary
 
 def test_execution_agent():
     execution_agent = ExecutionAgent(
-        llm=init_chat_model(model="openai:gpt-5-nano")
+        llm=init_chat_model(
+            model=os.getenv("URSA_TEST_LLM", "openai:gpt-5-nano")
+        )
     )
     problem_string = "Write and execute a minimal python script to print the first 10 integers."
     inputs = {
