@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
+import yaml
 from langchain.agents import create_agent
 from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage
@@ -11,45 +12,109 @@ from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.util import Checkpointer
 
 system_prompt = """\
-You are an agent with multiple subagents and tools.
+You are an data scientist with multiple tools.
 
-These agents are available to you:
-
-* execution_agent
-  * Use this agent whenever you are asked to write/edit code or run arbitrary
-    commands from the command line.
+These tools are available to you:
 
 * planning_agent
-  * Use this agent whenever you are asked to plan out tasks.
+  * Use this tool whenever you are asked to plan out tasks.
+  * In each step of your plan, if code needs to be generated, please 
+    explicitly state in the step that code needs to be written and executed.
 
-Note that if the user asks you to plan and then execute a task, you are 
-to iterate through each part (step or bullet point) of a task and then
-carry out the execution agent. Here is an example query:
+* execution_agent
+  * Use this tool **whenever** you are asked to write/edit code or run arbitrary
+    commands from the command line.
 
-Please make a plan to print the first 10 natural numbers in python, then execute
-the code.
-
-For this query, a generated plan might look like this:
-
-```
-The user wants to compute the first 10 natural numbers in python. This is the plan.
-
-* step 1: write code
-* step 2: check that code is correct
-```
-
-In this case you should call the execution agent for step 1; and then call the
-execution agent for step 2. If more steps are in the plan, keep calling the
-execution agent.
+* execute_plan_tool
+  * Use this tool if you are asked to execute a plan that starts with <PLAN> and ends with </PLAN>.
+  * Do not use this tool if the <PLAN></PLAN> tags are not present in the instruction!
 """
 
 
 # NOTE: Is the solution to have a tool that breaks up the string plan, and then
 # execute each section of the plan?
-@tool
-def execute_plan(plan: str):
-    """Execute plan item by item."""
-    ...
+def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
+    execution_agent = ExecutionAgent(llm)._action
+
+    @tool(
+        "execute_plan_tool",
+        description="Execute a plan from the planning agent tool.",
+    )
+    def execute_plan(plan: str):
+        """Execute plan item by item."""
+
+        print("EXECUTING PLAN")
+        if plan.startswith("<PLAN>") and plan.endswith("</PLAN>"):
+            summaries = []
+
+            plan_steps = yaml.safe_load(
+                plan.replace("<PLAN>", "").replace("</PLAN>", "").strip()
+            )
+            for step in plan_steps:
+                step_prompt = "You are contributing to a larger solution.\n\n"
+                if len(summaries) > 0:
+                    last_step_summary = summaries[-1]
+                    step_prompt += (
+                        f"Previous-step summary: {last_step_summary}\n\n"
+                    )
+                step_prompt += f"Now, execute the following step (and if you write any code, be sure to execute the code to make sure it works):\n{yaml.dump(step)}"
+                print(step_prompt)
+
+                result = execution_agent.invoke({
+                    "messages": [HumanMessage(step_prompt)],
+                    "workspace": str(workspace),
+                })
+                last_step_summary = result["messages"][-1].content
+                summaries.append(last_step_summary)
+            return "Grand summary of plan execution:\n\n" + "\n\n".join(
+                summaries
+            )
+        else:
+            return (
+                "Could not use `execute_plan` tool execute plan "
+                "as plan does not start/end with <PLAN>/</PLAN>."
+            )
+
+    return execute_plan
+
+
+def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
+    planning_agent = PlanningAgent(
+        llm, max_reflection_steps=max_reflection_steps
+    )._action
+
+    @tool(
+        "planning_agent",
+        description="Create plans for arbitrary tasks",
+    )
+    def call_agent(query: str):
+        result = planning_agent.invoke({
+            "messages": [HumanMessage(query)],
+            "reflection_steps": max_reflection_steps,
+        })
+        # return result["messages"][-1].content
+        plan = f"<PLAN>\n{yaml.dump(result['plan_steps'])}\n</PLAN>"
+        print(plan)
+        return plan
+
+    return call_agent
+
+
+def make_execution_tool(llm: BaseChatModel, workspace: Path):
+    execution_agent = ExecutionAgent(llm)._action
+
+    @tool(
+        "execution_agent",
+        description="Read and edit scripts/code, and execute arbitrary commands on command line.",
+    )
+    def call_agent(query: str):
+        result = execution_agent.invoke({
+            "messages": [HumanMessage(query)],
+            "workspace": str(workspace),
+        })
+        return result["messages"][-1].content
+
+    return call_agent
 
 
 class Ursa:
@@ -74,49 +139,17 @@ class Ursa:
             workspace
         )
 
-    def make_planning_tool(self):
-        planning_agent = PlanningAgent(
-            self.llm,
-            max_reflection_steps=self.max_reflection_steps,
-            thread_id=self.thread_id,
-        )
-
-        @tool(
-            "planning_agent",
-            description="Create plans for arbitrary tasks",
-        )
-        def call_agent(query: str):
-            result = planning_agent.invoke({
-                "messages": [HumanMessage(query)],
-            })
-            return result["messages"][-1].content
-
-        return call_agent
-
-    def make_execution_tool(self):
-        execution_agent = ExecutionAgent(self.llm, thread_id=self.thread_id)
-
-        @tool(
-            "execution_agent",
-            description="Read and edit scripts/code, and execute arbitrary commands on command line.",
-        )
-        def call_agent(query: str):
-            result = execution_agent.invoke({
-                "messages": [HumanMessage(query)],
-                "workspace": str(self.workspace),
-            })
-            return result["messages"][-1].content
-
-        return call_agent
-
     def create(self, **kwargs):
         """Create agent.
 
         kwargs: for `create_agent`
         """
         self.subagents = [
-            self.make_execution_tool(),
-            self.make_planning_tool(),
+            make_execution_tool(llm=self.llm, workspace=self.workspace),
+            make_planning_tool(
+                llm=self.llm, max_reflection_steps=self.max_reflection_steps
+            ),
+            make_execute_plan_tool(llm=self.llm, workspace=self.workspace),
         ]
         self.tools = self.subagents + self.extra_tools
         return create_agent(

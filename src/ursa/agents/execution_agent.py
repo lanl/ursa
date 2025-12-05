@@ -48,6 +48,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.tools import StructuredTool
+from langchain_core.tools.base import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
@@ -221,7 +222,7 @@ class ExecutionAgent(BaseAgent):
         llm: BaseChatModel,
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
-        extra_tools: Optional[list[Callable[..., Any]]] = None,
+        extra_tools: Optional[list[BaseTool]] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         safe_codes: Optional[list[str]] = None,
