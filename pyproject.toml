@@ -107,3 +107,7 @@ opt = [
 mcp = [
     "fastapi>=0.120.0,<0.121",
 ]
+otel = [
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-sdk>=1.38.0",
+]

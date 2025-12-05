@@ -1023,6 +1023,8 @@ class Telemetry:
     debug_raw: bool = False  # toggle raw dump
     output_dir: str = "metrics"  # where to save JSON
     save_json_default: bool = True  # opt-in autosave
+    save_otel_default: bool = False  # opt-out otel
+    otel_endpoint: str = "http://localhost:5000/v1/traces"  # where to push otel metrics
 
     tool: PerToolTimer = field(default_factory=PerToolTimer)
     runnable: PerRunnableTimer = field(default_factory=PerRunnableTimer)
@@ -1192,6 +1194,20 @@ class Telemetry:
             )
         return path
 
+    def _save_otel(self, payload: dict, endpoint: str | None = None) -> str:
+        breakpoint()
+        # path = filepath or self._default_filepath()
+        # self._ensure_dir(os.path.dirname(path) or ".")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                payload,
+                f,
+                ensure_ascii=False,
+                indent=2,
+                default=self._json_default,
+            )
+        return path
+
     def to_json(
         self, *, include_raw_snapshot: bool, include_raw_records: bool
     ) -> dict:
@@ -1215,6 +1231,7 @@ class Telemetry:
         self,
         raw: bool | None = None,
         save_json: bool | None = None,
+        save_otel: bool | None = None,
         filepath: str | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
@@ -1312,6 +1329,13 @@ class Telemetry:
         saved_path = None
         if do_save:
             saved_path = self._save_json(payload, filepath=filepath)
+
+        # --- Push to OTEL (if requested) ---
+        breakpoint()
+        do_otel = self.save_otel_default if save_otel is None else save_otel
+        saved_otel = None
+        if do_otel:
+            saved_otel = self._save_otel(payload, filepath=filepath)
 
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
