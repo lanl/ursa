@@ -1,7 +1,7 @@
+import json
 from pathlib import Path
 from typing import Optional
 
-import yaml
 from langchain.agents import create_agent
 from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage
@@ -47,7 +47,7 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
         if plan.startswith("<PLAN>") and plan.endswith("</PLAN>"):
             summaries = []
 
-            plan_steps = yaml.safe_load(
+            plan_steps = json.loads(
                 plan.replace("<PLAN>", "").replace("</PLAN>", "").strip()
             )
             for step in plan_steps:
@@ -57,7 +57,7 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
                     step_prompt += (
                         f"Previous-step summary: {last_step_summary}\n\n"
                     )
-                step_prompt += f"Now, execute the following step (and if you write any code, be sure to execute the code to make sure it works):\n{yaml.dump(step)}"
+                step_prompt += f"Now, execute the following step (and if you write any code, be sure to execute the code to make sure it works):\n{json.dumps(step)}"
                 print(step_prompt)
 
                 result = execution_agent.invoke({
@@ -93,7 +93,7 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
             "reflection_steps": max_reflection_steps,
         })
         # return result["messages"][-1].content
-        plan = f"<PLAN>\n{yaml.dump(result['plan_steps'])}\n</PLAN>"
+        plan = f"<PLAN>\n{json.dumps(result['plan_steps'])}\n</PLAN>"
         print(plan)
         return plan
 

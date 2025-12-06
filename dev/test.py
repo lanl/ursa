@@ -77,8 +77,9 @@ intercept. The plan MUST NOT include code; though it may include instruction
 to write code.  The analysis should be **very minimal** and AS CONCISE AS
 POSSIBLE.
 
-**Finally**, EXECUTE THE PLAN using execute_plan_tool. Write any code to
-*`output/`. DO NOT write anything to `data/`.
+**Finally**, EXECUTE THE PLAN using execute_plan_tool. Write all code to
+*`output/analysis.py`. DO NOT write anything to `data/`.  Do not write any other
+*files. I want a single file with the entire analysis.
 """
 run(query)
 
