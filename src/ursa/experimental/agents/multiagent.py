@@ -47,11 +47,15 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
         if plan.startswith("<PLAN>") and plan.endswith("</PLAN>"):
             summaries = []
 
-            plan_steps = json.loads(
+            task_and_plan_steps = json.loads(
                 plan.replace("<PLAN>", "").replace("</PLAN>", "").strip()
             )
+            task = task_and_plan_steps[0]["task"]
+            plan_steps = task_and_plan_steps[1:]
             for step in plan_steps:
-                step_prompt = "You are contributing to a larger solution.\n\n"
+                step_prompt = (
+                    f"You are contributing to a larger solution:\n{task}.\n\n"
+                )
                 if len(summaries) > 0:
                     last_step_summary = summaries[-1]
                     step_prompt += (
@@ -93,7 +97,8 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
             "reflection_steps": max_reflection_steps,
         })
         # return result["messages"][-1].content
-        plan = f"<PLAN>\n{json.dumps(result['plan_steps'])}\n</PLAN>"
+        plan_steps = [{"task": query}] + result["plan_steps"]
+        plan = f"<PLAN>\n{json.dumps(plan_steps)}\n</PLAN>"
         print(plan)
         return plan
 
