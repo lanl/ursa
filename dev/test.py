@@ -9,7 +9,7 @@ from pydantic import SecretStr
 
 from ursa.experimental.agents.multiagent import Ursa
 
-aiportal = False
+aiportal = True
 
 if aiportal:
     llm = ChatOpenAI(

@@ -28,6 +28,10 @@ These tools are available to you:
 * execute_plan_tool
   * Use this tool if you are asked to execute a plan that starts with <PLAN> and ends with </PLAN>.
   * Do not use this tool if the <PLAN></PLAN> tags are not present in the instruction!
+
+Note that this project is managed by `uv. So, if you need to execute python
+code, you MUST run `uv run path/to/file.py`. 
+DO NOT run `python /path/to/file.py` or `python3 /path/to/file.py`.
 """
 
 
