@@ -25,7 +25,7 @@ Your responsibilities are as follows:
 Your goal is to carry out the provided plan accurately, safely, and transparently, maintaining accountability at each step.
 """
 
-summarize_prompt = """
+recap_prompt = """
 You are a summarizing agent.  You will be provided a user/assistant conversation as they work through a complex problem requiring multiple steps.
 
 Your responsibilities is to write a condensed summary of the conversation.

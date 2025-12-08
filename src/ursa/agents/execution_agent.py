@@ -61,7 +61,7 @@ from ursa.agents.base import BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     get_safety_prompt,
-    summarize_prompt,
+    recap_prompt,
 )
 from ursa.tools import edit_code, read_file, run_command, write_code
 from ursa.tools.search_tools import (
@@ -112,21 +112,21 @@ def convert_to_tool(fn):
         )
 
 
-def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
-    """Return 'summarize' if no tool calls in the last message, else 'continue'.
+def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
+    """Return 'recap' if no tool calls in the last message, else 'continue'.
 
     Args:
         state: The current execution state containing messages.
 
     Returns:
-        A literal "summarize" if the last message has no tool calls,
+        A literal "recap" if the last message has no tool calls,
         otherwise "continue".
     """
     messages = state["messages"]
     last_message = messages[-1]
     # If there is no tool call, then we finish
     if not last_message.tool_calls:
-        return "summarize"
+        return "recap"
     # Otherwise if there is, we continue
     else:
         return "continue"
@@ -184,7 +184,7 @@ class ExecutionAgent(BaseAgent):
             agent. Defaults to python and julia
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
-        summarize_prompt (str): Prompt used to request concise summaries for
+        recap_prompt (str): Prompt used to request concise summaries for
             memory or final output.
         tools (list[Tool]): Tools available to the agent (run_command, write_code,
             edit_code, read_file, run_web_search, run_osti_search, run_arxiv_search).
@@ -197,7 +197,7 @@ class ExecutionAgent(BaseAgent):
         query_executor(state): Send messages to the executor LLM, ensure
             workspace exists, and handle symlink setup before returning the
             model response.
-        summarize(state): Produce and optionally persist a summary of recent
+        recap(state): Produce and optionally persist a summary of recent
             interactions to the memory backend.
         safety_check(state): Validate pending run_command calls via the safety
             prompt and append ToolMessages for unsafe commands.
@@ -233,7 +233,7 @@ class ExecutionAgent(BaseAgent):
         self.safe_codes = safe_codes or ["python", "julia"]
         self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
-        self.summarize_prompt = summarize_prompt
+        self.recap_prompt = recap_prompt
         self.tools = [
             run_command,
             write_code,
@@ -274,7 +274,7 @@ class ExecutionAgent(BaseAgent):
                         f"Approximate tokens before: {tokens_before_summarize}\n"
                         f"Approximate tokens after: {tokens_after_summarize}\n"
                     ),
-                    title="[bold yellow1 on black]:clipboard: Plan",
+                    title="[bold yellow1 on black]Summarize Past Context",
                     border_style="yellow1",
                     style="bold yellow1 on black",
                 )
@@ -376,7 +376,7 @@ class ExecutionAgent(BaseAgent):
         # Return the model's response and the workspace path as a partial state update.
         return new_state
 
-    def summarize(self, state: ExecutionState) -> ExecutionState:
+    def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
@@ -388,7 +388,7 @@ class ExecutionAgent(BaseAgent):
 
         Returns:
             ExecutionState: A partial update with a single string message containing
-                the summary.
+                the recap.
         """
         new_state = state.copy()
 
@@ -399,15 +399,14 @@ class ExecutionAgent(BaseAgent):
         messages = (
             new_state["messages"]
             if isinstance(new_state["messages"][0], SystemMessage)
-            else [SystemMessage(content=summarize_prompt)]
-            + new_state["messages"]
+            else [SystemMessage(content=recap_prompt)] + new_state["messages"]
         )
 
-        # 2) Invoke the LLM to generate a summary; capture content even on failure.
+        # 2) Invoke the LLM to generate a recap; capture content even on failure.
         response_content = ""
         try:
             response = self.llm.invoke(
-                messages, self.build_config(tags=["summarize"])
+                messages, self.build_config(tags=["recap"])
             )
             response_content = response.content
             new_state["messages"].append(response)
@@ -525,22 +524,22 @@ class ExecutionAgent(BaseAgent):
         # Register nodes:
         # - "agent": LLM planning/execution step
         # - "action": tool dispatch (run_command, write_code, etc.)
-        # - "summarize": summary/finalization step
+        # - "recap": summary/finalization step
         # - "safety_check": gate for shell command safety
         self.add_node(graph, self.query_executor, "agent")
         self.add_node(graph, self.tool_node, "action")
-        self.add_node(graph, self.summarize, "summarize")
+        self.add_node(graph, self.recap, "recap")
         self.add_node(graph, self.safety_check, "safety_check")
 
         # Set entrypoint: execution starts with the "agent" node.
         graph.set_entry_point("agent")
 
-        # From "agent", either continue (tools) or finish (summarize),
+        # From "agent", either continue (tools) or finish (recap),
         # based on presence of tool calls in the last message.
         graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "safety_check", "summarize": "summarize"},
+            {"continue": "safety_check", "recap": "recap"},
         )
 
         # From "safety_check", route to tools if safe, otherwise back to agent
@@ -554,8 +553,8 @@ class ExecutionAgent(BaseAgent):
         # After tools run, return control to the agent for the next step.
         graph.add_edge("action", "agent")
 
-        # The graph completes at the "summarize" node.
-        graph.set_finish_point("summarize")
+        # The graph completes at the "recap" node.
+        graph.set_finish_point("recap")
 
         # Compile and return the executable graph (optionally with a checkpointer).
         return graph.compile(checkpointer=self.checkpointer)

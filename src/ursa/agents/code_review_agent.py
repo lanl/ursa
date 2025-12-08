@@ -13,7 +13,7 @@ from ursa.prompt_library.code_review_prompts import (
     get_code_review_prompt,
     get_plan_review_prompt,
 )
-from ursa.prompt_library.execution_prompts import summarize_prompt
+from ursa.prompt_library.execution_prompts import recap_prompt
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from .base import BaseAgent
@@ -61,7 +61,7 @@ class CodeReviewAgent(BaseAgent):
         print(
             "CODE REVIEW AGENT NOT YET FULLY IMPLEMENTED AND TESTED. BE AWARE THAT IT WILL LIKELY NOT WORK AS INTENDED YET."
         )
-        self.summarize_prompt = summarize_prompt
+        self.recap_prompt = recap_prompt
         self.tools = [run_cmd, write_file, read_file]
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
@@ -107,7 +107,7 @@ class CodeReviewAgent(BaseAgent):
 
     # Define the function that calls the model
     def summarize(self, state: CodeReviewState) -> CodeReviewState:
-        messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
+        messages = [SystemMessage(content=recap_prompt)] + state["messages"]
         response = self.llm.invoke(
             messages, {"configurable": {"thread_id": self.thread_id}}
         )
