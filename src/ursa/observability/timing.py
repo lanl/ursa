@@ -745,7 +745,7 @@ class PerLLMTimer(BaseCallbackHandler):
             "metadata": metadata,
             "metrics": metrics,
             "t_start": wall_t0,
-            "t_end": wall_t1,  # <— add these
+            "t_end": wall_t1,
         })
 
     def on_llm_error(self, error, *, run_id, **kwargs):
@@ -763,7 +763,7 @@ class PerLLMTimer(BaseCallbackHandler):
             "metadata": metadata,
             "metrics": {"error": repr(error)},
             "t_start": wall_t0,
-            "t_end": wall_t1,  # <— add these
+            "t_end": wall_t1,
         })
 
 
