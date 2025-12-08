@@ -22,7 +22,7 @@ if aiportal:
     )
 else:
     # llm = init_chat_model("ollama:ministral-3:14b")
-    llm = init_chat_model("openai:gpt-5-nano")
+    llm = init_chat_model("openai:gpt-5")
 
 
 agent = Ursa(
