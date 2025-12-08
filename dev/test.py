@@ -84,7 +84,7 @@ POSSIBLE.
 *`analysis.py`. DO NOT write anything to `data/`.  Do not write any other
 files. I want a single file with the entire analysis.
 
-**Finally**, Edit *`analysis.py` to make it AS CONCISE AS POSSIBLE.
+**Finally**, edit *`analysis.py` to make it AS CONCISE AS POSSIBLE.
 """
 run(query)
 
