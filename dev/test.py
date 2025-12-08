@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import httpx
 from langchain.chat_models import init_chat_model
@@ -9,7 +10,7 @@ from pydantic import SecretStr
 
 from ursa.experimental.agents.multiagent import Ursa
 
-aiportal = True
+aiportal = False
 
 if aiportal:
     llm = ChatOpenAI(
@@ -27,6 +28,7 @@ else:
 agent = Ursa(
     llm,
     max_reflection_steps=0,
+    workspace=Path("dev-workspace"),
     checkpointer=InMemorySaver(),
 ).create()
 

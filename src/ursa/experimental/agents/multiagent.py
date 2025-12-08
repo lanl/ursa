@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
+import yaml
 from langchain.agents import create_agent
 from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage
@@ -12,26 +13,28 @@ from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.util import Checkpointer
 
 system_prompt = """\
-You are an data scientist with multiple tools.
+You are a data scientist with multiple tools.
 
 These tools are available to you:
 
 * planning_agent
   * Use this tool whenever you are asked to plan out tasks.
-  * In each step of your plan, if code needs to be generated, please 
-    explicitly state in the step that code needs to be written and executed.
+  * In each step of your plan, if code needs to be generated, please explicitly
+    state in the step that code needs to be written and executed.
 
 * execution_agent
-  * Use this tool **whenever** you are asked to write/edit code or run arbitrary
-    commands from the command line.
+  * Use this tool **whenever** you are asked to write/edit code or run
+    arbitrary commands from the command line.
 
 * execute_plan_tool
-  * Use this tool if you are asked to execute a plan that starts with <PLAN> and ends with </PLAN>.
-  * Do not use this tool if the <PLAN></PLAN> tags are not present in the instruction!
+  * Use this tool if you are asked to execute a plan that starts with <PLAN>
+    and ends with </PLAN>.
+  * Do not use this tool if the <PLAN></PLAN> tags are not present in the
+    instruction!
 
 Note that this project is managed by `uv. So, if you need to execute python
-code, you MUST run `uv run path/to/file.py`. 
-DO NOT run `python /path/to/file.py` or `python3 /path/to/file.py`.
+code, you MUST run `uv run path/to/file.py`. DO NOT run `python
+/path/to/file.py` or `python3 /path/to/file.py`.
 """
 
 
@@ -58,14 +61,18 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
             plan_steps = task_and_plan_steps[1:]
             for step in plan_steps:
                 step_prompt = (
-                    f"You are contributing to a larger solution:\n{task}.\n\n"
+                    f"You are contributing to a larger solution:\n{task}\n\n"
                 )
                 if len(summaries) > 0:
                     last_step_summary = summaries[-1]
                     step_prompt += (
                         f"Previous-step summary: {last_step_summary}\n\n"
                     )
-                step_prompt += f"Now, execute the following step (and if you write any code, be sure to execute the code to make sure it works):\n{json.dumps(step)}"
+                step_prompt += (
+                    "Now, execute the following step (and if you write any "
+                    "code, be sure to execute the code to make sure it "
+                    f"works):\n{yaml.dump(step)}"
+                )
                 print(step_prompt)
 
                 result = execution_agent.invoke({
