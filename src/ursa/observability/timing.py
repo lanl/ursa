@@ -749,10 +749,11 @@ class PerLLMTimer(BaseCallbackHandler):
         })
 
     def on_llm_error(self, error, *, run_id, **kwargs):
-        name, t0, tags, metadata = self._starts.pop(
+        name, t0, tags, metadata, wall_t0 = self._starts.pop(
             run_id, ("llm:unknown", time.perf_counter(), [], {})
         )
         ms = (time.perf_counter() - t0) * 1000.0
+        wall_t1 = time.time()
         self.agg.add(name, ms, False)
         self.samples.append({
             "name": name,
@@ -761,6 +762,8 @@ class PerLLMTimer(BaseCallbackHandler):
             "tags": tags,
             "metadata": metadata,
             "metrics": {"error": repr(error)},
+            "t_start": wall_t0,
+            "t_end": wall_t1,  # <— add these
         })
 
 
