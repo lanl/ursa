@@ -67,6 +67,7 @@ def run(query: str):
 
 # run("Can you now execute the plan?")
 
+# TODO: Need to make `uv run` a SAFE command.
 query = """
 I have a file `data/data.csv`. 
 
