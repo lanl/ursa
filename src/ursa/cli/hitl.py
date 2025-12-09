@@ -354,11 +354,11 @@ class HITL:
         )
 
         plan = "\n\n\n".join(
-            f"## {step['id']} -- {step['name']}\n\n"
+            f"## {ii} -- {step['name']}\n\n"
             + "\n\n".join(
                 f"* {key}\n    * {value}" for key, value in step.items()
             )
-            for step in self.planner_state["plan_steps"]
+            for ii, step in enumerate(self.planner_state["plan_steps"])
         )
         self.update_last_agent_result(plan)
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
