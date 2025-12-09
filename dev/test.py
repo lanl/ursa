@@ -74,10 +74,10 @@ I have a file `data/data.csv`.
 **First**, read the first few lines of the file to understand the format.
 Do this quickly; don't go overboard.
 
-**Then**, write a plan (with at most 3 steps) to perform simple linear
+**Then**, write a plan (with at most 4 steps) to perform simple linear
 regression on this data in python. The linear regression must have a slope and
 intercept. The plan MUST NOT include code; though it may include instruction
-to write code.  The analysis should be **very minimal** and AS CONCISE AS
+to write code. The analysis should be **very minimal** and AS CONCISE AS
 POSSIBLE.
 
 **Then**, EXECUTE THE PLAN using execute_plan_tool. Write all code to
