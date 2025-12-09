@@ -30,6 +30,10 @@ ModelInput = TypeVar("ModelInput")
 ModelOutput = TypeVar("ModelOutput")
 
 
+def default_device():
+    return current_accelerator(check_available=True) or torch.device("cpu")
+
+
 class TorchModuleTool(
     BaseModel, Generic[Input, Output, ModelInput, ModelOutput]
 ):
@@ -64,7 +68,7 @@ class TorchModuleTool(
     batch_size: int = 1
     """ Inputs to the model will be batched into set of at most this size """
 
-    device: torch.device = Field(default_factory=current_accelerator)
+    device: torch.device = Field(default_factory=default_device)
     """ The accelerator on which the model is placed """
 
     def preprocess(self, input: Sequence[Input]) -> ModelInput:
