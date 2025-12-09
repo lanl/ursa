@@ -7906,6 +7906,11 @@ dependencies = [
     { name = "typer" },
 ]
 
+[package.optional-dependencies]
+fm = [
+    { name = "torch" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "fastmcp" },
@@ -7920,9 +7925,6 @@ docs = [
     { name = "mkdocs-autorefs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
-]
-fm = [
-    { name = "torch" },
 ]
 lammps = [
     { name = "atomman" },
@@ -7957,9 +7959,11 @@ requires-dist = [
     { name = "randomname", specifier = ">=0.2.1,<0.3" },
     { name = "rich", specifier = ">=13.9.4,<14.0" },
     { name = "selectolax", specifier = ">=0.4.0,<0.5" },
+    { name = "torch", marker = "extra == 'fm'", specifier = ">=2.9.0" },
     { name = "trafilatura", specifier = ">=1.6.1,<1.7" },
     { name = "typer", specifier = ">=0.16.1" },
 ]
+provides-extras = ["fm"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -7976,7 +7980,6 @@ docs = [
     { name = "mkdocs-material", specifier = ">=9.6.21" },
     { name = "mkdocstrings-python", specifier = ">=1.18.2" },
 ]
-fm = [{ name = "torch", specifier = ">=2.9.0" }]
 lammps = [{ name = "atomman", specifier = ">=1.5.2" }]
 mcp = [{ name = "fastapi", specifier = ">=0.120.0,<0.121" }]
 opt = [{ name = "ortools", specifier = ">=9.14,<9.15" }]
