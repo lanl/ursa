@@ -40,6 +40,8 @@ code, you MUST run `uv run path/to/file.py`. DO NOT run `python
 
 # NOTE: Is the solution to have a tool that breaks up the string plan, and then
 # execute each section of the plan?
+# TODO: Try doing this instead:
+# https://docs.langchain.com/oss/python/langchain/multi-agent#where-to-customize
 def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
     execution_agent = ExecutionAgent(llm)._action
 
