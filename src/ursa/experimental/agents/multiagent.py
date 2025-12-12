@@ -80,7 +80,7 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
                         "SUMMARY_OF_LAST_STEP", last_step_summary
                     )
 
-                step_prompt += tag("NEXT_STEP", yaml.dump(step))
+                step_prompt += tag("NEXT_STEP", yaml.dump(step).strip())
                 print(step_prompt)
 
                 result = execution_agent.invoke({
@@ -118,7 +118,7 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
         # return result["messages"][-1].content
         plan_steps = [{"task": query}] + result["plan_steps"]
         plan = f"<PLAN>\n{json.dumps(plan_steps)}\n</PLAN>"
-        print(plan)
+        print(json.dumps(plan_steps, indent=4))
         return plan
 
     return call_agent
