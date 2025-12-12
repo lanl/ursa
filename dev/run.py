@@ -22,7 +22,7 @@ if aiportal:
     )
 else:
     # llm = init_chat_model("ollama:ministral-3:14b")
-    llm = init_chat_model("openai:gpt-5")
+    llm = init_chat_model("openai:gpt-5.2")
 
 
 agent = Ursa(
@@ -75,16 +75,19 @@ I have a file `data/data.csv`.
 Do this quickly; don't go overboard.
 
 **Then**, write a plan (with at most 4 steps) to perform simple linear
-regression on this data in python. The linear regression must have a slope and
-intercept. The plan MUST NOT include code; though it may include instruction
-to write code. The analysis should be **very minimal** and AS CONCISE AS
-POSSIBLE.
+regression on this data in python. I care only about the coefficients. Do not
+provide other information or plots. The plan MUST NOT include code; though it
+may include instruction to write code. The analysis should be **very minimal**
+and AS CONCISE AS POSSIBLE.
 
 **Then**, EXECUTE THE PLAN using execute_plan_tool. Write all code to
-*`analysis.py`. DO NOT write anything to `data/`.  Do not write any other
+`analysis.py`. DO NOT write anything to `data/`. Do not write any other
 files. I want a single file with the entire analysis.
 
-**Finally**, edit *`analysis.py` to make it AS CONCISE AS POSSIBLE.
+**Finally**, edit `analysis.py` to make it AS CONCISE AS POSSIBLE. Don't
+include code for assert, plots, etc. I want ONLY a very minimal script that
+reads the data and then prints the linear model's coefficients. Remember, I
+want A SINGLE FILE with the entire analysis (in `analysis.py`).
 """
 run(query)
 

@@ -38,6 +38,10 @@ code, you MUST run `uv run path/to/file.py`. DO NOT run `python
 """
 
 
+def tag(tag_name: str, content: str):
+    return f"\n<{tag_name}>\n{content}\n</{tag_name}>\n\n"
+
+
 # NOTE: Is the solution to have a tool that breaks up the string plan, and then
 # execute each section of the plan?
 # TODO: Try doing this instead:
@@ -63,18 +67,20 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
             plan_steps = task_and_plan_steps[1:]
             for step in plan_steps:
                 step_prompt = (
-                    f"You are contributing to a larger solution:\n{task}\n\n"
+                    "You are contributing a solution to the following overall plan. "
+                    "The overall plan, last step's summary, and next step are as follows."
+                    "With this information, please carry out the next step. "
+                    "IF you write any code, be sure to execute the code to make "
+                    "sure it properly runs."
                 )
+                step_prompt += tag("OVERALL_PLAN", task)
                 if len(summaries) > 0:
                     last_step_summary = summaries[-1]
-                    step_prompt += (
-                        f"Previous-step summary: {last_step_summary}\n\n"
+                    step_prompt += tag(
+                        "SUMMARY_OF_LAST_STEP", last_step_summary
                     )
-                step_prompt += (
-                    "Now, execute the following step (and if you write any "
-                    "code, be sure to execute the code to make sure it "
-                    f"works):\n{yaml.dump(step)}"
-                )
+
+                step_prompt += tag("NEXT_STEP", yaml.dump(step))
                 print(step_prompt)
 
                 result = execution_agent.invoke({
