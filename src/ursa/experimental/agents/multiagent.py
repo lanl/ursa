@@ -67,9 +67,9 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
             plan_steps = task_and_plan_steps[1:]
             for step in plan_steps:
                 step_prompt = (
-                    "You are contributing a solution to the following overall plan. "
-                    "The overall plan, last step's summary, and next step are as follows."
-                    "With this information, please carry out the next step. "
+                    "You are contributing a solution of an overall plan. "
+                    "The overall plan, last step's summary, and next step are provided below. "
+                    "With the provided information, please carry out the next step. "
                     "IF you write any code, be sure to execute the code to make "
                     "sure it properly runs."
                 )
@@ -118,7 +118,8 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
         # return result["messages"][-1].content
         plan_steps = [{"task": query}] + result["plan_steps"]
         plan = f"<PLAN>\n{json.dumps(plan_steps)}\n</PLAN>"
-        print(json.dumps(plan_steps, indent=4))
+        # print(json.dumps(plan_steps, indent=4))
+        print(yaml.dump(plan_steps))
         return plan
 
     return call_agent

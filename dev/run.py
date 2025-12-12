@@ -1,27 +1,28 @@
+# NOTE: This will be helpful for prompting.
+# https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide
+
 import os
 from pathlib import Path
 
 import httpx
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
-from pydantic import SecretStr
 
 from ursa.experimental.agents.multiagent import Ursa
 
 aiportal = False
 
 if aiportal:
-    llm = ChatOpenAI(
+    llm = init_chat_model(
         model=os.environ["CLAUDE"],
-        # model="gpt-oss-120b",
         base_url=os.environ["AIPORTAL_API_URL"],
-        api_key=SecretStr(os.environ["AIPORTAL_API_KEY"]),
+        api_key=os.environ["AIPORTAL_API_KEY"],
+        model_provider="openai",
+        model_kwargs={"extra_headers": {"disable_fallbacks": "true"}},
         http_client=httpx.Client(verify=False),
     )
 else:
-    # llm = init_chat_model("ollama:ministral-3:14b")
     llm = init_chat_model("openai:gpt-5.2")
 
 
@@ -51,22 +52,6 @@ def run(query: str):
     return result
 
 
-# run(
-#     "Write and execute a very minimal python script to compute Pi using Monte Carlo."
-# )
-
-# run("What did you just do?")
-
-# print(results)
-
-
-# run(
-#     "Write a plan to write a very minimal python script to compute Pi using Monte Carlo."
-#     "After planning, please execute the plan step by step. Save any code to disk."
-# )
-
-# run("Can you now execute the plan?")
-
 # TODO: Need to make `uv run` a SAFE command.
 query = """
 I have a file `data/data.csv`. 
@@ -85,9 +70,10 @@ intercept). Do not provide other information or plots.
 files. I want a single file with the entire analysis.
 
 **Finally**, edit `analysis.py` to make it AS CONCISE AS POSSIBLE. Don't
-include code for assert, plots, etc. I want ONLY a very minimal script that
-reads the data and then prints the linear model's coefficients. Remember, I
-want A SINGLE FILE with the entire analysis (in `analysis.py`).
+include code for assert, raising errors, exception handling, plots, etc. I want
+ONLY a very minimal script that reads the data and then prints the linear
+model's coefficients. Remember, I want A SINGLE FILE with the entire analysis
+(in `analysis.py`).
 """
 run(query)
 
