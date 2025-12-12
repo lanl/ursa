@@ -26,7 +26,7 @@ wf = LammpsAgent(
     ngpus= -1, # if -1  will not use gpus. Lammps executable must be installed with kokkos package for gpu usage 
     mpi_procs=8,
     workspace=workspace,
-    lammps_cmd="/usr/projects/artimis/ahabib/envs/p311g-alf-packages/lammps/build-ml4chem/lmp",
+    lammps_cmd="lmp_mpi",
     mpirun_cmd="mpirun",
 )
 
