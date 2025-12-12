@@ -16,7 +16,7 @@ wf = LammpsAgent(
     find_potential_only=False,
     mpi_procs=8,
     workspace=workspace,
-    lammps_cmd="lmp_mpi",
+    lammps_cmd="/usr/projects/artimis/ahabib/envs/p311g-alf-packages/lammps/build-ml4chem/lmp",
     mpirun_cmd="mpirun",
 )
 

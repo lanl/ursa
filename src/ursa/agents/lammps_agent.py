@@ -43,6 +43,9 @@ class LammpsAgent(BaseAgent):
     def __init__(
         self,
         llm: BaseChatModel,
+        potential_files: Optional[list[str]] = None,
+        pair_style: Optional[str] = None,
+        pair_coeff: Optional[str] = None,
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,
@@ -61,6 +64,12 @@ class LammpsAgent(BaseAgent):
             raise ImportError(
                 "LAMMPS agent requires the atomman and trafilatura dependencies. These can be installed using 'pip install ursa-ai[lammps]' or, if working from a local installation, 'pip install -e .[lammps]' ."
             )
+        
+        self.user_potential_files = potential_files
+        self.user_pair_style = pair_style
+        self.user_pair_coeff = pair_coeff
+        self.use_user_potential = (potential_files is not None and pair_style is not None and pair_coeff is not None)
+        
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.find_potential_only = find_potential_only
@@ -202,13 +211,44 @@ class LammpsAgent(BaseAgent):
     
         filename = os.path.basename(data_file_path)
         dest_path = os.path.join(self.workspace, filename)
-        with open(data_file_path, 'r') as src:
-            with open(dest_path, 'w') as dst:
-                dst.write(src.read())
-    
+        os.system(f"cp {data_file_path} {dest_path}")
         print(f"Data file copied to workspace: {dest_path}")
         return dest_path
 
+    def _copy_user_potential_files(self):
+        """Copy user-provided potential files to workspace."""
+        print("Copying user-provided potential files to workspace...")
+        for pot_file in self.user_potential_files:
+            if not os.path.exists(pot_file):
+                raise FileNotFoundError(f"Potential file not found: {pot_file}")
+            
+            filename = os.path.basename(pot_file)
+            dest_path = os.path.join(self.workspace, filename)
+            
+            try:
+                os.system(f"cp {pot_file} {dest_path}")
+                print(f"Potential files copied to workspace: {dest_path}")
+            except Exception as e:
+                print(f"Error copying {filename}: {e}")
+                raise
+
+    def _create_user_potential_wrapper(self, state: LammpsState) -> LammpsState:
+        """Create a wrapper object for user-provided potential to match atomman interface."""
+        self._copy_user_potential_files()
+        
+        # Create a simple object that mimics the atomman potential interface
+        class UserPotential:
+            def __init__(self, pair_style, pair_coeff):
+                self._pair_style = pair_style
+                self._pair_coeff = pair_coeff
+            
+            def pair_info(self):
+                return f"pair_style {self._pair_style}\npair_coeff {self._pair_coeff}"
+        
+        user_potential = UserPotential(self.user_pair_style, self.user_pair_coeff)
+        
+        return {**state, "chosen_potential": user_potential, "fix_attempts": 0}
+    
     def _fetch_and_trim_text(self, url: str) -> str:
         downloaded = trafilatura.fetch_url(url)
         if not downloaded:
@@ -234,6 +274,14 @@ class LammpsAgent(BaseAgent):
         return text
 
     def _entry_router(self, state: LammpsState) -> dict:
+        # Check if using user-provided potential
+        if self.use_user_potential:
+            if self.find_potential_only:
+                raise Exception(
+                    "Cannot set find_potential_only=True when providing your own potential!"
+                )
+            print("Using user-provided potential files")
+
         if self.find_potential_only and state.get("chosen_potential"):
             raise Exception(
                 "You cannot set find_potential_only=True and also specify your own potential!"
@@ -242,7 +290,6 @@ class LammpsAgent(BaseAgent):
         if self.data_file:
             try:
                 self._copy_data_file(self.data_file)
-                print(f"Data file copied to workspace.")
             except Exception as e:
                 print(f"Warning: Could not process data file: {e}")
 
@@ -352,7 +399,9 @@ class LammpsAgent(BaseAgent):
 
     def _author(self, state: LammpsState) -> LammpsState:
         print("First attempt at writing LAMMPS input file....")
-        state["chosen_potential"].download_files(self.workspace)
+
+        if not self.use_user_potential:
+            state["chosen_potential"].download_files(self.workspace)
         pair_info = state["chosen_potential"].pair_info()
         
         data_content = ""
@@ -378,6 +427,8 @@ class LammpsAgent(BaseAgent):
             result = subprocess.run(
                 [
                     self.mpirun_cmd,
+                    "-np",
+                    str(self.mpi_procs),
                     self.lammps_cmd,
                     "-in",
                     "in.lammps",
@@ -390,9 +441,9 @@ class LammpsAgent(BaseAgent):
                     "-pk",
                     "kokkos",
                     "neigh",
-                    "full",
+                    "half",
                     "newton",
-                    "on"
+                    "on",
                 ],
                 cwd=self.workspace,
                 stdout=subprocess.PIPE,
@@ -471,6 +522,7 @@ class LammpsAgent(BaseAgent):
         self.add_node(g, self._summarize_one)
         self.add_node(g, self._build_summaries)
         self.add_node(g, self._choose)
+        self.add_node(g, self._create_user_potential_wrapper)
         self.add_node(g, self._author)
         self.add_node(g, self._run_lammps)
         self.add_node(g, self._fix)
@@ -479,10 +531,11 @@ class LammpsAgent(BaseAgent):
 
         g.add_conditional_edges(
             "_entry_router",
-            lambda state: "user_choice"
-            if state.get("chosen_potential")
-            else "agent_choice",
-            {
+            lambda state: "user_potential" if self.use_user_potential else ( 
+                "user_choice" if state.get("chosen_potential") else "agent_choice"
+            ),
+            {   
+                "user_potential": "_create_user_potential_wrapper",
                 "user_choice": "_author",
                 "agent_choice": "_find_potentials",
             },
@@ -518,6 +571,7 @@ class LammpsAgent(BaseAgent):
             },
         )
 
+        g.add_edge("_create_user_potential_wrapper", "_author")
         g.add_edge("_author", "_run_lammps")
 
         g.add_conditional_edges(
