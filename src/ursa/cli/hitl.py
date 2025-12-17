@@ -26,6 +26,7 @@ from ursa.agents import (
     RecallAgent,
     WebSearchAgent,
 )
+from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 from ursa.util.memory_logger import AgentMemory
 
 app = Typer()
@@ -122,9 +123,11 @@ class HITL:
             init_embeddings(
                 model=self.emb_model_name,
                 **self._make_kwargs(
-                    http_client=None
-                    if self.ssl_verify_emb
-                    else httpx.Client(verify=False),
+                    http_client=(
+                        None
+                        if self.ssl_verify_emb
+                        else httpx.Client(verify=False)
+                    ),
                     base_url=self.emb_base_url,
                     api_key=self.emb_api_key,
                 ),
@@ -144,7 +147,7 @@ class HITL:
 
         self.last_agent_result = ""
         self.arxiv_state = []
-        self.chatter_state = {"messages": []}
+        self.chatter_state = {"messages": [get_chatter_system_prompt()]}
         self.executor_state = {}
         self.hypothesizer_state = {}
         self.planner_state = {}
@@ -398,6 +401,11 @@ class UrsaRepl(Cmd):
         self.hitl = hitl
         super().__init__(**kwargs)
 
+        cmds_doc, help, cmds_undoc = self.get_help_strings()
+        self.hitl.chatter_state["messages"].append(
+            f"The commands available to the user are {', '.join(cmds_doc)}."
+        )
+
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)
 
@@ -409,6 +417,36 @@ class UrsaRepl(Cmd):
     def postcmd(self, stop: bool, line: str):
         print()
         return stop
+
+    def get_help_strings(self):
+        """
+        Extracted from cmd.Cmd.do_help
+        """
+        names = self.get_names()
+        cmds_doc = []
+        cmds_undoc = []
+        help = {}
+        for name in names:
+            if name[:5] == "help_":
+                help[name[5:]] = 1
+        names.sort()
+        # There can be duplicates if routines overridden
+        prevname = ""
+        for name in names:
+            if name[:3] == "do_":
+                if name == prevname:
+                    continue
+                prevname = name
+                cmd = name[3:]
+                if cmd in help:
+                    cmds_doc.append(cmd)
+                    del help[cmd]
+                elif getattr(self, name).__doc__:
+                    cmds_doc.append(cmd)
+                else:
+                    cmds_undoc.append(cmd)
+
+        return cmds_doc, help, cmds_undoc
 
     def do_exit(self, _: str):
         """Exit shell."""
