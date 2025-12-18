@@ -37,6 +37,7 @@ def generate_data(data_path: Path):
     pd.DataFrame(dict(x=x, y=y)).to_csv(data_path, index=False)
 
 
+# Generate data if not already present.
 workspace = Path(__file__).parent / "workspace"
 data_dir = workspace / "data"
 data_csv = data_dir / "data.csv"
@@ -44,6 +45,7 @@ if not data_csv.exists():
     data_dir.mkdir(exist_ok=True, parents=True)
     generate_data(data_dir / "data.csv")
 
+# Initialize agent.
 agent = Ursa(
     llm,
     max_reflection_steps=0,
@@ -51,6 +53,7 @@ agent = Ursa(
     checkpointer=InMemorySaver(),
 ).create()
 
+# Store results (AI output) in this list.
 results = []
 
 
@@ -94,6 +97,7 @@ model's coefficients. Remember, I want A SINGLE FILE with the entire analysis
 (in `analysis.py`).
 """
 
+# An alternate query to test.
 query_2 = """
 I have a file `data/data.csv`. 
 
