@@ -201,19 +201,17 @@ class ArxivAgentLegacy(BaseAgent):
         for i, pdf_filename in enumerate(pdf_files):
             full_text = ""
             arxiv_id = pdf_filename.split(".pdf")[0]
-            vec_save_loc = self.vectorstore_path + "/" + arxiv_id
+            vec_save_loc = self.vectorstore_path / arxiv_id
 
-            if self.summarize and not os.path.exists(vec_save_loc):
+            if self.summarize and not vec_save_loc.exists():
                 try:
-                    loader = PyPDFLoader(
-                        os.path.join(self.database_path, pdf_filename)
-                    )
+                    loader = PyPDFLoader(self.database_path / pdf_filename)
                     pages = loader.load()
                     full_text = "\n".join([p.page_content for p in pages])
 
                     if self.process_images:
                         image_descriptions = extract_and_describe_images(
-                            os.path.join(self.database_path, pdf_filename)
+                            self.database_path / pdf_filename
                         )
                         full_text += (
                             "\n\n[Image Interpretations]\n"

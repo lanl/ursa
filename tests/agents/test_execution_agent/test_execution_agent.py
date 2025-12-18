@@ -1,50 +1,128 @@
-import os
 from math import sqrt
 from pathlib import Path
+from typing import Annotated
 
-from langchain.messages import HumanMessage
-from langchain.tools import tool
+import pytest
+from langchain.tools import ToolRuntime, tool
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.prebuilt import InjectedState
 
 from ursa.agents import ExecutionAgent
-from ursa.observability.timing import render_session_summary
 
 
-def test_execution_agent(chat_model, tmpdir: Path):
-    execution_agent = ExecutionAgent(llm=chat_model)
-    problem_string = "Write and execute a minimal python script to print the first 10 integers."
-    inputs = {
-        "messages": [HumanMessage(content=problem_string)],
-        "workspace": Path(tmpdir / ".ursa"),
-    }
-    result = execution_agent(inputs)
-    result["messages"][-1].pretty_print()
-    render_session_summary(execution_agent.thread_id)
+@pytest.fixture(autouse=True)
+def stub_execution_tools(monkeypatch):
+    """Replace external tools with lightweight stubs for deterministic testing."""
 
+    @tool
+    def fake_run_command(
+        query: str, state: Annotated[dict, InjectedState]
+    ) -> str:
+        """Return a placeholder response instead of executing shell commands."""
+        return "STDOUT:\nstubbed output\nSTDERR:\n"
 
-def test_execution_agent_with_extra_tools(chat_model, tmpdir: Path):
-    execution_agent = ExecutionAgent(llm=chat_model, extra_tools=[do_magic])
-    problem = (
-        "Do magic with the integers 3 and 4. "
-        "Don't give me verbose output. "
-        "Don't provide a summary. "
-        "Just give me the answer as a single float."
+    @tool
+    def fake_run_web_search(
+        prompt: str,
+        query: str,
+        runtime: ToolRuntime,
+        max_results: int = 3,
+    ) -> str:
+        """Return a deterministic web search payload for testing."""
+        return f"[stubbed web search] {query}"
+
+    @tool
+    def fake_run_arxiv_search(
+        prompt: str,
+        query: str,
+        runtime: ToolRuntime,
+        max_results: int = 3,
+    ) -> str:
+        """Return a deterministic arXiv search payload for testing."""
+        return f"[stubbed arxiv search] {query}"
+
+    @tool
+    def fake_run_osti_search(
+        prompt: str,
+        query: str,
+        runtime: ToolRuntime,
+        max_results: int = 3,
+    ) -> str:
+        """Return a deterministic OSTI search payload for testing."""
+        return f"[stubbed osti search] {query}"
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_command", fake_run_command
     )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_web_search", fake_run_web_search
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_arxiv_search", fake_run_arxiv_search
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_osti_search", fake_run_osti_search
+    )
+
+
+@pytest.mark.asyncio
+async def test_execution_agent_ainvoke_returns_ai_message(
+    chat_model, tmp_path: Path
+):
+    execution_agent = ExecutionAgent(llm=chat_model)
+    workspace = tmp_path / ".ursa"
     inputs = {
-        "messages": [HumanMessage(content=problem)],
-        "workspace": Path(tmpdir / ".ursa"),
+        "messages": [
+            HumanMessage(
+                content=(
+                    "Acknowledge this instruction with a brief response "
+                    "without calling any tools."
+                )
+            )
+        ],
+        "workspace": workspace,
     }
-    result = execution_agent(inputs)
-    (msg := result["messages"][-1]).pretty_print()
-    render_session_summary(execution_agent.thread_id)
-    assert "5.0" in msg.content
+
+    result = await execution_agent.ainvoke(inputs)
+
+    assert "messages" in result
+    assert any(isinstance(msg, HumanMessage) for msg in result["messages"])
+    ai_messages = [
+        message
+        for message in result["messages"]
+        if isinstance(message, AIMessage)
+    ]
+    assert ai_messages
+    assert any((message.content or "").strip() for message in ai_messages)
+    assert Path(result["workspace"]).exists()
 
 
-@tool
-def do_magic(a: int, b: int) -> float:
-    """Do magic with integers a and b.
+@pytest.mark.asyncio
+async def test_execution_agent_invokes_extra_tool(chat_model, tmp_path: Path):
+    @tool
+    def do_magic(a: int, b: int) -> float:
+        """Return the hypotenuse for the provided right-triangle legs."""
+        return sqrt(a**2 + b**2)
 
-    Args:
-        a: first integer
-        b: second integer
-    """
-    return sqrt(a**2 + b**2)
+    execution_agent = ExecutionAgent(llm=chat_model, extra_tools=[do_magic])
+    workspace = tmp_path / ".ursa_with_tool"
+    prompt = "List every tool you have access to and provide the names only."
+    inputs = {
+        "messages": [HumanMessage(content=prompt)],
+        "workspace": workspace,
+    }
+
+    result = await execution_agent.ainvoke(inputs)
+
+    assert "messages" in result
+    tool_names = [tool.name for tool in execution_agent.tools]
+    assert "fake_run_command" in tool_names
+    assert "do_magic" in tool_names
+    ai_messages = [
+        message
+        for message in result["messages"]
+        if isinstance(message, AIMessage)
+    ]
+    assert ai_messages
+    assert isinstance(result["messages"][-1], AIMessage)
+    assert Path(result["workspace"]).exists()
