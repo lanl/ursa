@@ -1,13 +1,13 @@
 import json
 import os
 import subprocess
-from typing import Any, Mapping, Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 import tiktoken
 from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END
 
 from .base import BaseAgent
 
@@ -39,7 +39,9 @@ class LammpsState(TypedDict, total=False):
     fix_attempts: int
 
 
-class LammpsAgent(BaseAgent):
+class LammpsAgent(BaseAgent[LammpsState]):
+    state_type = LammpsState
+
     def __init__(
         self,
         llm: BaseChatModel,
@@ -58,6 +60,7 @@ class LammpsAgent(BaseAgent):
             raise ImportError(
                 "LAMMPS agent requires the atomman and trafilatura dependencies. These can be installed using 'pip install ursa-ai[lammps]' or, if working from a local installation, 'pip install -e .[lammps]' ."
             )
+        super().__init__(llm, **kwargs)
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.find_potential_only = find_potential_only
@@ -80,11 +83,6 @@ class LammpsAgent(BaseAgent):
             "pace",
             "nep",
         ]
-
-        self.workspace = workspace
-        os.makedirs(self.workspace, exist_ok=True)
-
-        super().__init__(llm, **kwargs)
 
         self.str_parser = StrOutputParser()
 
@@ -154,8 +152,6 @@ class LammpsAgent(BaseAgent):
             | self.llm
             | self.str_parser
         )
-
-        self._action = self._build_graph()
 
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
@@ -374,20 +370,18 @@ class LammpsAgent(BaseAgent):
         }
 
     def _build_graph(self):
-        g = StateGraph(LammpsState)
+        self.add_node(self._entry_router)
+        self.add_node(self._find_potentials)
+        self.add_node(self._summarize_one)
+        self.add_node(self._build_summaries)
+        self.add_node(self._choose)
+        self.add_node(self._author)
+        self.add_node(self._run_lammps)
+        self.add_node(self._fix)
 
-        self.add_node(g, self._entry_router)
-        self.add_node(g, self._find_potentials)
-        self.add_node(g, self._summarize_one)
-        self.add_node(g, self._build_summaries)
-        self.add_node(g, self._choose)
-        self.add_node(g, self._author)
-        self.add_node(g, self._run_lammps)
-        self.add_node(g, self._fix)
+        self.graph.set_entry_point("_entry_router")
 
-        g.set_entry_point("_entry_router")
-
-        g.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_entry_router",
             lambda state: "user_choice"
             if state.get("chosen_potential")
@@ -398,7 +392,7 @@ class LammpsAgent(BaseAgent):
             },
         )
 
-        g.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_find_potentials",
             self._should_summarize,
             {
@@ -408,7 +402,7 @@ class LammpsAgent(BaseAgent):
             },
         )
 
-        g.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_summarize_one",
             self._should_summarize,
             {
@@ -417,9 +411,9 @@ class LammpsAgent(BaseAgent):
             },
         )
 
-        g.add_edge("_build_summaries", "_choose")
+        self.graph.add_edge("_build_summaries", "_choose")
 
-        g.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_choose",
             self._route_after_summarization,
             {
@@ -428,9 +422,9 @@ class LammpsAgent(BaseAgent):
             },
         )
 
-        g.add_edge("_author", "_run_lammps")
+        self.graph.add_edge("_author", "_run_lammps")
 
-        g.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_run_lammps",
             self._route_run,
             {
@@ -439,27 +433,4 @@ class LammpsAgent(BaseAgent):
                 "done_failed": END,
             },
         )
-        g.add_edge("_fix", "_run_lammps")
-        return g.compile(checkpointer=self.checkpointer)
-
-    def _invoke(
-        self,
-        inputs: Mapping[str, Any],
-        *,
-        summarize: bool | None = None,
-        recursion_limit: int = 999_999,
-        **_,
-    ) -> str:
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        if "simulation_task" not in inputs or "elements" not in inputs:
-            raise KeyError(
-                "'simulation_task' and 'elements' are required arguments"
-            )
-
-        if "template" not in inputs:
-            inputs = {**inputs, "template": "No template provided."}
-
-        return self._action.invoke(inputs, config)
+        self.graph.add_edge("_fix", "_run_lammps")

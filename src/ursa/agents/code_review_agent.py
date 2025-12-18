@@ -5,7 +5,7 @@ from typing import Annotated, Literal, TypedDict
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 
@@ -50,12 +50,10 @@ class CodeReviewState(TypedDict):
     iteration: int
 
 
-class CodeReviewAgent(BaseAgent):
-    def __init__(
-        self,
-        llm: BaseChatModel,
-        **kwargs,
-    ):
+class CodeReviewAgent(BaseAgent[CodeReviewState]):
+    state_type = CodeReviewState
+
+    def __init__(self, llm: BaseChatModel, **kwargs):
         super().__init__(llm, **kwargs)
         print("### WORK IN PROGRESS ###")
         print(
@@ -65,8 +63,6 @@ class CodeReviewAgent(BaseAgent):
         self.tools = [run_cmd, write_file, read_file]
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
-
-        self._initialize_agent()
 
     # Define the function that calls the model
     def plan_review(self, state: CodeReviewState) -> CodeReviewState:
@@ -171,9 +167,7 @@ class CodeReviewAgent(BaseAgent):
 
         return new_state
 
-    def _initialize_agent(self):
-        self.graph = StateGraph(CodeReviewState)
-
+    def _build_graph(self):
         self.graph.add_node("plan_review", self.plan_review)
         self.graph.add_node("file_review", self.file_review)
         self.graph.add_node("increment", self.increment)
@@ -208,9 +202,6 @@ class CodeReviewAgent(BaseAgent):
         self.graph.add_edge("action", "file_review")
         self.graph.add_edge("increment", "file_review")
         self.graph.add_edge("summarize", END)
-
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
-        # self.action.get_graph().draw_mermaid_png(output_file_path="code_review_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
     def run(self, prompt, workspace):
         code_files = [

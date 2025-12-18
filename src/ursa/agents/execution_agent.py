@@ -33,7 +33,6 @@ from typing import (
     Any,
     Callable,
     Literal,
-    Mapping,
     Optional,
     TypedDict,
 )
@@ -49,7 +48,6 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
@@ -155,7 +153,7 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
 
 
 # Main module class
-class ExecutionAgent(BaseAgent):
+class ExecutionAgent(BaseAgent[ExecutionState]):
     """Orchestrates model-driven code execution, tool calls, and state management.
 
     Orchestrates model-driven code execution, tool calls, and state management for
@@ -216,6 +214,8 @@ class ExecutionAgent(BaseAgent):
             using .stream(...) or .invoke(...).
     """
 
+    state_type = ExecutionState
+
     def __init__(
         self,
         llm: BaseChatModel,
@@ -249,7 +249,6 @@ class ExecutionAgent(BaseAgent):
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
-        self._action = self._build_graph()
         self.context_summarizer = SummarizationMiddleware(
             model=self.llm,
             max_tokens_before_summary=tokens_before_summarize,
@@ -518,25 +517,22 @@ class ExecutionAgent(BaseAgent):
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
-        # Create a graph over the agent's execution state.
-        graph = StateGraph(ExecutionState)
-
         # Register nodes:
         # - "agent": LLM planning/execution step
         # - "action": tool dispatch (run_command, write_code, etc.)
         # - "recap": summary/finalization step
         # - "safety_check": gate for shell command safety
-        self.add_node(graph, self.query_executor, "agent")
-        self.add_node(graph, self.tool_node, "action")
-        self.add_node(graph, self.recap, "recap")
-        self.add_node(graph, self.safety_check, "safety_check")
+        self.add_node(self.query_executor, "agent")
+        self.add_node(self.tool_node, "action")
+        self.add_node(self.recap, "recap")
+        self.add_node(self.safety_check, "safety_check")
 
         # Set entrypoint: execution starts with the "agent" node.
-        graph.set_entry_point("agent")
+        self.graph.set_entry_point("agent")
 
         # From "agent", either continue (tools) or finish (recap),
         # based on presence of tool calls in the last message.
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
             {"continue": "safety_check", "recap": "recap"},
@@ -544,20 +540,17 @@ class ExecutionAgent(BaseAgent):
 
         # From "safety_check", route to tools if safe, otherwise back to agent
         # to revise the plan without executing unsafe commands.
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "safety_check",
             self._wrap_cond(command_safe, "command_safe", "execution"),
             {"safe": "action", "unsafe": "agent"},
         )
 
         # After tools run, return control to the agent for the next step.
-        graph.add_edge("action", "agent")
+        self.graph.add_edge("action", "agent")
 
         # The graph completes at the "recap" node.
-        graph.set_finish_point("recap")
-
-        # Compile and return the executable graph (optionally with a checkpointer).
-        return graph.compile(checkpointer=self.checkpointer)
+        self.graph.set_finish_point("recap")
 
     async def add_mcp_tool(
         self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
@@ -579,7 +572,6 @@ class ExecutionAgent(BaseAgent):
             raise TypeError("Expected a callable or a list of callables.")
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
-        self._action = self._build_graph()
 
     def list_tools(self) -> None:
         print(
@@ -593,48 +585,7 @@ class ExecutionAgent(BaseAgent):
             self.tools = [x for x in self.tools if x.name not in cut_tools]
             self.tool_node = ToolNode(self.tools)
             self.llm = self.llm.bind_tools(self.tools)
-            self._action = self._build_graph()
         else:
             raise TypeError(
                 "Expected a string or a list of strings describing the tools to remove."
             )
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
-
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
-        """
-        # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # Delegate execution to the compiled graph.
-        return self._action.invoke(inputs, config)
-
-    def _ainvoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
-
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
-        """
-        # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # Delegate execution to the compiled graph.
-        return self._action.ainvoke(inputs, config)
-
-    # This property is trying to stop people bypassing invoke
-    @property
-    def action(self):
-        """Property used to affirm `action` attribute is unsupported."""
-        raise AttributeError(
-            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
-        )

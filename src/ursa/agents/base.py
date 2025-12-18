@@ -18,6 +18,7 @@ integration capabilities while only needing to implement the core _invoke method
 import re
 from abc import ABC, abstractmethod
 from functools import cached_property
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -127,6 +128,7 @@ class BaseAgent(Generic[TState], ABC):
     def __init__(
         self,
         llm: BaseChatModel,
+        workspace: Optional[Path] = None,
         checkpointer: Optional[BaseCheckpointSaver] = None,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
@@ -145,13 +147,16 @@ class BaseAgent(Generic[TState], ABC):
                        provided.
         """
         self.llm = llm
+        self.workspace = Path(workspace or ".ursa")
         self.thread_id = thread_id or uuid4().hex
         self.checkpointer = checkpointer
         self.telemetry = Telemetry(
             enable=enable_metrics,
-            output_dir=metrics_dir,
+            output_dir=self.workspace.joinpath(metrics_dir),
             save_json_default=autosave_metrics,
         )
+
+        self.workspace.mkdir(exist_ok=True, parents=True)
 
     @property
     def name(self) -> str:

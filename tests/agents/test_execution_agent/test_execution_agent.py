@@ -2,7 +2,6 @@ import os
 from math import sqrt
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage
 from langchain.tools import tool
 
@@ -10,27 +9,20 @@ from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
 
 
-def test_execution_agent():
-    execution_agent = ExecutionAgent(
-        llm=init_chat_model(
-            model=os.getenv("URSA_TEST_LLM", "openai:gpt-5-nano")
-        )
-    )
+def test_execution_agent(chat_model, tmpdir: Path):
+    execution_agent = ExecutionAgent(llm=chat_model)
     problem_string = "Write and execute a minimal python script to print the first 10 integers."
     inputs = {
         "messages": [HumanMessage(content=problem_string)],
-        "workspace": Path(".ursa/test-execution-agent"),
+        "workspace": Path(tmpdir / ".ursa"),
     }
     result = execution_agent(inputs)
     result["messages"][-1].pretty_print()
     render_session_summary(execution_agent.thread_id)
 
 
-def test_execution_agent_with_extra_tools():
-    execution_agent = ExecutionAgent(
-        llm=init_chat_model(model="openai:gpt-5-nano"),
-        extra_tools=[do_magic],
-    )
+def test_execution_agent_with_extra_tools(chat_model, tmpdir: Path):
+    execution_agent = ExecutionAgent(llm=chat_model, extra_tools=[do_magic])
     problem = (
         "Do magic with the integers 3 and 4. "
         "Don't give me verbose output. "
@@ -39,7 +31,7 @@ def test_execution_agent_with_extra_tools():
     )
     inputs = {
         "messages": [HumanMessage(content=problem)],
-        "workspace": Path(".ursa/test-execution-agent"),
+        "workspace": Path(tmpdir / ".ursa"),
     }
     result = execution_agent(inputs)
     (msg := result["messages"][-1]).pretty_print()

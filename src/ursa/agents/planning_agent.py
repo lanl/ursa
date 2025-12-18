@@ -1,8 +1,8 @@
-from typing import Annotated, Any, Iterator, TypedDict, cast
+from typing import Annotated, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import Required  # noqa
@@ -49,7 +49,9 @@ class PlanningState(TypedDict, total=False):
     reflection_steps: Required[int]
 
 
-class PlanningAgent(BaseAgent):
+class PlanningAgent(BaseAgent[PlanningState]):
+    agent_state = PlanningState
+
     def __init__(
         self,
         llm: BaseChatModel,
@@ -59,7 +61,6 @@ class PlanningAgent(BaseAgent):
         super().__init__(llm, **kwargs)
         self.planner_prompt = planner_prompt
         self.reflection_prompt = reflection_prompt
-        self._action = self._build_graph()
         self.max_reflection_steps = max_reflection_steps
 
     def generation_node(self, state: PlanningState) -> PlanningState:
@@ -119,60 +120,23 @@ class PlanningAgent(BaseAgent):
         }
 
     def _build_graph(self):
-        graph = StateGraph(PlanningState)
-        self.add_node(graph, self.generation_node, "generate")
-        self.add_node(graph, self.reflection_node, "reflect")
-        graph.set_entry_point("generate")
-        graph.add_conditional_edges(
+        self.add_node(self.generation_node, "generate")
+        self.add_node(self.reflection_node, "reflect")
+        self.graph.set_entry_point("generate")
+        self.graph.add_conditional_edges(
             "generate",
             self._wrap_cond(
                 _should_reflect, "should_reflect", "planning_agent"
             ),
             {"reflect": "reflect", "END": END},
         )
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "reflect",
             self._wrap_cond(
                 _should_regenerate, "should_regenerate", "planning_agent"
             ),
             {"generate": "generate", "END": END},
         )
-        return graph.compile(checkpointer=self.checkpointer)
-
-    def _invoke(
-        self, inputs: dict[str, Any], recursion_limit: int = 999999, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["planner"]
-        )
-        inputs.setdefault("reflection_steps", self.max_reflection_steps)
-        return self._action.invoke(inputs, config)
-
-    def _stream(
-        self,
-        inputs: dict[str, Any],
-        *,
-        config: dict | None = None,
-        recursion_limit: int = 999999,
-        **_,
-    ) -> Iterator[dict]:
-        # If you have defaults, merge them here:
-        default = self.build_config(
-            recursion_limit=recursion_limit, tags=["planner"]
-        )
-        if config:
-            merged = {**default, **config}
-            if "configurable" in config:
-                merged["configurable"] = {
-                    **default.get("configurable", {}),
-                    **config["configurable"],
-                }
-        else:
-            merged = default
-
-        inputs.setdefault("reflection_steps", self.max_reflection_steps)
-        # Delegate to the compiled graph's stream
-        yield from self._action.stream(inputs, merged)
 
 
 def _should_reflect(state: PlanningState):
