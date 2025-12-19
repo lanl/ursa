@@ -12,9 +12,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from ursa.experimental.agents.multiagent import Ursa
 
-aiportal = False
+use_aiportal = False
 
-if aiportal:
+if use_aiportal:
     llm = init_chat_model(
         model=os.environ["CLAUDE"],
         base_url=os.environ["AIPORTAL_API_URL"],
@@ -24,6 +24,7 @@ if aiportal:
         http_client=httpx.Client(verify=False),
     )
 else:
+    # Use openai
     llm = init_chat_model("openai:gpt-5.2")
 
 
@@ -35,42 +36,6 @@ def generate_data(data_path: Path):
     x = rng.uniform(0, 1, 100)
     y = rng.normal(2 * x + 1, 0.1)
     pd.DataFrame(dict(x=x, y=y)).to_csv(data_path, index=False)
-
-
-# Generate data if not already present.
-workspace = Path(__file__).parent / "workspace"
-data_dir = workspace / "data"
-data_csv = data_dir / "data.csv"
-if not data_csv.exists():
-    data_dir.mkdir(exist_ok=True, parents=True)
-    generate_data(data_dir / "data.csv")
-
-# Initialize agent.
-agent = Ursa(
-    llm,
-    max_reflection_steps=0,
-    workspace=workspace,
-    checkpointer=InMemorySaver(),
-).create()
-
-# Store results (AI output) in this list.
-results = []
-
-
-def run(query: str):
-    print(f"Task:\n{query}")
-    results.append(
-        result := agent.invoke(
-            {"messages": [HumanMessage(query)]},
-            {
-                "configurable": {
-                    "thread_id": "ursa",
-                },
-                "recursion_limit": 50,
-            },
-        )
-    )
-    return result
 
 
 # TODO: Need to make `uv run` a SAFE command.
@@ -109,6 +74,40 @@ plots. Write the analysis to `analysis.py`. Run the code to ensure it works.
 
 
 def test_multiagent():
+    # Generate data if not already present.
+    workspace = Path(__file__).parent / "workspace"
+    data_dir = workspace / "data"
+    data_csv = data_dir / "data.csv"
+    if not data_csv.exists():
+        data_dir.mkdir(exist_ok=True, parents=True)
+        generate_data(data_dir / "data.csv")
+
+    # Initialize agent.
+    agent = Ursa(
+        llm,
+        max_reflection_steps=0,
+        workspace=workspace,
+        checkpointer=InMemorySaver(),
+    ).create()
+
+    # Store results (AI output) in this list.
+    results = []
+
+    def run(query: str):
+        print(f"Task:\n{query}")
+        results.append(
+            result := agent.invoke(
+                {"messages": [HumanMessage(query)]},
+                {
+                    "configurable": {
+                        "thread_id": "ursa",
+                    },
+                    "recursion_limit": 50,
+                },
+            )
+        )
+        return result
+
     run(query_1)
 
     for result in results:
