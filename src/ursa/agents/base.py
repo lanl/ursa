@@ -266,6 +266,8 @@ class BaseAgent(ABC):
         save_json: Optional[bool] = None,
         save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
+        otel_endpoint: Optional[str] = None,
+        otel_headers: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
         config: Optional[dict] = None,
@@ -324,6 +326,8 @@ class BaseAgent(ABC):
                     save_json=save_json,
                     save_otel=save_otel,
                     filepath=metrics_path,
+                    otel_endpoint=otel_endpoint,
+                    otel_headers=otel_headers,
                     save_raw_snapshot=save_raw_snapshot,
                     save_raw_records=save_raw_records,
                 )

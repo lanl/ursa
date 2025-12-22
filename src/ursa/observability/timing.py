@@ -24,6 +24,12 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+    OTLPSpanExporter,
+)
+
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
 
@@ -1024,7 +1030,9 @@ class Telemetry:
     output_dir: str = "metrics"  # where to save JSON
     save_json_default: bool = True  # opt-in autosave
     save_otel_default: bool = False  # opt-out otel
-    otel_endpoint: str = "http://localhost:5000/v1/traces"  # where to push otel metrics
+    otel_endpoint: str = (
+        "http://localhost:5000/v1/traces"  # where to push otel metrics
+    )
 
     tool: PerToolTimer = field(default_factory=PerToolTimer)
     runnable: PerRunnableTimer = field(default_factory=PerRunnableTimer)
@@ -1194,19 +1202,23 @@ class Telemetry:
             )
         return path
 
-    def _save_otel(self, payload: dict, endpoint: str | None = None) -> str:
-        breakpoint()
+    def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
         # path = filepath or self._default_filepath()
         # self._ensure_dir(os.path.dirname(path) or ".")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(
-                payload,
-                f,
-                ensure_ascii=False,
-                indent=2,
-                default=self._json_default,
-            )
-        return path
+
+        # trace.set_tracer_provider(TracerProvider())
+        tracer = trace.get_tracer(__name__)
+        breakpoint()
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers=headers,
+        )
+        span_processor = BatchSpanProcessor(exporter)
+        trace.get_tracer_provider().add_span_processor(span_processor)
+        with tracer.start_as_current_span("foo"):
+            print("Hello world!")
+
+        return endpoint
 
     def to_json(
         self, *, include_raw_snapshot: bool, include_raw_records: bool
@@ -1233,6 +1245,8 @@ class Telemetry:
         save_json: bool | None = None,
         save_otel: bool | None = None,
         filepath: str | None = None,
+        otel_endpoint: str | None = None,
+        otel_headers: str | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
     ):
@@ -1331,11 +1345,10 @@ class Telemetry:
             saved_path = self._save_json(payload, filepath=filepath)
 
         # --- Push to OTEL (if requested) ---
-        breakpoint()
         do_otel = self.save_otel_default if save_otel is None else save_otel
         saved_otel = None
         if do_otel:
-            saved_otel = self._save_otel(payload, filepath=filepath)
+            saved_otel = self._save_otel(payload, otel_endpoint, otel_headers)
 
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
@@ -1362,6 +1375,10 @@ class Telemetry:
         )
         if saved_path:
             attrib_lines.append(f"[dim]Saved metrics JSON to:[/] {saved_path}")
+        if saved_otel:
+            attrib_lines.append(
+                f"[dim]Saved metrics JSON to OTEL endpoint:[/] {saved_otel}"
+            )
 
         header_str = "\n".join(
             header_lines
