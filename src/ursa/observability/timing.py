@@ -20,6 +20,7 @@ from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
     OTLPSpanExporter,
 )
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from rich import get_console
 from rich.box import HEAVY
@@ -28,6 +29,12 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+
+from ursa.observability.metrics_charts import (
+    compute_attribution,
+    extract_llm_token_stats,
+    extract_time_breakdown,
+)
 
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
@@ -1202,20 +1209,31 @@ class Telemetry:
         return path
 
     def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
-        # path = filepath or self._default_filepath()
-        # self._ensure_dir(os.path.dirname(path) or ".")
+        ctx = payload.get("context") or {}
+        agent = str(ctx.get("agent") or "")
+        thread_id = str(ctx.get("thread_id") or "")
+        run_id = str(ctx.get("run_id") or "")
+        s = _parse_iso(ctx.get("started_at"))
+        e = _parse_iso(ctx.get("ended_at"))
 
-        # trace.set_tracer_provider(TracerProvider())
-        tracer = trace.get_tracer(__name__)
-        breakpoint()
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
         exporter = OTLPSpanExporter(
             endpoint=endpoint,
             headers=headers,
         )
-        span_processor = BatchSpanProcessor(exporter)
-        trace.get_tracer_provider().add_span_processor(span_processor)
-        with tracer.start_as_current_span("foo"):
-            print("Hello world!")
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        tracer = trace.get_tracer(agent)
+
+        with tracer.start_as_current_span(run_id) as span:
+            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
+            [span.set_attribute(i[0], i[1]) for i in parts_i]
+
+            att = compute_attribution(payload)
+            span.set_attributes(att)
+
+            totals_run, samples_run = extract_llm_token_stats(payload)
+            span.set_attributes(totals_run)
 
         return endpoint
 
