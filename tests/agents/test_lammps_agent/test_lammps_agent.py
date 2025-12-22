@@ -40,15 +40,13 @@ async def test_lammps_agent_runs_with_preselected_potential(
         output = original_author_chain.invoke(inputs)
         if output and output.strip():
             return output
-        return json.dumps(
-            {
-                "input_script": (
-                    "log ./log.lammps\n"
-                    "# fallback script when the LLM response is empty\n"
-                    "write_data data.fallback\n"
-                )
-            }
-        )
+        return json.dumps({
+            "input_script": (
+                "log ./log.lammps\n"
+                "# fallback script when the LLM response is empty\n"
+                "write_data data.fallback\n"
+            )
+        })
 
     agent.author_chain = RunnableLambda(author_with_fallback)
 
@@ -56,7 +54,9 @@ async def test_lammps_agent_runs_with_preselected_potential(
 
     def fake_run(cmd, cwd, stdout, stderr, text, check):
         subprocess_calls.append((cmd, Path(cwd)))
-        return SimpleNamespace(returncode=0, stdout="LAMMPS mock run", stderr="")
+        return SimpleNamespace(
+            returncode=0, stdout="LAMMPS mock run", stderr=""
+        )
 
     monkeypatch.setattr(
         "ursa.agents.lammps_agent.subprocess.run",

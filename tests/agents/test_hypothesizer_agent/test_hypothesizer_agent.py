@@ -12,7 +12,9 @@ class DummySearchTool:
     def __init__(self) -> None:
         self.queries: list[tuple[str, str]] = []
 
-    def text(self, query: str, backend: str = "duckduckgo") -> list[dict[str, str]]:
+    def text(
+        self, query: str, backend: str = "duckduckgo"
+    ) -> list[dict[str, str]]:
         self.queries.append((query, backend))
         idx = len(self.queries)
         return [
@@ -72,5 +74,7 @@ async def test_hypothesizer_agent_ainvoke(
     ]
     assert isinstance(result["question_search_query"], str)
 
-    generated_logs = list(tmp_path.glob("iteration_details_unknown_model_*.txt"))
+    generated_logs = list(
+        tmp_path.glob("iteration_details_unknown_model_*.txt")
+    )
     assert generated_logs, "Expected iteration history files to be written"

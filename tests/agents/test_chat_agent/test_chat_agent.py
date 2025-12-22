@@ -10,9 +10,10 @@ async def test_chat_agent_appends_ai_response(chat_model):
     user_prompt = "Share a quick greeting."
     initial_message = HumanMessage(content=user_prompt)
 
-    result = await agent.ainvoke(
-        {"messages": [initial_message], "thread_id": agent.thread_id}
-    )
+    result = await agent.ainvoke({
+        "messages": [initial_message],
+        "thread_id": agent.thread_id,
+    })
 
     assert "messages" in result
     messages = result["messages"]

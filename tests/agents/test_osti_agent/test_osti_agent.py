@@ -30,7 +30,9 @@ class FakeSoup:
 
 
 @pytest.mark.asyncio
-async def test_osti_agent_ainvoke_returns_summary(chat_model, tmp_path, monkeypatch):
+async def test_osti_agent_ainvoke_returns_summary(
+    chat_model, tmp_path, monkeypatch
+):
     api_base = "https://osti.test/api/v1/records"
     query = "high-temperature superconductors"
     context = "Provide a quick overview of relevant OSTI research."
@@ -54,7 +56,9 @@ async def test_osti_agent_ainvoke_returns_summary(chat_model, tmp_path, monkeypa
 
     def fake_get_soup(url, *args, **kwargs):
         assert url == landing_url
-        return FakeSoup("OSTI document discussing superconductors and energy grids.")
+        return FakeSoup(
+            "OSTI document discussing superconductors and energy grids."
+        )
 
     monkeypatch.setattr(
         "ursa.agents.acquisition_agents.requests.get", fake_requests_get

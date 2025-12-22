@@ -11,7 +11,9 @@ async def test_arxiv_agent_legacy_fetches_local_papers_without_network(
 ):
     monkeypatch.setattr(
         "ursa.agents.arxiv_agent.requests.get",
-        lambda *args, **kwargs: pytest.fail("requests.get should not be called"),
+        lambda *args, **kwargs: pytest.fail(
+            "requests.get should not be called"
+        ),
     )
 
     agent = ArxivAgentLegacy(
