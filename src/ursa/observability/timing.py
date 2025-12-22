@@ -1211,10 +1211,10 @@ class Telemetry:
     def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
         ctx = payload.get("context") or {}
         agent = str(ctx.get("agent") or "")
-        thread_id = str(ctx.get("thread_id") or "")
+        # thread_id = str(ctx.get("thread_id") or "")
         run_id = str(ctx.get("run_id") or "")
-        s = _parse_iso(ctx.get("started_at"))
-        e = _parse_iso(ctx.get("ended_at"))
+        # s = _parse_iso(ctx.get("started_at"))
+        # e = _parse_iso(ctx.get("ended_at"))
 
         provider = TracerProvider()
         trace.set_tracer_provider(provider)
