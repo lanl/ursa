@@ -25,7 +25,7 @@ if use_aiportal:
     )
 else:
     # Use openai
-    llm = init_chat_model("openai:gpt-5.2")
+    llm = init_chat_model(os.getenv("URSA_TEST_LLM", "openai:gpt-5.2"))
 
 
 def generate_data(data_path: Path):
