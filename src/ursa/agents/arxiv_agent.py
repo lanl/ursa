@@ -3,7 +3,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any, Mapping, TypedDict
+from typing import TypedDict
 from urllib.parse import quote
 
 import feedparser
@@ -13,7 +13,6 @@ from langchain.chat_models import BaseChatModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph
 from PIL import Image
 from tqdm import tqdm
 
@@ -136,17 +135,14 @@ class ArxivAgentLegacy(BaseAgent):
         self.summarize = summarize
         self.process_images = process_images
         self.max_results = max_results
-        self.database_path = database_path
-        self.summaries_path = summaries_path
-        self.vectorstore_path = vectorstore_path
+        self.database_path = self.workspace / database_path
+        self.summaries_path = self.workspace / summaries_path
+        self.vectorstore_path = self.workspace / vectorstore_path
         self.download_papers = download_papers
         self.rag_embedding = rag_embedding
 
-        self._action = self._build_graph()
-
-        os.makedirs(self.database_path, exist_ok=True)
-
-        os.makedirs(self.summaries_path, exist_ok=True)
+        self.database_path.mkdir(exist_ok=True, parents=True)
+        self.summaries_path.mkdir(exist_ok=True, parents=True)
 
     def _fetch_papers(self, query: str) -> list[PaperMetadata]:
         if self.download_papers:
@@ -205,19 +201,17 @@ class ArxivAgentLegacy(BaseAgent):
         for i, pdf_filename in enumerate(pdf_files):
             full_text = ""
             arxiv_id = pdf_filename.split(".pdf")[0]
-            vec_save_loc = self.vectorstore_path + "/" + arxiv_id
+            vec_save_loc = self.vectorstore_path / arxiv_id
 
-            if self.summarize and not os.path.exists(vec_save_loc):
+            if self.summarize and not vec_save_loc.exists():
                 try:
-                    loader = PyPDFLoader(
-                        os.path.join(self.database_path, pdf_filename)
-                    )
+                    loader = PyPDFLoader(self.database_path / pdf_filename)
                     pages = loader.load()
                     full_text = "\n".join([p.page_content for p in pages])
 
                     if self.process_images:
                         image_descriptions = extract_and_describe_images(
-                            os.path.join(self.database_path, pdf_filename)
+                            self.database_path / pdf_filename
                         )
                         full_text += (
                             "\n\n[Image Interpretations]\n"
@@ -241,9 +235,9 @@ class ArxivAgentLegacy(BaseAgent):
     def _summarize_node(self, state: PaperState) -> PaperState:
         prompt = ChatPromptTemplate.from_template("""
         You are a scientific assistant responsible for summarizing extracts from research papers, in the context of the following task: {context}
-    
+
         Summarize the retrieved scientific content below.
-    
+
         {retrieved_content}
         """)
 
@@ -337,11 +331,11 @@ class ArxivAgentLegacy(BaseAgent):
 
         prompt = ChatPromptTemplate.from_template("""
             You are a scientific assistant helping extract insights from summaries of research papers.
-            
+
             Here are the summaries of a large number of extracts from scientific papers:
 
             {Summaries}
-            
+
             Your task is to read all the summaries and provide a response to this task: {context}
             """)
 
@@ -361,63 +355,24 @@ class ArxivAgentLegacy(BaseAgent):
         return {**state, "final_summary": final_summary}
 
     def _build_graph(self):
-        graph = StateGraph(PaperState)
-
-        self.add_node(graph, self._fetch_node)
+        self.add_node(self._fetch_node)
         if self.summarize:
             if self.rag_embedding:
-                self.add_node(graph, self._rag_node)
-                graph.set_entry_point("_fetch_node")
-                graph.add_edge("_fetch_node", "_rag_node")
-                graph.set_finish_point("_rag_node")
+                self.add_node(self._rag_node)
+                self.graph.set_entry_point("_fetch_node")
+                self.graph.add_edge("_fetch_node", "_rag_node")
+                self.graph.set_finish_point("_rag_node")
             else:
-                self.add_node(graph, self._summarize_node)
-                self.add_node(graph, self._aggregate_node)
+                self.add_node(self._summarize_node)
+                self.add_node(self._aggregate_node)
 
-                graph.set_entry_point("_fetch_node")
-                graph.add_edge("_fetch_node", "_summarize_node")
-                graph.add_edge("_summarize_node", "_aggregate_node")
-                graph.set_finish_point("_aggregate_node")
+                self.graph.set_entry_point("_fetch_node")
+                self.graph.add_edge("_fetch_node", "_summarize_node")
+                self.graph.add_edge("_summarize_node", "_aggregate_node")
+                self.graph.set_finish_point("_aggregate_node")
         else:
-            graph.set_entry_point("_fetch_node")
-            graph.set_finish_point("_fetch_node")
-
-        return graph.compile(checkpointer=self.checkpointer)
-
-    def _invoke(
-        self,
-        inputs: Mapping[str, Any],
-        *,
-        summarize: bool | None = None,
-        recursion_limit: int = 1000,
-        **_,
-    ) -> str:
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # this seems dumb, but it's b/c sometimes we had referred to the value as
-        # 'query' other times as 'arxiv_search_query' so trying to keep it compatible
-        # aliasing: accept arxiv_search_query -> query
-        if "query" not in inputs:
-            if "arxiv_search_query" in inputs:
-                # make a shallow copy and rename the key
-                inputs = dict(inputs)
-                inputs["query"] = inputs.pop("arxiv_search_query")
-            else:
-                raise KeyError(
-                    "Missing 'query' in inputs (alias 'arxiv_search_query' also accepted)."
-                )
-
-        result = self._action.invoke(inputs, config)
-
-        use_summary = self.summarize if summarize is None else summarize
-
-        return (
-            result.get("final_summary", "No summary generated.")
-            if use_summary
-            else "\n\nFinished Fetching papers!"
-        )
+            self.graph.set_entry_point("_fetch_node")
+            self.graph.set_finish_point("_fetch_node")
 
 
 # NOTE: Run test in `tests/agents/test_arxiv_agent/test_arxiv_agent.py` via:
