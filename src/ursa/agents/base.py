@@ -116,9 +116,12 @@ class BaseAgent(Generic[TState], ABC):
     _TELEMETRY_KW = {
         "raw_debug",
         "save_json",
+        "save_otel",
         "metrics_path",
         "save_raw_snapshot",
         "save_raw_records",
+        "otel_endpoint",
+        "otel_headers",
     }
 
     _CONTROL_KW = {"config", "recursion_limit", "tags", "metadata", "callbacks"}
@@ -133,6 +136,7 @@ class BaseAgent(Generic[TState], ABC):
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
+        otel_metrics: bool = False,
         thread_id: Optional[str] = None,
     ):
         """Initializes the base agent with a language model and optional configurations.
@@ -267,7 +271,10 @@ class BaseAgent(Generic[TState], ABC):
         inputs: Optional[InputLike] = None,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
+        otel_endpoint: Optional[str] = None,
+        otel_headers: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
         config: Optional[dict] = None,
@@ -324,7 +331,10 @@ class BaseAgent(Generic[TState], ABC):
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
+                    save_otel=save_otel,
                     filepath=metrics_path,
+                    otel_endpoint=otel_endpoint,
+                    otel_headers=otel_headers,
                     save_raw_snapshot=save_raw_snapshot,
                     save_raw_records=save_raw_records,
                 )
@@ -339,6 +349,7 @@ class BaseAgent(Generic[TState], ABC):
         *,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
@@ -356,6 +367,7 @@ class BaseAgent(Generic[TState], ABC):
                 keyword arguments will be rejected to avoid ambiguity.
             raw_debug: If True, displays raw telemetry data for debugging purposes.
             save_json: If True, saves telemetry data as JSON.
+            save_otel: If True, saves telemetry data to OpenTelemetry endpoint.
             metrics_path: Optional file path where telemetry metrics should be saved.
             save_raw_snapshot: If True, saves a raw snapshot of the telemetry data.
             save_raw_records: If True, saves raw telemetry records.
@@ -376,6 +388,7 @@ class BaseAgent(Generic[TState], ABC):
             inputs=inputs,
             raw_debug=raw_debug,
             save_json=save_json,
+            save_otel=save_otel,
             metrics_path=metrics_path,
             save_raw_snapshot=save_raw_snapshot,
             save_raw_records=save_raw_records,
@@ -393,6 +406,7 @@ class BaseAgent(Generic[TState], ABC):
         *,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
@@ -412,6 +426,7 @@ class BaseAgent(Generic[TState], ABC):
                 keyword arguments will be rejected to avoid ambiguity.
             raw_debug: If True, displays raw telemetry data for debugging purposes.
             save_json: If True, saves telemetry data as JSON.
+            save_otel: If True, saves telemetry data to OpenTelemetry endpoint.
             metrics_path: Optional file path where telemetry metrics should be saved.
             save_raw_snapshot: If True, saves a raw snapshot of the telemetry data.
             save_raw_records: If True, saves raw telemetry records.
@@ -432,6 +447,7 @@ class BaseAgent(Generic[TState], ABC):
             inputs=inputs,
             raw_debug=raw_debug,
             save_json=save_json,
+            save_otel=save_otel,
             metrics_path=metrics_path,
             save_raw_snapshot=save_raw_snapshot,
             save_raw_records=save_raw_records,
@@ -545,6 +561,7 @@ class BaseAgent(Generic[TState], ABC):
         *,
         raw_debug: bool = False,
         save_json: bool | None = None,
+        save_otel: bool | None = None,
         metrics_path: str | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
@@ -598,6 +615,7 @@ class BaseAgent(Generic[TState], ABC):
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
+                    save_otel=save_otel,
                     filepath=metrics_path,
                     save_raw_snapshot=save_raw_snapshot,
                     save_raw_records=save_raw_records,

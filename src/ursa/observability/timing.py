@@ -16,6 +16,12 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+    OTLPSpanExporter,
+)
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from rich import get_console
 from rich.box import HEAVY
 from rich.console import Group
@@ -23,6 +29,12 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+
+from ursa.observability.metrics_charts import (
+    compute_attribution,
+    extract_llm_token_stats,
+    extract_time_breakdown,
+)
 
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
@@ -1026,6 +1038,10 @@ class Telemetry:
     debug_raw: bool = False  # toggle raw dump
     output_dir: str = "metrics"  # where to save JSON
     save_json_default: bool = True  # opt-in autosave
+    save_otel_default: bool = False  # opt-out otel
+    otel_endpoint: str = (
+        "http://localhost:5000/v1/traces"  # where to push otel metrics
+    )
 
     tool: PerToolTimer = field(default_factory=PerToolTimer)
     runnable: PerRunnableTimer = field(default_factory=PerRunnableTimer)
@@ -1195,6 +1211,35 @@ class Telemetry:
             )
         return path
 
+    def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
+        ctx = payload.get("context") or {}
+        agent = str(ctx.get("agent") or "")
+        # thread_id = str(ctx.get("thread_id") or "")
+        run_id = str(ctx.get("run_id") or "")
+        # s = _parse_iso(ctx.get("started_at"))
+        # e = _parse_iso(ctx.get("ended_at"))
+
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers=headers,
+        )
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        tracer = trace.get_tracer(agent)
+
+        with tracer.start_as_current_span(run_id) as span:
+            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
+            [span.set_attribute(i[0], i[1]) for i in parts_i]
+
+            att = compute_attribution(payload)
+            span.set_attributes(att)
+
+            totals_run, samples_run = extract_llm_token_stats(payload)
+            span.set_attributes(totals_run)
+
+        return endpoint
+
     def to_json(
         self, *, include_raw_snapshot: bool, include_raw_records: bool
     ) -> dict:
@@ -1218,7 +1263,10 @@ class Telemetry:
         self,
         raw: bool | None = None,
         save_json: bool | None = None,
+        save_otel: bool | None = None,
         filepath: str | None = None,
+        otel_endpoint: str | None = None,
+        otel_headers: str | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
     ):
@@ -1316,6 +1364,12 @@ class Telemetry:
         if do_save:
             saved_path = self._save_json(payload, filepath=filepath)
 
+        # --- Push to OTEL (if requested) ---
+        do_otel = self.save_otel_default if save_otel is None else save_otel
+        saved_otel = None
+        if do_otel:
+            saved_otel = self._save_otel(payload, otel_endpoint, otel_headers)
+
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
         header_lines.append(
@@ -1341,6 +1395,10 @@ class Telemetry:
         )
         if saved_path:
             attrib_lines.append(f"[dim]Saved metrics JSON to:[/] {saved_path}")
+        if saved_otel:
+            attrib_lines.append(
+                f"[dim]Saved metrics JSON to OTEL endpoint:[/] {saved_otel}"
+            )
 
         header_str = "\n".join(
             header_lines
