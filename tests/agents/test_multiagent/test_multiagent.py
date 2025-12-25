@@ -5,7 +5,6 @@
 import os
 from pathlib import Path
 
-import httpx
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
