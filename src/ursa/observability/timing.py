@@ -16,12 +16,6 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-    OTLPSpanExporter,
-)
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from rich import get_console
 from rich.box import HEAVY
 from rich.console import Group
@@ -35,6 +29,17 @@ from ursa.observability.metrics_charts import (
     extract_llm_token_stats,
     extract_time_breakdown,
 )
+
+opentelemetry_available = True
+try:
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+except Exception:
+    opentelemetry_available = False
 
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
@@ -1212,6 +1217,8 @@ class Telemetry:
         return path
 
     def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
+        if not opentelemetry_available:
+            return None
         ctx = payload.get("context") or {}
         agent = str(ctx.get("agent") or "")
         # thread_id = str(ctx.get("thread_id") or "")
