@@ -12,20 +12,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from ursa.experimental.agents.multiagent import Ursa
 
-use_aiportal = False
 
-if use_aiportal:
-    llm = init_chat_model(
-        model=os.environ["CLAUDE"],
-        base_url=os.environ["AIPORTAL_API_URL"],
-        api_key=os.environ["AIPORTAL_API_KEY"],
-        model_provider="openai",
-        model_kwargs={"extra_headers": {"disable_fallbacks": "true"}},
-        http_client=httpx.Client(verify=False),
-    )
-else:
-    # Use openai
-    llm = init_chat_model(os.getenv("URSA_TEST_LLM", "openai:gpt-5.2"))
+# Use openai for the test on github
+llm = init_chat_model(os.getenv("URSA_TEST_LLM", "openai:gpt-5.2"))
 
 
 def generate_data(data_path: Path):
