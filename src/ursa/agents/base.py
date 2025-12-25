@@ -147,7 +147,7 @@ class BaseAgent(Generic[TState], ABC):
                        provided.
         """
         self.llm = llm
-        self.workspace = Path(workspace or ".ursa")
+        self.workspace = Path(workspace or "ursa_workspace")
         self.thread_id = thread_id or uuid4().hex
         self.checkpointer = checkpointer
         self.telemetry = Telemetry(
