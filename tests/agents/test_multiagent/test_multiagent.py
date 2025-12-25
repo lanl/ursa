@@ -1,7 +1,6 @@
 # NOTE: This will be helpful for prompting.
 # https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide
 
-
 import os
 from pathlib import Path
 
