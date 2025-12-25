@@ -10,7 +10,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from ursa.experimental.agents.multiagent import Ursa
 
-
 # Use openai for the test on github
 llm = init_chat_model(os.getenv("URSA_TEST_LLM", "openai:gpt-5.2"))
 
