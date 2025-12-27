@@ -40,13 +40,11 @@ class Plan(BaseModel):
 class PlanningState(TypedDict, total=False):
     """State dictionary for planning agent"""
 
-    messages: Annotated[list, add_messages]
-
-    # Ordered steps in the solution plan
-    plan_steps: list[PlanStep]
-
-    # Number of reflection steps
-    reflection_steps: Required[int]
+    messages: Annotated[
+        list, add_messages
+    ]  # Ordered steps in the solution plan
+    plan_steps: list[PlanStep]  # Plan in dictionary format
+    reflection_steps: Required[int]  # Number of reflection steps
 
 
 class PlanningAgent(BaseAgent[PlanningState]):
@@ -70,6 +68,7 @@ class PlanningAgent(BaseAgent[PlanningState]):
         """
 
         print("PlanningAgent: generating . . .")
+        state.setdefault("reflection_steps", self.max_reflection_steps)
 
         messages = cast(list, state.get("messages"))
         if isinstance(messages[0], SystemMessage):
