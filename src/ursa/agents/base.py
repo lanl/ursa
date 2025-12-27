@@ -484,7 +484,9 @@ class BaseAgent(Generic[TState], ABC):
     def compiled_graph(self) -> CompiledStateGraph:
         """Return the compiled StateGraph application for the agent."""
         graph = self.build_graph()
-        compiled = graph.compile(checkpointer=self.checkpointer)
+        compiled = graph.compile(checkpointer=self.checkpointer).with_config({
+            "recursion_limit": 50000
+        })
         return self._finalize_graph(compiled)
 
     @final
