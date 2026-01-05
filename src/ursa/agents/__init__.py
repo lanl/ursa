@@ -28,5 +28,6 @@ from .planning_agent import PlanningState as PlanningState
 from .rag_agent import RAGAgent as RAGAgent
 from .rag_agent import RAGState as RAGState
 from .recall_agent import RecallAgent as RecallAgent
+from .simulation_agent import SimulatorAgent as SimulatorAgent
 from .websearch_agent import WebSearchAgentLegacy as WebSearchAgentLegacy
 from .websearch_agent import WebSearchState as WebSearchState
