@@ -145,7 +145,7 @@ class Ursa:
     def __init__(
         self,
         llm: BaseChatModel,
-        extra_tools: list = [],
+        extra_tools: Optional[list] = None,
         workspace: Path = Path("ursa-workspace"),
         checkpointer: Optional[BaseCheckpointSaver] = None,
         thread_id: str = "ursa",
@@ -153,7 +153,7 @@ class Ursa:
         system_prompt: str = system_prompt,
     ):
         self.llm = llm
-        self.extra_tools = extra_tools
+        self.extra_tools = extra_tools or []
         self.workspace = workspace
         self.checkpointer = checkpointer
         self.thread_id = thread_id
