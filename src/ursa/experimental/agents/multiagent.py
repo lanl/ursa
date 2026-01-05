@@ -146,7 +146,7 @@ class Ursa:
         self,
         llm: BaseChatModel,
         extra_tools: Optional[list] = None,
-        workspace: Path = Path("ursa-workspace"),
+        workspace: Path = Path("ursa_workspace"),
         checkpointer: Optional[BaseCheckpointSaver] = None,
         thread_id: str = "ursa",
         max_reflection_steps: int = 1,
