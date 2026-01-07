@@ -1,7 +1,6 @@
 import logging
 import asyncio
 import threading
-import inspect
 import os
 import platform
 from cmd import Cmd
@@ -18,7 +17,6 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
-from typer import Typer
 
 from ursa.agents import (
     ArxivAgent,
@@ -113,7 +111,12 @@ class HITL:
         self.agents["hypothesize"] = AgentHITL(agent_class=HypothesizerAgent)
         self.agents["plan"] = AgentHITL(agent_class=PlanningAgent)
         self.agents["web"] = AgentHITL(agent_class=WebSearchAgent)
-        self.agents["recall"] = AgentHITL(agent_class=RecallAgent)
+
+        if self.memory is not None:
+            self.agents["recall"] = AgentHITL(
+                agent_class=RecallAgent,
+                config={"memory": self.memory},
+            )
 
         self.last_agent_result = ""
         self.arxiv_state = []
