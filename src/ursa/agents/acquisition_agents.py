@@ -309,6 +309,28 @@ class BaseAcquisitionAgent(BaseAgent):
                     })
         return items
 
+    def _normalize_inputs(self, inputs) -> AcquisitionState:
+        if isinstance(inputs, str):
+            return AcquisitionState(context=inputs)
+        elif isinstance(inputs, dict):
+            return inputs
+        else:
+            raise TypeError(f"Invalid input for {self.__class__.__name__}")
+
+    def format_result(self, state: AcquisitionState) -> str:
+        if summary := state["final_summary"]:
+            return summary
+        return str(state)  # Fallback, don't do this
+
+    async def _search_query(self, state: AcquisitionState) -> AcquisitionState:
+        """Generate a search query from the input search task"""
+        context = state["context"]
+        query = await self.llm.ainvoke(
+            f"The user stated {context}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
+        )
+        state["query"] = query.content or context
+        return state
+
     def _fetch_node(self, state: AcquisitionState) -> AcquisitionState:
         items = self._fetch_items(state["query"])
         return {**state, "items": items}
@@ -413,24 +435,24 @@ class BaseAcquisitionAgent(BaseAgent):
         return {**state, "final_summary": final_summary}
 
     def _build_graph(self):
+        self.add_node(self._search_query)
+        self.graph.set_entry_point("_search_query")
         self.add_node(self._fetch_node)
+        self.graph.add_edge("_search_query", "_fetch_node")
 
         if self.summarize:
             if self.rag_embedding:
                 self.add_node(self._rag_node)
-                self.graph.set_entry_point("_fetch_node")
                 self.graph.add_edge("_fetch_node", "_rag_node")
                 self.graph.set_finish_point("_rag_node")
             else:
                 self.add_node(self._summarize_node)
                 self.add_node(self._aggregate_node)
 
-                self.graph.set_entry_point("_fetch_node")
                 self.graph.add_edge("_fetch_node", "_summarize_node")
                 self.graph.add_edge("_summarize_node", "_aggregate_node")
                 self.graph.set_finish_point("_aggregate_node")
         else:
-            self.graph.set_entry_point("_fetch_node")
             self.graph.set_finish_point("_fetch_node")
 
 
