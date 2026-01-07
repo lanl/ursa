@@ -8,14 +8,12 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from ursa.agents import SimulatorAgent
 
 problem = (
-    "Your task is to perform a parameter sweep of dcopf using an open source "
+    "Your task is to perform a do another parameter sweep of dcopf using an open source "
     "code for optimizing power systems in Julia, PowerModels.jl. "
-    "The parameter sweep will be performed on the load parameters 10 times by choosing "
-    "a random number between 0.8 and 1.2 and multiplying the load by this factor."
-    "I require that each parameter configuration be stored in its own input file, ieee14."
-    "I require that the code used to perform the task be stored."
-    "I require that the code be executed and output saved to a csv file. "
+    "The parameter sweep will be performed on the load parameters 50 times by choosing "
+    "a random number between 0.5 and 2.0 and multiplying the load by this factor (wider ranges than before)."
     "Produce a plot with opf objective value on the x axis and load factor on the y axis."
+    "Highlight any difference between the results of this sweep and the previous sweep you performed in a file called changes.md"
 )
 workspace = "ursa_simulator_test"
 
@@ -33,8 +31,11 @@ simulator = SimulatorAgent(
     embedding=embedding,
     checkpointer=checkpointer,
     use_web=True,
-    tokens_before_summarize=20000,
 )
 simulator.thread_id = "dcopf_test_executor"
 
 result = simulator.invoke(problem)
+
+print("COMPLETE ------------")
+# print("==============\n==============\n\n".join([x.text for x in result["messages"]]))
+print(result["messages"][-1].text)

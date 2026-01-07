@@ -7,7 +7,6 @@ from typing import (
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain.tools import tool
-from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import ExecutionAgent, RAGAgent
@@ -30,6 +29,7 @@ class SimulatorAgent(ExecutionAgent):
         tokens_before_summarize: Optional[int] = 50000,
         messages_to_keep: Optional[int] = 20,
         safe_codes: Optional[list[str]] = None,
+        workspace: Optional[str] = "ursa_simulation_workspace",
         **kwargs,
     ):
         super().__init__(
@@ -37,6 +37,7 @@ class SimulatorAgent(ExecutionAgent):
             tokens_before_summarize=tokens_before_summarize,
             messages_to_keep=messages_to_keep,
             safe_codes=safe_codes,
+            workspace=workspace,
             **kwargs,
         )
         self.embedding = embedding
@@ -48,6 +49,7 @@ class SimulatorAgent(ExecutionAgent):
         if self.embedding:
             self.rag_agent = RAGAgent(
                 llm=self.llm,
+                workspace=self.workspace,
                 embedding=self.embedding,
                 database_path="simulator_docs",
             )
@@ -106,14 +108,14 @@ def main():
     )
 
     simulator = SimulatorAgent(
-        llm=model, embedding=embedding, checkpointer=checkpointer, use_web=True
+        llm=model,
+        workspace=workspace,
+        embedding=embedding,
+        checkpointer=checkpointer,
+        use_web=True,
     )
     simulator.thread_id = "dcopf_test_executor"
-    problem_dict = {
-        "messages": [HumanMessage(content=problem)],
-        "workspace": workspace,
-    }
 
-    result = simulator.invoke(problem_dict)
+    result = simulator.invoke(problem)
 
     print("\n\n".join([x.content for x in result["messages"]]))

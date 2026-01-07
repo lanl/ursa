@@ -62,31 +62,31 @@ B) Create / update: workplan.md (in workspace root)
        * acceptance checks (sanity bounds, conservation checks, etc.)
    - Risks / unknowns / assumptions (explicit bullets)
 
-STAGE 2 — DISCOVER & USE DOCUMENTATION
-A) Check workspace for: ursa_docs/simulator_user_guide.md
+STAGE 2 — READ OR BUILD SIMULATOR DOCUMENTATION FOR AGENTS
+A) Check workspace for: simulator_user_guide.md
 B) If it exists:
-   - Read it and use it as the primary reference for setup/run/analysis.
+   - Read it and use it as the primary reference for the simulation code.
    - Note any gaps or contradictions you encounter while working.
 
 C) If it does NOT exist:
-   - Create folder: ursa_docs/
-   - Use all available documentation sources/tools (RAG over simulation_docs, local READMEs,
-     docstrings, examples, and optional web/literature search if needed).
-   - Write a clear “getting started” guide to ursa_docs/simulator_user_guide.md including:
-       * prerequisites/dependencies
+   - Review existing documentation for the requested simulation code 
+       * Utilize web search or other tools for information if none exists in your workspace
+   - Write a clear user guide for the simulation code to simulator_user_guide.md
+       * Should act as a comprehensive guide to using the simulator 
+   - Include information such as:
        * how to configure/build/install (if relevant)
        * how to run (minimum example + common options)
        * input file formats and how to validate them
        * outputs produced and how to interpret them
        * troubleshooting section (most common errors)
-       * reproducibility notes (versions, seeds, deterministic settings)
+       * citations to additional resources
+   - Use all available documentation sources/tools (RAG over simulation_docs, local READMEs,
+     docstrings, examples, and optional web/literature search if needed).
+   - It will be intended to give future agents a complete guide to using the simulation code.
+       - And should act as a clear and complete reference
 
-STAGE 3 — SETUP (REPRODUCIBLE EXECUTION)
-A) Create a run directory for each run:
-   - runs/<YYYYMMDD_HHMMSS>_<short_label>/
-   Inside each run directory, set up as required by the simulation documentation
-
-B) Perform a smoke test run first (minimal size, short duration, coarse mesh, etc.).
+STAGE 3 — SMOKE TEST
+A) Perform a smoke test run first (minimal size, short duration, coarse mesh, etc.).
    - If smoke test fails, debug before scaling up.
 
 STAGE 4 — EXECUTE
@@ -99,7 +99,7 @@ C) If failures occur:
    - never “thrash” (avoid many random changes); prefer a structured hypothesis → test cycle
 
 STAGE 5 — ANALYZE OUTPUTS
-A) Use ursa_docs/simulator_user_guide.md (and any other docs) to interpret outputs.
+A) Use simulator_user_guide.md (and any other docs) to interpret outputs.
 B) Produce analysis artifacts in runs/.../analysis/, such as:
    - summary tables (CSV/TSV) of key metrics
    - plots (PNG/PDF)
@@ -115,10 +115,9 @@ D) Validate outputs against the acceptance checks defined in workplan.md:
 
 STAGE 6 — UPDATE DOCUMENTATION (LEARNINGS BACK INTO GUIDE)
 A) If you learned anything new (correct flags, pitfalls, missing steps, interpretation details),
-   update ursa_docs/simulator_user_guide.md:
+   update simulator_user_guide.md:
    - add missing steps
    - correct inaccuracies
-   - include one or two canonical examples
    - extend troubleshooting with the exact error messages and fixes (when safe to include)
 
 FINAL REPORTING (REQUIRED)
@@ -180,9 +179,9 @@ Create/overwrite workplan.md in workspace root with:
 - Expected outputs (filenames/patterns + meaning) and validation/sanity checks
 - Risks/unknowns/assumptions
 
-2) DOCUMENTATION (REQUIRED ARTIFACT: ursa_docs/simulator_user_guide.md)
-- If ursa_docs/simulator_user_guide.md exists: read and use it; note gaps.
-- If missing: create ursa_docs/ and write a guide using available docs/tools:
+2) DOCUMENTATION (REQUIRED ARTIFACT: simulator_user_guide.md)
+- If simulator_user_guide.md exists: read and use it; note gaps.
+- If missing: write a guide using available docs/tools:
   prerequisites, install/build, how to run, inputs, outputs, troubleshooting, reproducibility notes.
 
 3) SETUP (PER-RUN ARTIFACTS)
@@ -203,7 +202,7 @@ In logs/, write run_manifest.md with:
 
 6) UPDATE GUIDE
 - If you learned anything new (flags, pitfalls, interpretation), update
-  ursa_docs/simulator_user_guide.md (examples + troubleshooting with fixes).
+  simulator_user_guide.md (examples + troubleshooting with fixes).
 
 FINAL REPORT (REQUIRED ARTIFACT: status.md)
 Create/update status.md (edit if exists) with:
