@@ -45,7 +45,7 @@ ursa_banner = r"""
 
 def init_model_kwargs(cfg):
     kwargs = {k: v for k, v in cfg.items() if v is not None}
-    if kwargs.pop("ssl_verify", None):
+    if not kwargs.pop("ssl_verify", None):
         kwargs["http_client"] = httpx.Client(verify=False)
     return kwargs
 
