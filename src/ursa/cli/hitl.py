@@ -309,21 +309,6 @@ class HITL:
         self.update_last_agent_result(chat_output.content)
         return f"{self.last_agent_result}"
 
-    async def run_hypothesizer(self, prompt: str) -> str:
-        hypothesizer = await self.hypothesizer
-        question = f"The last agent output was: {self.last_agent_result}\n\nThe user stated: {prompt}"
-
-        self.hypothesizer_state = await hypothesizer.ainvoke(
-            prompt=question,
-            max_iterations=2,
-        )
-
-        solution = self.hypothesizer_state.get(
-            "solution", "Hypothesizer failed to return a solution"
-        )
-        self.update_last_agent_result(solution)
-        return f"[Hypothesizer Agent Output]:\n {self.last_agent_result}"
-
     async def run_planner(self, prompt: str) -> str:
         planner = await self.planner
         self.planner_state.setdefault("messages", [])
