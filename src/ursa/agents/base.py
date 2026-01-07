@@ -16,6 +16,7 @@ integration capabilities while only needing to implement the core _invoke method
 """
 
 import re
+import logging
 from abc import ABC, abstractmethod
 from functools import cached_property
 from pathlib import Path
@@ -454,6 +455,13 @@ class BaseAgent(Generic[TState], ABC):
             config=config,
             **kwargs,
         )
+
+    def format_query(self, prompt: str, state: Any | None = None):
+        logging.info("prompt: " + prompt)
+        return self._normalize_inputs(prompt)
+
+    def format_result(self, result: Any) -> str:
+        return str(result)
 
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         """Normalizes various input formats into a standardized mapping.

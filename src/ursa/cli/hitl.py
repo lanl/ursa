@@ -1,17 +1,20 @@
+import logging
+import asyncio
+import threading
+import inspect
 import os
 import platform
-import sqlite3
 from cmd import Cmd
-from dataclasses import dataclass
-from functools import cached_property
-from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Optional
+from dataclasses import dataclass, field
 
+import aiosqlite
 import httpx
 from langchain.chat_models import init_chat_model
+from mcp.server.fastmcp import FastMCP
 from langchain.embeddings import init_embeddings
-from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langchain_core.messages import BaseMessage, HumanMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
@@ -19,6 +22,7 @@ from typer import Typer
 
 from ursa.agents import (
     ArxivAgent,
+    BaseAgent,
     ChatAgent,
     ExecutionAgent,
     HypothesizerAgent,
@@ -26,116 +30,73 @@ from ursa.agents import (
     RecallAgent,
     WebSearchAgent,
 )
+from ursa.config import UrsaConfig
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
+from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
-
-app = Typer()
 
 ursa_banner = r"""
   __  ________________ _
  / / / / ___/ ___/ __ `/
-/ /_/ / /  (__  ) /_/ / 
-\__,_/_/  /____/\__,_/  
+/ /_/ / /  (__  ) /_/ /
+\__,_/_/  /____/\__,_/
 """
 
 
-def make_console():
-    return Console(
-        theme=Theme({
-            "success": "green",
-            "error": "bold red",
-            "dim": "grey50",
-            "warn": "yellow",
-            "emph": "bold cyan",
-        })
-    )
+def init_model_kwargs(cfg):
+    kwargs = {k: v for k, v in cfg.items() if v is not None}
+    if kwargs.pop("ssl_verify", None):
+        kwargs["http_client"] = httpx.Client(verify=False)
+    return kwargs
 
 
 @dataclass
+class AgentHITL:
+    agent_class: Any
+    config: dict = field(default_factory=dict)
+    state: Any | None = None
+    _agent: BaseAgent | None = field(default=None, init=False)
+
+    def instantiate(self, **kwargs):
+        """Instantiate the underlying agent instance"""
+        assert self._agent is None
+        kwargs |= self.config
+        self._agent = self.agent_class(**kwargs)
+
+    @property
+    def description(self):
+        if self._agent is None:
+            return self.agent_class.__doc__
+        return self._agent.__doc__
+
+    async def __call__(self, prompt: str) -> str:
+        assert self._agent is not None, "Agent not yet instantiated"
+        agent = self._agent
+
+        # Setup the agents input state from it's current state and plain text input
+        # then invoke the agent and extract a final message from it's new state
+        query = agent.format_query(prompt, state=self.state)
+        new_state = await agent.ainvoke(query)
+        msg = agent.format_result(new_state)
+        self.state = new_state
+
+        # Return only the result message
+        return msg
+
+
 class HITL:
-    workspace: Path
-    llm_model_name: str
-    llm_base_url: Optional[str]
-    llm_api_key: Optional[str]
-    max_completion_tokens: int
-    emb_model_name: Optional[str]
-    emb_base_url: Optional[str]
-    emb_api_key: Optional[str]
-    share_key: bool
-    thread_id: str
-    safe_codes: list[str]
-    arxiv_summarize: bool
-    arxiv_process_images: bool
-    arxiv_max_results: int
-    arxiv_database_path: Optional[Path]
-    arxiv_summaries_path: Optional[Path]
-    arxiv_vectorstore_path: Optional[Path]
-    arxiv_download_papers: bool
-    ssl_verify_llm: bool
-    ssl_verify_emb: bool
-
-    def _make_kwargs(self, **kwargs):
-        # NOTE: This is required instead of setting to None because of
-        # strangeness in init_chat_model.
-        return {
-            key: value for key, value in kwargs.items() if value is not None
-        }
-
-    def get_path(self, path: Optional[Path], default_subdir: str) -> str:
-        if path is None:
-            return str(self.workspace / default_subdir)
-        return str(path)
-
-    def __post_init__(self):
-        self.workspace.mkdir(parents=True, exist_ok=True)
-
-        # Specify API key only once and share for llm and embedder.
-        if self.share_key:
-            match self.llm_api_key, self.emb_api_key:
-                case None, None:
-                    raise ValueError(
-                        "When sharing API keys, both llm_api_key and emb_api_key "
-                        "cannot be empty!"
-                    )
-                case str(), str():
-                    raise ValueError(
-                        "When sharing API keys, do not supply both llm_api_key and "
-                        "emb_api_key."
-                    )
-                case None, str():
-                    self.llm_api_key = self.emb_api_key
-                case str(), None:
-                    self.emb_api_key = self.llm_api_key
-
-        self.model = init_chat_model(
-            model=self.llm_model_name,
-            max_completion_tokens=self.max_completion_tokens,
-            **self._make_kwargs(
-                http_client=None
-                if self.ssl_verify_llm
-                else httpx.Client(verify=False),
-                base_url=self.llm_base_url,
-                api_key=self.llm_api_key,
-            ),
+    def __init__(self, config: UrsaConfig):
+        self.config = config
+        self.thread_id = "cli"
+        # expose workspace and init common attributes
+        self.workspace = self.config.workspace
+        self.safe_codes = None
+        self.config.workspace.mkdir(parents=True, exist_ok=True)
+        self.model = init_chat_model(**init_model_kwargs(self.config.llm_model))
+        self.embedding = init_embeddings(
+            **init_model_kwargs(self.config.emb_model)
         )
-
-        self.embedding = (
-            init_embeddings(
-                model=self.emb_model_name,
-                **self._make_kwargs(
-                    http_client=(
-                        None
-                        if self.ssl_verify_emb
-                        else httpx.Client(verify=False)
-                    ),
-                    base_url=self.emb_base_url,
-                    api_key=self.emb_api_key,
-                ),
-            )
-            if self.emb_model_name
-            else None
-        )
-
+        self.mcp_client = start_mcp_client(self.config.mcp_servers)
         self.memory = (
             AgentMemory(
                 embedding_model=self.embedding,
@@ -145,9 +106,17 @@ class HITL:
             else None
         )
 
+        self.agents: dict[str, AgentHITL] = {}
+        self.agents["chat"] = AgentHITL(agent_class=ChatAgent)
+        self.agents["arxiv"] = AgentHITL(agent_class=ArxivAgent)
+        self.agents["execute"] = AgentHITL(agent_class=ExecutionAgent)
+        self.agents["hypothesize"] = AgentHITL(agent_class=HypothesizerAgent)
+        self.agents["plan"] = AgentHITL(agent_class=PlanningAgent)
+        self.agents["web"] = AgentHITL(agent_class=WebSearchAgent)
+        self.agents["recall"] = AgentHITL(agent_class=RecallAgent)
+
         self.last_agent_result = ""
         self.arxiv_state = []
-        self.chatter_state = {"messages": [get_chatter_system_prompt()]}
         self.executor_state = {}
         self.hypothesizer_state = {}
         self.planner_state = {}
@@ -156,108 +125,116 @@ class HITL:
     def update_last_agent_result(self, result: str):
         self.last_agent_result = result
 
-    @cached_property
-    def arxiv_agent(self) -> ArxivAgent:
-        return ArxivAgent(
-            llm=self.model,
-            summarize=self.arxiv_summarize,
-            process_images=self.arxiv_process_images,
-            max_results=self.arxiv_max_results,
-            # rag_embedding=self.embedding,
-            database_path=self.get_path(
-                self.arxiv_database_path, "arxiv_downloaded_papers"
-            ),
-            summaries_path=self.get_path(
-                self.arxiv_summaries_path, "arxiv_generated_summaries"
-            ),
-            vectorstore_path=self.get_path(
-                self.arxiv_vectorstore_path, "arxiv_vectorstores"
-            ),
-            download=self.arxiv_download_papers,
-        )
+    async def _get_checkpointer(
+        self, name: str = "checkpoint"
+    ) -> AsyncSqliteSaver:
+        checkpoint_path = (self.config.workspace / name).with_suffix(".db")
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(str(checkpoint_path))
+        return AsyncSqliteSaver(conn)
 
-    @cached_property
-    def chatter(self) -> ChatAgent:
-        edb_path = self.workspace / "checkpoint.db"
-        edb_path.parent.mkdir(parents=True, exist_ok=True)
-        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
-        self.chatter_checkpointer = SqliteSaver(econn)
-        return ChatAgent(
+    async def get_agent(self, name: str):
+        agent = self.agents[name]
+
+        # Lazily instantiate the agents
+        if agent._agent is None:
+            checkpointer = await self._get_checkpointer(name)
+            agent.instantiate(
+                llm=self.model,
+                checkpointer=checkpointer,
+                thread_id=f"{self.thread_id}_{name}",
+            )
+
+        assert agent._agent is not None
+        return agent
+
+    # Properties for REPL usage
+    @property
+    def llm_model_name(self) -> str:
+        return self.config.llm_model.model
+
+    @property
+    def emb_model_name(self) -> str:
+        return self.config.emb_model.model
+
+    @property
+    def llm_base_url(self) -> Optional[str]:
+        return self.config.llm_model.base_url
+
+    @property
+    def emb_base_url(self) -> Optional[str]:
+        return self.config.emb_model.base_url
+
+    async def run_agent(self, name: str, prompt: str) -> str:
+        assert name in self.agents, f"Unknown agent {name}"
+        agent = await self.get_agent(name)
+        msg = await agent(prompt)
+        assert isinstance(msg, str)
+        self.last_agent_result = msg
+        return msg
+
+    async def arxiv_agent(self) -> ArxivAgent:
+        return ArxivAgent(llm=self.model)
+
+    async def chatter(self) -> ChatAgent:
+        checkpointer = await self._get_checkpointer("chatter")
+        chat = ChatAgent(
             llm=self.model,
-            checkpointer=self.chatter_checkpointer,
+            checkpointer=checkpointer,
             thread_id=self.thread_id + "_chatter",
         )
+        return chat
 
-    @cached_property
-    def executor(self) -> ExecutionAgent:
-        edb_path = self.workspace / "checkpoint.db"
-        edb_path.parent.mkdir(parents=True, exist_ok=True)
-        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
-        self.executor_checkpointer = SqliteSaver(econn)
-        return ExecutionAgent(
+    async def executor(self) -> ExecutionAgent:
+        checkpointer = await self._get_checkpointer("executor")
+        executor = ExecutionAgent(
             llm=self.model,
-            checkpointer=self.executor_checkpointer,
+            checkpointer=checkpointer,
             agent_memory=self.memory,
             thread_id=self.thread_id + "_executor",
             safe_codes=self.safe_codes,
         )
+        tools = await self.mcp_client.get_tools()
+        executor.add_mcp_tool(tools)
+        return executor
 
-    @cached_property
-    def hypothesizer(self) -> HypothesizerAgent:
-        edb_path = self.workspace / "checkpoint.db"
-        edb_path.parent.mkdir(parents=True, exist_ok=True)
-        econn = sqlite3.connect(str(edb_path), check_same_thread=False)
-        self.executor_checkpointer = SqliteSaver(econn)
+    async def hypothesizer(self) -> HypothesizerAgent:
+        checkpointer = await self._get_checkpointer("hypothesizer")
         return HypothesizerAgent(
             llm=self.model,
-            checkpointer=self.executor_checkpointer,
+            checkpointer=checkpointer,
             thread_id=self.thread_id + "_hypothesizer",
         )
 
-    @cached_property
-    def planner(self) -> PlanningAgent:
-        pdb_path = Path(self.workspace) / "checkpoint.db"
-        pdb_path.parent.mkdir(parents=True, exist_ok=True)
-        pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
-        self.planner_checkpointer = SqliteSaver(pconn)
+    async def planner(self) -> PlanningAgent:
+        checkpointer = await self._get_checkpointer("planner")
         return PlanningAgent(
             llm=self.model,
-            checkpointer=self.planner_checkpointer,
+            checkpointer=checkpointer,
             thread_id=self.thread_id + "_planner",
         )
 
-    @cached_property
-    def websearcher(self) -> WebSearchAgent:
-        rdb_path = Path(self.workspace) / "checkpoint.db"
-        rdb_path.parent.mkdir(parents=True, exist_ok=True)
-        rconn = sqlite3.connect(str(rdb_path), check_same_thread=False)
-        self.websearcher_checkpointer = SqliteSaver(rconn)
-
+    async def websearcher(self) -> WebSearchAgent:
+        checkpointer = await self._get_checkpointer("websearcher")
         return WebSearchAgent(
             llm=self.model,
-            max_results=10,
-            database_path="web_db",
-            summaries_path="web_summaries",
-            checkpointer=self.websearcher_checkpointer,
+            checkpointer=checkpointer,
             thread_id=self.thread_id + "_websearch",
         )
 
-    @cached_property
-    def rememberer(self) -> RecallAgent:
-        return (
-            RecallAgent(llm=self.model, memory=self.memory)
-            if self.memory
-            else None
-        )
+    async def rememberer(self) -> RecallAgent:
+        return RecallAgent(llm=self.model, memory=self.memory)
 
-    def run_arxiv(self, prompt: str) -> str:
-        llm_search_query = self.model.invoke(
-            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
-        ).content
+    async def run_arxiv(self, prompt: str) -> str:
+        message: BaseMessage = await self.model.ainvoke(
+            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search.",
+        )
+        llm_search_query = message.content
         print("Searching ArXiv for ", llm_search_query)
 
         if isinstance(llm_search_query, str):
-            arxiv_result = self.arxiv_agent.invoke(
+            arxiv_agent = await self.arxiv_agent
+            arxiv_result = await arxiv_agent.ainvoke(
                 arxiv_search_query=llm_search_query,
                 context=prompt,
             )
@@ -267,7 +244,8 @@ class HITL:
         else:
             raise RuntimeError("Unexpected error while running ArxivAgent!")
 
-    def run_executor(self, prompt: str) -> str:
+    async def run_executor(self, prompt: str) -> str:
+        executor = await self.executor
         if "messages" in self.executor_state and isinstance(
             self.executor_state["messages"], list
         ):
@@ -277,9 +255,10 @@ class HITL:
                     f"The user stated: {prompt}"
                 )
             )
-            executor_state = self.executor.invoke(
+            executor_state = await executor.ainvoke(
                 self.executor_state,
             )
+            self.executor_state = executor_state
 
             if isinstance(
                 content := executor_state["messages"][-1].content, str
@@ -298,7 +277,7 @@ class HITL:
                     )
                 ],
             )
-            self.executor_state = self.executor.invoke(
+            self.executor_state = await executor.ainvoke(
                 self.executor_state,
             )
             self.update_last_agent_result(
@@ -306,19 +285,20 @@ class HITL:
             )
         return f"[Executor Agent Output]:\n {self.last_agent_result}"
 
-    def run_rememberer(self, prompt: str) -> str:
-        memory_output = self.rememberer.invoke(prompt) if self.memory else None
+    async def run_rememberer(self, prompt: str) -> str:
+        rememberer = await self.rememberer
+        memory_output = await rememberer.ainvoke(prompt)
         return f"[Rememberer Output]:\n {memory_output}"
 
-    def run_chatter(self, prompt: str) -> str:
+    async def run_chatter(self, prompt: str) -> str:
+        chatter = await self.chatter
+        assert chatter is not None
         self.chatter_state["messages"].append(
             HumanMessage(
                 content=f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
             )
         )
-        self.chatter_state = self.chatter.invoke(
-            self.chatter_state,
-        )
+        self.chatter_state = await chatter.ainvoke(self.chatter_state)
         chat_output = self.chatter_state["messages"][-1]
 
         if not isinstance(chat_output.content, str):
@@ -327,13 +307,13 @@ class HITL:
             )
 
         self.update_last_agent_result(chat_output.content)
-        # return f"[{self.model.model_name}]: {self.last_agent_result}"
         return f"{self.last_agent_result}"
 
-    def run_hypothesizer(self, prompt: str) -> str:
+    async def run_hypothesizer(self, prompt: str) -> str:
+        hypothesizer = await self.hypothesizer
         question = f"The last agent output was: {self.last_agent_result}\n\nThe user stated: {prompt}"
 
-        self.hypothesizer_state = self.hypothesizer.invoke(
+        self.hypothesizer_state = await hypothesizer.ainvoke(
             prompt=question,
             max_iterations=2,
         )
@@ -344,7 +324,8 @@ class HITL:
         self.update_last_agent_result(solution)
         return f"[Hypothesizer Agent Output]:\n {self.last_agent_result}"
 
-    def run_planner(self, prompt: str) -> str:
+    async def run_planner(self, prompt: str) -> str:
+        planner = await self.planner
         self.planner_state.setdefault("messages", [])
         self.planner_state["messages"].append(
             HumanMessage(
@@ -352,27 +333,19 @@ class HITL:
                 f"The user stated: {prompt}"
             )
         )
-        self.planner_state = self.planner.invoke(
-            self.planner_state,
-        )
-
-        plan = "\n\n\n".join(
-            f"## {ii} -- {step['name']}\n\n"
-            + "\n\n".join(
-                f"* {key}\n    * {value}" for key, value in step.items()
-            )
-            for ii, step in enumerate(self.planner_state["plan_steps"])
-        )
-        self.update_last_agent_result(plan)
+        self.planner_state = await planner.ainvoke(self.planner_state)
+        self.update_last_agent_result(str(self.planner_state))
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
-    def run_websearcher(self, prompt: str) -> str:
-        llm_search_query = self.model.invoke(
-            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
-        ).content
+    async def run_websearcher(self, prompt: str) -> str:
+        message: BaseMessage = await self.model.ainvoke(
+            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search.",
+        )
+        llm_search_query = message.content
         print("Searching Web for ", llm_search_query)
         if isinstance(llm_search_query, str):
-            web_result = self.websearcher.invoke(
+            websearcher = await self.websearcher
+            web_result = await websearcher.ainvoke(
                 query=llm_search_query,
                 context=prompt,
             )
@@ -382,71 +355,94 @@ class HITL:
         else:
             raise RuntimeError("Unexpected error while running WebSearchAgent!")
 
+    def as_mcp_server(self, **kwargs):
+        mcp = FastMCP("URSA", **kwargs)
+
+        # Add all agents
+        for name, agent in self.agents.items():
+
+            def call_agent(prompt: str) -> str:
+                return self.run_agent(name, prompt)
+
+            mcp.add_tool(call_agent, description=agent.description)
+
+        return mcp
+
+
+class AsyncLoopThread:
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def submit(self, coro):
+        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+
 
 class UrsaRepl(Cmd):
-    console = make_console()
-    exit_message: str = "[dim]Exiting ursa..."
+    exit_message: str = "\n[dim]Exiting ursa..."
     _help_message: str = "[dim]For help, type: ? or help. Exit with Ctrl+d."
     prompt: str = "ursa> "
 
-    def get_input(self, msg: str, end: str = "", **kwargs):
-        # NOTE: Printing in rich with Prompt somehow gets removed when
-        # backspacing. This is a workaround that captures the print output and
-        # converts it to the proper string format for your terminal.
-        with self.console.capture() as capture:
-            self.console.print(msg, end=end, **kwargs)
-        return input(capture.get())
-
     def __init__(self, hitl: HITL, **kwargs):
-        self.hitl = hitl
         super().__init__(**kwargs)
-
-        cmds_doc, help, cmds_undoc = self.get_help_strings()
-        self.hitl.chatter_state["messages"].append(
-            f"The commands available to the user are {', '.join(cmds_doc)}."
+        self.hitl = hitl
+        self.ursa_loop = AsyncLoopThread()
+        self.console = Console(
+            file=self.stdout,
+            theme=Theme({
+                "success": "green",
+                "error": "bold red",
+                "dim": "grey50",
+                "warn": "yellow",
+                "emph": "bold cyan",
+            }),
         )
+
+    def __getattribute__(self, name: str) -> Any:
+
+        # Dynamically add do_agent methods
+        if name.startswith("do_"):
+            agent_name = name.removeprefix("do_")
+            if agent_name in self.hitl.agents.keys():
+
+                def run_agent(prompt):
+                    return self.run_agent(agent_name, prompt)
+
+                run_agent.__doc__ = self.hitl.agents[agent_name].description
+                return run_agent
+
+        return super().__getattribute__(name)
+
+    def get_names(self) -> list[str]:
+        names = super().get_names()
+        for name in self.hitl.agents.keys():
+            names.append(f"do_{name}")
+        return names
+
+    def run_agent(self, name: str, prompt: str | None = None):
+        if not prompt:
+            prompt = input(f"{name}: ")
+        with self.console.status("Generating response"):
+            result = self.hitl.run_agent(name, prompt)
+            result = self.ursa_loop.submit(result)
+
+        assert isinstance(result, str)
+        self.show(result)
 
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)
 
     def default(self, prompt: str):
-        with self.console.status("Generating response"):
-            response = self.hitl.run_chatter(prompt)
-            self.show(response)
+        self.run_agent("chat", prompt)
 
     def postcmd(self, stop: bool, line: str):
-        print()
+        print(file=self.stdout)
         return stop
-
-    def get_help_strings(self):
-        """
-        Extracted from cmd.Cmd.do_help
-        """
-        names = self.get_names()
-        cmds_doc = []
-        cmds_undoc = []
-        help = {}
-        for name in names:
-            if name[:5] == "help_":
-                help[name[5:]] = 1
-        names.sort()
-        # There can be duplicates if routines overridden
-        prevname = ""
-        for name in names:
-            if name[:3] == "do_":
-                if name == prevname:
-                    continue
-                prevname = name
-                cmd = name[3:]
-                if cmd in help:
-                    cmds_doc.append(cmd)
-                    del help[cmd]
-                elif getattr(self, name).__doc__:
-                    cmds_doc.append(cmd)
-                else:
-                    cmds_undoc.append(cmd)
-
-        return cmds_doc, help, cmds_undoc
 
     def do_exit(self, _: str):
         """Exit shell."""
@@ -465,38 +461,6 @@ class UrsaRepl(Cmd):
     def emptyline(self):
         """Do nothing when an empty line is entered"""
         pass
-
-    def run_agent(self, agent: str, run: Callable[[str], str]):
-        # prompt = self.get_input(f"Enter your prompt for [emph]{agent}[/]: ")
-        prompt = input(f"Enter your prompt for {agent}: ")
-        with self.console.status("Generating response"):
-            return run(prompt)
-
-    def do_arxiv(self, _: str):
-        """Run ArxivAgent"""
-        self.show(self.run_agent("Arxiv Agent", self.hitl.run_arxiv))
-
-    def do_plan(self, _: str):
-        """Run PlanningAgent"""
-        self.show(self.run_agent("Planning Agent", self.hitl.run_planner))
-
-    def do_execute(self, _: str):
-        """Run ExecutionAgent"""
-        self.show(self.run_agent("Execution Agent", self.hitl.run_executor))
-
-    def do_web(self, _: str):
-        """Run WebSearchAgent"""
-        self.show(self.run_agent("Websearch Agent", self.hitl.run_websearcher))
-
-    def do_recall(self, _: str):
-        """Run RecallAgent"""
-        self.show(self.run_agent("Recall Agent", self.hitl.run_rememberer))
-
-    def do_hypothesize(self, _: str):
-        """Run HypothesizerAgent"""
-        self.show(
-            self.run_agent("Hypothesizer Agent", self.hitl.run_hypothesizer)
-        )
 
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
