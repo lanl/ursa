@@ -5,7 +5,7 @@ from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from ursa.agents import SimulatorAgent
+from ursa.agents.experimental.simulation_agent import SimulatorAgent
 
 problem = (
     "Your task is to perform a parameter sweep of dcopf using an open source "
