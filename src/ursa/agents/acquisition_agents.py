@@ -323,7 +323,11 @@ class BaseAcquisitionAgent(BaseAgent):
         return str(state)  # Fallback, don't do this
 
     async def _search_query(self, state: AcquisitionState) -> AcquisitionState:
-        """Generate a search query from the input search task"""
+        """Generate a search query from the input search task (context)"""
+        existing = state.get("query")
+        if existing:
+            return state
+
         context = state["context"]
         query = await self.llm.ainvoke(
             f"The user stated {context}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."

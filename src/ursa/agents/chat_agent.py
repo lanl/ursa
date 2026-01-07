@@ -1,4 +1,3 @@
-import logging
 from typing import Annotated, TypedDict, Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -29,8 +28,6 @@ class ChatAgent(BaseAgent[ChatState]):
                 messages=[SystemMessage(content=get_chatter_system_prompt())]
             )
         state["messages"].append(HumanMessage(content=prompt))
-        for id, msg in enumerate(state["messages"]):
-            logging.info(f"msg {id}: {msg.pretty_repr()}")
 
         return state
 

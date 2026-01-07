@@ -317,7 +317,7 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
                 f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "
                 f"for this project.{RESET}"
             )
-        new_state["workspace"].mkdir(exist_ok=False)
+        new_state["workspace"].mkdir(exist_ok=True)
 
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
@@ -551,6 +551,9 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
 
         # The graph completes at the "recap" node.
         self.graph.set_finish_point("recap")
+
+    def format_result(self, state: ExecutionState) -> str:
+        return state["messages"][-1].content
 
     async def add_mcp_tool(
         self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]

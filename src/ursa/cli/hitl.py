@@ -1,4 +1,3 @@
-import logging
 import asyncio
 import threading
 import os
@@ -12,7 +11,6 @@ import httpx
 from langchain.chat_models import init_chat_model
 from mcp.server.fastmcp import FastMCP
 from langchain.embeddings import init_embeddings
-from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
 from rich.markdown import Markdown
@@ -29,7 +27,6 @@ from ursa.agents import (
     WebSearchAgent,
 )
 from ursa.config import UrsaConfig
-from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
 
@@ -67,13 +64,23 @@ class AgentHITL:
             return self.agent_class.__doc__
         return self._agent.__doc__
 
-    async def __call__(self, prompt: str) -> str:
+    async def __call__(
+        self, prompt: str, last_agent_result: str | None = None
+    ) -> str:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
+
+        # Inject the previous agent's response into the query
+        if last_agent_result is not None:
+            prompt = "\n".join([
+                f"The last agent output was: {last_agent_result}",
+                f"The user stated: {prompt}",
+            ])
 
         # Setup the agents input state from it's current state and plain text input
         # then invoke the agent and extract a final message from it's new state
         query = agent.format_query(prompt, state=self.state)
+
         new_state = await agent.ainvoke(query)
         msg = agent.format_result(new_state)
         self.state = new_state
@@ -107,7 +114,9 @@ class HITL:
         self.agents: dict[str, AgentHITL] = {}
         self.agents["chat"] = AgentHITL(agent_class=ChatAgent)
         self.agents["arxiv"] = AgentHITL(agent_class=ArxivAgent)
-        self.agents["execute"] = AgentHITL(agent_class=ExecutionAgent)
+        self.agents["execute"] = AgentHITL(
+            agent_class=ExecutionAgent, config={"agent_memory": self.memory}
+        )
         self.agents["hypothesize"] = AgentHITL(agent_class=HypothesizerAgent)
         self.agents["plan"] = AgentHITL(agent_class=PlanningAgent)
         self.agents["web"] = AgentHITL(agent_class=WebSearchAgent)
@@ -118,15 +127,7 @@ class HITL:
                 config={"memory": self.memory},
             )
 
-        self.last_agent_result = ""
-        self.arxiv_state = []
-        self.executor_state = {}
-        self.hypothesizer_state = {}
-        self.planner_state = {}
-        self.websearcher_state = []
-
-    def update_last_agent_result(self, result: str):
-        self.last_agent_result = result
+        self.last_agent_result = None
 
     async def _get_checkpointer(
         self, name: str = "checkpoint"
@@ -151,197 +152,13 @@ class HITL:
         assert agent._agent is not None
         return agent
 
-    # Properties for REPL usage
-    @property
-    def llm_model_name(self) -> str:
-        return self.config.llm_model.model
-
-    @property
-    def emb_model_name(self) -> str:
-        return self.config.emb_model.model
-
-    @property
-    def llm_base_url(self) -> Optional[str]:
-        return self.config.llm_model.base_url
-
-    @property
-    def emb_base_url(self) -> Optional[str]:
-        return self.config.emb_model.base_url
-
     async def run_agent(self, name: str, prompt: str) -> str:
         assert name in self.agents, f"Unknown agent {name}"
         agent = await self.get_agent(name)
-        msg = await agent(prompt)
+        msg = await agent(prompt, last_agent_result=self.last_agent_result)
         assert isinstance(msg, str)
         self.last_agent_result = msg
         return msg
-
-    async def arxiv_agent(self) -> ArxivAgent:
-        return ArxivAgent(llm=self.model)
-
-    async def chatter(self) -> ChatAgent:
-        checkpointer = await self._get_checkpointer("chatter")
-        chat = ChatAgent(
-            llm=self.model,
-            checkpointer=checkpointer,
-            thread_id=self.thread_id + "_chatter",
-        )
-        return chat
-
-    async def executor(self) -> ExecutionAgent:
-        checkpointer = await self._get_checkpointer("executor")
-        executor = ExecutionAgent(
-            llm=self.model,
-            checkpointer=checkpointer,
-            agent_memory=self.memory,
-            thread_id=self.thread_id + "_executor",
-            safe_codes=self.safe_codes,
-        )
-        tools = await self.mcp_client.get_tools()
-        executor.add_mcp_tool(tools)
-        return executor
-
-    async def hypothesizer(self) -> HypothesizerAgent:
-        checkpointer = await self._get_checkpointer("hypothesizer")
-        return HypothesizerAgent(
-            llm=self.model,
-            checkpointer=checkpointer,
-            thread_id=self.thread_id + "_hypothesizer",
-        )
-
-    async def planner(self) -> PlanningAgent:
-        checkpointer = await self._get_checkpointer("planner")
-        return PlanningAgent(
-            llm=self.model,
-            checkpointer=checkpointer,
-            thread_id=self.thread_id + "_planner",
-        )
-
-    async def websearcher(self) -> WebSearchAgent:
-        checkpointer = await self._get_checkpointer("websearcher")
-        return WebSearchAgent(
-            llm=self.model,
-            checkpointer=checkpointer,
-            thread_id=self.thread_id + "_websearch",
-        )
-
-    async def rememberer(self) -> RecallAgent:
-        return RecallAgent(llm=self.model, memory=self.memory)
-
-    async def run_arxiv(self, prompt: str) -> str:
-        message: BaseMessage = await self.model.ainvoke(
-            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search.",
-        )
-        llm_search_query = message.content
-        print("Searching ArXiv for ", llm_search_query)
-
-        if isinstance(llm_search_query, str):
-            arxiv_agent = await self.arxiv_agent
-            arxiv_result = await arxiv_agent.ainvoke(
-                arxiv_search_query=llm_search_query,
-                context=prompt,
-            )
-            self.arxiv_state.append(arxiv_result)
-            self.update_last_agent_result(arxiv_result)
-            return f"[ArXiv Agent Output]:\n {self.last_agent_result}"
-        else:
-            raise RuntimeError("Unexpected error while running ArxivAgent!")
-
-    async def run_executor(self, prompt: str) -> str:
-        executor = await self.executor
-        if "messages" in self.executor_state and isinstance(
-            self.executor_state["messages"], list
-        ):
-            self.executor_state["messages"].append(
-                HumanMessage(
-                    f"The last agent output was: {self.last_agent_result}\n"
-                    f"The user stated: {prompt}"
-                )
-            )
-            executor_state = await executor.ainvoke(
-                self.executor_state,
-            )
-            self.executor_state = executor_state
-
-            if isinstance(
-                content := executor_state["messages"][-1].content, str
-            ):
-                self.update_last_agent_result(content)
-            else:
-                raise TypeError(
-                    f"content is supposed to have type str! Instead, it is {content}"
-                )
-        else:
-            self.executor_state = dict(
-                workspace=self.workspace,
-                messages=[
-                    HumanMessage(
-                        f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
-                    )
-                ],
-            )
-            self.executor_state = await executor.ainvoke(
-                self.executor_state,
-            )
-            self.update_last_agent_result(
-                self.executor_state["messages"][-1].content
-            )
-        return f"[Executor Agent Output]:\n {self.last_agent_result}"
-
-    async def run_rememberer(self, prompt: str) -> str:
-        rememberer = await self.rememberer
-        memory_output = await rememberer.ainvoke(prompt)
-        return f"[Rememberer Output]:\n {memory_output}"
-
-    async def run_chatter(self, prompt: str) -> str:
-        chatter = await self.chatter
-        assert chatter is not None
-        self.chatter_state["messages"].append(
-            HumanMessage(
-                content=f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
-            )
-        )
-        self.chatter_state = await chatter.ainvoke(self.chatter_state)
-        chat_output = self.chatter_state["messages"][-1]
-
-        if not isinstance(chat_output.content, str):
-            raise TypeError(
-                f"chat_output is not a str! Instead, it is: {type(chat_output.content)}."
-            )
-
-        self.update_last_agent_result(chat_output.content)
-        return f"{self.last_agent_result}"
-
-    async def run_planner(self, prompt: str) -> str:
-        planner = await self.planner
-        self.planner_state.setdefault("messages", [])
-        self.planner_state["messages"].append(
-            HumanMessage(
-                f"The last agent output was: {self.last_agent_result}\n"
-                f"The user stated: {prompt}"
-            )
-        )
-        self.planner_state = await planner.ainvoke(self.planner_state)
-        self.update_last_agent_result(str(self.planner_state))
-        return f"[Planner Agent Output]:\n {self.last_agent_result}"
-
-    async def run_websearcher(self, prompt: str) -> str:
-        message: BaseMessage = await self.model.ainvoke(
-            f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search.",
-        )
-        llm_search_query = message.content
-        print("Searching Web for ", llm_search_query)
-        if isinstance(llm_search_query, str):
-            websearcher = await self.websearcher
-            web_result = await websearcher.ainvoke(
-                query=llm_search_query,
-                context=prompt,
-            )
-            self.websearcher_state.append(web_result)
-            self.update_last_agent_result(web_result)
-            return f"[WebSearch Agent Output]:\n {self.last_agent_result}"
-        else:
-            raise RuntimeError("Unexpected error while running WebSearchAgent!")
 
     def as_mcp_server(self, **kwargs):
         mcp = FastMCP("URSA", **kwargs)
@@ -372,7 +189,7 @@ class AsyncLoopThread:
 
 
 class UrsaRepl(Cmd):
-    exit_message: str = "\n[dim]Exiting ursa..."
+    exit_message: str = "[dim]Exiting ursa..."
     _help_message: str = "[dim]For help, type: ? or help. Exit with Ctrl+d."
     prompt: str = "ursa> "
 
@@ -439,7 +256,7 @@ class UrsaRepl(Cmd):
 
     def do_EOF(self, _: str):
         """Exit on Ctrl+D."""
-        self.show(self.exit_message, markdown=False)
+        self.show("\n" + self.exit_message, markdown=False)
         return True
 
     def do_clear(self, _: str):
@@ -468,20 +285,20 @@ class UrsaRepl(Cmd):
     def do_models(self, _: str):
         """List models and base urls"""
         llm_provider, llm_name = get_provider_and_model(
-            self.hitl.llm_model_name
+            self.hitl.config.llm_model.model
         )
         self.show(
             f"[dim]*[/] LLM: [emph]{llm_name} "
-            f"[dim]{self.hitl.llm_base_url or llm_provider}",
+            f"[dim]{self.hitl.config.llm_model.base_url or llm_provider}",
             markdown=False,
         )
 
         emb_provider, emb_name = get_provider_and_model(
-            self.hitl.emb_model_name
+            self.hitl.config.emb_model.model
         )
         self.show(
             f"[dim]*[/] Embedding Model: [emph]{emb_name} "
-            f"[dim]{self.hitl.emb_base_url or emb_provider}",
+            f"[dim]{self.hitl.config.emb_model.base_url or emb_provider}",
             markdown=False,
         )
 

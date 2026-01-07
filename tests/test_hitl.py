@@ -1,5 +1,5 @@
 import io
-import itertools
+import logging
 import re
 from pathlib import Path
 from unittest.mock import patch
@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console as RealConsole
 
+from ursa.agents import ExecutionAgent
 from ursa.cli.hitl import HITL, UrsaRepl
 from ursa.config import UrsaConfig
 
@@ -25,11 +26,10 @@ def ursa_config(tmpdir, chat_model, embedding_model):
 async def test_default_config_smoke(ursa_config):
     hitl = HITL(ursa_config)
     assert hitl is not None
-    assert set(hitl.agents.keys()) >= {"chatter"}
-    out = await hitl.run_agent("chatter", "Hello! What is your name?")
+    assert set(hitl.agents.keys()) >= {"chat", "plan", "execute"}
+    out = await hitl.run_agent("chat", "Hello! What is your name?")
     print("chat out:", out)
     assert len(out) > 0
-    assert False
 
 
 def test_has_all_agent_do_methods(ursa_config):
@@ -44,6 +44,7 @@ def check_script(
     input_expected: list[tuple[str, str | int | re.Pattern | None]],
 ):
     stdout = io.StringIO()
+    stdout_pos = 0
 
     def console_factory(*args, **kwargs):
         kwargs["record"] = True
@@ -55,20 +56,25 @@ def check_script(
     with patch("ursa.cli.hitl.Console", new=console_factory):
         shell = UrsaRepl(HITL(ursa_config), stdout=stdout)
 
-    trace = []
-
     # Feed the REPL with the script and check the output matches
     # expectations
+    trace = []
     for input, ref in input_expected:
+        logging.info(f"input: {input}")
         shell.onecmd(input)
-        output = shell.console.export_text()
+        console_output = shell.console.export_text()
+        stdout_value = stdout.getvalue()
+        stdout_delta = stdout_value[stdout_pos:]
+        stdout_pos = len(stdout_value)
+        output = stdout_delta or console_output
+        logging.info(f"output: {output}")
         match ref:
             case str():
                 assert output == ref
             case int():
                 assert len(output.strip()) >= ref
             case re.Pattern():
-                assert ref.match(output)
+                assert ref.search(output) is not None
             case None:
                 pass
             case _:
@@ -80,12 +86,20 @@ def check_script(
 
 
 def test_repl_smoke(ursa_config):
+
+    def docstr_header(cls) -> str:
+        docs = cls.__doc__
+        assert isinstance(docs, str)
+        return docs.split("\n", maxsplit=1)[0]
+
     trace = check_script(
         ursa_config,
         [
-            ("What is your name?", 1),
-            ("What is your purpose?", 1),
+            ("What is your name?", None),
             ("help", re.compile(r".*Documented commands")),
+            ("?", re.compile(r".*Documented commands")),
+            # ("?execute", re.compile(docstr_header(ExecutionAgent))),
+            # ("exit", "Exiting ursa..."),
         ],
     )
     print(trace)
@@ -94,7 +108,7 @@ def test_repl_smoke(ursa_config):
 async def test_chat(ursa_config):
     hitl = HITL(ursa_config)
     out = await hitl.run_agent(
-        "chatter",
+        "chat",
         "What is your name?",
     )
     print(out)

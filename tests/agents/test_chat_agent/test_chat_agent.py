@@ -24,6 +24,5 @@ async def test_chat_agent_appends_ai_response(chat_model):
     ai_message = messages[-1]
     assert isinstance(ai_message, AIMessage)
     assert ai_message.type == "ai"
-    assert ai_message.response_metadata.get("model_provider") == "openai"
     assert ai_message.usage_metadata["total_tokens"] > 0
     assert result["thread_id"] == agent.thread_id

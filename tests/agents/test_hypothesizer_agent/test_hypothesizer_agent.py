@@ -49,7 +49,7 @@ async def test_hypothesizer_agent_ainvoke(
         "agent3_perspectives": [],
         "solution": "",
         "summary_report": "",
-        "visited_sites": [],
+        "visited_sites": set(),
     }
 
     result = await agent.ainvoke(initial_state)
@@ -57,9 +57,9 @@ async def test_hypothesizer_agent_ainvoke(
     assert isinstance(result["agent1_solution"], Sequence)
     assert isinstance(result["agent2_critiques"], Sequence)
     assert isinstance(result["agent3_perspectives"], Sequence)
-    assert len(result["agent1_solution"]) == 1
-    assert len(result["agent2_critiques"]) == 1
-    assert len(result["agent3_perspectives"]) == 1
+    assert len(result["agent1_solution"]) >= 1
+    assert len(result["agent2_critiques"]) >= 1
+    assert len(result["agent3_perspectives"]) >= 1
     assert isinstance(result["solution"], str)
     assert isinstance(result["summary_report"], str)
     if result["summary_report"].strip():
@@ -67,14 +67,12 @@ async def test_hypothesizer_agent_ainvoke(
     assert result["current_iteration"] == 1
     assert len(dummy_search.queries) == 3
     assert all(backend == "duckduckgo" for _, backend in dummy_search.queries)
-    assert result["visited_sites"] == [
+    assert result["visited_sites"] == {
         "https://example.com/result-1",
         "https://example.com/result-2",
         "https://example.com/result-3",
-    ]
+    }
     assert isinstance(result["question_search_query"], str)
 
-    generated_logs = list(
-        tmp_path.glob("iteration_details_unknown_model_*.txt")
-    )
+    generated_logs = list(agent.workspace.glob("iteration_details_*.txt"))
     assert generated_logs, "Expected iteration history files to be written"

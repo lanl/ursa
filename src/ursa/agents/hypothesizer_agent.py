@@ -1,8 +1,9 @@
 import ast
 
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Literal, TypedDict, cast
-from operator import add
+from operator import add, or_
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -40,7 +41,7 @@ class HypothesizerState(TypedDict, total=False):
     agent3_perspectives: list[str]
     solution: str
     summary_report: str
-    visited_sites: set[str]
+    visited_sites: Annotated[set[str], or_]
 
 
 class HypothesizerAgent(BaseAgent[HypothesizerState]):
@@ -318,7 +319,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # Write iteration_details to disk as .txt
         # -----------------------------
         timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        txt_filename = f"iteration_details_{timestamp_str}_chat_history.txt"
+        txt_filename = Path(
+            self.workspace,
+            f"iteration_details_{timestamp_str}_chat_history.txt",
+        )
         with open(txt_filename, "w", encoding="utf-8") as f:
             f.write(iteration_details)
 
