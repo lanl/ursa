@@ -95,7 +95,7 @@ class ExecutionState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     current_progress: str
     code_files: list[str]
-    workspace: str
+    workspace: Path
     symlinkdir: dict
     model: BaseChatModel
 
@@ -311,13 +311,13 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
 
         # 1) Ensure a workspace directory exists, creating a named one if absent.
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = randomname.get_name()
+            new_state["workspace"] = self.workspace / randomname.get_name()
             print(
                 f"{RED}Creating the folder "
                 f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "
                 f"for this project.{RESET}"
             )
-        os.makedirs(new_state["workspace"], exist_ok=True)
+        new_state["workspace"].mkdir(exist_ok=False)
 
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
