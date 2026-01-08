@@ -10,7 +10,7 @@ from fastmcp.client import Client
 
 from ursa.agents import ExecutionAgent
 from ursa.cli.hitl import HITL, UrsaRepl
-from ursa.config import UrsaConfig
+from ursa.cli.config import UrsaConfig
 
 
 @pytest.fixture(scope="function")

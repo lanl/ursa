@@ -28,7 +28,7 @@ from ursa.agents import (
     RecallAgent,
     WebSearchAgent,
 )
-from ursa.config import UrsaConfig
+from ursa.cli.config import UrsaConfig
 from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
 
