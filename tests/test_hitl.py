@@ -5,12 +5,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from rich.console import Console as RealConsole
 from fastmcp.client import Client
+from rich.console import Console as RealConsole
 
-from ursa.agents import ExecutionAgent
-from ursa.cli.hitl import HITL, UrsaRepl
 from ursa.cli.config import UrsaConfig
+from ursa.cli.hitl import HITL, UrsaRepl
 
 
 @pytest.fixture(scope="function")

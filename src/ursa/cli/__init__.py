@@ -1,8 +1,9 @@
 import logging
+
 from jsonargparse import ArgumentParser, set_parsing_settings
 
 from ursa import __version__
-from ursa.cli.config import LoggingLevel, UrsaConfig, MCPServerConfig
+from ursa.cli.config import LoggingLevel, MCPServerConfig, UrsaConfig
 
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
 

@@ -1,7 +1,7 @@
-from tempfile import TemporaryDirectory
-from typing import Literal
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Literal
 
 LoggingLevel = Literal[
     "debug", "info", "notice", "warning", "error", "critical"

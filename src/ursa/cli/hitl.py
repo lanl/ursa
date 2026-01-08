@@ -1,17 +1,15 @@
-import logging
 import asyncio
-import threading
 import os
 import platform
+import threading
 from cmd import Cmd
-from typing import Any, Optional
 from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import aiosqlite
 import httpx
-from langchain.chat_models import init_chat_model
 from fastmcp import FastMCP
-
+from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
