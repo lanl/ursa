@@ -6,9 +6,9 @@ from ursa.agents import RAGAgent
 
 
 async def test_rag_agent_retrieves_contextual_documents(
-    chat_model, embedding_model, monkeypatch, tmpdir: Path
+    chat_model, embedding_model, monkeypatch, tmpdir
 ):
-    workspace = Path(tmpdir / "rag_workspace")
+    workspace = Path(tmpdir)
     database_dir = workspace / "database"
     summaries_dir = workspace / "summaries"
     vectors_dir = workspace / "vectors"
@@ -38,7 +38,7 @@ async def test_rag_agent_retrieves_contextual_documents(
     agent = RAGAgent(
         llm=chat_model,
         embedding=embedding_model,
-        workspace=workspace,
+        workspace=tmpdir,
         database_path="database",
         summaries_path="summaries",
         vectorstore_path="vectors",

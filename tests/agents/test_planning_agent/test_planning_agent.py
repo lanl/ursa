@@ -1,14 +1,12 @@
-from pathlib import Path
-
 from langchain_core.messages import HumanMessage
 
-from ursa.agents.planning_agent import PlanningAgent, Plan, PlanStep
+from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
-async def test_planning_agent_creates_structured_plan(chat_model, tmpdir: Path):
+async def test_planning_agent_creates_structured_plan(chat_model, tmpdir):
     planning_agent = PlanningAgent(
         llm=chat_model.model_copy(update={"max_tokens": 4000}),
-        workspace=tmpdir / ".ursa",
+        workspace=tmpdir,
         max_reflection_steps=0,
     )
 

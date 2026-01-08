@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from pathlib import Path
 
 import pytest
 
@@ -30,16 +29,16 @@ class DummySearchTool:
 async def test_hypothesizer_agent_ainvoke(
     chat_model,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    tmpdir,
 ) -> None:
     dummy_search = DummySearchTool()
     monkeypatch.setattr(
         "ursa.agents.hypothesizer_agent.DDGS",
         lambda: dummy_search,
     )
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(tmpdir)
 
-    agent = HypothesizerAgent(llm=chat_model)
+    agent = HypothesizerAgent(llm=chat_model, workspace=tmpdir)
     initial_state = {
         "question": "How can we reduce the cooling energy usage in edge data centers?",
         "current_iteration": 0,
