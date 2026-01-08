@@ -15,6 +15,7 @@ class ModelConfig:
     api_key: str | None = None
     max_completion_tokens: int | None = None
     ssl_verify: bool = True
+    temperature: float | None = None
 
 
 @dataclass

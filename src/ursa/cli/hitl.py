@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import threading
 import os
@@ -9,7 +10,8 @@ from dataclasses import dataclass, field
 import aiosqlite
 import httpx
 from langchain.chat_models import init_chat_model
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
+
 from langchain.embeddings import init_embeddings
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
@@ -161,17 +163,33 @@ class HITL:
         return msg
 
     def as_mcp_server(self, **kwargs):
-        mcp = FastMCP("URSA", **kwargs)
+        from ursa import __version__ as ursa_version
+
+        mcp = FastMCP(
+            "URSA",
+            version=ursa_version,
+            on_duplicate_tools="error",
+            on_duplicate_prompts="error",
+            on_duplicate_resources="error",
+            **kwargs,
+        )
 
         # Add all agents
         for name, agent in self.agents.items():
-
-            def call_agent(prompt: str) -> str:
-                return self.run_agent(name, prompt)
-
-            mcp.add_tool(call_agent, description=agent.description)
+            mcp.tool(
+                self._make_agent_tool(name),
+                name=name,
+                description=agent.description,
+            )
 
         return mcp
+
+    def _make_agent_tool(self, agent_name: str):
+        # Need to ensure the call_agent closure is correctly constructed
+        async def call_agent(prompt: str) -> str:
+            return await self.run_agent(agent_name, prompt)
+
+        return call_agent
 
 
 class AsyncLoopThread:

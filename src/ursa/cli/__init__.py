@@ -18,20 +18,21 @@ def main(args=None):
 
     # Run Ursa as an MCP Server
     mcp_parser = ArgumentParser()
-    mcp_parser.add_class_arguments(UrsaConfig, help="URSA Config")
     mcp_parser.add_class_arguments(MCPServerConfig)
     subparsers.add_subcommand(
         "mcp-server",
         mcp_parser,
         help="[Experimental] Run URSA as an MCP server",
+        dest="mcp_server",
     )
 
     cfg = parser.parse_args(args=args)
+    ursa_config = UrsaConfig.from_namespace(cfg)
+    cmd_config = cfg.get(cfg.subcommand, None)
+    logging.basicConfig(level=cfg.log_level.upper())
     match cfg.subcommand:
         case None:
             from ursa.cli.hitl import HITL, UrsaRepl
-
-            logging.basicConfig(level=cfg.log_level.upper())
 
             ursa_config = UrsaConfig.from_namespace(cfg)
             hitl = HITL(ursa_config)
@@ -40,9 +41,10 @@ def main(args=None):
         case "mcp-server":
             from ursa.cli.hitl import HITL
 
-            ursa_config = UrsaConfig.from_namespace(cfg)
             hitl = HITL(ursa_config)
             mcp = hitl.as_mcp_server(
-                host=cfg.host, port=cfg.port, log_level=cfg.log_level
+                host=cmd_config.host,
+                port=cmd_config.port,
+                log_level=cmd_config.log_level.upper(),
             )
-            mcp.run(transport=cfg.transport)
+            mcp.run(transport=cmd_config.transport)

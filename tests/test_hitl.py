@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console as RealConsole
+from fastmcp.client import Client
 
 from ursa.agents import ExecutionAgent
 from ursa.cli.hitl import HITL, UrsaRepl
@@ -129,3 +130,27 @@ def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
         [(f"{agent} What is your purpose?", None)],
     )
     print(trace)
+
+
+@pytest.fixture
+async def mcp_server(ursa_config):
+    hitl = HITL(ursa_config)
+    server = hitl.as_mcp_server()
+    async with Client(transport=server) as client:
+        yield client
+        print("Hey")
+
+
+async def test_mcp_smoke(mcp_server: Client):
+    tools = await mcp_server.list_tools()
+    assert len(tools) > 0
+    await mcp_server.list_resources()
+    await mcp_server.list_prompts()
+
+
+@pytest.mark.parametrize(
+    "agent,query", [("chat", "Who are you?"), ("recall", "Who am I?")]
+)
+async def test_mcp_agents(mcp_server: Client, agent: str, query: str):
+    response = await mcp_server.call_tool(agent, {"prompt": query})
+    assert isinstance(response.structured_content["result"], str)
