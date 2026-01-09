@@ -14,11 +14,11 @@ class StubMemory:
 
 
 @pytest.mark.asyncio
-async def test_recall_agent_ainvoke_returns_memory(chat_model):
+async def test_recall_agent_ainvoke_returns_memory(chat_model, tmpdir):
     memory_stub = StubMemory([
         "The lab stored baseline experiment logs in the west wing archive."
     ])
-    agent = RecallAgent(llm=chat_model, memory=memory_stub)
+    agent = RecallAgent(llm=chat_model, memory=memory_stub, workspace=tmpdir)
 
     # RecallAgent's initializer does not currently attach memory to the instance,
     # so we set it up here to mirror the expected runtime configuration.

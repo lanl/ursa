@@ -1,12 +1,15 @@
 import importlib
 import inspect
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
+from langchain.tools import tool
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode
 
-from ursa.agents.base import BaseAgent
+from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.util.memory_logger import AgentMemory
 
 
@@ -76,3 +79,129 @@ def test_interface(agent_instance):
     assert isinstance(g, StateGraph)
     gc = agent_instance.compiled_graph
     assert isinstance(gc, CompiledStateGraph)
+
+
+def _make_tool(name: str):
+    @tool(name)
+    def simple_tool(message: str) -> str:
+        """Echo the provided message."""
+        return message
+
+    return simple_tool
+
+
+class DummyAgentWithTools(AgentWithTools, BaseAgent):
+    def __init__(self, llm, tools=None, **kwargs):
+        self.build_graph_calls = 0
+        super().__init__(llm=llm, tools=tools, **kwargs)
+
+    def _noop(self, state):
+        return state
+
+    def _build_graph(self):
+        self.build_graph_calls += 1
+        self.add_node(self._noop, "noop")
+        self.graph.set_entry_point("noop")
+        self.graph.set_finish_point("noop")
+
+
+def test_agent_with_tools_defaults_to_empty_tool_dict(chat_model, tmp_path):
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=None,
+        workspace=tmp_path,
+    )
+    assert agent.tools == {}
+
+
+def test_agent_with_tools_initializes_tool_mapping(chat_model, tmp_path):
+    alpha = _make_tool("alpha")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha],
+        workspace=tmp_path,
+    )
+    assert agent.tools == {"alpha": alpha}
+
+
+def test_agent_with_tools_add_tool_updates_mapping(chat_model, tmp_path):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha],
+        workspace=tmp_path,
+    )
+    agent.add_tool(beta)
+    assert agent.tools == {"alpha": alpha, "beta": beta}
+
+
+def test_agent_with_tools_remove_tool_accepts_single_name(chat_model, tmp_path):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha, beta],
+        workspace=tmp_path,
+    )
+    agent.remove_tool("alpha")
+    assert agent.tools == {"beta": beta}
+
+
+def test_agent_with_tools_remove_tool_accepts_list(chat_model, tmp_path):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    gamma = _make_tool("gamma")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha, beta, gamma],
+        workspace=tmp_path,
+    )
+    agent.remove_tool(["alpha", "gamma"])
+    assert agent.tools == {"beta": beta}
+
+
+def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(
+    chat_model, tmp_path
+):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha],
+        workspace=tmp_path,
+    )
+    initial_calls = agent.build_graph_calls
+    agent.tools = {"beta": beta}
+    assert agent.tools == {"beta": beta}
+    assert agent.build_graph_calls == initial_calls + 1
+    assert isinstance(agent.tool_node, ToolNode)
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    client = AsyncMock()
+    client.get_tools.return_value = [alpha, beta]
+
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    await agent.add_mcp_tools(client)
+
+    assert agent.tools == {"alpha": alpha, "beta": beta}
+    client.get_tools.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_add_mcp_tools_filters_by_name(
+    chat_model, tmp_path
+):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    client = AsyncMock()
+    client.get_tools.return_value = [alpha, beta]
+
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    await agent.add_mcp_tools(client, tool_name="beta")
+
+    assert agent.tools == {"beta": beta}

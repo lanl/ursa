@@ -1,14 +1,12 @@
-from pathlib import Path
-
 from langchain_core.messages import HumanMessage
 
-from ursa.agents import PlanningAgent
+from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
-async def test_planning_agent_creates_structured_plan(chat_model, tmpdir: Path):
+async def test_planning_agent_creates_structured_plan(chat_model, tmpdir):
     planning_agent = PlanningAgent(
         llm=chat_model.model_copy(update={"max_tokens": 4000}),
-        workspace=tmpdir / ".ursa",
+        workspace=tmpdir,
         max_reflection_steps=0,
     )
 
@@ -18,20 +16,11 @@ async def test_planning_agent_creates_structured_plan(chat_model, tmpdir: Path):
         "reflection_steps": 0,
     })
 
-    assert "plan_steps" in result
-    assert isinstance(result["plan_steps"], list)
-    assert result["plan_steps"], "expected at least one plan step"
-
-    for step in result["plan_steps"]:
-        assert isinstance(step, dict)
-        for key in (
-            "name",
-            "description",
-            "requires_code",
-            "expected_outputs",
-            "success_criteria",
-        ):
-            assert key in step
+    assert "plan" in result
+    plan = result["plan"]
+    assert isinstance(plan, Plan)
+    assert len(plan.steps) > 0, "expected at least one plan step"
+    assert isinstance(str(plan), str)
 
     assert "messages" in result
     assert result["messages"], "agent should return at least one message"

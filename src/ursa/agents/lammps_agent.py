@@ -383,9 +383,11 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         self.graph.add_conditional_edges(
             "_entry_router",
-            lambda state: "user_choice"
-            if state.get("chosen_potential")
-            else "agent_choice",
+            lambda state: (
+                "user_choice"
+                if state.get("chosen_potential")
+                else "agent_choice"
+            ),
             {
                 "user_choice": "_author",
                 "agent_choice": "_find_potentials",

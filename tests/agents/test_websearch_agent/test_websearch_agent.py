@@ -4,7 +4,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 from ursa.agents import WebSearchAgentLegacy
 
 
-async def test_websearch_agent_legacy_websearch_flow(chat_model, monkeypatch):
+async def test_websearch_agent_legacy_websearch_flow(
+    chat_model, monkeypatch, tmpdir
+):
     """Ensure the legacy websearch agent wires the search tool into the graph."""
     query = "Who won the 2025 International Chopin Competition?"
     search_url = "https://example.com/chopin-2025"
@@ -77,7 +79,7 @@ async def test_websearch_agent_legacy_websearch_flow(chat_model, monkeypatch):
         lambda *args, **kwargs: fake_react_agent,
     )
 
-    agent = WebSearchAgentLegacy(llm=chat_model)
+    agent = WebSearchAgentLegacy(llm=chat_model, workspace=tmpdir)
     inputs = {
         "messages": [HumanMessage(content=query)],
         "model": chat_model,
