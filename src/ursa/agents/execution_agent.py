@@ -313,9 +313,7 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
                 SystemMessage(content=self.executor_prompt),
                 summary,
             ]
-            summarized_messages.extend(
-                new_state["messages"][-self.messages_to_keep :]
-            )
+            summarized_messages.extend(conversation_to_keep)
             tokens_after_summarize = count_tokens_approximately(
                 summarized_messages
             )
