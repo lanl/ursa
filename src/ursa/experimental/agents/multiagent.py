@@ -46,7 +46,7 @@ def tag(tag_name: str, content: str):
 # NOTE: Resources
 # https://docs.langchain.com/oss/python/langchain/multi-agent#where-to-customize
 def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
-    execution_agent = ExecutionAgent(llm)._action
+    execution_agent = ExecutionAgent(llm)
 
     @tool(
         "execute_plan_tool",
@@ -125,7 +125,7 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
 
 
 def make_execution_tool(llm: BaseChatModel, workspace: Path):
-    execution_agent = ExecutionAgent(llm)._action
+    execution_agent = ExecutionAgent(llm)
 
     @tool(
         "execution_agent",
