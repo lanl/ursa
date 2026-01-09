@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import aiosqlite
-import httpx
 from fastmcp import FastMCP
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
@@ -38,13 +37,6 @@ ursa_banner = r"""
 / /_/ / /  (__  ) /_/ /
 \__,_/_/  /____/\__,_/
 """
-
-
-def init_model_kwargs(cfg):
-    kwargs = {k: v for k, v in cfg.items() if v is not None}
-    if not kwargs.pop("ssl_verify", None):
-        kwargs["http_client"] = httpx.Client(verify=False)
-    return kwargs
 
 
 @dataclass
@@ -107,10 +99,8 @@ class HITL:
         self.workspace = self.config.workspace
         self.safe_codes = None
         self.config.workspace.mkdir(parents=True, exist_ok=True)
-        self.model = init_chat_model(**init_model_kwargs(self.config.llm_model))
-        self.embedding = init_embeddings(
-            **init_model_kwargs(self.config.emb_model)
-        )
+        self.model = init_chat_model(**self.config.llm_model.kwargs)
+        self.embedding = init_embeddings(**self.config.emb_model.kwargs)
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
         self.memory = (
             AgentMemory(

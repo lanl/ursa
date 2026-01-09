@@ -101,8 +101,7 @@ def test_repl_smoke(ursa_config):
             ("What is your name?", None),
             ("help", re.compile(r".*Documented commands")),
             ("?", re.compile(r".*Documented commands")),
-            # ("?execute", re.compile(docstr_header(ExecutionAgent))),
-            # ("exit", "Exiting ursa..."),
+            ("exit", re.compile(r".*Exiting ursa")),
         ],
     )
     print(trace)
@@ -118,6 +117,7 @@ async def test_chat(ursa_config):
     assert out is not None
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "agent",
     ["chat", "execute", "hypothesize", "plan", "web", "recall"],
@@ -134,7 +134,7 @@ def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
     print(trace)
 
 
-DUMMY_MCP_SERVER_PATH = Path(__file__).parent.joinpath(
+DUMMY_MCP_SERVER_PATH = Path(__file__).parent.parent.joinpath(
     "tools", "dummy_mcp_server.py"
 )
 
@@ -157,7 +157,6 @@ async def mcp_server(ursa_config):
     server = hitl.as_mcp_server()
     async with Client(transport=server) as client:
         yield client
-        print("Hey")
 
 
 async def test_mcp_smoke(mcp_server: Client):
