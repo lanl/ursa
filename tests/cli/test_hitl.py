@@ -89,7 +89,6 @@ def check_script(
 
 
 def test_repl_smoke(ursa_config):
-
     def docstr_header(cls) -> str:
         docs = cls.__doc__
         assert isinstance(docs, str)

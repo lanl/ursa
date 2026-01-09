@@ -227,7 +227,6 @@ class UrsaRepl(Cmd):
         )
 
     def __getattribute__(self, name: str) -> Any:
-
         # Dynamically add do_agent methods
         if name.startswith("do_"):
             agent_name = name.removeprefix("do_")
