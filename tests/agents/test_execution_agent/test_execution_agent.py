@@ -119,7 +119,7 @@ async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
     result = await execution_agent.ainvoke(inputs)
 
     assert "messages" in result
-    tool_names = [tool.name for tool in execution_agent.tools]
+    tool_names = list(execution_agent.tools.keys())
     assert "fake_run_command" in tool_names
     assert "do_magic" in tool_names
     ai_messages = [

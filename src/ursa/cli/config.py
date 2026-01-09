@@ -3,6 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
 
+from ursa.util.mcp import ServerParameters
+
 LoggingLevel = Literal[
     "debug", "info", "notice", "warning", "error", "critical"
 ]
@@ -40,7 +42,7 @@ class UrsaConfig:
     )
     """Default Embedding model"""
 
-    mcp_servers: dict[str, dict] = field(default_factory=dict)
+    mcp_servers: dict[str, ServerParameters] = field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
 
     def __post_init__(self):

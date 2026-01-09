@@ -2,12 +2,15 @@ import io
 import logging
 import re
 from pathlib import Path
+from sys import executable
 from unittest.mock import patch
 
+from mcp import StdioServerParameters
 import pytest
 from fastmcp.client import Client
 from rich.console import Console as RealConsole
 
+from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
 from ursa.cli.hitl import HITL, UrsaRepl
 
@@ -129,6 +132,23 @@ def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
         [(f"{agent} What is your purpose?", None)],
     )
     print(trace)
+
+
+DUMMY_MCP_SERVER_PATH = Path(__file__).parent.joinpath(
+    "tools", "dummy_mcp_server.py"
+)
+
+
+async def test_mcp_tools(ursa_config: UrsaConfig):
+    ursa_config.mcp_servers["demo"] = StdioServerParameters(
+        command=executable,
+        args=[str(DUMMY_MCP_SERVER_PATH.resolve())],
+    )
+    hitl = HITL(ursa_config)
+    agent = await hitl.get_agent("execute")
+    assert agent._agent is not None
+    assert isinstance(agent._agent, AgentWithTools)
+    assert "add" in agent._agent.tools
 
 
 @pytest.fixture

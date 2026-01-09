@@ -11,6 +11,7 @@ import httpx
 from fastmcp import FastMCP
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
 from rich.markdown import Markdown
@@ -26,6 +27,7 @@ from ursa.agents import (
     RecallAgent,
     WebSearchAgent,
 )
+from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
 from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
@@ -47,16 +49,24 @@ def init_model_kwargs(cfg):
 
 @dataclass
 class AgentHITL:
+    """Wrapper for BaseAgent to delay instantiation and async method calls"""
+
     agent_class: Any
     config: dict = field(default_factory=dict)
     state: Any | None = None
     _agent: BaseAgent | None = field(default=None, init=False)
 
-    def instantiate(self, **kwargs):
+    async def instantiate(
+        self, mcp_client: MultiServerMCPClient | None = None, **kwargs
+    ):
         """Instantiate the underlying agent instance"""
         assert self._agent is None
         kwargs |= self.config
         self._agent = self.agent_class(**kwargs)
+
+        # Attach tools from MCP client
+        if mcp_client and isinstance(self._agent, AgentWithTools):
+            await self._agent.add_mcp_tools(mcp_client)
 
     @property
     def description(self):
@@ -115,7 +125,8 @@ class HITL:
         self.agents["chat"] = AgentHITL(agent_class=ChatAgent)
         self.agents["arxiv"] = AgentHITL(agent_class=ArxivAgent)
         self.agents["execute"] = AgentHITL(
-            agent_class=ExecutionAgent, config={"agent_memory": self.memory}
+            agent_class=ExecutionAgent,
+            config={"agent_memory": self.memory},
         )
         self.agents["hypothesize"] = AgentHITL(agent_class=HypothesizerAgent)
         self.agents["plan"] = AgentHITL(agent_class=PlanningAgent)
@@ -143,9 +154,10 @@ class HITL:
         # Lazily instantiate the agents
         if agent._agent is None:
             checkpointer = await self._get_checkpointer(name)
-            agent.instantiate(
+            await agent.instantiate(
                 llm=self.model,
                 checkpointer=checkpointer,
+                mcp_client=self.mcp_client,
                 thread_id=f"{self.thread_id}_{name}",
             )
 

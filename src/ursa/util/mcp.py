@@ -6,7 +6,7 @@ from mcp.client.session_group import (
     SseServerParameters,
     StreamableHttpParameters,
 )
-from pydantic import BeforeValidator, ValidationError
+from pydantic import BaseModel, BeforeValidator, ValidationError
 
 
 def validate_server_parameters(config: dict):
@@ -60,10 +60,14 @@ def transport(sp: ServerParameters) -> str:
 
 
 def start_mcp_client(
-    server_configs: dict[str, ServerParameters],
+    server_configs: dict[str, ServerParameters | dict],
 ) -> MultiServerMCPClient:
-    config = {
-        server: {**config.model_dump(), "transport": transport(config)}
-        for server, config in server_configs.items()
-    }
-    return MultiServerMCPClient(config)
+    client_config = {}
+    for server, config in server_configs.items():
+        if not isinstance(config, BaseModel):
+            config = validate_server_parameters(dict(**config))
+        client_config[server] = {
+            **config.model_dump(),
+            "transport": transport(config),
+        }
+    return MultiServerMCPClient(client_config)
