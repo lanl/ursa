@@ -35,7 +35,7 @@ from uuid import uuid4
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool
 from langchain_core.load import dumps
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver

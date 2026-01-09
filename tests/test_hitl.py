@@ -5,9 +5,9 @@ from pathlib import Path
 from sys import executable
 from unittest.mock import patch
 
-from mcp import StdioServerParameters
 import pytest
 from fastmcp.client import Client
+from mcp import StdioServerParameters
 from rich.console import Console as RealConsole
 
 from ursa.agents.base import AgentWithTools
