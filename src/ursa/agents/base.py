@@ -458,10 +458,24 @@ class BaseAgent(Generic[TState], ABC):
             **kwargs,
         )
 
-    def format_query(self, prompt: str, state: Any | None = None):
+    def format_query(self, prompt: str, state: TState | None = None) -> TState:
+        """Format a plain text prompt into the agent's input schema
+        possibly incorporating the prior state.
+
+        Agents should override this method for their operation
+        """
+
+        if state is not None and "messages" in state:
+            state["messages"].append(HumanMessage(content=str(prompt)))
+            return state
         return self._normalize_inputs(prompt)
 
-    def format_result(self, result: Any) -> str:
+    def format_result(self, result: TState) -> str:
+        """Extracts a plain text response from the Agent's output schema
+
+        Agents should override this method for their operation
+        """
+
         if "messages" in result:
             if isinstance(result["messages"], list) and isinstance(
                 result["messages"][-1], BaseMessage

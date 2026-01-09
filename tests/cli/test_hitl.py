@@ -42,6 +42,16 @@ def test_has_all_agent_do_methods(ursa_config):
         assert hasattr(repl, f"do_{name}")
 
 
+async def test_agents_use_configured_workspace(ursa_config, tmp_path):
+    workspace = tmp_path / "custom-workspace"
+    ursa_config.workspace = workspace
+
+    hitl = HITL(ursa_config)
+    agent = await hitl.get_agent("chat")
+    assert agent._agent is not None
+    assert agent._agent.workspace == workspace
+
+
 def check_script(
     ursa_config: UrsaConfig,
     input_expected: list[tuple[str, str | int | re.Pattern | None]],

@@ -146,6 +146,7 @@ class HITL:
             checkpointer = await self._get_checkpointer(name)
             await agent.instantiate(
                 llm=self.model,
+                workspace=self.workspace,
                 checkpointer=checkpointer,
                 mcp_client=self.mcp_client,
                 thread_id=f"{self.thread_id}_{name}",
