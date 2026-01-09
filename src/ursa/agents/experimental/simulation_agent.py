@@ -51,7 +51,7 @@ class SimulatorAgent(ExecutionAgent):
                 llm=self.llm,
                 workspace=self.workspace,
                 embedding=self.embedding,
-                database_path="simulator_docs",
+                database_path="../simulator_docs",
             )
             self.rag_agent.thread_id = "simulation_documentation_rag"
 
