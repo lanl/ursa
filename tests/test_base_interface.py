@@ -1,6 +1,7 @@
 import importlib
 import inspect
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain.tools import tool
@@ -175,3 +176,32 @@ def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(
     assert agent.tools == {"beta": beta}
     assert agent.build_graph_calls == initial_calls + 1
     assert isinstance(agent.tool_node, ToolNode)
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    client = AsyncMock()
+    client.get_tools.return_value = [alpha, beta]
+
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    await agent.add_mcp_tools(client)
+
+    assert agent.tools == {"alpha": alpha, "beta": beta}
+    client.get_tools.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_add_mcp_tools_filters_by_name(
+    chat_model, tmp_path
+):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    client = AsyncMock()
+    client.get_tools.return_value = [alpha, beta]
+
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    await agent.add_mcp_tools(client, tool_name="beta")
+
+    assert agent.tools == {"beta": beta}

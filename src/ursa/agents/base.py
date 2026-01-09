@@ -840,13 +840,18 @@ class AgentWithTools:
         client: MultiServerMCPClient,
         tool_name: None | str | list[str] = None,
     ) -> None:
-        """Add tools from an MCP client to the agent"""
+        """Add tools from an MCP client to the agent
+
+        Args:
+           client: the MCP client to add tools from
+           tool_name: if provided, only add named tools
+        """
         tools = await client.get_tools()
         if tool_name is not None:
             tool_name = (
-                tool_name if isinstance(tool_name, list) else list(tool_name)
+                tool_name if isinstance(tool_name, list) else [tool_name]
             )
-            tools = [tool for tool in tools if tool.name not in tool_name]
+            tools = [tool for tool in tools if tool.name in tool_name]
         self.add_tool(tools)
 
     def remove_tool(self, tool_names: str | list[str]) -> None:
