@@ -103,7 +103,7 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
 def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
     planning_agent = PlanningAgent(
         llm, max_reflection_steps=max_reflection_steps
-    )._action
+    )
 
     @tool(
         "planning_agent",
