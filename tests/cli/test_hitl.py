@@ -134,7 +134,7 @@ async def test_chat(ursa_config):
 def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
     if agent == "plan":
         # Planning eats tokens
-        ursa_config.llm_model["max_completion_tokens"] = 128000
+        ursa_config.llm_model.max_completion_tokens = 128000
 
     trace = check_script(
         ursa_config,
