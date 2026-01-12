@@ -1,24 +1,23 @@
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from typing import Annotated, Any, Mapping
+from typing import Annotated, Any, TypedDict
 
 import requests
 from bs4 import BeautifulSoup
 from langchain.agents import create_agent
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage, SystemMessage
 from langchain_community.tools import DuckDuckGoSearchResults
-from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState
 from pydantic import Field
-from typing_extensions import TypedDict
 
-from ..prompt_library.websearch_prompts import (
+from ursa.prompt_library.websearch_prompts import (
     reflection_prompt,
     summarize_prompt,
     websearch_prompt,
 )
+
 from .base import BaseAgent
 
 
@@ -41,11 +40,7 @@ class WebSearchState(TypedDict):
 
 
 class WebSearchAgentLegacy(BaseAgent):
-    def __init__(
-        self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
-        **kwargs,
-    ):
+    def __init__(self, llm: BaseChatModel, **kwargs):
         super().__init__(llm, **kwargs)
         self.websearch_prompt = websearch_prompt
         self.reflection_prompt = reflection_prompt
@@ -53,7 +48,6 @@ class WebSearchAgentLegacy(BaseAgent):
         self.has_internet = self._check_for_internet(
             kwargs.get("url", "http://www.lanl.gov")
         )
-        self._build_graph()
 
     def _review_node(self, state: WebSearchState) -> WebSearchState:
         if not self.has_internet:
@@ -122,18 +116,17 @@ class WebSearchAgentLegacy(BaseAgent):
         return react_agent.invoke(state)
 
     def _build_graph(self):
-        graph = StateGraph(WebSearchState)
-        self.add_node(graph, self._state_store_node)
-        self.add_node(graph, self._create_react)
-        self.add_node(graph, self._review_node)
-        self.add_node(graph, self._response_node)
+        self.add_node(self._state_store_node)
+        self.add_node(self._create_react)
+        self.add_node(self._review_node)
+        self.add_node(self._response_node)
 
-        graph.set_entry_point("_state_store_node")
-        graph.add_edge("_state_store_node", "_create_react")
-        graph.add_edge("_create_react", "_review_node")
-        graph.set_finish_point("_response_node")
+        self.graph.set_entry_point("_state_store_node")
+        self.graph.add_edge("_state_store_node", "_create_react")
+        self.graph.add_edge("_create_react", "_review_node")
+        self.graph.set_finish_point("_response_node")
 
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_review_node",
             should_continue,
             {
@@ -141,16 +134,6 @@ class WebSearchAgentLegacy(BaseAgent):
                 "_response_node": "_response_node",
             },
         )
-        self._action = graph.compile(checkpointer=self.checkpointer)
-        # self._action.get_graph().draw_mermaid_png(output_file_path="./websearch_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
 
 
 def process_content(

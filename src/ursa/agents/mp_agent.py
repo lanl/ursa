@@ -4,10 +4,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping, TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph
 from mp_api.client import MPRester
 from tqdm import tqdm
 
@@ -34,7 +33,7 @@ def remove_surrogates(text: str) -> str:
 class MaterialsProjectAgent(BaseAgent):
     def __init__(
         self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
         summarize: bool = True,
         max_results: int = 3,
         database_path: str = "mp_database",
@@ -44,13 +43,11 @@ class MaterialsProjectAgent(BaseAgent):
         super().__init__(llm, **kwargs)
         self.summarize = summarize
         self.max_results = max_results
-        self.database_path = database_path
-        self.summaries_path = summaries_path
+        self.database_path = self.workspace.joinpath(database_path)
+        self.summaries_path = self.workspace.joinpath(summaries_path)
 
-        os.makedirs(self.database_path, exist_ok=True)
-        os.makedirs(self.summaries_path, exist_ok=True)
-
-        self._action = self._build_graph()
+        self.database_path.mkdir(parents=True, exist_ok=True)
+        self.summaries_path.mkdir(parents=True, exist_ok=True)
 
     def _fetch_node(self, state: dict) -> dict:
         f = state["query"]
@@ -148,20 +145,18 @@ You are a materials-science assistant. Given the following metadata about a mate
         return {**state, "final_summary": final}
 
     def _build_graph(self):
-        graph = StateGraph(dict)  # using plain dict for state
-        self.add_node(graph, self._fetch_node)
+        self.add_node(self._fetch_node)
         if self.summarize:
-            self.add_node(graph, self._summarize_node)
-            self.add_node(graph, self._aggregate_node)
+            self.add_node(self._summarize_node)
+            self.add_node(self._aggregate_node)
 
-            graph.set_entry_point("_fetch_node")
-            graph.add_edge("_fetch_node", "_summarize_node")
-            graph.add_edge("_summarize_node", "_aggregate_node")
-            graph.set_finish_point("_aggregate_node")
+            self.graph.set_entry_point("_fetch_node")
+            self.graph.add_edge("_fetch_node", "_summarize_node")
+            self.graph.add_edge("_summarize_node", "_aggregate_node")
+            self.graph.set_finish_point("_aggregate_node")
         else:
-            graph.set_entry_point("_fetch_node")
-            graph.set_finish_point("_fetch_node")
-        return graph.compile(checkpointer=self.checkpointer)
+            self.graph.set_entry_point("_fetch_node")
+            self.graph.set_finish_point("_fetch_node")
 
     def _invoke(
         self,

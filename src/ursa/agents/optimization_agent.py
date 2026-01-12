@@ -1,17 +1,17 @@
 import os
 import pprint
 import subprocess
-from typing import Annotated, Any, Literal, Mapping, TypedDict
+from typing import Annotated, Literal, TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START
 from langgraph.prebuilt import InjectedState
 
-from ..prompt_library.optimization_prompts import (
+from ursa.prompt_library.optimization_prompts import (
     code_generator_prompt,
     discretizer_prompt,
     explainer_prompt,
@@ -21,9 +21,10 @@ from ..prompt_library.optimization_prompts import (
     solver_selector_prompt,
     verifier_prompt,
 )
-from ..tools.feasibility_tools import feasibility_check_auto as fca
-from ..util.helperFunctions import extract_tool_calls, run_tool_calls
-from ..util.optimization_schema import ProblemSpec, SolverSpec
+from ursa.tools.feasibility_tools import feasibility_check_auto as fca
+from ursa.util.helperFunctions import extract_tool_calls, run_tool_calls
+from ursa.util.optimization_schema import ProblemSpec, SolverSpec
+
 from .base import BaseAgent
 
 # --- ANSI color codes ---
@@ -44,13 +45,10 @@ class OptimizerState(TypedDict):
     summary: str
 
 
-class OptimizationAgent(BaseAgent):
-    def __init__(
-        self,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
-        *args,
-        **kwargs,
-    ):
+class OptimizationAgent(BaseAgent[OptimizerState]):
+    state_type = OptimizerState
+
+    def __init__(self, llm: BaseChatModel, *args, **kwargs):
         super().__init__(llm, *args, **kwargs)
         self.extractor_prompt = extractor_prompt
         self.explainer_prompt = explainer_prompt
@@ -66,8 +64,6 @@ class OptimizationAgent(BaseAgent):
             (getattr(t, "name", None) or getattr(t, "__name__", None)): t
             for i, t in enumerate(self.tools)
         }
-
-        self._action = self._build_graph()
 
     # Define the function that calls the model
     def extractor(self, state: OptimizerState) -> OptimizerState:
@@ -195,50 +191,32 @@ class OptimizationAgent(BaseAgent):
         return new_state
 
     def _build_graph(self):
-        graph = StateGraph(OptimizerState)
+        self.add_node(self.extractor, "Problem Extractor")
+        self.add_node(self.formulator, "Math Formulator")
+        self.add_node(self.selector, "Solver Selector")
+        self.add_node(self.generator, "Code Generator")
+        self.add_node(self.verifier, "Verifier")
+        self.add_node(self.explainer, "Explainer")
+        self.add_node(self.tester, "Feasibility Tester")
+        self.add_node(self.discretizer, "Discretizer")
 
-        self.add_node(graph, self.extractor, "Problem Extractor")
-        self.add_node(graph, self.formulator, "Math Formulator")
-        self.add_node(graph, self.selector, "Solver Selector")
-        self.add_node(graph, self.generator, "Code Generator")
-        self.add_node(graph, self.verifier, "Verifier")
-        self.add_node(graph, self.explainer, "Explainer")
-        self.add_node(graph, self.tester, "Feasibility Tester")
-        self.add_node(graph, self.discretizer, "Discretizer")
-
-        graph.add_edge(START, "Problem Extractor")
-        graph.add_edge("Problem Extractor", "Math Formulator")
-        graph.add_conditional_edges(
+        self.graph.add_edge(START, "Problem Extractor")
+        self.graph.add_edge("Problem Extractor", "Math Formulator")
+        self.graph.add_conditional_edges(
             "Math Formulator",
             should_discretize,
             {"discretize": "Discretizer", "continue": "Solver Selector"},
         )
-        graph.add_edge("Discretizer", "Solver Selector")
-        graph.add_edge("Solver Selector", "Code Generator")
-        graph.add_edge("Code Generator", "Feasibility Tester")
-        graph.add_edge("Feasibility Tester", "Verifier")
-        graph.add_conditional_edges(
+        self.graph.add_edge("Discretizer", "Solver Selector")
+        self.graph.add_edge("Solver Selector", "Code Generator")
+        self.graph.add_edge("Code Generator", "Feasibility Tester")
+        self.graph.add_edge("Feasibility Tester", "Verifier")
+        self.graph.add_conditional_edges(
             "Verifier",
             should_continue,
             {"continue": "Explainer", "error": "Problem Extractor"},
         )
-        graph.add_edge("Explainer", END)
-
-        return graph.compile()
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        if "user_input" not in inputs:
-            try:
-                inputs["user_input"] = inputs["messages"][0].content
-            except KeyError:
-                raise ("'user_input' is a required argument")
-
-        return self._action.invoke(inputs, config)
+        self.graph.add_edge("Explainer", END)
 
 
 #########  try:
@@ -392,9 +370,9 @@ def main():
 
     Line‐flow limits
         - Lines 1-2 and 1-3 are thermal‐limited to ±0.5 p.u., line 2-3 is unconstrained.
-    
+
     In words:
-    We choose how much each generator should produce (at non-negative cost) and the voltage angles at each bus (with bus 1 set to zero) so that supply exactly meets demand, flows on the critical lines don’t exceed their limits, and the total cost is as small as possible. 
+    We choose how much each generator should produce (at non-negative cost) and the voltage angles at each bus (with bus 1 set to zero) so that supply exactly meets demand, flows on the critical lines don’t exceed their limits, and the total cost is as small as possible.
     Use the tools at your disposal to check if your formulation is feasible.
     """
     inputs = {"user_input": problem_string}

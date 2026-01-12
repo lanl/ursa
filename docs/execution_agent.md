@@ -11,7 +11,7 @@ from ursa.agents import ExecutionAgent
 agent = ExecutionAgent()
 
 # Run a prompt
-result = agent.invoke("Write and execute a python script to print the first 10 integers.")
+result = agent("Write and execute a python script to print the first 10 integers.")
 
 # Access the final response
 print(result["messages"][-1].content)
@@ -24,7 +24,7 @@ When initializing `ExecutionAgent`, you can customize its behavior with these pa
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5-mini")` | The LLM model to use |
-| `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
+| `extra_tools` | `Optional[list[Callable[..., Any]]]` | `None` | Additional tools for the execution agent |
 
 ## Features
 
@@ -33,7 +33,7 @@ When initializing `ExecutionAgent`, you can customize its behavior with these pa
 The agent can safely execute shell commands in a controlled environment:
 
 ```python
-result = agent.invoke("Install numpy and create a script that uses it to calculate the mean of [1, 2, 3, 4, 5]")
+result = agent("Install numpy and create a script that uses it to calculate the mean of [1, 2, 3, 4, 5]")
 ```
 
 ### Code Writing
@@ -41,17 +41,18 @@ result = agent.invoke("Install numpy and create a script that uses it to calcula
 The agent can write code files to a workspace directory:
 
 ```python
-result = agent.invoke("Create a Flask web application that displays 'Hello World'")
+result = agent("Create a Flask web application that displays 'Hello World'")
 ```
 
 ## Advanced Usage
 
 ### Customizing the Workspace
 
-The agent creates a workspace folder with a randomly generated name for each run. You can access this workspace path from the result:
+The agent creates a workspace folder with a randomly generated name for each
+run. You can access this workspace path from the result:
 
 ```python
-result = agent.invoke("Create a Python script")
+result = agent("Create a Python script"))
 workspace_path = result["workspace"]
 print(f"Files were created in: {workspace_path}")
 ```
@@ -80,7 +81,23 @@ The agent includes built-in safety checks for shell commands:
 1. **State Machine**: The agent uses a directed graph to manage its workflow:
    - `agent` node: Processes user requests and generates responses
    - `safety_check` node: Evaluates command safety
-   - `action` node: Executes tools (run_cmd, write_code, edit_code, search)
+   - `action` node: Executes tools (`run_cmd`, `write_code`, `edit_code`, `search`)
+     - extra tools can be provided to the agent as follows:
+       ```py
+       from langchain.tools import tool
+
+       @tool
+       def do_magic(a: int, b: int) -> float:
+           """Do magic with integers a and b.
+       
+           Args:
+               a: first integer
+               b: second integer
+           """
+           return sqrt(a**2 + b**2)
+
+       agent = ExecutionAgent(extra_tools=[do_magic])
+       ```
    - `summarize` node: Creates a final summary when complete
 
 2. **Tools**:

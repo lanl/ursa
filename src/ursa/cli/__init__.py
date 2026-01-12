@@ -1,9 +1,10 @@
-import importlib
+import asyncio
 from pathlib import Path
 from typing import Annotated, Optional
 
+from mcp.server.fastmcp import FastMCP
 from rich.console import Console
-from typer import Exit, Option, Typer, colors, secho
+from typer import Option, Typer
 
 app = Typer()
 
@@ -26,7 +27,8 @@ def run(
         ),
     ] = "openai:gpt-5",
     llm_base_url: Annotated[
-        str, Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL")
+        Optional[str],
+        Option(help="Base url for LLM.", envvar="URSA_LLM_BASE_URL"),
     ] = None,
     llm_api_key: Annotated[
         Optional[str],
@@ -36,7 +38,7 @@ def run(
         int, Option(help="Maximum tokens for LLM to output")
     ] = 50000,
     emb_model_name: Annotated[
-        str,
+        Optional[str],
         Option(
             help=(
                 "Model provider and Embedding model name. "
@@ -46,7 +48,7 @@ def run(
             ),
             envvar="URSA_EMB_NAME",
         ),
-    ] = "openai:text-embedding-3-small",
+    ] = None,
     emb_base_url: Annotated[
         Optional[str],
         Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
@@ -113,8 +115,14 @@ def run(
             help="Whether or not to allow ArxivAgent to download ArXiv papers."
         ),
     ] = True,
-    ssl_verify: Annotated[
-        bool, Option(help="Whether or not to verify SSL certificates.")
+    ssl_verify_llm: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates for LLM.")
+    ] = True,
+    ssl_verify_emb: Annotated[
+        bool,
+        Option(
+            help="Whether or not to verify SSL certificates for embedding model."
+        ),
     ] = True,
 ) -> None:
     console = Console()
@@ -140,16 +148,17 @@ def run(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+        ssl_verify_llm=ssl_verify_llm,
+        ssl_verify_emb=ssl_verify_emb,
     )
     UrsaRepl(hitl).run()
 
 
 @app.command()
 def version() -> None:
-    from importlib.metadata import version as get_version
+    from ursa import __version__
 
-    print(get_version("ursa-ai"))
+    print(__version__)
 
 
 @app.command(help="Start MCP server to serve ursa agents")
@@ -201,7 +210,7 @@ def serve(
         int, Option(help="Maximum tokens for LLM to output")
     ] = 50000,
     emb_model_name: Annotated[
-        str,
+        Optional[str],
         Option(
             help=(
                 "Model provider and Embedding model name. "
@@ -211,7 +220,7 @@ def serve(
             ),
             envvar="URSA_EMB_NAME",
         ),
-    ] = "openai:text-embedding-3-small",
+    ] = None,
     emb_base_url: Annotated[
         Optional[str],
         Option(help="Base url for embedding model", envvar="URSA_EMB_BASE_URL"),
@@ -278,24 +287,21 @@ def serve(
             help="Whether or not to allow ArxivAgent to download ArXiv papers."
         ),
     ] = True,
-    ssl_verify: Annotated[
-        bool, Option(help="Whether or not to verify SSL certificates.")
+    ssl_verify_llm: Annotated[
+        bool, Option(help="Whether or not to verify SSL certificates for LLM.")
+    ] = True,
+    ssl_verify_emb: Annotated[
+        bool,
+        Option(
+            help="Whether or not to verify SSL certificates for embedding model."
+        ),
     ] = True,
 ) -> None:
     console = Console()
     with console.status("[grey50]Starting ursa MCP server ..."):
         from ursa.cli.hitl import HITL
 
-    app_path = "ursa.cli.hitl_api:mcp_app"
-
-    try:
-        import uvicorn
-    except Exception as e:
-        secho(
-            f"Uvicorn is required for 'ursa serve'. Install with: pip install uvicorn[standard]\n{e}",
-            fg=colors.RED,
-        )
-        raise Exit(code=1)
+    app_path = "ursa.cli.hitl_mcp:mcp_http_app"
 
     hitl = HITL(
         workspace=workspace,
@@ -316,30 +322,72 @@ def serve(
         arxiv_summaries_path=arxiv_summaries_path,
         arxiv_vectorstore_path=arxiv_vectorstore_path,
         arxiv_download_papers=arxiv_download_papers,
-        ssl_verify=ssl_verify,
+        ssl_verify_llm=ssl_verify_llm,
+        ssl_verify_emb=ssl_verify_emb,
     )
-    module_name, var_name = app_path.split(":")
-    mod = importlib.import_module(module_name)
-    asgi_app = getattr(mod, var_name)
-    asgi_app.state.hitl = hitl
-
-    config = uvicorn.Config(
-        app=asgi_app,
-        host=host,
-        port=port,
-        reload=reload,
-        workers=1,
-        log_level=log_level.lower(),
-    )
-
-    server = uvicorn.Server(config)
     console.print(
         f"[bold]URSA MCP server[/bold] starting at "
         f"http://{host}:{port} "
         f"(app: {app_path})"
     )
+
     try:
-        server.run()
+        mcp = FastMCP(
+            name="URSA Server",
+            host=host,
+            port=port,
+            # description="URSA agents exposed as MCP tools (arxiv, plan, execute, web, recall, hypothesize, chat).",
+        )
+
+        console.print("[bold]Starting MCP Server[/bold]")
+
+        # Each tool is a thin shim to your HITL methods. The type hints become the tool's JSON Schema.
+        @mcp.tool(
+            description="Search for papers on arXiv and summarize in the query context."
+        )
+        def arxiv(query):
+            return hitl.run_arxiv(query)
+
+        @mcp.tool(
+            description="Build a step-by-step plan to solve the user's problem."
+        )
+        def plan(query):
+            return hitl.run_planner(query)
+
+        @mcp.tool(
+            description="Execute a ReAct agent that can write/edit code & run commands."
+        )
+        def execute(query):
+            return hitl.run_executor(query)
+
+        @mcp.tool(
+            description="Search the web and summarize results in context."
+        )
+        def web(query):
+            result = hitl.run_websearcher(query)
+            return result
+
+        # @mcp.tool(description="Recall prior execution steps from memory (RAG).")
+        # def remember(query):
+        #     return hitl.run_rememberer(query)
+
+        @mcp.tool(description="Deep reasoning to propose an approach.")
+        def hypothesize(query):
+            return hitl.run_hypothesizer(query)
+
+        @mcp.tool(description="Direct chat with the hosted LLM.")
+        def chat(query):
+            return hitl.run_chatter(query)
+
+        # Optional: a quick ping/health tool (some clients call this)
+        @mcp.tool(description="Liveness check.")
+        def ping(dummy: str = "ok") -> str:
+            return "pong"
+
+        # ---- ASGI app that serves the MCP Streamable HTTP endpoint ----
+        # This is a complete ASGI app; uvicorn can serve it directly.
+        asyncio.run(mcp.run_streamable_http_async())
+
     except KeyboardInterrupt:
         console.print("[grey50]Shutting down...[/grey50]")
 

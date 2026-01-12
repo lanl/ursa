@@ -5,7 +5,7 @@ import os
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_UP, Decimal, getcontext
 from importlib import resources
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 getcontext().prec = 28  # robust money math
 
@@ -216,7 +216,7 @@ def price_event(
     event: dict[str, Any],
     registry: dict[str, ModelPricing],
     overwrite: bool = False,
-) -> Tuple[dict[str, Any], Optional[Decimal], str]:
+) -> tuple[dict[str, Any], Optional[Decimal], str]:
     """
     Returns (event, total_cost_decimal_or_None, cost_source)
       cost_source ∈ {"provider", "computed", "no_usage", "no_pricing"}

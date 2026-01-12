@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 import collections
-import datetime
 import importlib
 import json
 import os
 import re
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable, Dict, Iterable, List, Tuple
+from typing import Any, Callable
+from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
 from rich import get_console
@@ -23,6 +23,23 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+
+from ursa.observability.metrics_charts import (
+    compute_attribution,
+    extract_llm_token_stats,
+    extract_time_breakdown,
+)
+
+opentelemetry_available = True
+try:
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+except Exception:
+    opentelemetry_available = False
 
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
@@ -102,31 +119,31 @@ class SessionRollup:
     ended_at: str | None = None
 
     def ingest(self, payload: dict) -> None:
-        from datetime import datetime
-
-        def p(ts):
+        def p(timestamp):
             try:
-                return datetime.fromisoformat((ts or "").replace("Z", "+00:00"))
+                return datetime.fromisoformat(timestamp)
             except Exception:
                 return None
 
-        ctx = payload.get("context") or {}
-        agent = ctx.get("agent") or "agent"
-        s_iso, e_iso = ctx.get("started_at"), ctx.get("ended_at")
-        s_dt, e_dt = p(s_iso), p(e_iso)
+        context = payload.get("context") or {}
+        agent = context.get("agent") or "agent"
+        s_iso, e_iso = context.get("started_at"), context.get("ended_at")
+        s_datetime, e_datetime = p(s_iso), p(e_iso)
 
         self.runs += 1
         self.agents.add(agent)
 
         # wall time: sum of each run; keep overall min/max for elapsed
-        if s_dt and e_dt:
-            self.wall_sum_s += max(0.0, (e_dt - s_dt).total_seconds())
+        if s_datetime and e_datetime:
+            self.wall_sum_s += max(
+                0.0, (e_datetime - s_datetime).total_seconds()
+            )
             if not self.started_at or (
-                p(self.started_at) and s_dt < p(self.started_at)
+                p(self.started_at) and s_datetime < p(self.started_at)
             ):
                 self.started_at = s_iso
             if not self.ended_at or (
-                p(self.ended_at) and e_dt > p(self.ended_at)
+                p(self.ended_at) and e_datetime > p(self.ended_at)
             ):
                 self.ended_at = e_iso
 
@@ -179,9 +196,9 @@ def _rows_from_bucket_map(
 
 
 def render_session_summary(thread_id: str):
-    roll = _SESSIONS.get(thread_id)
+    rollup = _SESSIONS.get(thread_id)
     console = get_console()
-    if not roll:
+    if not rollup:
         msg = f"No session data for thread_id '{thread_id}'."
         console.print(
             Panel(msg, title="[bold]Session Summary[/]", border_style="red")
@@ -190,46 +207,45 @@ def render_session_summary(thread_id: str):
 
     # header
     header_lines = []
-    agents_list = ", ".join(sorted(roll.agents)) or "—"
+    agents_list = ", ".join(sorted(rollup.agents)) or "—"
     header_lines.append(
-        f"[bold magenta]Session[/] • thread [bold]{thread_id}[/] [dim]• runs {roll.runs} • agents {len(roll.agents)}[/]"
+        f"[bold magenta]Session[/] • thread [bold]{thread_id}[/] [dim]• runs {rollup.runs} • agents {len(rollup.agents)}[/]"
     )
     # both elapsed window and sum of runs
     elapsed = None
-    if roll.started_at and roll.ended_at:
-        header_lines.append(f"[dim]{roll.started_at} → {roll.ended_at}[/dim]")
+    if rollup.started_at and rollup.ended_at:
+        header_lines.append(
+            f"[dim]{rollup.started_at} → {rollup.ended_at}[/dim]"
+        )
         # display elapsed in panel footer text (computing here)
         try:
-            from datetime import datetime
-
             s, e = (
-                datetime.fromisoformat(roll.started_at.replace("Z", "+00:00")),
-                datetime.fromisoformat(roll.ended_at.replace("Z", "+00:00")),
+                datetime.fromisoformat(rollup.started_at),
+                datetime.fromisoformat(rollup.ended_at),
             )
             elapsed = max(0.0, (e - s).total_seconds())
         except Exception:
             elapsed = None
     if elapsed is not None:
         header_lines[-1] += (
-            f"   [bold]wall (elapsed)[/]: {elapsed:,.2f}s   [bold]wall (sum)[/]: {roll.wall_sum_s:,.2f}s"
+            f"   [bold]wall (elapsed)[/]: {elapsed:,.2f}s   [bold]wall (sum)[/]: {rollup.wall_sum_s:,.2f}s"
         )
     else:
-        header_lines.append(f"[bold]wall (sum)[/]: {roll.wall_sum_s:,.2f}s")
+        header_lines.append(f"[bold]wall (sum)[/]: {rollup.wall_sum_s:,.2f}s")
 
     # combined tables (aligned widths)
     t_nodes = _mk_table(
         "Per-Node / Runnable Timing (session)",
-        _rows_from_bucket_map(roll.runnable_by_name),
+        _rows_from_bucket_map(rollup.runnable_by_name),
     )
     t_tools = _mk_table(
-        "Per-Tool Timing (session)", _rows_from_bucket_map(roll.tool_by_name)
+        "Per-Tool Timing (session)", _rows_from_bucket_map(rollup.tool_by_name)
     )
     t_llms = _mk_table(
-        "Per-LLM Timing (session)", _rows_from_bucket_map(roll.llm_by_name)
+        "Per-LLM Timing (session)", _rows_from_bucket_map(rollup.llm_by_name)
     )
 
     # cost-by-model table (aligned with a smaller schema)
-    from rich.table import Table
 
     t_cost = Table(
         title="Cost by Model (USD)",
@@ -255,9 +271,9 @@ def render_session_summary(thread_id: str):
         min_width=TOTAL_W,
         max_width=TOTAL_W,
     )
-    if roll.cost_by_model_usd:
+    if rollup.cost_by_model_usd:
         for model, amt in sorted(
-            roll.cost_by_model_usd.items(), key=lambda kv: kv[1], reverse=True
+            rollup.cost_by_model_usd.items(), key=lambda kv: kv[1], reverse=True
         ):
             t_cost.add_row(model, f"${amt:,.6f}")
     else:
@@ -266,11 +282,11 @@ def render_session_summary(thread_id: str):
     # attribution block
     attrib = [
         "[bold]Session Totals[/]",
-        f"  LLM total:   {roll.llm_total_s:,.2f}s",
-        f"  Tool total:  {roll.tool_total_s:,.2f}s",
+        f"  LLM total:   {rollup.llm_total_s:,.2f}s",
+        f"  Tool total:  {rollup.tool_total_s:,.2f}s",
         (f"  Wall (elapsed): {elapsed:,.2f}s" if elapsed is not None else None),
-        f"  Wall (sum):  {roll.wall_sum_s:,.2f}s",
-        f"[bold]Cost total:[/] [bold green]${roll.cost_total_usd:,.6f}[/]",
+        f"  Wall (sum):  {rollup.wall_sum_s:,.2f}s",
+        f"[bold]Cost total:[/] [bold green]${rollup.cost_total_usd:,.6f}[/]",
         f"[dim]Agents:[/] {agents_list}",
     ]
     attrib = [a for a in attrib if a is not None]
@@ -304,16 +320,16 @@ def render_session_summary(thread_id: str):
 @dataclass
 class _Agg:
     # list of (name, elapsed_ms, ok)
-    records: List[Tuple[str, float, bool]] = field(default_factory=list)
+    records: list[tuple[str, float, bool]] = field(default_factory=list)
     _lock: Lock = field(default_factory=Lock, repr=False)
 
     def add(self, name: str, elapsed_ms: float, ok: bool) -> None:
         with self._lock:
             self.records.append((name, elapsed_ms, ok))
 
-    def buckets(self) -> List[Tuple[str, int, float, float, float]]:
+    def buckets(self) -> list[tuple[str, int, float, float, float]]:
         # -> [(name, count, total_secs, avg_ms, max_ms)]
-        by_name: Dict[str, List[float]] = defaultdict(list)
+        by_name: dict[str, list[float]] = defaultdict(list)
         with self._lock:
             for name, ms, _ok in self.records:
                 by_name[name].append(ms)
@@ -341,7 +357,7 @@ class PerToolTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None):
         self.agg = agg or _Agg()
-        self._starts: Dict[Any, Tuple[str, float]] = {}
+        self._starts: dict[Any, tuple[str, float]] = {}
 
     def _name(self, serialized) -> str:
         # serialized can be None, dict, str, or contain nested ids
@@ -385,7 +401,7 @@ class PerRunnableTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None):
         self.agg = agg or _Agg()
-        self._starts: Dict[Any, Tuple[str, float]] = {}
+        self._starts: dict[Any, tuple[str, float]] = {}
 
     def _name(self, serialized) -> str:
         # serialized can be None, dict, str, or contain nested ids
@@ -432,8 +448,8 @@ class PerRunnableTimer(BaseCallbackHandler):
 
         # Only keep spans that our wrapper marked with a namespace.
         # This filters out internal 'graph:step:N:<node>' duplicates.
-        ns = md.get("ursa_ns")
-        if not ns:
+        namespace = md.get("ursa_ns")
+        if not namespace:
             return  # ignore un-namespaced child spans
 
         # node base name (prefer explicit metadata)
@@ -451,17 +467,8 @@ class PerRunnableTimer(BaseCallbackHandler):
             if len(parts) == 4:
                 node_base = parts[3]
 
-        # namespace + snake casing for safety
-        def _to_snake(s: str) -> str:
-            import re
-
-            s = str(s)
-            s = re.sub(r"(?<!^)(?=[A-Z])", "_", s)
-            s = s.replace("-", "_").replace(" ", "_")
-            return s.lower()
-
-        ns = _to_snake(ns)
-        qualified = f"{ns}:{node_base}"
+        namespace = _to_snake(namespace)
+        qualified = f"{namespace}:{node_base}"
         name = f"node:{qualified}"
 
         self._starts[run_id] = (name, time.perf_counter())
@@ -551,7 +558,7 @@ class PerLLMTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None, keep_max: int = 1000):
         self.agg = agg or _Agg()
-        self._starts: Dict[Any, Tuple[str, float, list, dict]] = {}
+        self._starts: dict[Any, tuple[str, float, list, dict]] = {}
         self.samples: collections.deque = collections.deque(maxlen=keep_max)
 
     def _name(self, serialized, metadata, tags) -> str:
@@ -614,16 +621,20 @@ class PerLLMTimer(BaseCallbackHandler):
             llm_output = getattr(response, "llm_output", None)
             if isinstance(llm_output, dict):
                 out["llm_output"] = llm_output
-                tu = llm_output.get("token_usage") or llm_output.get("usage")
-                coerced_tu = _coerce_usage(tu)
-                if coerced_tu:
-                    out["llm_output_token_usage"] = coerced_tu  # clean copy
+                token_usage = llm_output.get("token_usage") or llm_output.get(
+                    "usage"
+                )
+                coerced_token_usage = _coerce_usage(token_usage)
+                if coerced_token_usage:
+                    out["llm_output_token_usage"] = (
+                        coerced_token_usage  # clean copy
+                    )
 
             # 2) generations -> response_metadata / usage_metadata
-            gens = getattr(response, "generations", None)
+            generations = getattr(response, "generations", None)
             resp_meta_list, usage_meta_list = [], []
-            if gens:
-                for gen_list in gens:
+            if generations:
+                for gen_list in generations:
                     for gen in (
                         gen_list
                         if isinstance(gen_list, (list, tuple))
@@ -635,8 +646,10 @@ class PerLLMTimer(BaseCallbackHandler):
                         rm = getattr(msg, "response_metadata", None)
                         if isinstance(rm, dict):
                             resp_meta_list.append(rm)
-                            tu = rm.get("token_usage") or rm.get("usage")
-                            coerced = _coerce_usage(tu)
+                            token_usage = rm.get("token_usage") or rm.get(
+                                "usage"
+                            )
+                            coerced = _coerce_usage(token_usage)
                             if coerced:
                                 sources_token_usage.append(coerced)
                         um = getattr(msg, "usage_metadata", None)
@@ -749,14 +762,15 @@ class PerLLMTimer(BaseCallbackHandler):
             "metadata": metadata,
             "metrics": metrics,
             "t_start": wall_t0,
-            "t_end": wall_t1,  # <— add these
+            "t_end": wall_t1,
         })
 
     def on_llm_error(self, error, *, run_id, **kwargs):
-        name, t0, tags, metadata = self._starts.pop(
+        name, t0, tags, metadata, wall_t0 = self._starts.pop(
             run_id, ("llm:unknown", time.perf_counter(), [], {})
         )
         ms = (time.perf_counter() - t0) * 1000.0
+        wall_t1 = time.time()
         self.agg.add(name, ms, False)
         self.samples.append({
             "name": name,
@@ -765,6 +779,8 @@ class PerLLMTimer(BaseCallbackHandler):
             "tags": tags,
             "metadata": metadata,
             "metrics": {"error": repr(error)},
+            "t_start": wall_t0,
+            "t_end": wall_t1,
         })
 
 
@@ -874,7 +890,7 @@ def timed_tool(tool_name: str, sink: _Agg | None = None):
     def deco(fn: Callable):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            t0 = time.perf_counter()
+            start_time = time.perf_counter()
             ok = True
             try:
                 return fn(*args, **kwargs)
@@ -882,7 +898,9 @@ def timed_tool(tool_name: str, sink: _Agg | None = None):
                 ok = False
                 raise
             finally:
-                sink.add(tool_name, (time.perf_counter() - t0) * 1000.0, ok)
+                sink.add(
+                    tool_name, (time.perf_counter() - start_time) * 1000.0, ok
+                )
 
         return wrapper
 
@@ -894,47 +912,11 @@ def timed_tool(tool_name: str, sink: _Agg | None = None):
 # ---------------------------------
 
 
-def render_table(
-    title: str, rows: Iterable[Tuple[str, int, float, float, float]]
-) -> str:
-    # rows: (name, count, total_s, avg_ms, max_ms)
-    out = []
-    out.append(f"\n{title}")
-    out.append(
-        "┏{0}┳{1}┳{2}┳{3}┳{4}┓".format(
-            "━" * 30, "━" * 7, "━" * 11, "━" * 10, "━" * 10
-        )
-    )
-    out.append(
-        "┃ {0:<28} ┃ {1:>5} ┃ {2:>9} ┃ {3:>8} ┃ {4:>8} ┃".format(
-            "Name", "Count", "Total(s)", "Avg(ms)", "Max(ms)"
-        )
-    )
-    out.append(
-        "┡{0}╇{1}╇{2}╇{3}╇{4}┩".format(
-            "━" * 30, "━" * 7, "━" * 11, "━" * 10, "━" * 10
-        )
-    )
-    for name, cnt, tot_s, avg_ms, max_ms in rows:
-        out.append(
-            "│ {0:<28} │ {1:>5} │ {2:>9.2f} │ {3:>8.0f} │ {4:>8.0f} │".format(
-                name[:28], cnt, tot_s, avg_ms, max_ms
-            )
-        )
-    out.append(
-        "└{0}┴{1}┴{2}┴{3}┴{4}┘".format(
-            "─" * 30, "─" * 7, "─" * 11, "─" * 10, "─" * 10
-        )
-    )
-    return "\n".join(out)
-
-
-def _parse_iso(ts: str | None):
-    if not ts:
+def _parse_iso(timestamp: str | None):
+    if not timestamp:
         return None
-    # handle both "...Z" and "+00:00"
     try:
-        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return datetime.fromisoformat(timestamp)
     except Exception:
         return None
 
@@ -1055,22 +1037,23 @@ def _plain_table(rows):
     return "\n".join(lines)
 
 
-# ---------------------------------
-#          Facade to use
-# ---------------------------------
 @dataclass
 class Telemetry:
     enable: bool = True
     debug_raw: bool = False  # toggle raw dump
     output_dir: str = "metrics"  # where to save JSON
     save_json_default: bool = True  # opt-in autosave
+    save_otel_default: bool = False  # opt-out otel
+    otel_endpoint: str = (
+        "http://localhost:5000/v1/traces"  # where to push otel metrics
+    )
 
     tool: PerToolTimer = field(default_factory=PerToolTimer)
     runnable: PerRunnableTimer = field(default_factory=PerRunnableTimer)
     llm: PerLLMTimer = field(default_factory=PerLLMTimer)
 
     # Run-scoped context we’ll embed in the JSON filename/body
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
 
     # ---------- JSON/export helpers ----------
     def begin_run(self, *, agent: str, thread_id: str) -> None:
@@ -1086,14 +1069,12 @@ class Telemetry:
         self.context.update({
             "agent": agent,
             "thread_id": thread_id,
-            "run_id": uuid.uuid4().hex,
-            "started_at": datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat(),
+            "run_id": uuid4().hex,
+            "started_at": datetime.now(timezone.utc).isoformat(),
         })
 
     @property
-    def callbacks(self) -> List[BaseCallbackHandler]:
+    def callbacks(self) -> list[BaseCallbackHandler]:
         return [] if not self.enable else [self.tool, self.runnable, self.llm]
 
     def _snapshot(self) -> dict:
@@ -1203,11 +1184,11 @@ class Telemetry:
         os.makedirs(path, exist_ok=True)
 
     def _default_filepath(self) -> str:
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         agent = (self.context.get("agent") or "agent").replace(" ", "_")
         thread_id = self.context.get("thread_id") or "thread"
         run_id = (self.context.get("run_id") or "run")[:8]
-        fname = f"{ts}_{agent}_{thread_id}_{run_id}.json"
+        fname = f"{timestamp}_{agent}_{thread_id}_{run_id}.json"
         return os.path.join(self.output_dir, fname)
 
     def _json_default(self, o):
@@ -1235,6 +1216,37 @@ class Telemetry:
             )
         return path
 
+    def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
+        if not opentelemetry_available:
+            return None
+        ctx = payload.get("context") or {}
+        agent = str(ctx.get("agent") or "")
+        # thread_id = str(ctx.get("thread_id") or "")
+        run_id = str(ctx.get("run_id") or "")
+        # s = _parse_iso(ctx.get("started_at"))
+        # e = _parse_iso(ctx.get("ended_at"))
+
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers=headers,
+        )
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        tracer = trace.get_tracer(agent)
+
+        with tracer.start_as_current_span(run_id) as span:
+            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
+            [span.set_attribute(i[0], i[1]) for i in parts_i]
+
+            att = compute_attribution(payload)
+            span.set_attributes(att)
+
+            totals_run, samples_run = extract_llm_token_stats(payload)
+            span.set_attributes(totals_run)
+
+        return endpoint
+
     def to_json(
         self, *, include_raw_snapshot: bool, include_raw_records: bool
     ) -> dict:
@@ -1242,9 +1254,7 @@ class Telemetry:
         out = {
             "context": {
                 **self.context,
-                "ended_at": datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat(),
+                "ended_at": datetime.now(timezone.utc).isoformat(),
             },
             "tables": tables,
             "totals": self._totals(tables),
@@ -1260,7 +1270,10 @@ class Telemetry:
         self,
         raw: bool | None = None,
         save_json: bool | None = None,
+        save_otel: bool | None = None,
         filepath: str | None = None,
+        otel_endpoint: str | None = None,
+        otel_headers: str | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
     ):
@@ -1307,9 +1320,7 @@ class Telemetry:
         # Lazily create a per-instance short id (stable for the object's lifetime)
         if not hasattr(self, "_short_id"):
             try:
-                import uuid as _uuid
-
-                self._short_id = _uuid.uuid4().hex[:6]
+                self._short_id = uuid4().hex[:6]
             except Exception:
                 self._short_id = format(id(self) & 0xFFFFFF, "06x")
         agent_label = f"{base_label} [{self._short_id}]"
@@ -1360,8 +1371,11 @@ class Telemetry:
         if do_save:
             saved_path = self._save_json(payload, filepath=filepath)
 
-        # --- Build Rich renderables ---
-        # console = get_console()
+        # --- Push to OTEL (if requested) ---
+        do_otel = self.save_otel_default if save_otel is None else save_otel
+        saved_otel = None
+        if do_otel:
+            saved_otel = self._save_otel(payload, otel_endpoint, otel_headers)
 
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
@@ -1388,6 +1402,10 @@ class Telemetry:
         )
         if saved_path:
             attrib_lines.append(f"[dim]Saved metrics JSON to:[/] {saved_path}")
+        if saved_otel:
+            attrib_lines.append(
+                f"[dim]Saved metrics JSON to OTEL endpoint:[/] {saved_otel}"
+            )
 
         header_str = "\n".join(
             header_lines
@@ -1416,51 +1434,4 @@ class Telemetry:
                 Text.from_markup(pricing_str),
             ]  # <- parse markup
 
-        # panel = Panel.fit(
-        #     Group(*renderables),  # <- pass a single renderable
-        #     title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
-        #     border_style="bright_magenta",
-        #     padding=(1, 2),
-        #     box=HEAVY,  # <- beefy border with corners
-        # )
-        # console.print(panel)
-
         _session_ingest(payload)
-
-        # parts = []
-        # parts.append(f"{agent_label} • thread {thread_id} • run {run_id}")
-        # if start_dt and end_dt:
-        #     parts.append(f"{started_at} → {ended_at}   wall: {wall_secs:.2f}s")
-        # parts.append("\nPer-Node / Runnable Timing\n" + _plain_table(r_rows))
-        # parts.append("\nPer-Tool Timing\n" + _plain_table(t_rows))
-        # parts.append("\nPer-LLM Timing\n" + _plain_table(l_rows))
-        # parts.append(
-        #     "\nAttribution\n"
-        #     + (f"  Total run (wall): {wall_secs:.2f}s\n" if wall_secs is not None else "")
-        #     + f"  LLM total: {llm_total:.2f}s\n"
-        #     + f"  Tool total: {tool_total:.2f}s\n"
-        #     + (f"  Unattributed: {unattributed:.2f}s\n" if unattributed is not None else "")
-        #     + f"  Graph bucket sum (overlaps): {graph_bucket_sum:.2f}s"
-        # )
-        # if pricing_text_lines:
-        #     sanitized = []
-        #     for line in pricing_text_lines:
-        #         sanitized.append(
-        #             line.replace("[bold]", "")
-        #                 .replace("[/bold]", "")
-        #                 .replace("[dim]", "")
-        #                 .replace("[/dim]", "")
-        #                 .replace("[bold green]", "")
-        #                 .replace("[/bold green]", "")
-        #         )
-        #     parts.append("\n" + "\n".join(sanitized))
-        # if saved_path:
-        #     parts.append(f"\nSaved metrics JSON to: {saved_path}")
-
-        # include_raw = self.debug_raw if raw is None else raw
-        # if include_raw:
-        #     import pprint as _pp
-        #     parts.append("\nRaw Debug Snapshot\n" + _pp.pformat(self._snapshot(), sort_dicts=True, width=120))
-
-        # return ""
-        # # return "\n".join(parts)

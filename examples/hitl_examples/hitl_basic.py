@@ -57,7 +57,7 @@ def main():
         database_path="arxiv_downloaded_papers",
         summaries_path="arxiv_generated_summaries",
         vectorstore_path="arxiv_vectorstores",
-        download_papers=True,
+        download=True,
     )
     memory = AgentMemory(embedding_model=OpenAIEmbeddings(), path="hitl_memory")
 

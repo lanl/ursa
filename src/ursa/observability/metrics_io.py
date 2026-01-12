@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 
-def load_metrics(path: str) -> Dict[str, Any]:
+def load_metrics(path: str) -> dict[str, Any]:
     """Load a telemetry metrics JSON into a Python dict."""
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)

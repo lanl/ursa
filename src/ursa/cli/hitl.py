@@ -26,6 +26,7 @@ from ursa.agents import (
     RecallAgent,
     WebSearchAgent,
 )
+from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 from ursa.util.memory_logger import AgentMemory
 
 app = Typer()
@@ -57,7 +58,7 @@ class HITL:
     llm_base_url: Optional[str]
     llm_api_key: Optional[str]
     max_completion_tokens: int
-    emb_model_name: str
+    emb_model_name: Optional[str]
     emb_base_url: Optional[str]
     emb_api_key: Optional[str]
     share_key: bool
@@ -70,7 +71,8 @@ class HITL:
     arxiv_summaries_path: Optional[Path]
     arxiv_vectorstore_path: Optional[Path]
     arxiv_download_papers: bool
-    ssl_verify: bool
+    ssl_verify_llm: bool
+    ssl_verify_emb: bool
 
     def _make_kwargs(self, **kwargs):
         # NOTE: This is required instead of setting to None because of
@@ -110,31 +112,42 @@ class HITL:
             max_completion_tokens=self.max_completion_tokens,
             **self._make_kwargs(
                 http_client=None
-                if self.ssl_verify
+                if self.ssl_verify_llm
                 else httpx.Client(verify=False),
                 base_url=self.llm_base_url,
                 api_key=self.llm_api_key,
             ),
         )
 
-        self.embedding = init_embeddings(
-            model=self.emb_model_name,
-            **self._make_kwargs(
-                http_client=None
-                if self.ssl_verify
-                else httpx.Client(verify=False),
-                base_url=self.emb_base_url,
-                api_key=self.emb_api_key,
-            ),
+        self.embedding = (
+            init_embeddings(
+                model=self.emb_model_name,
+                **self._make_kwargs(
+                    http_client=(
+                        None
+                        if self.ssl_verify_emb
+                        else httpx.Client(verify=False)
+                    ),
+                    base_url=self.emb_base_url,
+                    api_key=self.emb_api_key,
+                ),
+            )
+            if self.emb_model_name
+            else None
         )
 
-        self.memory = AgentMemory(
-            embedding_model=self.embedding, path=str(self.workspace / "memory")
+        self.memory = (
+            AgentMemory(
+                embedding_model=self.embedding,
+                path=str(self.workspace / "memory"),
+            )
+            if self.embedding
+            else None
         )
 
         self.last_agent_result = ""
         self.arxiv_state = []
-        self.chatter_state = {"messages": []}
+        self.chatter_state = {"messages": [get_chatter_system_prompt()]}
         self.executor_state = {}
         self.hypothesizer_state = {}
         self.planner_state = {}
@@ -160,7 +173,7 @@ class HITL:
             vectorstore_path=self.get_path(
                 self.arxiv_vectorstore_path, "arxiv_vectorstores"
             ),
-            download_papers=self.arxiv_download_papers,
+            download=self.arxiv_download_papers,
         )
 
     @cached_property
@@ -231,7 +244,11 @@ class HITL:
 
     @cached_property
     def rememberer(self) -> RecallAgent:
-        return RecallAgent(llm=self.model, memory=self.memory)
+        return (
+            RecallAgent(llm=self.model, memory=self.memory)
+            if self.memory
+            else None
+        )
 
     def run_arxiv(self, prompt: str) -> str:
         llm_search_query = self.model.invoke(
@@ -290,7 +307,7 @@ class HITL:
         return f"[Executor Agent Output]:\n {self.last_agent_result}"
 
     def run_rememberer(self, prompt: str) -> str:
-        memory_output = self.rememberer.remember(prompt)
+        memory_output = self.rememberer.invoke(prompt) if self.memory else None
         return f"[Rememberer Output]:\n {memory_output}"
 
     def run_chatter(self, prompt: str) -> str:
@@ -340,11 +357,11 @@ class HITL:
         )
 
         plan = "\n\n\n".join(
-            f"## {step['id']} -- {step['name']}\n\n"
+            f"## {ii} -- {step['name']}\n\n"
             + "\n\n".join(
                 f"* {key}\n    * {value}" for key, value in step.items()
             )
-            for step in self.planner_state["plan_steps"]
+            for ii, step in enumerate(self.planner_state["plan_steps"])
         )
         self.update_last_agent_result(plan)
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
@@ -384,6 +401,11 @@ class UrsaRepl(Cmd):
         self.hitl = hitl
         super().__init__(**kwargs)
 
+        cmds_doc, help, cmds_undoc = self.get_help_strings()
+        self.hitl.chatter_state["messages"].append(
+            f"The commands available to the user are {', '.join(cmds_doc)}."
+        )
+
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)
 
@@ -395,6 +417,36 @@ class UrsaRepl(Cmd):
     def postcmd(self, stop: bool, line: str):
         print()
         return stop
+
+    def get_help_strings(self):
+        """
+        Extracted from cmd.Cmd.do_help
+        """
+        names = self.get_names()
+        cmds_doc = []
+        cmds_undoc = []
+        help = {}
+        for name in names:
+            if name[:5] == "help_":
+                help[name[5:]] = 1
+        names.sort()
+        # There can be duplicates if routines overridden
+        prevname = ""
+        for name in names:
+            if name[:3] == "do_":
+                if name == prevname:
+                    continue
+                prevname = name
+                cmd = name[3:]
+                if cmd in help:
+                    cmds_doc.append(cmd)
+                    del help[cmd]
+                elif getattr(self, name).__doc__:
+                    cmds_doc.append(cmd)
+                else:
+                    cmds_undoc.append(cmd)
+
+        return cmds_doc, help, cmds_undoc
 
     def do_exit(self, _: str):
         """Exit shell."""
@@ -449,7 +501,7 @@ class UrsaRepl(Cmd):
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
         # Print intro only once.
-        self.show(f"[magenta]{ursa_banner}", markdown=False)
+        self.show(f"[magenta]{ursa_banner}", markdown=False, highlight=False)
         self.show(self._help_message, markdown=False)
 
         while True:
@@ -473,21 +525,25 @@ class UrsaRepl(Cmd):
         )
 
         emb_provider, emb_name = get_provider_and_model(
-            self.hitl.llm_model_name
+            self.hitl.emb_model_name
         )
         self.show(
-            f"[dim]*[/] Embedding Model: [emph]{self.hitl.embedding.model} "
+            f"[dim]*[/] Embedding Model: [emph]{emb_name} "
             f"[dim]{self.hitl.emb_base_url or emb_provider}",
             markdown=False,
         )
 
 
-def get_provider_and_model(model_str: str):
+def get_provider_and_model(model_str: Optional[str]):
+    if model_str is None:
+        return "none", "none"
+
     if ":" in model_str:
         provider, model = model_str.split(":", 1)
     else:
         provider = "openai"
         model = model_str
+
     return provider, model
 
 

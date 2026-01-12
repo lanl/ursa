@@ -1,5 +1,5 @@
 import os
-from typing import Annotated, Any, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping, TypedDict
 
 import randomname
 from langchain_core.messages import (
@@ -12,7 +12,6 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
-from typing_extensions import TypedDict
 
 from ursa.agents import (
     ArxivAgent,
@@ -22,7 +21,7 @@ from ursa.agents import (
     ExecutionState,
     RecallAgent,
 )
-from ursa.prompt_library.execution_prompts import summarize_prompt
+from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util.memory_logger import AgentMemory
 
 # --- ANSI color codes ---
@@ -69,7 +68,7 @@ arxiver = ArxivAgent(
     database_path="database_neutron_star",
     summaries_path="database_summaries_neutron_star",
     vectorstore_path="vectorstores_neutron_star",
-    download_papers=True,
+    download=True,
 )
 
 executor = ExecutionAgent(llm=model)
@@ -140,7 +139,7 @@ class CombinedAgent(BaseAgent):
     ):
         super().__init__(llm, **kwargs)
         self.runner_prompt = runner_prompt
-        self.summarize_prompt = summarize_prompt
+        self.recap_prompt = recap_prompt
         self.tools = [query_arxiver, query_executor, query_rememberer]
         self._tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
@@ -174,7 +173,7 @@ class CombinedAgent(BaseAgent):
 
     # Define the function that calls the model
     def _summarize(self, state: ExecutionState) -> ExecutionState:
-        messages = [SystemMessage(content=summarize_prompt)] + state["messages"]
+        messages = [SystemMessage(content=recap_prompt)] + state["messages"]
         response = self.llm.invoke(
             messages, {"configurable": {"thread_id": self.thread_id}}
         )

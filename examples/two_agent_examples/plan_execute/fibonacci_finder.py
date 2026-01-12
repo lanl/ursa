@@ -5,13 +5,18 @@ Plans, implements, and benchmarks several techniques to compute the N-th
 Fibonacci number, then explains which approach is the best.
 """
 
+from pathlib import Path
 from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
+from rich import get_console
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util import Checkpointer
 from ursa.workflows import PlanningExecutorWorkflow
+
+console = get_console()
 
 tid = "run-" + uuid4().hex[:8]
 
@@ -28,14 +33,25 @@ problem = (
     f"benchmark and compare the approaches then explain which one is the best."
 )
 
+# Setup checkpointing
+checkpointer = Checkpointer.from_workspace(Path(workspace))
+
 # Setup Planning Agent
 planner_model = init_chat_model(model="openai:o4-mini")
-planner = PlanningAgent(llm=planner_model, enable_metrics=True, thread_id=tid)
+planner = PlanningAgent(
+    llm=planner_model,
+    enable_metrics=True,
+    thread_id=tid + "_planner",
+    checkpointer=checkpointer,
+)
 
 # Setup Execution Agent
 executor_model = init_chat_model(model="openai:o4-mini")
 executor = ExecutionAgent(
-    llm=executor_model, enable_metrics=True, thread_id=tid
+    llm=executor_model,
+    enable_metrics=True,
+    thread_id=tid + "_executor",
+    checkpointer=checkpointer,
 )
 
 # Initialize workflow

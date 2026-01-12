@@ -3,16 +3,15 @@ import re
 import statistics
 from functools import cached_property
 from threading import Lock
-from typing import Any, Mapping, TypedDict
+from typing import TypedDict
 
-from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.embeddings import Embeddings
+from langchain.chat_models import BaseChatModel
+from langchain.embeddings import Embeddings, init_embeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langgraph.graph import StateGraph
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
@@ -36,11 +35,13 @@ def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
 
 
-class RAGAgent(BaseAgent):
+class RAGAgent(BaseAgent[RAGState]):
+    agent_state = RAGState
+
     def __init__(
         self,
-        embedding: Embeddings,
-        llm: BaseChatModel = init_chat_model("openai:gpt-5-mini"),
+        llm: BaseChatModel,
+        embedding: Embeddings | None = None,
         return_k: int = 10,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
@@ -53,14 +54,16 @@ class RAGAgent(BaseAgent):
         self.retriever = None
         self._vs_lock = Lock()
         self.return_k = return_k
-        self.embedding = embedding
+        self.embedding = embedding or init_embeddings(
+            "openai:text-embedding-3-small"
+        )
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.database_path = database_path
-        self.summaries_path = summaries_path
-        self.vectorstore_path = vectorstore_path
+        self.database_path = self.workspace / database_path
+        self.summaries_path = self.workspace / summaries_path
+        self.vectorstore_path = self.workspace / vectorstore_path
 
-        os.makedirs(self.vectorstore_path, exist_ok=True)
+        self.vectorstore_path.mkdir(exist_ok=True, parents=True)
         self.vectorstore = self._open_global_vectorstore()
 
     @cached_property
@@ -202,7 +205,7 @@ class RAGAgent(BaseAgent):
 
         Summarize the retrieved scientific content below.
         Cite sources by ID when relevant: {source_ids}
-                                                  
+
         {retrieved_content}
         """)
         chain = prompt | self.llm | StrOutputParser()
@@ -269,28 +272,16 @@ class RAGAgent(BaseAgent):
             },
         }
 
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
-
     def _build_graph(self):
-        graph = StateGraph(RAGState)
+        self.add_node(self._read_docs_node)
+        self.add_node(self._ingest_docs_node)
+        self.add_node(self._retrieve_and_summarize_node)
 
-        self.add_node(graph, self._read_docs_node)
-        self.add_node(graph, self._ingest_docs_node)
-        self.add_node(graph, self._retrieve_and_summarize_node)
+        self.graph.add_edge("_read_docs_node", "_ingest_docs_node")
+        self.graph.add_edge("_ingest_docs_node", "_retrieve_and_summarize_node")
 
-        graph.add_edge("_read_docs_node", "_ingest_docs_node")
-        graph.add_edge("_ingest_docs_node", "_retrieve_and_summarize_node")
-
-        graph.set_entry_point("_read_docs_node")
-        graph.set_finish_point("_retrieve_and_summarize_node")
-
-        return graph.compile(checkpointer=self.checkpointer)
+        self.graph.set_entry_point("_read_docs_node")
+        self.graph.set_finish_point("_retrieve_and_summarize_node")
 
 
 # NOTE: Run test in `tests/agents/test_rag_agent/test_rag_agent.py` via:
