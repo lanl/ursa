@@ -387,8 +387,10 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
+            workspace=self.workspace,
             embedding=self.rag_embedding,
-            database_path=self.database_path,
+            vectorstore_path="rag_vectorstore",
+            database_path=self.database_path.name,
         )
         new_state["final_summary"] = rag_agent.invoke(context=state["context"])[
             "summary"

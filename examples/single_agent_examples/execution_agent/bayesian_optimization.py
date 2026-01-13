@@ -4,7 +4,6 @@ from langchain_openai import OpenAIEmbeddings
 
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
-from ursa.util.memory_logger import AgentMemory
 
 ### Run a simple example of an Execution Agent.
 
@@ -24,13 +23,12 @@ model = init_chat_model(
 
 embedding_kwargs = None
 embedding_model = OpenAIEmbeddings(**(embedding_kwargs or {}))
-memory = AgentMemory(embedding_model=embedding_model)
 
 tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 # Initialize the agent
 executor = ExecutionAgent(
-    agent_memory=memory, llm=model, enable_metrics=True
+    llm=model, enable_metrics=True
 )  # , enable_metrics=False if you don't want metrics
 executor.thread_id = tid
 

@@ -1,3 +1,5 @@
+import asyncio
+
 from langchain_community.callbacks.openai_info import OpenAICallbackHandler
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -7,7 +9,7 @@ from ursa.observability.timing import render_session_summary
 tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 
-def main():
+async def main():
     callback_handler = OpenAICallbackHandler()
 
     llm = ChatOpenAI(
@@ -23,6 +25,7 @@ def main():
         summarize=True,
         process_images=False,
         max_results=10,
+        workspace="hea_example",
         rag_embedding=OpenAIEmbeddings(),
         database_path="arxiv_HEA_papers",
         summaries_path="arxiv_HEA_summaries",
@@ -33,15 +36,15 @@ def main():
 
     # t0 = time.time()
 
-    results = agent.invoke(
+    results = await agent.ainvoke(
         arxiv_search_query="High Entropy Alloys",
         context="Find High entropy alloys suitable for application under extreme conditions. For candidates that you identify, provide the starting structure, crystal structure, lattice parameters, and space group.",
     )
 
-    print(results)
+    print(results["final_summary"])
 
     render_session_summary(tid)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

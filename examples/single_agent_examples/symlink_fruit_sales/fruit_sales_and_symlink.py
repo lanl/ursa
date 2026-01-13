@@ -106,12 +106,11 @@ def main(model_name: str):
 
         # Initialize the agent
         # no planning agent for this one - let's YOLO and go risk it
-        executor = ExecutionAgent(llm=model)
+        executor = ExecutionAgent(llm=model, workspace=workspace)
 
         final_results = executor.invoke(
             {
                 "messages": [HumanMessage(content=problem)],
-                "workspace": workspace,
                 "symlinkdir": symlinkdict,
             },
             config={
