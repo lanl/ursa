@@ -19,11 +19,10 @@ from typing import (
     Any,
     Mapping,
     Optional,
-    Union,
     final,
 )
 
-InputLike = Union[str, Mapping[str, Any]]
+InputLike = str | Mapping[str, Any]
 
 
 class BaseWorkflow(ABC):
