@@ -74,7 +74,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
             console.print(
                 Panel(
                     step_prompt,
-                    title=f"[bold orange3 on black]Solving Step {step['id']}",
+                    title=f"[bold orange3 on black]Solving Step {i + 1}",
                     border_style="orange3 on black",
                     style="orange3 on black",
                 )

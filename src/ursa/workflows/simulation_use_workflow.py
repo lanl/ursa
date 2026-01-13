@@ -130,7 +130,7 @@ class SimulationUseWorkflow(BaseWorkflow):
             console.print(
                 Panel(
                     step_prompt,
-                    title=f"[bold orange3 on black]Solving Step {step['id']}",
+                    title=f"[bold orange3 on black]Solving Step {i + 1}",
                     border_style="orange3 on black",
                     style="orange3 on black",
                 )
@@ -184,14 +184,18 @@ def main():
 
     # Init the agents with the model and checkpointer
     executor = ExecutionAgent(
-        llm=executor_model, checkpointer=checkpointer, enable_metrics=True
+        llm=executor_model,
+        checkpointer=checkpointer,
+        enable_metrics=True,
+        thread_id=tid + "_executor",
     )
-    executor.thread_id = tid
 
     planner = PlanningAgent(
-        llm=planner_model, checkpointer=checkpointer, enable_metrics=True
+        llm=planner_model,
+        checkpointer=checkpointer,
+        enable_metrics=True,
+        thread_id=tid + "_planner",
     )
-    planner.thread_id = tid
 
     problem = (
         "Your task is to perform a parameter sweep of a complex computational model. "
@@ -242,7 +246,7 @@ def main():
 
     workflow(problem)  # raw_debug=True doesn't seem to trigger anything.
 
-    render_session_summary(tid)
+    render_session_summary(tid + "_executor")
 
 
 if __name__ == "__main__":

@@ -60,7 +60,8 @@ workflow = PlanningExecutorWorkflow(
 )
 
 # Run problem through the workflow
-workflow(problem)
+workflow.invoke(problem)
 
 # Print agent telemetry data
-render_session_summary(tid)
+render_session_summary(tid + "_planner")
+render_session_summary(tid + "_executor")
