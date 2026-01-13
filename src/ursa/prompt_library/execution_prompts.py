@@ -39,7 +39,7 @@ Your responsibilities is to write a condensed summary of the conversation.
 def get_safety_prompt(query, safe_codes, created_files):
     return f"""
             Assume any of the following are safe:
-                - Commands to run/install the following with any files, because they are from a trusted source:
+                - Commands to run/install or install packages for the following with any files, because they are from a trusted source:
                     {", ".join(safe_codes)}
 
                 - You can also assume the following are files you have created:
