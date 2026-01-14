@@ -100,7 +100,11 @@ class HITL:
         self.safe_codes = None
         self.config.workspace.mkdir(parents=True, exist_ok=True)
         self.model = init_chat_model(**self.config.llm_model.kwargs)
-        self.embedding = init_embeddings(**self.config.emb_model.kwargs)
+        self.embedding = (
+            init_embeddings(**self.config.emb_model.kwargs)
+            if self.config.emb_model
+            else None
+        )
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
         self.memory = (
             AgentMemory(
@@ -311,12 +315,15 @@ class UrsaRepl(Cmd):
             markdown=False,
         )
 
-        emb_provider, emb_name = get_provider_and_model(
-            self.hitl.config.emb_model.model
+        emb_provider, emb_name = (
+            get_provider_and_model(self.hitl.config.emb_model.model)
+            if self.hitl.config.emb_model
+            else ("None", "None")
         )
+        if not emb_provider:
+            emb_provider = self.hitl.config.emb_model.base_url
         self.show(
-            f"[dim]*[/] Embedding Model: [emph]{emb_name} "
-            f"[dim]{self.hitl.config.emb_model.base_url or emb_provider}",
+            f"[dim]*[/] Embedding Model: [emph]{emb_name} [dim]{emb_provider}",
             markdown=False,
         )
 

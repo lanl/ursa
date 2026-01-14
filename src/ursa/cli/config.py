@@ -54,17 +54,13 @@ class UrsaConfig(BaseModel):
 
     llm_model: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
-            model="openai:gpt-5",
+            model="openai:gpt-5.2",
             max_completion_tokens=5000,
         )
     )
     """Default LLM"""
 
-    emb_model: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(
-            model="openai:text-embedding-3-small",
-        )
-    )
+    emb_model: ModelConfig | None = None
     """Default Embedding model"""
 
     mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
