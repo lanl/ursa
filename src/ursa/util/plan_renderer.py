@@ -2,6 +2,8 @@ from rich import box, get_console
 from rich.table import Table
 from rich.text import Text
 
+from ursa.agents.planning_agent import PlanStep
+
 
 def render_plan_steps_rich(plan_steps, highlight_index: int | None = None):
     """Pretty table for a list of plan steps (strings or dicts), with an optional highlighted row."""
@@ -40,19 +42,18 @@ def render_plan_steps_rich(plan_steps, highlight_index: int | None = None):
 
     for i, step in enumerate(plan_steps, 1):
         # build cells
-        if isinstance(step, dict):
-            name = (
-                step.get("name")
-                or step.get("title")
-                or step.get("id")
-                or f"Step {i}"
-            )
-            desc = step.get("description") or ""
-            outs = bullets(
-                step.get("expected_outputs") or step.get("artifacts")
-            )
-            crit = bullets(step.get("success_criteria"))
-            needs_code = bool(step.get("requires_code"))
+        if isinstance(step, PlanStep):
+            name = step.name
+            desc = step.description
+            outs = bullets(step.expected_outputs)
+            crit = bullets(step.success_criteria)
+            needs_code = bool(step.requires_code)
+        elif isinstance(step, dict):
+            name = step.get("name", "No Name")
+            desc = step.get("description", "No Description")
+            outs = bullets(step.get("expected_outputs", "None"))
+            crit = bullets(step.get("success_criteria", "None listed"))
+            needs_code = bool(step.get("requires_code", False))
         else:
             name, desc, outs, crit, needs_code = (
                 f"Step {i}",

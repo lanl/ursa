@@ -1,13 +1,13 @@
+import asyncio
 from uuid import uuid4
 
-from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.observability.timing import render_session_summary
 
 
-def main():
+async def main():
     tid = f"run-{uuid4().hex[:8]}"
     model = ChatOpenAI(
         model="o3",
@@ -26,30 +26,25 @@ def main():
         thread_id=tid,
     )
 
-    result = agent.invoke(
+    result = await agent.ainvoke(
         arxiv_search_query="high entropy alloy, yield strength, interstitial",
         context="Extract data that can be used to visualize how yield strength increase (%) depends on the interstital doping atomic percentage.",
     )
-    print(result)
+    print(result["final_summary"])
     executor = ExecutionAgent(llm=model, thread_id=tid)
     exe_plan = f"""
     The following is the summaries of research papers on how yield strength increase depends on interstital doping percentage: 
-    {result}
+    {result["final_summary"]}
 
     Fit a machine learning surrogate to predict yield strength increase (%) from interstital doping atomic percentage and any other relevant features.
     Summarize the results in a markdown document. Include one or more plots of the data extracted from the papers. This 
     will be reviewed by experts in the field so technical accuracy and clarity is critical. Ensure it is well cited from the reviewed works.
     """
 
-    init = {"messages": [HumanMessage(content=exe_plan)]}
-
-    final_results = executor.invoke(init, {"recursion_limit": 10000})
-
-    for x in final_results["messages"]:
-        print(x.content)
+    _ = executor.invoke(exe_plan)
 
     render_session_summary(tid)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

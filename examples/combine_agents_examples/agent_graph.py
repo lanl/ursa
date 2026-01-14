@@ -1,14 +1,13 @@
-import os
-from typing import Annotated, Any, Literal, Mapping, TypedDict
+import asyncio
+from typing import Annotated, Literal, TypedDict
 
-import randomname
+from langchain.embeddings import init_embeddings
 from langchain_core.messages import (
     AIMessage,
-    HumanMessage,
     SystemMessage,
 )
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
@@ -30,6 +29,9 @@ BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
+
+
+workspace = "combined_workspace"
 
 runner_prompt = """
 You are a responsible and efficient agent tasked with coordinating agentic execution to solve a specific problem.
@@ -56,11 +58,12 @@ model = ChatOpenAI(
     model="gpt-5-mini",
     max_completion_tokens=50000,
 )
-embedding = OpenAIEmbeddings()
+embedding = init_embeddings("openai:text-embedding-3-large")
 memory = AgentMemory(embedding_model=embedding)
 
 arxiver = ArxivAgent(
     llm=model,
+    workspace=workspace,
     summarize=True,
     process_images=False,
     max_results=5,
@@ -71,9 +74,9 @@ arxiver = ArxivAgent(
     download=True,
 )
 
-executor = ExecutionAgent(llm=model)
+executor = ExecutionAgent(llm=model, workspace=workspace)
 
-rememberer = RecallAgent(llm=model, memory=memory)
+rememberer = RecallAgent(llm=model, memory=memory, workspace=workspace)
 
 
 @tool
@@ -88,7 +91,9 @@ def query_arxiver(search_query: str, context: str) -> str:
     """
     print(f"{GREEN}[Arxiver Search] - {search_query}{RESET}")
     print(f"{GREEN}[Arxiver Context] - {context}{RESET}")
-    return arxiver.invoke(arxiv_search_query=search_query, context=context)
+    return asyncio.run(
+        arxiver.ainvoke(arxiv_search_query=search_query, context=context)
+    )
 
 
 @tool
@@ -102,12 +107,8 @@ def query_executor(
         request: Text request of the task to be carried out. Be clear about the goals and any important details
 
     """
-    init = {
-        "messages": [HumanMessage(content=request)],
-        "workspace": state["workspace"],
-    }
     print(f"{RED}[Executor Request] - {request}{RESET}")
-    return executor.invoke(init)
+    return executor.invoke(request)
 
 
 @tool
@@ -127,7 +128,6 @@ class State(TypedDict):
     messages: Annotated[list, add_messages]
     current_progress: str
     code_files: list[str]
-    workspace: str
 
 
 class CombinedAgent(BaseAgent):
@@ -150,12 +150,6 @@ class CombinedAgent(BaseAgent):
     # Define the function that calls the model
     def _runner(self, state: State) -> State:
         new_state = state.copy()
-        if "workspace" not in new_state.keys():
-            new_state["workspace"] = randomname.get_name()
-            print(
-                f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
-            )
-        os.makedirs(new_state["workspace"], exist_ok=True)
 
         if isinstance(new_state["messages"][0], SystemMessage):
             new_state["messages"][0] = SystemMessage(content=self.runner_prompt)
@@ -169,7 +163,7 @@ class CombinedAgent(BaseAgent):
         )
         if self.log_state:
             self.write_state("combined_agent.json", new_state)
-        return {"messages": [response], "workspace": new_state["workspace"]}
+        return {"messages": response}
 
     # Define the function that calls the model
     def _summarize(self, state: ExecutionState) -> ExecutionState:
@@ -200,7 +194,7 @@ class CombinedAgent(BaseAgent):
         save_state["messages"].append(response)
         if self.log_state:
             self.write_state("combined_agent.json", save_state)
-        return {"messages": [response.content]}
+        return {"messages": response}
 
     def _build_graph(self):
         graph = StateGraph(State)
@@ -227,14 +221,6 @@ class CombinedAgent(BaseAgent):
 
         return graph.compile(checkpointer=self.checkpointer)
 
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
-
 
 # Define the function that determines whether to continue or not
 def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
@@ -249,7 +235,7 @@ def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
 
 
 def main():
-    agent = CombinedAgent(llm=model, log_state=True)
+    agent = CombinedAgent(llm=model, log_state=True, workspace=workspace)
     result = agent.invoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints? 
                 Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This 
                 will be reviewed by experts in the field so technical accuracy and clarity is critical.""")

@@ -35,7 +35,6 @@ from typing import (
     TypedDict,
 )
 
-import randomname
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool
@@ -268,7 +267,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
         This method copies the incoming state, ensures a workspace directory exists
-        (creating one with a random name when absent), optionally creates a symlink
+        (creating one with a default name when absent), optionally creates a symlink
         described by state["symlinkdir"], sets or injects the executor system prompt
         as the first message, and invokes the bound LLM. When logging is enabled,
         it persists the pre-invocation state to disk.
@@ -290,7 +289,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 1) Ensure a workspace directory exists, creating a named one if absent.
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = self.workspace / randomname.get_name()
+            new_state["workspace"] = self.workspace
             print(
                 f"{RED}Creating the folder "
                 f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "

@@ -35,13 +35,15 @@ def main():
         executor = ExecutionAgent(
             llm=executor_model,
             enable_metrics=True,
-            thread_id=tid,
+            thread_id=tid + "_executor",
+            workspace=workspace,
         )
 
         planner = PlanningAgent(
             llm=planner_model,
             enable_metrics=True,
-            thread_id=tid,
+            thread_id=tid + "_planner",
+            workspace=workspace,
         )
 
         workflow = PlanningExecutorWorkflow(
@@ -50,7 +52,8 @@ def main():
 
         final_results = workflow(problem)
 
-        render_session_summary(tid)
+        render_session_summary(planner.thread_id)
+        render_session_summary(executor.thread_id)
 
         return final_results
 
