@@ -18,9 +18,9 @@ from ursa.agents import (
     BaseAgent,
     BaseChatModel,
     ExecutionAgent,
-    ExecutionState,
     RecallAgent,
 )
+from ursa.agents.execution_agent import ExecutionState
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util.memory_logger import AgentMemory
 
