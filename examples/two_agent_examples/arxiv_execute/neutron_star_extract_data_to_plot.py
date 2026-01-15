@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
@@ -34,18 +35,18 @@ async def main():
     executor.thread_id = tid
     exe_plan = f"""
     The following is the summaries of research papers on the contraints on neutron
-    star radius: 
+    star radius:
     {result["final_summary"]}
 
-    Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This 
-    will be reviewed by experts in the field so technical accuracy and clarity is 
+    Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This
+    will be reviewed by experts in the field so technical accuracy and clarity is
     critical.
     """
 
-    _ = executor.invoke(exe_plan)
+    _ = await executor.ainvoke(exe_plan)
 
     render_session_summary(tid)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
