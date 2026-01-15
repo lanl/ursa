@@ -768,7 +768,18 @@ def main_plan_load_or_perform(
     if values:
         # title = "[yellow]📋 Resumed Plan" if values else "[yellow]📋 Plan"
         # choose the dict that has messages/plan_steps
-        plan_dict = values
+        plan_dict = values["__root__"]
+
+        plan_dict["plan_steps"] = [
+            {
+                "name": plan_step.name,
+                "description": plan_step.description,
+                "expected_outputs": plan_step.expected_outputs,
+                "success_criteria": plan_step.success_criteria,
+                "requires_code": plan_step.requires_code,
+            }
+            for plan_step in plan_dict["plan"].steps
+        ]
         # NOTE: This path is where we've recovered from a checkpoint
     else:
         # Fresh plan - need to do a plan
@@ -1355,6 +1366,7 @@ def main(
         elif planning_mode == "single":
             # figure out where to resume execution
             exec_prog = load_exec_progress(workspace)
+
             if exec_prog.get("plan_hash") != plan_sig:
                 start_idx = 0
                 prev_summary = (
