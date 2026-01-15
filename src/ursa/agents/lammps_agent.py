@@ -35,7 +35,8 @@ class LammpsState(TypedDict, total=False):
     run_returncode: Optional[int]
     run_stdout: str
     run_stderr: str
-
+    run_history: list[dict[str, Any]]  
+    
     fix_attempts: int
 
 
@@ -157,7 +158,8 @@ class LammpsAgent(BaseAgent):
                 "You are part of a larger scientific workflow whose purpose is to accomplish this task: {simulation_task}\n"
                 "For this purpose, this input file for LAMMPS was written: {input_script}\n"
                 "However, when running the simulation, an error was raised.\n"
-                "Here is the full stdout message that includes the error message: {err_message}\n"
+                "Here is the run history across attempts (each includes the input script and its stdout/stderr):\n{err_message}\n"
+                "Use the history to identify what changed between attempts and avoid repeating failed approaches.\n"
                 "Your task is to write a new input file that resolves the error.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
@@ -247,7 +249,7 @@ class LammpsAgent(BaseAgent):
         
         user_potential = UserPotential(self.user_pair_style, self.user_pair_coeff)
         
-        return {**state, "chosen_potential": user_potential, "fix_attempts": 0}
+        return {**state, "chosen_potential": user_potential, "fix_attempts": 0,"run_history": []}
     
     def _fetch_and_trim_text(self, url: str) -> str:
         downloaded = trafilatura.fetch_url(url)
@@ -313,6 +315,7 @@ class LammpsAgent(BaseAgent):
             "summaries": [],
             "full_texts": [],
             "fix_attempts": 0,
+            "run_history": [],
         }
 
     def _should_summarize(self, state: LammpsState) -> str:
@@ -468,12 +471,25 @@ class LammpsAgent(BaseAgent):
                 text=True,
                 check=False,
             )
+
+
+        hist = list(state.get("run_history", []))
+        hist.append({
+            "attempt": state.get("fix_attempts", 0),
+            "input_script": state.get("input_script", ""),
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        })
+
         return {
             **state,
             "run_returncode": result.returncode,
             "run_stdout": result.stdout,
             "run_stderr": result.stderr,
+            "run_history": hist,
         }
+
 
     def _route_run(self, state: LammpsState) -> str:
         rc = state.get("run_returncode", 0)
@@ -489,8 +505,28 @@ class LammpsAgent(BaseAgent):
 
     def _fix(self, state: LammpsState) -> LammpsState:
         pair_info = state["chosen_potential"].pair_info()
-        err_blob = state.get("run_stdout")
 
+        hist = state.get("run_history", [])
+        if not hist:
+            hist = [{
+                "attempt": state.get("fix_attempts", 0),
+                "input_script": state.get("input_script", ""),
+                "returncode": state.get("run_returncode"),
+                "stdout": state.get("run_stdout", ""),
+                "stderr": state.get("run_stderr", ""),
+            }]
+        
+        parts = []
+        for h in hist:
+            parts.append(
+                "=== Attempt {attempt} | returncode={returncode} ===\n"
+                "--- input_script ---\n{input_script}\n"
+                "--- stdout ---\n{stdout}\n"
+                "--- stderr ---\n{stderr}\n"
+            .format(**h)
+            )
+        err_blob = "\n".join(parts)
+        
         data_content = ""
         if self.data_file:
             data_content = self._read_and_trim_data_file(self.data_file)
