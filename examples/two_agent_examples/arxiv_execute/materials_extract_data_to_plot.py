@@ -10,9 +10,7 @@ from ursa.observability.timing import render_session_summary
 
 async def main():
     tid = f"run-{uuid4().hex[:8]}"
-    model = init_chat_model(
-        model="openai:gpt-5-mini", max_completion_tokens=50000
-    )
+    model = init_chat_model(model="openai:gpt-5", max_completion_tokens=20000)
 
     embedding = init_embeddings("openai:text-embedding-3-large")
 
