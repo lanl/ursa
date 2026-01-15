@@ -1,6 +1,7 @@
 import asyncio
 from typing import Annotated, Literal, TypedDict
 
+from langchain.chat_models import BaseChatModel
 from langchain.embeddings import init_embeddings
 from langchain_core.messages import (
     AIMessage,
@@ -9,12 +10,11 @@ from langchain_core.messages import (
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import InjectedState, ToolNode
+from langgraph.prebuilt import InjectedState
 
+from ursa.agents.base import BaseAgent, AgentWithTools
 from ursa.agents import (
     ArxivAgent,
-    BaseAgent,
-    BaseChatModel,
     ExecutionAgent,
     RecallAgent,
 )
@@ -54,8 +54,8 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 
 
 model = ChatOpenAI(
-    model="gpt-5-mini",
-    max_completion_tokens=50000,
+    model="gpt-5-nano",
+    # max_completion_tokens=50000,
 )
 embedding = init_embeddings("openai:text-embedding-3-large")
 memory = AgentMemory(embedding_model=embedding)
@@ -65,7 +65,7 @@ arxiver = ArxivAgent(
     workspace=workspace,
     summarize=True,
     process_images=False,
-    max_results=5,
+    max_results=3,
     rag_embedding=embedding,
     database_path="database_neutron_star",
     summaries_path="database_summaries_neutron_star",
@@ -79,7 +79,7 @@ rememberer = RecallAgent(llm=model, memory=memory, workspace=workspace)
 
 
 @tool
-def query_arxiver(search_query: str, context: str) -> str:
+async def query_arxiver(search_query: str, context: str) -> str:
     """
     Use the Arxiv agent to search for research papers on Arxiv and summarize them using the specified context.
 
@@ -90,13 +90,11 @@ def query_arxiver(search_query: str, context: str) -> str:
     """
     print(f"{GREEN}[Arxiver Search] - {search_query}{RESET}")
     print(f"{GREEN}[Arxiver Context] - {context}{RESET}")
-    return asyncio.run(
-        arxiver.ainvoke(arxiv_search_query=search_query, context=context)
-    )
+    return await arxiver.ainvoke(query=search_query, context=context)
 
 
 @tool
-def query_executor(
+async def query_executor(
     request: str, state: Annotated[dict, InjectedState]
 ) -> ExecutionState:
     """
@@ -107,11 +105,11 @@ def query_executor(
 
     """
     print(f"{RED}[Executor Request] - {request}{RESET}")
-    return executor.invoke(request)
+    return await executor.ainvoke(request)
 
 
 @tool
-def query_rememberer(request: str) -> str:
+async def query_rememberer(request: str) -> str:
     """
     Check logs of past tasks to see if you have a memory of doing something similar
 
@@ -120,7 +118,7 @@ def query_rememberer(request: str) -> str:
 
     """
     print(f"{BLUE}[Rememberer Request] - {request}{RESET}")
-    return rememberer.invoke(query=request)
+    return await rememberer.ainvoke(query=request)
 
 
 class State(TypedDict):
@@ -129,46 +127,55 @@ class State(TypedDict):
     code_files: list[str]
 
 
-class CombinedAgent(BaseAgent):
+class CombinedAgent(AgentWithTools, BaseAgent):
+    state_type = State
+
     def __init__(
         self,
         llm: BaseChatModel,
         log_state: bool = False,
         **kwargs,
     ):
-        super().__init__(llm, **kwargs)
+        tools = [query_arxiver, query_executor, query_rememberer]
+        super().__init__(llm, tools=tools, **kwargs)
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
-        self.tools = [query_arxiver, query_executor, query_rememberer]
-        self._tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
 
     # Define the function that calls the model
-    def _runner(self, state: State) -> State:
-        new_state = state.copy()
-
-        if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(content=self.runner_prompt)
+    async def _runner(self, state: State) -> State:
+        existing_messages = state.get("messages", [])
+        if existing_messages and isinstance(
+            existing_messages[0], SystemMessage
+        ):
+            prepared_messages = existing_messages.copy()
+            prepared_messages[0] = SystemMessage(content=self.runner_prompt)
         else:
-            new_state["messages"] = [
-                SystemMessage(content=self.runner_prompt)
-            ] + state["messages"]
-        response = self.llm.invoke(
-            new_state["messages"],
+            prepared_messages = [
+                SystemMessage(content=self.runner_prompt),
+                *existing_messages,
+            ]
+
+        response = await self.llm.ainvoke(
+            prepared_messages,
             {"configurable": {"thread_id": self.thread_id}},
         )
+        updated_messages = [*prepared_messages, response]
+
         if self.log_state:
-            self.write_state("combined_agent.json", new_state)
-        return {"messages": response}
+            saved_state = state.copy()
+            saved_state["messages"] = updated_messages
+            self.write_state("combined_agent.json", saved_state)
+
+        return {"messages": updated_messages}
 
     # Define the function that calls the model
-    def _summarize(self, state: ExecutionState) -> ExecutionState:
+    async def _summarize(self, state: ExecutionState) -> ExecutionState:
         messages = [SystemMessage(content=recap_prompt)] + state["messages"]
-        response = self.llm.invoke(
+        response = await self.llm.ainvoke(
             messages, {"configurable": {"thread_id": self.thread_id}}
         )
-        memories = []
+        memories: list[str] = []
         # Handle looping through the messages
         for x in state["messages"]:
             if not isinstance(x, AIMessage):
@@ -187,15 +194,18 @@ class CombinedAgent(BaseAgent):
                 memories.append("\n".join(tool_strings))
         memories.append(response.content)
         memory.add_memories(memories)
-        save_state = state.copy()
-        save_state["messages"].append(response)
+        updated_messages = [*state["messages"], response]
+
         if self.log_state:
-            self.write_state("combined_agent.json", save_state)
-        return {"messages": response}
+            save_state = state.copy()
+            save_state["messages"] = updated_messages
+            self.write_state(self.workspace / "combined_agent.json", save_state)
+        return {"messages": updated_messages}
 
     def _build_graph(self):
+        self.llm = self.llm.bind_tools(self.tools.values())
         self.add_node(self._runner)
-        self.add_node(self._tool_node, "_tool_node")
+        self.add_node(self.tool_node, "_tool_node")
         self.add_node(self._summarize)
 
         # Set the entrypoint as `agent`
