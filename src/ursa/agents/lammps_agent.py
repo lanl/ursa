@@ -9,6 +9,16 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.syntax import Syntax
+from rich.rule import Rule
+from rich.table import Table
+from rich import box
+from rich.console import Group
+import difflib
+
 from .base import BaseAgent
 
 working = True
@@ -83,6 +93,8 @@ class LammpsAgent(BaseAgent):
         self.tiktoken_model = tiktoken_model
         self.max_tokens = max_tokens
 
+        self.console = Console()
+        
         self.pair_styles = [
             "eam",
             "eam/alloy",
@@ -156,11 +168,10 @@ class LammpsAgent(BaseAgent):
         self.fix_chain = (
             ChatPromptTemplate.from_template(
                 "You are part of a larger scientific workflow whose purpose is to accomplish this task: {simulation_task}\n"
-                "For this purpose, this input file for LAMMPS was written: {input_script}\n"
-                "However, when running the simulation, an error was raised.\n"
-                "Here is the run history across attempts (each includes the input script and its stdout/stderr):\n{err_message}\n"
+                "Multiple attempts at writing and running a LAMMPS input file have been made.\n"
+                "Here is the run history across attempts (each includes the input script and its stdout/stderr):{err_message}\n"
                 "Use the history to identify what changed between attempts and avoid repeating failed approaches.\n"
-                "Your task is to write a new input file that resolves the error.\n"
+                "Your task is to write a new input file that resolves the latest error.\n"
                 "Note that all potential files are in the './' directory.\n"
                 "Here is some information about the pair_style and pair_coeff that might be useful in writing the input file: {pair_info}.\n"
                 "If a template for the input file is provided, you should adapt it appropriately to meet the task requirements.\n"
@@ -182,6 +193,32 @@ class LammpsAgent(BaseAgent):
         )
 
         self._action = self._build_graph()
+
+    def _section(self, title: str):
+        self.console.print(Rule(f"[bold cyan]{title}[/bold cyan]"))
+    
+    def _panel(self, title: str, body: str, style: str = "cyan"):
+        self.console.print(Panel(body, title=f"[bold]{title}[/bold]", border_style=style))
+    
+    def _code_panel(self, title: str, code: str, language: str = "bash", style: str = "magenta"):
+        syn = Syntax(code, language, theme="monokai", line_numbers=True, word_wrap=True)
+        self.console.print(Panel(syn, title=f"[bold]{title}[/bold]", border_style=style))
+
+    def _diff_panel(self, old: str, new: str, title: str = "LAMMPS input diff"):
+        diff = "\n".join(
+            difflib.unified_diff(
+                old.splitlines(),
+                new.splitlines(),
+                fromfile="in.lammps (before)",
+                tofile="in.lammps (after)",
+                lineterm="",
+            )
+        )
+        if not diff.strip():
+            diff = "(no changes)"
+        syn = Syntax(diff, "diff", theme="monokai", line_numbers=False, word_wrap=True)
+        self.console.print(Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan"))
+
 
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
@@ -330,7 +367,7 @@ class LammpsAgent(BaseAgent):
 
     def _summarize_one(self, state: LammpsState) -> LammpsState:
         i = state["idx"]
-        print(f"Summarizing potential #{i}")
+        self._section(f"Summarizing potential #{i}")
         match = state["matches"][i]
         md = match.metadata()
 
@@ -371,20 +408,22 @@ class LammpsAgent(BaseAgent):
         return {**state, "summaries_combined": "".join(parts)}
 
     def _choose(self, state: LammpsState) -> LammpsState:
-        print("Choosing one potential for this task...")
+        self._section("Choosing potential")
         choice = self.choose_chain.invoke({
             "summaries_combined": state["summaries_combined"],
             "simulation_task": state["simulation_task"],
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
-
-        print(f"Chosen potential #{chosen_index}")
-        print("Rationale for choosing this potential:")
-        print(choice_dict["rationale"])
-
+        
         chosen_potential = state["matches"][chosen_index]
 
+        self._panel(
+            "Chosen Potential",
+            f"[bold]Index:[/bold] {chosen_index}\n[bold]ID:[/bold] {chosen_potential.id}\n\n[bold]Rationale:[/bold]\n{choice_dict['rationale']}",
+            style="green",
+        )
+        
         out_file = os.path.join(self.potential_summaries_dir, "Rationale.txt")
         with open(out_file, "w") as f:
             f.write(f"Chosen potential #{chosen_index}")
@@ -401,7 +440,7 @@ class LammpsAgent(BaseAgent):
         return "continue_author"
 
     def _author(self, state: LammpsState) -> LammpsState:
-        print("First attempt at writing LAMMPS input file....")
+        self._section("First attempt at writing LAMMPS input file")
 
         if not self.use_user_potential:
             state["chosen_potential"].download_files(self.workspace)
@@ -422,10 +461,15 @@ class LammpsAgent(BaseAgent):
         input_script = script_dict["input_script"]
         with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
             f.write(input_script)
+
+        self._section("Authored LAMMPS input")
+        self._code_panel("in.lammps", input_script, language="bash", style="magenta")
+                    
         return {**state, "input_script": input_script}
 
     def _run_lammps(self, state: LammpsState) -> LammpsState:
-        print("Running LAMMPS....")
+        self._section("Running LAMMPS")
+        
         if self.ngpus >= 0:
             result = subprocess.run(
                 [
@@ -472,7 +516,13 @@ class LammpsAgent(BaseAgent):
                 check=False,
             )
 
+        status_style = "green" if result.returncode == 0 else "red"
+        self._panel("Run Result", f"returncode = {result.returncode}", style=status_style)
 
+        if result.returncode != 0:
+            err_view = (result.stderr.strip() + "\n" + result.stdout.strip()).strip() or "(no output captured)"
+            self._panel("Run error/output", err_view[-6000:], style="red") 
+        
         hist = list(state.get("run_history", []))
         hist.append({
             "attempt": state.get("fix_attempts", 0),
@@ -495,12 +545,12 @@ class LammpsAgent(BaseAgent):
         rc = state.get("run_returncode", 0)
         attempts = state.get("fix_attempts", 0)
         if rc == 0:
-            print("LAMMPS run successful! Exiting...")
+            self._section("LAMMPS run successful! Exiting...")
             return "done_success"
         if attempts < self.max_fix_attempts:
-            print("LAMMPS run Failed. Attempting to rewrite input file...")
+            self._section("LAMMPS run Failed. Attempting to rewrite input file...")
             return "need_fix"
-        print("LAMMPS run Failed and maximum fix attempts reached. Exiting...")
+        self._section("LAMMPS run Failed and maximum fix attempts reached. Exiting..")
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
@@ -533,7 +583,6 @@ class LammpsAgent(BaseAgent):
 
         fixed_json = self.fix_chain.invoke({
             "simulation_task": state["simulation_task"],
-            "input_script": state["input_script"],
             "err_message": err_blob,
             "pair_info": pair_info,
             "template": state["template"],
@@ -541,9 +590,14 @@ class LammpsAgent(BaseAgent):
             "data_content": data_content,
         })
         script_dict = self._safe_json_loads(fixed_json)
+        
         new_input = script_dict["input_script"]
+        old_input = state["input_script"]
+        self._diff_panel(old_input, new_input)
+                
         with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
             f.write(new_input)
+            
         return {
             **state,
             "input_script": new_input,
