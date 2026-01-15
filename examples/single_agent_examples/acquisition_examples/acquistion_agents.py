@@ -1,4 +1,5 @@
 import asyncio
+
 from langchain.chat_models import init_chat_model
 from rich import print as rprint
 from rich.panel import Panel
