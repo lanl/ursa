@@ -64,7 +64,7 @@ uv tool install ursa-ai
 To use the command line app, run
 
 ```
-ursa run
+ursa --llm_model.model openai:gpt-5.2
 ```
 
 This will start a REPL in your terminal.
@@ -92,7 +92,7 @@ You can run various agents by typing the name of the agent. For example,
 
 ```
 ursa> plan
-Enter your prompt for Planning Agent: Write a python script to do linear regression using only numpy.
+plan: Write a python script to do linear regression using only numpy.
 ```
 
 If you run subsequent agents, the last output will be appended to the prompt for the next agent.
@@ -100,17 +100,17 @@ If you run subsequent agents, the last output will be appended to the prompt for
 So, to run the Planning Agent followed by the Execution Agent:
 ```
 ursa> plan
-Enter your prompt for Planning Agent: Write a python script to do linear regression using only numpy.
+plan: Write a python script to do linear regression using only numpy.
 
 ...
 
 ursa> execute
-Enter your prompt for Execution Agent: Execute the plan.
+execute: Execute the plan.
 ```
 
 You can get a list of available command line options via
 ```
-ursa run --help
+ursa --help
 ```
 
 ## MCP serving
