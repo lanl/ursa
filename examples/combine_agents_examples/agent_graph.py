@@ -145,8 +145,6 @@ class CombinedAgent(BaseAgent):
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
 
-        self._action = self._build_graph()
-
     # Define the function that calls the model
     def _runner(self, state: State) -> State:
         new_state = state.copy()
@@ -197,17 +195,15 @@ class CombinedAgent(BaseAgent):
         return {"messages": response}
 
     def _build_graph(self):
-        graph = StateGraph(State)
-
-        self.add_node(graph, self._runner)
-        self.add_node(graph, self._tool_node, "_tool_node")
-        self.add_node(graph, self._summarize)
+        self.add_node(self._runner)
+        self.add_node(self._tool_node, "_tool_node")
+        self.add_node(self._summarize)
 
         # Set the entrypoint as `agent`
         # This means that this node is the first one called
-        graph.set_entry_point("_runner")
+        self.graph.set_entry_point("_runner")
 
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_runner",
             should_continue,
             {
@@ -216,10 +212,8 @@ class CombinedAgent(BaseAgent):
             },
         )
 
-        graph.add_edge("_tool_node", "_runner")
-        graph.set_finish_point("_summarize")
-
-        return graph.compile(checkpointer=self.checkpointer)
+        self.graph.add_edge("_tool_node", "_runner")
+        self.graph.set_finish_point("_summarize")
 
 
 # Define the function that determines whether to continue or not
@@ -234,13 +228,13 @@ def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
         return "continue"
 
 
-def main():
+async def main():
     agent = CombinedAgent(llm=model, log_state=True, workspace=workspace)
-    result = agent.invoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints? 
-                Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This 
+    result = await agent.ainvoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints?
+                Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This
                 will be reviewed by experts in the field so technical accuracy and clarity is critical.""")
     print(result["messages"][-1].content)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
