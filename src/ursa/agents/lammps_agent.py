@@ -1,3 +1,4 @@
+import difflib
 import json
 import os
 import subprocess
@@ -8,16 +9,10 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END
-
 from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
-from rich.syntax import Syntax
 from rich.rule import Rule
-from rich.table import Table
-from rich import box
-from rich.console import Group
-import difflib
+from rich.syntax import Syntax
 
 from .base import BaseAgent
 
@@ -45,8 +40,8 @@ class LammpsState(TypedDict, total=False):
     run_returncode: Optional[int]
     run_stdout: str
     run_stderr: str
-    run_history: list[dict[str, Any]]  
-    
+    run_history: list[dict[str, Any]]
+
     fix_attempts: int
 
 
@@ -79,12 +74,16 @@ class LammpsAgent(BaseAgent[LammpsState]):
             )
 
         super().__init__(llm, **kwargs)
-        
+
         self.user_potential_files = potential_files
         self.user_pair_style = pair_style
         self.user_pair_coeff = pair_coeff
-        self.use_user_potential = (potential_files is not None and pair_style is not None and pair_coeff is not None)
-        
+        self.use_user_potential = (
+            potential_files is not None
+            and pair_style is not None
+            and pair_coeff is not None
+        )
+
         self.max_potentials = max_potentials
         self.max_fix_attempts = max_fix_attempts
         self.find_potential_only = find_potential_only
@@ -98,7 +97,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.max_tokens = max_tokens
 
         self.console = Console()
-        
+
         self.pair_styles = [
             "eam",
             "eam/alloy",
@@ -143,7 +142,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             | self.str_parser
         )
 
-        
         self.author_chain = (
             ChatPromptTemplate.from_template(
                 "Your task is to write a LAMMPS input file for this purpose: {simulation_task}.\n"
@@ -193,18 +191,30 @@ class LammpsAgent(BaseAgent[LammpsState]):
             | self.llm
             | self.str_parser
         )
-        
+
         self._action = self._build_graph()
 
     def _section(self, title: str):
         self.console.print(Rule(f"[bold cyan]{title}[/bold cyan]"))
-    
+
     def _panel(self, title: str, body: str, style: str = "cyan"):
-        self.console.print(Panel(body, title=f"[bold]{title}[/bold]", border_style=style))
-    
-    def _code_panel(self, title: str, code: str, language: str = "bash", style: str = "magenta"):
-        syn = Syntax(code, language, theme="monokai", line_numbers=True, word_wrap=True)
-        self.console.print(Panel(syn, title=f"[bold]{title}[/bold]", border_style=style))
+        self.console.print(
+            Panel(body, title=f"[bold]{title}[/bold]", border_style=style)
+        )
+
+    def _code_panel(
+        self,
+        title: str,
+        code: str,
+        language: str = "bash",
+        style: str = "magenta",
+    ):
+        syn = Syntax(
+            code, language, theme="monokai", line_numbers=True, word_wrap=True
+        )
+        self.console.print(
+            Panel(syn, title=f"[bold]{title}[/bold]", border_style=style)
+        )
 
     def _diff_panel(self, old: str, new: str, title: str = "LAMMPS input diff"):
         diff = "\n".join(
@@ -218,9 +228,13 @@ class LammpsAgent(BaseAgent[LammpsState]):
         )
         if not diff.strip():
             diff = "(no changes)"
-        syn = Syntax(diff, "diff", theme="monokai", line_numbers=False, word_wrap=True)
-        self.console.print(Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan"))
-        
+        syn = Syntax(
+            diff, "diff", theme="monokai", line_numbers=False, word_wrap=True
+        )
+        self.console.print(
+            Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan")
+        )
+
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
         s = s.strip()
@@ -234,21 +248,23 @@ class LammpsAgent(BaseAgent[LammpsState]):
     def _read_and_trim_data_file(self, data_file_path: str) -> str:
         """Read LAMMPS data file and trim to token limit for LLM context."""
         if os.path.exists(data_file_path):
-            with open(data_file_path, 'r') as f:
+            with open(data_file_path, "r") as f:
                 content = f.read()
             lines = content.splitlines()
             if len(lines) > self.data_max_lines:
-                content = "\n".join(lines[:self.data_max_lines])
-                print(f"Data file trimmed from {len(lines)} to {self.data_max_lines} lines")
+                content = "\n".join(lines[: self.data_max_lines])
+                print(
+                    f"Data file trimmed from {len(lines)} to {self.data_max_lines} lines"
+                )
             return content
-        else:       
-            return (f"Could not read data file.")
-        
+        else:
+            return "Could not read data file."
+
     def _copy_data_file(self, data_file_path: str) -> str:
         """Copy data file to workspace and return new path."""
         if not os.path.exists(data_file_path):
             raise FileNotFoundError(f"Data file not found: {data_file_path}")
-    
+
         filename = os.path.basename(data_file_path)
         dest_path = os.path.join(self.workspace, filename)
         os.system(f"cp {data_file_path} {dest_path}")
@@ -261,10 +277,10 @@ class LammpsAgent(BaseAgent[LammpsState]):
         for pot_file in self.user_potential_files:
             if not os.path.exists(pot_file):
                 raise FileNotFoundError(f"Potential file not found: {pot_file}")
-            
+
             filename = os.path.basename(pot_file)
             dest_path = os.path.join(self.workspace, filename)
-            
+
             try:
                 os.system(f"cp {pot_file} {dest_path}")
                 print(f"Potential files copied to workspace: {dest_path}")
@@ -275,20 +291,27 @@ class LammpsAgent(BaseAgent[LammpsState]):
     def _create_user_potential_wrapper(self, state: LammpsState) -> LammpsState:
         """Create a wrapper object for user-provided potential to match atomman interface."""
         self._copy_user_potential_files()
-        
+
         # Create a simple object that mimics the atomman potential interface
         class UserPotential:
             def __init__(self, pair_style, pair_coeff):
                 self._pair_style = pair_style
                 self._pair_coeff = pair_coeff
-            
+
             def pair_info(self):
                 return f"pair_style {self._pair_style}\npair_coeff {self._pair_coeff}"
-        
-        user_potential = UserPotential(self.user_pair_style, self.user_pair_coeff)
-        
-        return {**state, "chosen_potential": user_potential, "fix_attempts": 0,"run_history": []}
-    
+
+        user_potential = UserPotential(
+            self.user_pair_style, self.user_pair_coeff
+        )
+
+        return {
+            **state,
+            "chosen_potential": user_potential,
+            "fix_attempts": 0,
+            "run_history": [],
+        }
+
     def _fetch_and_trim_text(self, url: str) -> str:
         downloaded = trafilatura.fetch_url(url)
         if not downloaded:
@@ -326,7 +349,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
             raise Exception(
                 "You cannot set find_potential_only=True and also specify your own potential!"
             )
-        
+
         if self.data_file:
             try:
                 self._copy_data_file(self.data_file)
@@ -416,7 +439,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         })
         choice_dict = self._safe_json_loads(choice)
         chosen_index = int(choice_dict["Chosen index"])
-        
+
         chosen_potential = state["matches"][chosen_index]
 
         self._panel(
@@ -424,7 +447,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
             f"[bold]Index:[/bold] {chosen_index}\n[bold]ID:[/bold] {chosen_potential.id}\n\n[bold]Rationale:[/bold]\n{choice_dict['rationale']}",
             style="green",
         )
-        
+
         out_file = os.path.join(self.potential_summaries_dir, "Rationale.txt")
         with open(out_file, "w") as f:
             f.write(f"Chosen potential #{chosen_index}")
@@ -446,7 +469,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         if not self.use_user_potential:
             state["chosen_potential"].download_files(self.workspace)
         pair_info = state["chosen_potential"].pair_info()
-        
+
         data_content = ""
         if self.data_file:
             data_content = self._read_and_trim_data_file(self.data_file)
@@ -464,13 +487,15 @@ class LammpsAgent(BaseAgent[LammpsState]):
             f.write(input_script)
 
         self._section("Authored LAMMPS input")
-        self._code_panel("in.lammps", input_script, language="bash", style="magenta")
-                    
+        self._code_panel(
+            "in.lammps", input_script, language="bash", style="magenta"
+        )
+
         return {**state, "input_script": input_script}
 
     def _run_lammps(self, state: LammpsState) -> LammpsState:
         self._section("Running LAMMPS")
-        
+
         if self.ngpus >= 0:
             result = subprocess.run(
                 [
@@ -518,12 +543,18 @@ class LammpsAgent(BaseAgent[LammpsState]):
             )
 
         status_style = "green" if result.returncode == 0 else "red"
-        self._panel("Run Result", f"returncode = {result.returncode}", style=status_style)
+        self._panel(
+            "Run Result",
+            f"returncode = {result.returncode}",
+            style=status_style,
+        )
 
         if result.returncode != 0:
-            err_view = (result.stderr.strip() + "\n" + result.stdout.strip()).strip() or "(no output captured)"
-            self._panel("Run error/output", err_view[-6000:], style="red") 
-        
+            err_view = (
+                result.stderr.strip() + "\n" + result.stdout.strip()
+            ).strip() or "(no output captured)"
+            self._panel("Run error/output", err_view[-6000:], style="red")
+
         hist = list(state.get("run_history", []))
         hist.append({
             "attempt": state.get("fix_attempts", 0),
@@ -541,7 +572,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "run_history": hist,
         }
 
-
     def _route_run(self, state: LammpsState) -> str:
         rc = state.get("run_returncode", 0)
         attempts = state.get("fix_attempts", 0)
@@ -549,9 +579,13 @@ class LammpsAgent(BaseAgent[LammpsState]):
             self._section("LAMMPS run successful! Exiting...")
             return "done_success"
         if attempts < self.max_fix_attempts:
-            self._section("LAMMPS run Failed. Attempting to rewrite input file...")
+            self._section(
+                "LAMMPS run Failed. Attempting to rewrite input file..."
+            )
             return "need_fix"
-        self._section("LAMMPS run Failed and maximum fix attempts reached. Exiting..")
+        self._section(
+            "LAMMPS run Failed and maximum fix attempts reached. Exiting.."
+        )
         return "done_failed"
 
     def _fix(self, state: LammpsState) -> LammpsState:
@@ -559,25 +593,26 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         hist = state.get("run_history", [])
         if not hist:
-            hist = [{
-                "attempt": state.get("fix_attempts", 0),
-                "input_script": state.get("input_script", ""),
-                "returncode": state.get("run_returncode"),
-                "stdout": state.get("run_stdout", ""),
-                "stderr": state.get("run_stderr", ""),
-            }]
-        
+            hist = [
+                {
+                    "attempt": state.get("fix_attempts", 0),
+                    "input_script": state.get("input_script", ""),
+                    "returncode": state.get("run_returncode"),
+                    "stdout": state.get("run_stdout", ""),
+                    "stderr": state.get("run_stderr", ""),
+                }
+            ]
+
         parts = []
         for h in hist:
             parts.append(
                 "=== Attempt {attempt} | returncode={returncode} ===\n"
                 "--- input_script ---\n{input_script}\n"
                 "--- stdout ---\n{stdout}\n"
-                "--- stderr ---\n{stderr}\n"
-            .format(**h)
+                "--- stderr ---\n{stderr}\n".format(**h)
             )
         err_blob = "\n".join(parts)
-        
+
         data_content = ""
         if self.data_file:
             data_content = self._read_and_trim_data_file(self.data_file)
@@ -591,14 +626,14 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "data_content": data_content,
         })
         script_dict = self._safe_json_loads(fixed_json)
-        
+
         new_input = script_dict["input_script"]
         old_input = state["input_script"]
         self._diff_panel(old_input, new_input)
-                
+
         with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
             f.write(new_input)
-            
+
         return {
             **state,
             "input_script": new_input,
@@ -615,15 +650,19 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.add_node(self._author)
         self.add_node(self._run_lammps)
         self.add_node(self._fix)
-        
+
         self.graph.set_entry_point("_entry_router")
-        
+
         self.graph.add_conditional_edges(
             "_entry_router",
-            lambda state: "user_potential" if self.use_user_potential else ( 
-                "user_choice" if state.get("chosen_potential") else "agent_choice"
+            lambda state: "user_potential"
+            if self.use_user_potential
+            else (
+                "user_choice"
+                if state.get("chosen_potential")
+                else "agent_choice"
             ),
-            {   
+            {
                 "user_potential": "_create_user_potential_wrapper",
                 "user_choice": "_author",
                 "agent_choice": "_find_potentials",
@@ -659,7 +698,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
                 "Exit": END,
             },
         )
-        
+
         self.graph.add_edge("_create_user_potential_wrapper", "_author")
         self.graph.add_edge("_author", "_run_lammps")
 
