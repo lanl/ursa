@@ -25,7 +25,7 @@ dependencies = [
     "pymupdf>=1.26.0,<2.0",
     "pypdf>=5.9.0,<6.0",
     "rich>=13.9.4,<14.0",
-    "mp-api>=0.45.8,<0.46",
+    "mp-api>=0.45.8,<0.45.13",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
     "trafilatura>=1.6.1,<1.7",
@@ -40,6 +40,8 @@ dependencies = [
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
     "langchain-mcp-adapters>=0.1.12,<0.2",
+    "pydantic>=2.12.0,<3.0",
+    "mcp>=1.20.0,<2.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -59,6 +61,9 @@ Documentation = "https://github.com/lanl/ursa/tree/main/docs"
 Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
+[project.optional-dependencies]
+fm = ["torch>=2.9.0"] # Ursa's MCP FM interface
+
 [build-system]
 requires = ["setuptools>=74.1,<80", "setuptools-git-versioning>=2.0,<3"]
 build-backend = "setuptools.build_meta"
@@ -71,9 +76,12 @@ line-length = 80
 preview = true
 
 [tool.ruff.lint]
-extend-select = ["I"]  # W505 (doc-line-too-long); D (pydocstyle)
+extend-select = ["I", "TID", "UP006", "UP007"]  # W505 (doc-line-too-long); D (pydocstyle)
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing_extensions" = { msg = "Use standard typing features instead of `typing_extensions`." }
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]
@@ -82,11 +90,16 @@ pycodestyle.max-doc-length = 80
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [dependency-groups]
 dev = [
+    "fastmcp>=2.13.3",
     "notebook>=7.3.3",
     "pre-commit>=4.3.0",
     "pytest>=8.4.2",
+    "pytest-asyncio>=1.3.0",
     "scikit-optimize>=0.10.2",
 ]
 docs = [
@@ -103,4 +116,8 @@ opt = [
 ]
 mcp = [
     "fastapi>=0.120.0,<0.121",
+]
+otel = [
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-sdk>=1.38.0",
 ]

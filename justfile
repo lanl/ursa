@@ -55,6 +55,8 @@ neutron-lowest:
     just neutron --isolated --resolution=lowest-direct
 
 clean: clean-workspaces
+    rm -rf arxiv_papers/ arxiv_generated_summaries/
+    rm -rf ursa_metrics/ ursa_workspace/ workspace/
 
 test-cli:
     uv run ursa run

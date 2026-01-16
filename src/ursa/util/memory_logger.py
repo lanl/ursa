@@ -1,7 +1,7 @@
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -67,7 +67,7 @@ class AgentMemory:
     def build_index(
         self,
         chunks: Sequence[str],
-        metadatas: Optional[Sequence[Dict[str, Any]]] = None,
+        metadatas: Optional[Sequence[dict[str, Any]]] = None,
     ) -> None:
         """
         Create a fresh vector store from ``chunks``.  Existing data (if any)
@@ -101,7 +101,7 @@ class AgentMemory:
     def add_memories(
         self,
         new_chunks: Sequence[str],
-        metadatas: Optional[Sequence[Dict[str, Any]]] = None,
+        metadatas: Optional[Sequence[dict[str, Any]]] = None,
     ) -> None:
         """
         Append new text chunks to the existing store (must call `build_index`

@@ -17,14 +17,17 @@ integration capabilities while only needing to implement the core _invoke method
 
 import re
 from abc import ABC, abstractmethod
+from functools import cached_property
+from pathlib import Path
 from typing import (
     Any,
     Callable,
+    Generic,
     Iterator,
     Mapping,
     Optional,
     Sequence,
-    Union,
+    TypeVar,
     final,
 )
 from uuid import uuid4
@@ -32,17 +35,16 @@ from uuid import uuid4
 from langchain.chat_models import BaseChatModel
 from langchain_core.load import dumps
 from langchain_core.messages import HumanMessage
-from langchain_core.runnables import (
-    RunnableLambda,
-)
+from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph, StateGraph
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
 
-InputLike = Union[str, Mapping[str, Any]]
+InputLike = str | Mapping[str, Any]
+TState = TypeVar("TState", bound=Mapping[str, Any])
 
 
 def _to_snake(s: str) -> str:
@@ -69,7 +71,7 @@ def _to_snake(s: str) -> str:
     return s.lower()
 
 
-class BaseAgent(ABC):
+class BaseAgent(Generic[TState], ABC):
     """Abstract base class for all agent implementations in the Ursa framework.
 
     BaseAgent provides a standardized foundation for building LLM-powered agents with
@@ -114,23 +116,29 @@ class BaseAgent(ABC):
     _TELEMETRY_KW = {
         "raw_debug",
         "save_json",
+        "save_otel",
         "metrics_path",
         "save_raw_snapshot",
         "save_raw_records",
+        "otel_endpoint",
+        "otel_headers",
     }
 
     _CONTROL_KW = {"config", "recursion_limit", "tags", "metadata", "callbacks"}
 
+    state_type: type[TState] = dict
+
     def __init__(
         self,
         llm: BaseChatModel,
+        workspace: Optional[Path] = None,
         checkpointer: Optional[BaseCheckpointSaver] = None,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
+        otel_metrics: bool = False,
         thread_id: Optional[str] = None,
     ):
-        self.llm = llm
         """Initializes the base agent with a language model and optional configurations.
 
         Args:
@@ -142,13 +150,17 @@ class BaseAgent(ABC):
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
         """
+        self.llm = llm
+        self.workspace = Path(workspace or "ursa_workspace")
         self.thread_id = thread_id or uuid4().hex
         self.checkpointer = checkpointer
         self.telemetry = Telemetry(
             enable=enable_metrics,
-            output_dir=metrics_dir,
+            output_dir=self.workspace.joinpath(metrics_dir),
             save_json_default=autosave_metrics,
         )
+
+        self.workspace.mkdir(exist_ok=True, parents=True)
 
     @property
     def name(self) -> str:
@@ -157,10 +169,10 @@ class BaseAgent(ABC):
 
     def add_node(
         self,
-        graph: StateGraph,
         f: Callable[..., Mapping[str, Any]],
         node_name: Optional[str] = None,
         agent_name: Optional[str] = None,
+        **kwargs,
     ) -> StateGraph:
         """Add a node to the state graph with token usage tracking.
 
@@ -169,7 +181,6 @@ class BaseAgent(ABC):
         node_name or the function's name.
 
         Args:
-            graph: The StateGraph to add the node to.
             f: The function to add as a node. Should return a mapping of string keys to
                 any values.
             node_name: Optional name for the node. If not provided, the function's name
@@ -183,8 +194,7 @@ class BaseAgent(ABC):
         _node_name = node_name or f.__name__
         _agent_name = agent_name or _to_snake(self.name)
         wrapped_node = self._wrap_node(f, _node_name, _agent_name)
-
-        return graph.add_node(_node_name, wrapped_node)
+        return self.graph.add_node(_node_name, wrapped_node, **kwargs)
 
     def write_state(self, filename: str, state: dict) -> None:
         """Writes agent state to a JSON file.
@@ -261,7 +271,10 @@ class BaseAgent(ABC):
         inputs: Optional[InputLike] = None,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
+        otel_endpoint: Optional[str] = None,
+        otel_headers: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
         config: Optional[dict] = None,
@@ -318,7 +331,10 @@ class BaseAgent(ABC):
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
+                    save_otel=save_otel,
                     filepath=metrics_path,
+                    otel_endpoint=otel_endpoint,
+                    otel_headers=otel_headers,
                     save_raw_snapshot=save_raw_snapshot,
                     save_raw_records=save_raw_records,
                 )
@@ -333,6 +349,7 @@ class BaseAgent(ABC):
         *,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
@@ -350,6 +367,7 @@ class BaseAgent(ABC):
                 keyword arguments will be rejected to avoid ambiguity.
             raw_debug: If True, displays raw telemetry data for debugging purposes.
             save_json: If True, saves telemetry data as JSON.
+            save_otel: If True, saves telemetry data to OpenTelemetry endpoint.
             metrics_path: Optional file path where telemetry metrics should be saved.
             save_raw_snapshot: If True, saves a raw snapshot of the telemetry data.
             save_raw_records: If True, saves raw telemetry records.
@@ -370,6 +388,7 @@ class BaseAgent(ABC):
             inputs=inputs,
             raw_debug=raw_debug,
             save_json=save_json,
+            save_otel=save_otel,
             metrics_path=metrics_path,
             save_raw_snapshot=save_raw_snapshot,
             save_raw_records=save_raw_records,
@@ -387,6 +406,7 @@ class BaseAgent(ABC):
         *,
         raw_debug: bool = False,
         save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
         metrics_path: Optional[str] = None,
         save_raw_snapshot: Optional[bool] = None,
         save_raw_records: Optional[bool] = None,
@@ -406,6 +426,7 @@ class BaseAgent(ABC):
                 keyword arguments will be rejected to avoid ambiguity.
             raw_debug: If True, displays raw telemetry data for debugging purposes.
             save_json: If True, saves telemetry data as JSON.
+            save_otel: If True, saves telemetry data to OpenTelemetry endpoint.
             metrics_path: Optional file path where telemetry metrics should be saved.
             save_raw_snapshot: If True, saves a raw snapshot of the telemetry data.
             save_raw_records: If True, saves raw telemetry records.
@@ -426,6 +447,7 @@ class BaseAgent(ABC):
             inputs=inputs,
             raw_debug=raw_debug,
             save_json=save_json,
+            save_otel=save_otel,
             metrics_path=metrics_path,
             save_raw_snapshot=save_raw_snapshot,
             save_raw_records=save_raw_records,
@@ -458,14 +480,53 @@ class BaseAgent(ABC):
             return inputs
         raise TypeError(f"Unsupported input type: {type(inputs)}")
 
+    @cached_property
+    def compiled_graph(self) -> CompiledStateGraph:
+        """Return the compiled StateGraph application for the agent."""
+        graph = self.build_graph()
+        compiled = graph.compile(checkpointer=self.checkpointer).with_config({
+            "recursion_limit": 50000
+        })
+        return self._finalize_graph(compiled)
+
+    @final
+    def build_graph(self) -> StateGraph:
+        """Build and return the StateGraph backing this agent."""
+        self.graph = StateGraph(self.state_type)
+        self._build_graph()
+        return self.graph
+
     @abstractmethod
-    def _invoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
-        """Subclasses implement the actual work against normalized inputs."""
+    def _build_graph(self) -> None:
+        """Construct the StateGraph for this agent without compiling.
+
+        Called during `__post_init__()` after the Agent has been fully
+        Initialized (`__post_init__` is called after `__init__`) to
+        instantiate `self.graph`
+
+        Agents should implement this to define their their behavior.
+
+        Agents should treat `self.graph` as read-only
+        """
         ...
 
-    def _ainvoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
-        """Subclasses implement the actual work against normalized inputs."""
-        ...
+    def _finalize_graph(
+        self, graph_app: CompiledStateGraph
+    ) -> CompiledStateGraph:
+        """Hook for subclasses to wrap or modify the compiled graph."""
+        return graph_app
+
+    def _invoke(self, input, **config):
+        config = self.build_config(**config)
+        return self.compiled_graph.invoke(input, config=config)
+
+    async def _ainvoke(self, input, **config):
+        config = self.build_config(**config)
+        return await self.compiled_graph.ainvoke(input, config=config)
+
+    def _stream(self, input, **config):
+        config = self.build_config(**config)
+        yield from self.compiled_graph.stream(input, config=config)
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""
@@ -482,6 +543,18 @@ class BaseAgent(ABC):
             )
             raise TypeError(err_msg)
 
+        # Init graph after subclass has been fully constructed
+        orig_init = cls.__init__
+
+        def __init__(self, *args, **kwargs):
+            orig_init(self, *args, **kwargs)
+            self.__post_init__()
+
+        cls.__init__ = __init__
+
+    def __post_init__(self):
+        self.build_graph()
+
     def stream(
         self,
         inputs: InputLike,
@@ -490,6 +563,7 @@ class BaseAgent(ABC):
         *,
         raw_debug: bool = False,
         save_json: bool | None = None,
+        save_otel: bool | None = None,
         metrics_path: str | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
@@ -543,23 +617,11 @@ class BaseAgent(ABC):
                 self.telemetry.render(
                     raw=raw_debug,
                     save_json=save_json,
+                    save_otel=save_otel,
                     filepath=metrics_path,
                     save_raw_snapshot=save_raw_snapshot,
                     save_raw_records=save_raw_records,
                 )
-
-    def _stream(
-        self,
-        inputs: Mapping[str, Any],
-        *,
-        config: Any | None = None,
-        **kwargs: Any,
-    ) -> Iterator[Any]:
-        """Subclass method to be overwritten for streaming implementation."""
-        raise NotImplementedError(
-            f"{self.name} does not support streaming. "
-            "Override _stream(...) in your agent to enable it."
-        )
 
     def _default_node_tags(
         self, name: str, extra: Sequence[str] | None = None

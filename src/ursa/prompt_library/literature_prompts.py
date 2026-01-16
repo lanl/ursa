@@ -6,6 +6,6 @@ You should perform a search through the arxiv database.
 
 summarize_prompt = """
 You are a summarizing agent. 
-You should cite all the papers that were used for the arxiv review.
+You should cite all the documents that were used for the review.
 You should give me the final summary from the literature review.
 """

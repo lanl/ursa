@@ -5,7 +5,7 @@ instructions by invoking LLM tool calls and coordinating a controlled workflow.
 
 Key features:
 - Workspace management with optional symlinking for external sources.
-- Safety-checked shell execution via run_cmd with output size budgeting.
+- Safety-checked shell execution via run_command with output size budgeting.
 - Code authoring and edits through write_code and edit_code with rich previews.
 - Web search capability through DuckDuckGoSearchResults.
 - Summarization of the session and optional memory logging.
@@ -27,43 +27,47 @@ Entry points:
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
 import os
-import subprocess
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, Mapping, Optional
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Literal,
+    Optional,
+    TypedDict,
+)
 
 import randomname
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain.chat_models import BaseChatModel
-from langchain_community.tools import (
-    DuckDuckGoSearchResults,
-)  # TavilySearchResults,
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.tools import InjectedToolCallId, StructuredTool, tool
+from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import InjectedState, ToolNode
-from langgraph.types import Command
+from langgraph.prebuilt import ToolNode
 
 # Rich
 from rich import get_console
 from rich.panel import Panel
-from rich.syntax import Syntax
-from typing_extensions import TypedDict
 
-from ..prompt_library.execution_prompts import (
+from ursa.agents.base import BaseAgent
+from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     get_safety_prompt,
-    summarize_prompt,
+    recap_prompt,
 )
-from ..util.diff_renderer import DiffRenderer
-from ..util.memory_logger import AgentMemory
-from .base import BaseAgent
+from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools.search_tools import (
+    run_arxiv_search,
+    run_osti_search,
+    run_web_search,
+)
+from ursa.util.memory_logger import AgentMemory
 
 console = get_console()  # always returns the same instance
 
@@ -73,20 +77,6 @@ BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
-
-
-# Global variables for the module.
-
-# Set a limit for message characters - the user could overload
-# that in their env, or maybe we could pull this out of the LLM parameters
-MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "50000"))
-
-# Set a search tool.
-search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
-# search_tool = TavilySearchResults(
-#                   max_results=10,
-#                   search_depth="advanced",
-#                   include_answer=True)
 
 
 # Classes for typing
@@ -107,6 +97,7 @@ class ExecutionState(TypedDict):
     code_files: list[str]
     workspace: str
     symlinkdir: dict
+    model: BaseChatModel
 
 
 # Helper functions
@@ -119,99 +110,21 @@ def convert_to_tool(fn):
         )
 
 
-def _strip_fences(snippet: str) -> str:
-    """Remove markdown fences from a code snippet.
-
-    This function strips leading triple backticks and any language
-    identifiers from a markdown-formatted code snippet and returns
-    only the contained code.
-
-    Args:
-        snippet: The markdown-formatted code snippet.
-
-    Returns:
-        The snippet content without leading markdown fences.
-    """
-    if "```" not in snippet:
-        return snippet
-
-    parts = snippet.split("```")
-    if len(parts) < 3:
-        return snippet
-
-    body = parts[1]
-    return "\n".join(body.split("\n")[1:]) if "\n" in body else body.strip()
-
-
-def _snip_text(text: str, max_chars: int) -> tuple[str, bool]:
-    """Truncate text to a maximum length and indicate if truncation occurred.
-
-    Args:
-        text: The original text to potentially truncate.
-        max_chars: The maximum characters allowed in the output.
-
-    Returns:
-        A tuple of (possibly truncated text, boolean flag indicating
-        if truncation occurred).
-    """
-    if text is None:
-        return "", False
-    if max_chars <= 0:
-        return "", len(text) > 0
-    if len(text) <= max_chars:
-        return text, False
-    head = max_chars // 2
-    tail = max_chars - head
-    return (
-        text[:head]
-        + f"\n... [snipped {len(text) - max_chars} chars] ...\n"
-        + text[-tail:],
-        True,
-    )
-
-
-def _fit_streams_to_budget(stdout: str, stderr: str, total_budget: int):
-    """Allocate and truncate stdout and stderr to fit a total character budget.
-
-    Args:
-        stdout: The original stdout string.
-        stderr: The original stderr string.
-        total_budget: The combined character budget for stdout and stderr.
-
-    Returns:
-        A tuple of (possibly truncated stdout, possibly truncated stderr).
-    """
-    label_overhead = len("STDOUT:\n") + len("\nSTDERR:\n")
-    budget = max(0, total_budget - label_overhead)
-
-    if len(stdout) + len(stderr) <= budget:
-        return stdout, stderr
-
-    total_len = max(1, len(stdout) + len(stderr))
-    stdout_budget = int(budget * (len(stdout) / total_len))
-    stderr_budget = budget - stdout_budget
-
-    stdout_snip, _ = _snip_text(stdout, stdout_budget)
-    stderr_snip, _ = _snip_text(stderr, stderr_budget)
-
-    return stdout_snip, stderr_snip
-
-
-def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
-    """Return 'summarize' if no tool calls in the last message, else 'continue'.
+def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
+    """Return 'recap' if no tool calls in the last message, else 'continue'.
 
     Args:
         state: The current execution state containing messages.
 
     Returns:
-        A literal "summarize" if the last message has no tool calls,
+        A literal "recap" if the last message has no tool calls,
         otherwise "continue".
     """
     messages = state["messages"]
     last_message = messages[-1]
     # If there is no tool call, then we finish
     if not last_message.tool_calls:
-        return "summarize"
+        return "recap"
     # Otherwise if there is, we continue
     else:
         return "continue"
@@ -239,214 +152,15 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
     return "safe"
 
 
-# Tools for ExecutionAgent
-@tool
-def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
-    """Execute a shell command in the workspace and return its combined output.
-
-    Runs the specified command using subprocess.run in the given workspace
-    directory, captures stdout and stderr, enforces a maximum character budget,
-    and formats both streams into a single string. KeyboardInterrupt during
-    execution is caught and reported.
-
-    Args:
-        query: The shell command to execute.
-        state: A dict with injected state; must include the 'workspace' path.
-
-    Returns:
-        A formatted string with "STDOUT:" followed by the truncated stdout and
-        "STDERR:" followed by the truncated stderr.
-    """
-    workspace_dir = state["workspace"]
-
-    print("RUNNING: ", query)
-    try:
-        result = subprocess.run(
-            query,
-            text=True,
-            shell=True,
-            timeout=60000,
-            capture_output=True,
-            cwd=workspace_dir,
-        )
-        stdout, stderr = result.stdout, result.stderr
-    except KeyboardInterrupt:
-        print("Keyboard Interrupt of command: ", query)
-        stdout, stderr = "", "KeyboardInterrupt:"
-
-    # Fit BOTH streams under a single overall cap
-    stdout_fit, stderr_fit = _fit_streams_to_budget(
-        stdout or "", stderr or "", MAX_TOOL_MSG_CHARS
-    )
-
-    print("STDOUT: ", stdout_fit)
-    print("STDERR: ", stderr_fit)
-
-    return f"STDOUT:\n{stdout_fit}\nSTDERR:\n{stderr_fit}"
-
-
-@tool
-def write_code(
-    code: str,
-    filename: str,
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[dict, InjectedState],
-) -> Command:
-    """Write source code to a file and update the agent’s workspace state.
-
-    Args:
-        code: The source code content to be written to disk.
-        filename: Name of the target file (including its extension).
-        tool_call_id: Identifier for this tool invocation.
-        state: Agent state dict holding workspace path and file list.
-
-    Returns:
-        Command: Contains an updated state (including code_files) and
-        a ToolMessage acknowledging success or failure.
-    """
-    # Determine the full path to the target file
-    workspace_dir = state["workspace"]
-    console.print("[cyan]Writing file:[/]", filename)
-
-    # Clean up markdown fences on submitted code.
-    code = _strip_fences(code)
-
-    # Show syntax-highlighted preview before writing to file
-    try:
-        lexer_name = Syntax.guess_lexer(filename, code)
-    except Exception:
-        lexer_name = "text"
-
-    console.print(
-        Panel(
-            Syntax(code, lexer_name, line_numbers=True),
-            title="File Preview",
-            border_style="cyan",
-        )
-    )
-
-    # Write cleaned code to disk
-    code_file = os.path.join(workspace_dir, filename)
-    try:
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(code)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write file:[/]",
-            exc,
-        )
-        return f"Failed to write {filename}."
-
-    console.print(
-        f"[bold bright_white on green] :heavy_check_mark: [/] "
-        f"[green]File written:[/] {code_file}"
-    )
-
-    # Append the file to the list in agent's state for later reference
-    file_list = state.get("code_files", [])
-    if filename not in file_list:
-        file_list.append(filename)
-
-    # Create a tool message to send back to acknowledge success.
-    msg = ToolMessage(
-        content=f"File {filename} written successfully.",
-        tool_call_id=tool_call_id,
-    )
-
-    # Return updated code files list & the message
-    return Command(
-        update={
-            "code_files": file_list,
-            "messages": [msg],
-        }
-    )
-
-
-@tool
-def edit_code(
-    old_code: str,
-    new_code: str,
-    filename: str,
-    state: Annotated[dict, InjectedState],
-) -> str:
-    """Replace the **first** occurrence of *old_code* with *new_code* in *filename*.
-
-    Args:
-        old_code: Code fragment to search for.
-        new_code: Replacement fragment.
-        filename: Target file inside the workspace.
-
-    Returns:
-        Success / failure message.
-    """
-    workspace_dir = state["workspace"]
-    console.print("[cyan]Editing file:[/cyan]", filename)
-
-    code_file = os.path.join(workspace_dir, filename)
-    try:
-        with open(code_file, "r", encoding="utf-8") as f:
-            content = f.read()
-    except FileNotFoundError:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]File not found:[/]",
-            filename,
-        )
-        return f"Failed: {filename} not found."
-
-    # Clean up markdown fences
-    old_code_clean = _strip_fences(old_code)
-    new_code_clean = _strip_fences(new_code)
-
-    if old_code_clean not in content:
-        console.print(
-            "[yellow] ⚠️ 'old_code' not found in file'; no changes made.[/]"
-        )
-        return f"No changes made to {filename}: 'old_code' not found in file."
-
-    updated = content.replace(old_code_clean, new_code_clean, 1)
-
-    console.print(
-        Panel(
-            DiffRenderer(content, updated, filename),
-            title="Diff Preview",
-            border_style="cyan",
-        )
-    )
-
-    try:
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(updated)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write file:[/]",
-            exc,
-        )
-        return f"Failed to edit {filename}."
-
-    console.print(
-        f"[bold bright_white on green] :heavy_check_mark: [/] "
-        f"[green]File updated:[/] {code_file}"
-    )
-    file_list = state.get("code_files", [])
-    if code_file not in file_list:
-        file_list.append(filename)
-    state["code_files"] = file_list
-
-    return f"File {filename} updated successfully."
-
-
 # Main module class
-class ExecutionAgent(BaseAgent):
+class ExecutionAgent(BaseAgent[ExecutionState]):
     """Orchestrates model-driven code execution, tool calls, and state management.
 
     Orchestrates model-driven code execution, tool calls, and state management for
     iterative program synthesis and shell interaction.
 
     This agent wraps an LLM with a small execution graph that alternates
-    between issuing model queries, invoking tools (run, write, edit, search),
+    between issuing model queries, invoking tools (read, run, write, edit, search),
     performing safety checks, and summarizing progress. It manages a
     workspace on disk, optional symlinks, and an optional memory backend to
     persist summaries.
@@ -468,10 +182,10 @@ class ExecutionAgent(BaseAgent):
             agent. Defaults to python and julia
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
-        summarize_prompt (str): Prompt used to request concise summaries for
+        recap_prompt (str): Prompt used to request concise summaries for
             memory or final output.
-        tools (list[Tool]): Tools available to the agent (run_cmd, write_code,
-            edit_code, search_tool).
+        tools (list[Tool]): Tools available to the agent (run_command, write_code,
+            edit_code, read_file, run_web_search, run_osti_search, run_arxiv_search).
         tool_node (ToolNode): Graph node that dispatches tool calls.
         llm (BaseChatModel): LLM instance bound to the available tools.
         _action (StateGraph): Compiled execution graph that implements the
@@ -481,9 +195,9 @@ class ExecutionAgent(BaseAgent):
         query_executor(state): Send messages to the executor LLM, ensure
             workspace exists, and handle symlink setup before returning the
             model response.
-        summarize(state): Produce and optionally persist a summary of recent
+        recap(state): Produce and optionally persist a summary of recent
             interactions to the memory backend.
-        safety_check(state): Validate pending run_cmd calls via the safety
+        safety_check(state): Validate pending run_command calls via the safety
             prompt and append ToolMessages for unsafe commands.
         get_safety_prompt(query, safe_codes, created_files): Get the LLM prompt for safety_check
             that includes an editable list of available programming languages and gets the context
@@ -499,6 +213,8 @@ class ExecutionAgent(BaseAgent):
         AttributeError: Accessing the .action attribute raises to encourage
             using .stream(...) or .invoke(...).
     """
+
+    state_type = ExecutionState
 
     def __init__(
         self,
@@ -517,15 +233,22 @@ class ExecutionAgent(BaseAgent):
         self.safe_codes = safe_codes or ["python", "julia"]
         self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
-        self.summarize_prompt = summarize_prompt
-        self.tools = [run_cmd, write_code, edit_code, search_tool]
+        self.recap_prompt = recap_prompt
+        self.tools = [
+            run_command,
+            write_code,
+            edit_code,
+            read_file,
+            run_web_search,
+            run_osti_search,
+            run_arxiv_search,
+        ]
         self.extra_tools = extra_tools
         if self.extra_tools is not None:
             self.tools.extend(self.extra_tools)
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
-        self._action = self._build_graph()
         self.context_summarizer = SummarizationMiddleware(
             model=self.llm,
             max_tokens_before_summary=tokens_before_summarize,
@@ -550,7 +273,7 @@ class ExecutionAgent(BaseAgent):
                         f"Approximate tokens before: {tokens_before_summarize}\n"
                         f"Approximate tokens after: {tokens_after_summarize}\n"
                     ),
-                    title="[bold yellow1 on black]:clipboard: Plan",
+                    title="[bold yellow1 on black]Summarize Past Context",
                     border_style="yellow1",
                     style="bold yellow1 on black",
                 )
@@ -582,6 +305,8 @@ class ExecutionAgent(BaseAgent):
                 - "messages": A list with the model's response as the latest entry.
                 - "workspace": The resolved workspace path.
         """
+        # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
+        state.setdefault("model", self.llm)
         new_state = state.copy()
 
         # 1) Ensure a workspace directory exists, creating a named one if absent.
@@ -650,7 +375,7 @@ class ExecutionAgent(BaseAgent):
         # Return the model's response and the workspace path as a partial state update.
         return new_state
 
-    def summarize(self, state: ExecutionState) -> ExecutionState:
+    def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
@@ -662,7 +387,7 @@ class ExecutionAgent(BaseAgent):
 
         Returns:
             ExecutionState: A partial update with a single string message containing
-                the summary.
+                the recap.
         """
         new_state = state.copy()
 
@@ -673,15 +398,14 @@ class ExecutionAgent(BaseAgent):
         messages = (
             new_state["messages"]
             if isinstance(new_state["messages"][0], SystemMessage)
-            else [SystemMessage(content=summarize_prompt)]
-            + new_state["messages"]
+            else [SystemMessage(content=recap_prompt)] + new_state["messages"]
         )
 
-        # 2) Invoke the LLM to generate a summary; capture content even on failure.
+        # 2) Invoke the LLM to generate a recap; capture content even on failure.
         response_content = ""
         try:
             response = self.llm.invoke(
-                messages, self.build_config(tags=["summarize"])
+                messages, self.build_config(tags=["recap"])
             )
             response_content = response.content
             new_state["messages"].append(response)
@@ -723,7 +447,7 @@ class ExecutionAgent(BaseAgent):
     def safety_check(self, state: ExecutionState) -> ExecutionState:
         """Assess pending shell commands for safety and inject ToolMessages with results.
 
-        This method inspects the most recent AI tool calls, evaluates any run_cmd
+        This method inspects the most recent AI tool calls, evaluates any run_command
         queries against the safety prompt, and constructs ToolMessages that either
         flag unsafe commands with reasons or confirm safe execution. If any command
         is unsafe, the generated ToolMessages are appended to the state so the agent
@@ -743,11 +467,11 @@ class ExecutionAgent(BaseAgent):
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
 
-        # 2) Evaluate any pending run_cmd tool calls for safety.
+        # 2) Evaluate any pending run_command tool calls for safety.
         tool_responses: list[ToolMessage] = []
         any_unsafe = False
         for tool_call in last_msg.tool_calls:
-            if tool_call["name"] != "run_cmd":
+            if tool_call["name"] != "run_command":
                 continue
 
             query = tool_call["args"]["query"]
@@ -793,46 +517,40 @@ class ExecutionAgent(BaseAgent):
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
-        # Create a graph over the agent's execution state.
-        graph = StateGraph(ExecutionState)
-
         # Register nodes:
         # - "agent": LLM planning/execution step
-        # - "action": tool dispatch (run_cmd, write_code, etc.)
-        # - "summarize": summary/finalization step
+        # - "action": tool dispatch (run_command, write_code, etc.)
+        # - "recap": summary/finalization step
         # - "safety_check": gate for shell command safety
-        self.add_node(graph, self.query_executor, "agent")
-        self.add_node(graph, self.tool_node, "action")
-        self.add_node(graph, self.summarize, "summarize")
-        self.add_node(graph, self.safety_check, "safety_check")
+        self.add_node(self.query_executor, "agent")
+        self.add_node(self.tool_node, "action")
+        self.add_node(self.recap, "recap")
+        self.add_node(self.safety_check, "safety_check")
 
         # Set entrypoint: execution starts with the "agent" node.
-        graph.set_entry_point("agent")
+        self.graph.set_entry_point("agent")
 
-        # From "agent", either continue (tools) or finish (summarize),
+        # From "agent", either continue (tools) or finish (recap),
         # based on presence of tool calls in the last message.
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "safety_check", "summarize": "summarize"},
+            {"continue": "safety_check", "recap": "recap"},
         )
 
         # From "safety_check", route to tools if safe, otherwise back to agent
         # to revise the plan without executing unsafe commands.
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "safety_check",
             self._wrap_cond(command_safe, "command_safe", "execution"),
             {"safe": "action", "unsafe": "agent"},
         )
 
         # After tools run, return control to the agent for the next step.
-        graph.add_edge("action", "agent")
+        self.graph.add_edge("action", "agent")
 
-        # The graph completes at the "summarize" node.
-        graph.set_finish_point("summarize")
-
-        # Compile and return the executable graph (optionally with a checkpointer).
-        return graph.compile(checkpointer=self.checkpointer)
+        # The graph completes at the "recap" node.
+        self.graph.set_finish_point("recap")
 
     async def add_mcp_tool(
         self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
@@ -854,7 +572,6 @@ class ExecutionAgent(BaseAgent):
             raise TypeError("Expected a callable or a list of callables.")
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
-        self._action = self._build_graph()
 
     def list_tools(self) -> None:
         print(
@@ -868,48 +585,7 @@ class ExecutionAgent(BaseAgent):
             self.tools = [x for x in self.tools if x.name not in cut_tools]
             self.tool_node = ToolNode(self.tools)
             self.llm = self.llm.bind_tools(self.tools)
-            self._action = self._build_graph()
         else:
             raise TypeError(
                 "Expected a string or a list of strings describing the tools to remove."
             )
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
-
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
-        """
-        # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # Delegate execution to the compiled graph.
-        return self._action.invoke(inputs, config)
-
-    def _ainvoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
-
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
-        """
-        # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # Delegate execution to the compiled graph.
-        return self._action.ainvoke(inputs, config)
-
-    # This property is trying to stop people bypassing invoke
-    @property
-    def action(self):
-        """Property used to affirm `action` attribute is unsupported."""
-        raise AttributeError(
-            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
-        )
