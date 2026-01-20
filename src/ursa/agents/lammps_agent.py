@@ -192,8 +192,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             | self.str_parser
         )
 
-        self._action = self._build_graph()
-
     def _section(self, title: str):
         self.console.print(Rule(f"[bold cyan]{title}[/bold cyan]"))
 
