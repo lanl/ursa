@@ -8,11 +8,11 @@ from ursa.observability.timing import render_session_summary
 ### Run a simple example of an Execution Agent.
 
 # Define a simple problem
-problem = """ 
-Optimize the six-hump camel function. 
+problem = """
+Optimize the six-hump camel function.
     Start by evaluating that function at 10 locations.
-    Then utilize Bayesian optimization to build a surrogate model 
-        and sequentially select points until the function is optimized. 
+    Then utilize Bayesian optimization to build a surrogate model
+        and sequentially select points until the function is optimized.
     Carry out the optimization and report the results.
 """
 
@@ -24,13 +24,12 @@ model = init_chat_model(
 embedding_kwargs = None
 embedding_model = OpenAIEmbeddings(**(embedding_kwargs or {}))
 
-tid = "run-" + __import__("uuid").uuid4().hex[:8]
 
 # Initialize the agent
 executor = ExecutionAgent(
-    llm=model, enable_metrics=True
+    llm=model,
+    enable_metrics=True,
 )  # , enable_metrics=False if you don't want metrics
-executor.thread_id = tid
 
 set_workspace = False
 
@@ -49,7 +48,7 @@ if set_workspace:
 else:
     final_results = executor.invoke(problem)
 
-render_session_summary(tid)
+render_session_summary(executor.thread_id)
 
 for x in final_results["messages"]:
     print(x.content)
