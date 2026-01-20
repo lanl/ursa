@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import platform
 import threading
@@ -16,16 +17,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.theme import Theme
 
-from ursa.agents import (
-    ArxivAgent,
-    BaseAgent,
-    ChatAgent,
-    ExecutionAgent,
-    HypothesizerAgent,
-    PlanningAgent,
-    RecallAgent,
-    WebSearchAgent,
-)
+from ursa import agents
+from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
 from ursa.util.mcp import start_mcp_client
@@ -54,7 +47,13 @@ class AgentHITL:
         """Instantiate the underlying agent instance"""
         assert self._agent is None
         kwargs |= self.config
-        self._agent = self.agent_class(**kwargs)
+        try:
+            self._agent = self.agent_class(**kwargs)
+        except TypeError as exc:
+            raise TypeError(
+                f"Failed to instantiate {self.agent_class.__name__} with config "
+                f"{self.config}. {exc}"
+            ) from exc
 
         # Attach tools from MCP client
         if mcp_client and isinstance(self._agent, AgentWithTools):
@@ -94,11 +93,14 @@ class AgentHITL:
 class HITL:
     def __init__(self, config: UrsaConfig):
         self.config = config
-        self.thread_id = "cli"
+        self.thread_id = config.thread_id or "ursa_cli"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
-        self.safe_codes = None
         self.config.workspace.mkdir(parents=True, exist_ok=True)
+
+        agent_overrides = dict(config.agent_config or {})
+        memory_overrides = agent_overrides.pop("memory", None)
+
         self.model = init_chat_model(**self.config.llm_model.kwargs)
         self.embedding = (
             init_embeddings(**self.config.emb_model.kwargs)
@@ -110,26 +112,39 @@ class HITL:
             AgentMemory(
                 embedding_model=self.embedding,
                 path=str(self.workspace / "memory"),
+                **(memory_overrides or {}),
             )
             if self.embedding
             else None
         )
 
         self.agents: dict[str, AgentHITL] = {}
-        self.agents["chat"] = AgentHITL(agent_class=ChatAgent)
-        self.agents["arxiv"] = AgentHITL(agent_class=ArxivAgent)
+        self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
+        self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
         self.agents["execute"] = AgentHITL(
-            agent_class=ExecutionAgent,
+            agent_class=agents.ExecutionAgent,
             config={"agent_memory": self.memory},
         )
-        self.agents["hypothesize"] = AgentHITL(agent_class=HypothesizerAgent)
-        self.agents["plan"] = AgentHITL(agent_class=PlanningAgent)
-        self.agents["web"] = AgentHITL(agent_class=WebSearchAgent)
+        self.agents["hypothesize"] = AgentHITL(
+            agent_class=agents.HypothesizerAgent
+        )
+        self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
+        self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
 
         if self.memory is not None:
             self.agents["recall"] = AgentHITL(
-                agent_class=RecallAgent,
+                agent_class=agents.RecallAgent,
                 config={"memory": self.memory},
+            )
+
+        # Apply agent-specific configuration overrides
+        for agent, agent_config in agent_overrides.items():
+            assert agent in self.agents, (
+                f"Unknown agent {agent}, Know agents: {','.join(self.agents.keys())}"
+            )
+            self.agents[agent].config.update(agent_config)
+            logging.debug(
+                f"Updated {agent} config: {self.agents[agent].config}"
             )
 
         self.last_agent_result = None
@@ -326,6 +341,16 @@ class UrsaRepl(Cmd):
             f"[dim]*[/] Embedding Model: [emph]{emb_name} [dim]{emb_provider}",
             markdown=False,
         )
+
+    def do_agents(self, _: str):
+        """Display configured Agents and their configurations"""
+        for name, agent in self.hitl.agents.items():
+            if agent.config:
+                self.console.print(f"{name}:")
+                for k, v in agent.config.items():
+                    self.console.print(f" {k}: {v}")
+            else:
+                self.console.print(name + ": {}")
 
 
 def get_provider_and_model(model_str: Optional[str]):

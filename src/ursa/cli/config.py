@@ -8,9 +8,9 @@ from typing import Any, Literal
 import httpx
 import yaml
 from jsonargparse import Namespace
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
 
-from ursa.util.mcp import ServerParameters
+from ursa.util.mcp import ServerParameters, _serialize_server_config
 
 LoggingLevel = Literal[
     "debug", "info", "notice", "warning", "error", "critical"
@@ -45,12 +45,20 @@ class ModelConfig(BaseModel):
 
 
 class UrsaConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+    )
+
     _temp_workspace: TemporaryDirectory | None = PrivateAttr(default=None)
 
     workspace: Path = Field(
         default_factory=lambda: Path("ursa_workspace"),
     )
     """Directory to store URSA's output."""
+
+    thread_id: str | None = None
+    """ Thread ID for persistence """
 
     llm_model: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
@@ -62,6 +70,9 @@ class UrsaConfig(BaseModel):
 
     emb_model: ModelConfig | None = None
     """Default Embedding model"""
+
+    agent_config: dict[str, dict[str, Any]] | None = None
+    """ Configuration options for URSA Agents """
 
     mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
@@ -76,7 +87,7 @@ class UrsaConfig(BaseModel):
     @classmethod
     def from_namespace(cls, cfg: Namespace):
         """Instantiate from a jsonargparse namespace."""
-        return cls.model_validate(cfg.as_dict())
+        return cls.model_validate(cfg.as_dict(), extra="ignore")
 
     @classmethod
     def from_file(cls, path: Path):
@@ -87,6 +98,31 @@ class UrsaConfig(BaseModel):
             data = loader(fid)
 
         return cls.model_validate(data)
+
+    @field_serializer("workspace")
+    def serialize_workspace(self, workspace: Path, _info):
+        return workspace.as_posix()
+
+    @field_serializer("mcp_servers")
+    def serialize_mcp_servers(
+        self, mcp_servers: dict[str, ServerParameters], _info
+    ):
+        return {
+            server: _serialize_server_config(config)
+            for server, config in mcp_servers.items()
+        }
+
+
+@dataclass
+class MCPServerConfig:
+    """MCP Server Options"""
+
+    transport: Literal["stdio", "streamable-http"] = "stdio"
+    host: str = "localhost"
+    """Host to bind for network transports (ignored for stdio)"""
+    port: int = 8000
+    """Port to bind for network transports (ignored for stdio)"""
+    log_level: LoggingLevel = "info"
 
 
 def dict_diff(
@@ -123,15 +159,3 @@ def deep_merge_dicts(
         else:
             merged[key] = value
     return merged
-
-
-@dataclass
-class MCPServerConfig:
-    """MCP Server Options"""
-
-    transport: Literal["stdio", "streamable-http"] = "stdio"
-    host: str = "localhost"
-    """Host to bind for network transports (ignored for stdio)"""
-    port: int = 8000
-    """Port to bind for network transports (ignored for stdio)"""
-    log_level: LoggingLevel = "info"

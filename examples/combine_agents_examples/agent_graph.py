@@ -12,12 +12,12 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState
 
-from ursa.agents.base import BaseAgent, AgentWithTools
 from ursa.agents import (
     ArxivAgent,
     ExecutionAgent,
     RecallAgent,
 )
+from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.agents.execution_agent import ExecutionState
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util.memory_logger import AgentMemory

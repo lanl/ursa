@@ -1,3 +1,0 @@
-llm_model:
-  model: openai:gpt-5.2
-  max_completion_tokens: 10000

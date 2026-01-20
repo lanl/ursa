@@ -1,6 +1,12 @@
 import pytest
+from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _load_dotenv():
+    load_dotenv()
 
 
 def bind_kwargs(func, **kwargs):

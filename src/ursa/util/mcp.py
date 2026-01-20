@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Annotated
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -71,3 +72,12 @@ def start_mcp_client(
             "transport": transport(config),
         }
     return MultiServerMCPClient(client_config)
+
+
+def _serialize_server_config(config: ServerParameters):
+    """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
+    config = {"transport": transport(config), **config.model_dump()}
+    for k, v in config.items():
+        if isinstance(v, timedelta):
+            config[k] = v.total_seconds()
+    return config

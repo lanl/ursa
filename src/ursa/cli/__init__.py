@@ -16,7 +16,13 @@ set_parsing_settings(docstring_parse_attribute_docstrings=True)
 
 
 def build_parser() -> ArgumentParser:
-    parser = ArgumentParser("ursa", env_prefix="URSA_", version=__version__)
+    parser = ArgumentParser(
+        prog="ursa",
+        description="URSA: The Universal Research and Scientific Agent",
+        env_prefix="URSA",
+        version=__version__,
+        default_env=True,
+    )
     subparsers = parser.add_subcommands(required=False)
 
     # Default -> Launch a CLI interface
@@ -27,6 +33,11 @@ def build_parser() -> ArgumentParser:
         help="Path to a YAML/JSON file with additional configuration. CLI Opts have priority",
     )
     parser.add_argument("--log-level", default="error", type=LoggingLevel)
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Print the Ursa configuration and exit",
+    )
     parser.add_class_arguments(UrsaConfig, help="URSA configuration")
 
     # Run Ursa as an MCP Server
@@ -68,6 +79,12 @@ def main(args=None):
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
+
+    if cfg["print_config"]:
+        import yaml
+
+        print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))
+        exit(0)
 
     match subcommand:
         case None:
