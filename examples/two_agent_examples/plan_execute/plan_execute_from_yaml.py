@@ -693,7 +693,6 @@ def setup_llm(model_choice: str, models_cfg: dict | None = None):
         model_provider=provider,  # <-- lets langchain pick the right integration
         max_completion_tokens=10000,
         max_retries=2,
-        reasoning={"effort": "high"},
         **extra,  # <-- base_url, api_key, etc. flow through
     )
     return model

@@ -18,10 +18,8 @@ Optimize the six-hump camel function.
 """
 
 model = init_chat_model(
-    # model="openai:gpt-5.2",
-    model="google_genai:gemini-2.5-pro",
+    model="openai:gpt-5-mini",
     max_completion_tokens=30000,
-    reasoning={"effort": "high"},
 )
 
 embedding_kwargs = None
