@@ -7,6 +7,7 @@ from typing import Literal, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 
 try:
     from ddgs import DDGS  # pip install duckduckgo-search
@@ -53,6 +54,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         self.critic_prompt = critic_prompt
         self.competitor_prompt = competitor_prompt
         self.search_tool = DDGS()
+        self.strllm = self.llm | StrOutputParser()
 
     def agent1_generate_solution(
         self, state: HypothesizerState
@@ -81,9 +83,9 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         else:
             user_content += "Research this problem and generate a solution."
 
-        search_query = self.llm.invoke(
+        search_query = self.strllm.invoke(
             f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
-        ).content
+        )
         if '"' in search_query:
             search_query = search_query.split('"')[1]
         raw_search_results = self.search_tool.text(
@@ -119,14 +121,12 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             SystemMessage(content=self.hypothesizer_prompt),
             HumanMessage(content=user_content),
         ]
-        solution = self.llm.invoke(messages)
+        solution = self.strllm.invoke(messages)
 
-        new_state["agent1_solution"].append(solution.content)
+        new_state["agent1_solution"].append(solution)
 
         # Print the entire solution in green
-        print(
-            f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution.content}{RESET}"
-        )
+        print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
         print(
             f"[iteration {state['current_iteration']}] Exiting agent1_generate_solution."
         )
@@ -179,12 +179,12 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             SystemMessage(content=self.critic_prompt),
             HumanMessage(content=user_content),
         ]
-        critique = self.llm.invoke(messages)
+        critique = self.strllm.invoke(messages)
 
-        new_state["agent2_critiques"].append(critique.content)
+        new_state["agent2_critiques"].append(critique)
 
         # Print the entire critique in blue
-        print(f"{BLUE}[Agent2 - Critic]\n{critique.content}{RESET}")
+        print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
         print(
             f"[iteration {state['current_iteration']}] Exiting agent2_critique."
         )
@@ -244,13 +244,13 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             SystemMessage(content=self.competitor_prompt),
             HumanMessage(content=user_content),
         ]
-        perspective = self.llm.invoke(messages)
+        perspective = self.strllm.invoke(messages)
 
-        new_state["agent3_perspectives"].append(perspective.content)
+        new_state["agent3_perspectives"].append(perspective)
 
         # Print the entire perspective in red
         print(
-            f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective.content}{RESET}"
+            f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
         )
         print(
             f"[iteration {state['current_iteration']}] Exiting agent3_competitor_perspective."
@@ -288,15 +288,15 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         print(
             f"[iteration {state['current_iteration']}] Generating overall solution with LLM..."
         )
-        solution = self.llm.invoke(prompt)
+        solution = self.strllm.invoke(prompt)
         print(
             f"[iteration {state['current_iteration']}] Overall solution obtained. Preview:",
-            solution.content[:200],
+            solution[:200],
             "...",
         )
 
         new_state = state.copy()
-        new_state["solution"] = solution.content
+        new_state["solution"] = solution
 
         print(
             f"[iteration {state['current_iteration']}] Exiting generate_solution."
@@ -412,9 +412,9 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         websites_latex = ""
 
         # Ask the LLM to produce *only* LaTeX content
-        latex_response = self.llm.invoke(prompt)
+        latex_response = self.strllm.invoke(prompt)
 
-        latex_doc = latex_response.content
+        latex_doc = latex_response
 
         def inject_into_latex(original_tex: str, injection: str) -> str:
             """
@@ -444,7 +444,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         print(
             f"[iteration {state['current_iteration']}] Received LaTeX from LLM. Preview:"
         )
-        print(latex_response.content[:300], "...")
+        print(latex_response[:300], "...")
         print(
             f"[iteration {state['current_iteration']}] Exiting summarize_process_as_latex."
         )

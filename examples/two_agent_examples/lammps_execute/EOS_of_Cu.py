@@ -65,6 +65,3 @@ if final_lammps_state.get("run_returncode") == 0:
         "messages": [HumanMessage(content=exe_plan)],
         "workspace": workspace,
     })
-
-    for x in final_results["messages"]:
-        print(x.content)

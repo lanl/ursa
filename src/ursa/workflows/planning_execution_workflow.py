@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
@@ -48,7 +49,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
 
             console.print(
                 Panel(
-                    planning_output["messages"][-1].content,
+                    StrOutputParser().invoke(planning_output["messages"][-1]),
                     title="[bold yellow1 on black]:clipboard: Plan",
                     border_style="yellow1 on black",
                     style="yellow1 on black",
@@ -87,7 +88,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                 },
             )
 
-            last_step_summary = result["messages"][-1].content
+            last_step_summary = StrOutputParser().invoke(result["messages"][-1])
 
             console.print(
                 Panel(

@@ -7,6 +7,7 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import StateGraph
@@ -253,7 +254,7 @@ def main():
     result = agent.invoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints? 
                 Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This 
                 will be reviewed by experts in the field so technical accuracy and clarity is critical.""")
-    print(result["messages"][-1].content)
+    print(StrOutputParser().invoke(result["messages"][-1]))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from typing import Annotated, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
@@ -109,12 +110,14 @@ class PlanningAgent(BaseAgent[PlanningState]):
             for msg in state["messages"][1:]
         ]
         translated = [SystemMessage(content=reflection_prompt)] + translated
-        res = self.llm.invoke(
-            translated,
-            self.build_config(tags=["planner", "reflect"]),
+        res = StrOutputParser().invoke(
+            self.llm.invoke(
+                translated,
+                self.build_config(tags=["planner", "reflect"]),
+            )
         )
         return {
-            "messages": [HumanMessage(content=res.content)],
+            "messages": [HumanMessage(content=res)],
             "reflection_steps": state["reflection_steps"] - 1,
         }
 
@@ -153,7 +156,9 @@ def _should_regenerate(state: PlanningState):
 
     # Latest reviewer output (if present)
     last_content = (
-        state["messages"][-1].content if state.get("messages") else ""
+        StrOutputParser().invoke(state["messages"][-1])
+        if state.get("messages")
+        else ""
     )
 
     # Approved?

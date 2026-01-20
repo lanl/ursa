@@ -15,6 +15,7 @@ import randomname
 import yaml
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # rich console stuff for beautification
@@ -118,13 +119,7 @@ def _last_message_text(messages) -> str:
     if not messages:
         return "<no messages>"
     last = messages[-1]
-    # LangChain Message object
-    if hasattr(last, "content"):
-        return last.content
-    # dict-like message
-    if isinstance(last, dict):
-        return str(last.get("content") or last.get("text") or last)
-    return str(last)
+    return StrOutputParser().invoke(last)
 
 
 #########################################################################
@@ -698,6 +693,7 @@ def setup_llm(model_choice: str, models_cfg: dict | None = None):
         model_provider=provider,  # <-- lets langchain pick the right integration
         max_completion_tokens=10000,
         max_retries=2,
+        reasoning={"effort": "high"},
         **extra,  # <-- base_url, api_key, etc. flow through
     )
     return model
@@ -941,7 +937,9 @@ def run_substeps(
                 },
             )
 
-            last_sub_summary = sub_result["messages"][-1].content
+            last_sub_summary = StrOutputParser().invoke(
+                sub_result["messages"][-1]
+            )
             last_ran_summary = last_sub_summary  # <—
             sub_progress.console.log(last_sub_summary)
             sub_progress.advance(sub_task)

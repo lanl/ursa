@@ -41,6 +41,3 @@ if set_workspace:
     final_results = executor.invoke(init)
 else:
     final_results = executor.invoke(problem)
-
-for x in final_results["messages"]:
-    print(x.content)

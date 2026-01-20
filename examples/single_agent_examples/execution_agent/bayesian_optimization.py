@@ -18,8 +18,10 @@ Optimize the six-hump camel function.
 """
 
 model = init_chat_model(
-    model="openai:gpt-5-mini",
+    # model="openai:gpt-5.2",
+    model="google_genai:gemini-2.5-pro",
     max_completion_tokens=30000,
+    reasoning={"effort": "high"},
 )
 
 embedding_kwargs = None
@@ -52,6 +54,3 @@ else:
     final_results = executor.invoke(problem)
 
 render_session_summary(tid)
-
-for x in final_results["messages"]:
-    print(x.content)

@@ -11,6 +11,7 @@ import httpx
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich.console import Console
 from rich.markdown import Markdown
@@ -251,9 +252,10 @@ class HITL:
         )
 
     def run_arxiv(self, prompt: str) -> str:
-        llm_search_query = self.model.invoke(
+        search_generator = self.model | StrOutputParser()
+        llm_search_query = search_generator.invoke(
             f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
-        ).content
+        )
         print("Searching ArXiv for ", llm_search_query)
 
         if isinstance(llm_search_query, str):
@@ -282,7 +284,10 @@ class HITL:
             )
 
             if isinstance(
-                content := executor_state["messages"][-1].content, str
+                content := StrOutputParser().invoke(
+                    executor_state["messages"][-1]
+                ),
+                str,
             ):
                 self.update_last_agent_result(content)
             else:
@@ -302,7 +307,7 @@ class HITL:
                 self.executor_state,
             )
             self.update_last_agent_result(
-                self.executor_state["messages"][-1].content
+                StrOutputParser().invoke(self.executor_state["messages"][-1])
             )
         return f"[Executor Agent Output]:\n {self.last_agent_result}"
 
@@ -319,14 +324,16 @@ class HITL:
         self.chatter_state = self.chatter.invoke(
             self.chatter_state,
         )
-        chat_output = self.chatter_state["messages"][-1]
+        chat_output = StrOutputParser().invoke(
+            self.chatter_state["messages"][-1]
+        )
 
-        if not isinstance(chat_output.content, str):
+        if not isinstance(chat_output, str):
             raise TypeError(
-                f"chat_output is not a str! Instead, it is: {type(chat_output.content)}."
+                f"chat_output is not a str! Instead, it is: {type(chat_output)}."
             )
 
-        self.update_last_agent_result(chat_output.content)
+        self.update_last_agent_result(chat_output)
         # return f"[{self.model.model_name}]: {self.last_agent_result}"
         return f"{self.last_agent_result}"
 
@@ -367,9 +374,10 @@ class HITL:
         return f"[Planner Agent Output]:\n {self.last_agent_result}"
 
     def run_websearcher(self, prompt: str) -> str:
-        llm_search_query = self.model.invoke(
+        search_generator = self.model | StrOutputParser()
+        llm_search_query = search_generator.invoke(
             f"The user stated {prompt}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
-        ).content
+        )
         print("Searching Web for ", llm_search_query)
         if isinstance(llm_search_query, str):
             web_result = self.websearcher.invoke(

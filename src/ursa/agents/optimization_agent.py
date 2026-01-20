@@ -6,6 +6,7 @@ from typing import Annotated, Literal, TypedDict
 from langchain.chat_models import BaseChatModel
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START
@@ -68,10 +69,12 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     # Define the function that calls the model
     def extractor(self, state: OptimizerState) -> OptimizerState:
         new_state = state.copy()
-        new_state["problem"] = self.llm.invoke([
-            SystemMessage(content=self.extractor_prompt),
-            HumanMessage(content=new_state["user_input"]),
-        ]).content
+        new_state["problem"] = StrOutputParser().invoke(
+            self.llm.invoke([
+                SystemMessage(content=self.extractor_prompt),
+                HumanMessage(content=new_state["user_input"]),
+            ])
+        )
 
         new_state["problem_diagnostic"] = []
 
@@ -150,10 +153,12 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     def generator(self, state: OptimizerState) -> OptimizerState:
         new_state = state.copy()
 
-        new_state["code"] = self.llm.invoke([
-            SystemMessage(content=self.code_generator_prompt),
-            HumanMessage(content=str(state["problem_spec"])),
-        ]).content
+        new_state["code"] = StrOutputParser().invoke(
+            self.llm.invoke([
+                SystemMessage(content=self.code_generator_prompt),
+                HumanMessage(content=str(state["problem_spec"])),
+            ])
+        )
 
         print("Generator:\n")
         pprint.pprint(new_state["code"])
@@ -180,11 +185,15 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     def explainer(self, state: OptimizerState) -> OptimizerState:
         new_state = state.copy()
 
-        new_state["summary"] = self.llm.invoke([
-            SystemMessage(content=self.explainer_prompt),
-            HumanMessage(content=state["problem"] + str(state["problem_spec"])),
-            *state["problem_diagnostic"],
-        ]).content
+        new_state["summary"] = StrOutputParser().invoke(
+            self.llm.invoke([
+                SystemMessage(content=self.explainer_prompt),
+                HumanMessage(
+                    content=state["problem"] + str(state["problem_spec"])
+                ),
+                *state["problem_diagnostic"],
+            ])
+        )
 
         print("Summary:\n")
         pprint.pprint(new_state["summary"])
@@ -377,7 +386,7 @@ def main():
     """
     inputs = {"user_input": problem_string}
     result = execution_agent.invoke(inputs)
-    print(result["messages"][-1].content)
+    print(StrOutputParser().invoke(result["messages"][-1]))
     return result
 
 

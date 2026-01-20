@@ -10,6 +10,7 @@ from pathlib import Path
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
@@ -66,7 +67,7 @@ for i, step_prompt in enumerate(problem):
 
     console.print(
         Panel(
-            result["messages"][-1].content,
+            StrOutputParser().invoke(result["messages"][-1]),
             title=f"Step {i + 1} Final Response",
             border_style="orange3",
         )

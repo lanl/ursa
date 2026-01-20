@@ -3,6 +3,7 @@ import sys
 import randomname
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
 
 # rich console stuff for beautification
 from rich.console import Console
@@ -120,7 +121,9 @@ def main(model_name: str):
             },
         )
 
-        last_step_summary = final_results["messages"][-1].content
+        last_step_summary = StrOutputParser().invoke(
+            final_results["messages"][-1]
+        )
 
         render_session_summary(executor.thread_id)
 

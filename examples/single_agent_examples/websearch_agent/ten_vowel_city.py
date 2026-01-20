@@ -17,7 +17,7 @@ websearcher = WebSearchAgent(llm=model, enable_metrics=True)
 websearch_output = websearcher.invoke(problem)
 
 # Print results
-print("Final summary: \n", websearch_output["messages"][-1].content)
+print("Final summary: \n", websearch_output["final_summary"])
 # for x in websearch_output["messages"]:
 #     print(x.content)
 

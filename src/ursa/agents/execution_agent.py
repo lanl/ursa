@@ -46,6 +46,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph.message import add_messages
@@ -143,7 +144,7 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
     message = state["messages"][index]
     # Loop through all the consecutive tool messages in reverse order
     while isinstance(message, ToolMessage):
-        if "[UNSAFE]" in message.content:
+        if "[UNSAFE]" in StrOutputParser().invoke(message):
             return "unsafe"
 
         index -= 1
@@ -363,7 +364,8 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
             )
             new_state["messages"].append(response)
         except Exception as e:
-            print("Error: ", e, " ", new_state["messages"][-1].content)
+            msg = StrOutputParser().invoke(new_state["messages"][-1])
+            print("Error: ", e, " ", msg)
             new_state["messages"].append(
                 AIMessage(content=f"Response error {e}")
             )
@@ -407,10 +409,10 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
             response = self.llm.invoke(
                 messages, self.build_config(tags=["recap"])
             )
-            response_content = response.content
+            response_content = StrOutputParser().invoke(response.content)
             new_state["messages"].append(response)
         except Exception as e:
-            print("Error: ", e, " ", messages[-1].content)
+            print("Error: ", e, " ", StrOutputParser().invoke(messages[-1]))
             new_state["messages"].append(
                 AIMessage(content=f"Response error {e}")
             )
@@ -420,10 +422,11 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
             memories: list[str] = []
             # Collect human/system/tool message content; for AI tool calls, store args.
             for msg in new_state["messages"]:
+                msg_content = StrOutputParser().invoke(msg)
                 if not isinstance(msg, AIMessage):
-                    memories.append(msg.content)
+                    memories.append(msg_content)
                 elif not msg.tool_calls:
-                    memories.append(msg.content)
+                    memories.append(msg_content)
                 else:
                     tool_strings = []
                     for tool in msg.tool_calls:
@@ -475,19 +478,21 @@ class ExecutionAgent(BaseAgent[ExecutionState]):
                 continue
 
             query = tool_call["args"]["query"]
-            safety_result = self.llm.invoke(
-                self.get_safety_prompt(
-                    query, self.safe_codes, new_state.get("code_files", [])
-                ),
-                self.build_config(tags=["safety_check"]),
+            safety_result = StrOutputParser().invoke(
+                self.llm.invoke(
+                    self.get_safety_prompt(
+                        query, self.safe_codes, new_state.get("code_files", [])
+                    ),
+                    self.build_config(tags=["safety_check"]),
+                )
             )
 
-            if "[NO]" in safety_result.content:
+            if "[NO]" in safety_result:
                 any_unsafe = True
                 tool_response = (
                     "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
                     "For reason: {r}"
-                ).format(q=query, r=safety_result.content)
+                ).format(q=query, r=safety_result)
                 console.print(
                     "[bold red][WARNING][/bold red] Command deemed unsafe:",
                     query,

@@ -1,6 +1,7 @@
 from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
+from langchain_core.output_parsers import StrOutputParser
 
 from .base import BaseAgent
 
@@ -27,7 +28,9 @@ class RecallAgent(BaseAgent):
 
         for memory in memories:
             summarize_query += f"Memory: {memory} \n\n"
-        state["memory"] = self.llm.invoke(summarize_query).content
+        state["memory"] = StrOutputParser().invoke(
+            self.llm.invoke(summarize_query)
+        )
         return state
 
     def _build_graph(self):

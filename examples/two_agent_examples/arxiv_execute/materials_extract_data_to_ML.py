@@ -43,10 +43,7 @@ def main():
 
     init = {"messages": [HumanMessage(content=exe_plan)]}
 
-    final_results = executor.invoke(init, {"recursion_limit": 10000})
-
-    for x in final_results["messages"]:
-        print(x.content)
+    _ = executor.invoke(init, {"recursion_limit": 10000})
 
     render_session_summary(tid)
 
