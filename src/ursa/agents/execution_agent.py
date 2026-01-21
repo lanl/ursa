@@ -587,7 +587,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # Bind tools to llm and context summarizer
         self.llm = self.llm.bind_tools(self.tools.values())
-        self.context_summarizer.model = self.llm
 
         # Register nodes:
         # - "agent": LLM planning/execution step
