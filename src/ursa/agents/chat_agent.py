@@ -1,9 +1,9 @@
-from typing import Annotated, Any, Mapping, TypedDict
+from typing import Annotated, TypedDict
 
-from langchain.chat_models import BaseChatModel
-from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph.message import add_messages
+
+from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 
 from .base import BaseAgent
 
@@ -13,47 +13,28 @@ class ChatState(TypedDict):
     thread_id: str
 
 
-class ChatAgent(BaseAgent):
-    def __init__(
-        self,
-        llm: BaseChatModel,
-        **kwargs,
-    ):
-        super().__init__(llm, **kwargs)
-        self._build_graph()
+class ChatAgent(BaseAgent[ChatState]):
+    """Chat Agent"""
+
+    state_type = ChatState
 
     def _response_node(self, state: ChatState) -> ChatState:
-        res = self.llm.invoke(
-            state["messages"], {"configurable": {"thread_id": self.thread_id}}
-        )
+        res = self.llm.invoke(state["messages"])
         return {"messages": [res]}
 
+    def format_query(self, prompt: str, state: ChatState | None = None):
+        if state is None:
+            state = ChatState(
+                messages=[SystemMessage(content=get_chatter_system_prompt())]
+            )
+        state["messages"].append(HumanMessage(content=prompt))
+
+        return state
+
+    def format_result(self, result: ChatState) -> str:
+        return result["messages"][-1].content
+
     def _build_graph(self):
-        graph = StateGraph(ChatState)
-        self.add_node(graph, self._response_node)
-        graph.set_entry_point("_response_node")
-        graph.set_finish_point("_response_node")
-        self._action = graph.compile(checkpointer=self.checkpointer)
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
-
-
-def main():
-    model = ChatOpenAI(
-        model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2
-    )
-    websearcher = ChatAgent(llm=model)
-    problem_string = "What is your name?"
-    print("Prompt: ", problem_string)
-    result = websearcher.invoke(problem_string)
-    return result["messages"][-1].content
-
-
-if __name__ == "__main__":
-    print("Response: ", main())
+        self.add_node(self._response_node)
+        self.graph.set_entry_point("_response_node")
+        self.graph.set_finish_point("_response_node")

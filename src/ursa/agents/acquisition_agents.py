@@ -8,7 +8,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any, Mapping, Optional, TypedDict
+from typing import Any, Optional, TypedDict
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -19,7 +19,6 @@ import requests
 from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph
 from PIL import Image
 
 from ursa.agents.base import BaseAgent
@@ -215,16 +214,14 @@ class BaseAcquisitionAgent(BaseAgent):
         self.rag_embedding = rag_embedding
         self.process_images = process_images
         self.max_results = max_results
-        self.database_path = database_path
-        self.summaries_path = summaries_path
-        self.vectorstore_path = vectorstore_path
+        self.database_path = self.workspace / database_path
+        self.summaries_path = self.workspace / summaries_path
+        self.vectorstore_path = self.workspace / vectorstore_path
         self.download = download
         self.num_threads = num_threads
 
-        os.makedirs(self.database_path, exist_ok=True)
-        os.makedirs(self.summaries_path, exist_ok=True)
-
-        self._action = self._build_graph()
+        self.database_path.mkdir(exist_ok=True, parents=True)
+        self.summaries_path.mkdir(exist_ok=True, parents=True)
 
     # ---- abstract-ish methods ----
     def _search(self, query: str) -> list[dict[str, Any]]:
@@ -312,6 +309,36 @@ class BaseAcquisitionAgent(BaseAgent):
                     })
         return items
 
+    def _normalize_inputs(self, inputs) -> AcquisitionState:
+        if isinstance(inputs, str):
+            return AcquisitionState(context=inputs)
+        elif isinstance(inputs, dict):
+            return inputs
+        else:
+            raise TypeError(f"Invalid input for {self.__class__.__name__}")
+
+    def format_result(self, state: AcquisitionState) -> str:
+        if summary := state["final_summary"]:
+            return summary
+
+        # Fallback to dumping an empty string if `self.summarize=False`.
+        # This only happens if a user disables summarization when configuring
+        # URSA or if the final_summary is an empty string itself.
+        return ""
+
+    async def _search_query(self, state: AcquisitionState) -> AcquisitionState:
+        """Generate a search query from the input search task (context)"""
+        existing = state.get("query")
+        if existing:
+            return state
+
+        context = state["context"]
+        query = await self.llm.ainvoke(
+            f"The user stated {context}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
+        )
+        state["query"] = query.content or context
+        return state
+
     def _fetch_node(self, state: AcquisitionState) -> AcquisitionState:
         items = self._fetch_items(state["query"])
         return {**state, "items": items}
@@ -364,8 +391,10 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
+            workspace=self.workspace,
             embedding=self.rag_embedding,
-            database_path=self.database_path,
+            vectorstore_path="rag_vectorstore",
+            database_path=self.database_path.name,
         )
         new_state["final_summary"] = rag_agent.invoke(context=state["context"])[
             "summary"
@@ -416,58 +445,25 @@ class BaseAcquisitionAgent(BaseAgent):
         return {**state, "final_summary": final_summary}
 
     def _build_graph(self):
-        graph = StateGraph(AcquisitionState)
-        self.add_node(graph, self._fetch_node)
+        self.add_node(self._search_query)
+        self.graph.set_entry_point("_search_query")
+        self.add_node(self._fetch_node)
+        self.graph.add_edge("_search_query", "_fetch_node")
 
         if self.summarize:
             if self.rag_embedding:
-                self.add_node(graph, self._rag_node)
-                graph.set_entry_point("_fetch_node")
-                graph.add_edge("_fetch_node", "_rag_node")
-                graph.set_finish_point("_rag_node")
+                self.add_node(self._rag_node)
+                self.graph.add_edge("_fetch_node", "_rag_node")
+                self.graph.set_finish_point("_rag_node")
             else:
-                self.add_node(graph, self._summarize_node)
-                self.add_node(graph, self._aggregate_node)
+                self.add_node(self._summarize_node)
+                self.add_node(self._aggregate_node)
 
-                graph.set_entry_point("_fetch_node")
-                graph.add_edge("_fetch_node", "_summarize_node")
-                graph.add_edge("_summarize_node", "_aggregate_node")
-                graph.set_finish_point("_aggregate_node")
+                self.graph.add_edge("_fetch_node", "_summarize_node")
+                self.graph.add_edge("_summarize_node", "_aggregate_node")
+                self.graph.set_finish_point("_aggregate_node")
         else:
-            graph.set_entry_point("_fetch_node")
-            graph.set_finish_point("_fetch_node")
-
-        return graph.compile(checkpointer=self.checkpointer)
-
-    def _invoke(
-        self,
-        inputs: Mapping[str, Any],
-        *,
-        summarize: bool | None = None,
-        recursion_limit: int = 1000,
-        **_,
-    ) -> str:
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # alias support like your ArxivAgent
-        if "query" not in inputs:
-            if "arxiv_search_query" in inputs:
-                inputs = dict(inputs)
-                inputs["query"] = inputs.pop("arxiv_search_query")
-            else:
-                raise KeyError(
-                    "Missing 'query' in inputs (alias 'arxiv_search_query' also accepted)."
-                )
-
-        result = self._action.invoke(inputs, config)
-        use_summary = self.summarize if summarize is None else summarize
-        return (
-            result.get("final_summary", "No summary generated.")
-            if use_summary
-            else "\n\nFinished fetching items!"
-        )
+            self.graph.set_finish_point("_fetch_node")
 
 
 # ---------- Concrete: Web Search via ddgs ----------

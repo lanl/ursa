@@ -26,43 +26,35 @@ Entry points:
 """
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
-import os
 from pathlib import Path
 from typing import (
-    Annotated,
     Any,
-    Callable,
     Literal,
-    Mapping,
     Optional,
     TypedDict,
 )
 
-import randomname
-from langchain.agents.middleware import SummarizationMiddleware
 from langchain.chat_models import BaseChatModel
+from langchain.tools import BaseTool
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.tools import StructuredTool
-from langchain_core.tools.base import BaseTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages.utils import count_tokens_approximately
+from langgraph.types import Command
 
 # Rich
 from rich import get_console
+from rich.markdown import Markdown
 from rich.panel import Panel
 
-from ursa.agents.base import BaseAgent
+from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     get_safety_prompt,
-    summarize_prompt,
+    recap_prompt,
 )
 from ursa.tools import edit_code, read_file, run_command, write_code
 from ursa.tools.search_tools import (
@@ -87,7 +79,7 @@ class ExecutionState(TypedDict):
     """TypedDict representing the execution agent's mutable run state used by nodes.
 
     Fields:
-    - messages: list of messages (System/Human/AI/Tool) with add_messages metadata.
+    - messages: list of messages (System/Human/AI/Tool).
     - current_progress: short status string describing agent progress.
     - code_files: list of filenames created or edited in the workspace.
     - workspace: path to the working directory where files and commands run.
@@ -95,39 +87,29 @@ class ExecutionState(TypedDict):
       is_linked).
     """
 
-    messages: Annotated[list[AnyMessage], add_messages]
+    messages: list[AnyMessage]
     current_progress: str
     code_files: list[str]
-    workspace: str
+    workspace: Path
     symlinkdir: dict
     model: BaseChatModel
 
 
-# Helper functions
-def convert_to_tool(fn):
-    if isinstance(fn, StructuredTool):
-        return fn
-    else:
-        return StructuredTool.from_function(
-            func=fn, name=fn.__name__, description=fn.__doc__
-        )
-
-
-def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
-    """Return 'summarize' if no tool calls in the last message, else 'continue'.
+def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
+    """Return 'recap' if no tool calls in the last message, else 'continue'.
 
     Args:
         state: The current execution state containing messages.
 
     Returns:
-        A literal "summarize" if the last message has no tool calls,
+        A literal "recap" if the last message has no tool calls,
         otherwise "continue".
     """
     messages = state["messages"]
     last_message = messages[-1]
     # If there is no tool call, then we finish
     if not last_message.tool_calls:
-        return "summarize"
+        return "recap"
     # Otherwise if there is, we continue
     else:
         return "continue"
@@ -156,7 +138,7 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
 
 
 # Main module class
-class ExecutionAgent(BaseAgent):
+class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     """Orchestrates model-driven code execution, tool calls, and state management.
 
     Orchestrates model-driven code execution, tool calls, and state management for
@@ -185,20 +167,19 @@ class ExecutionAgent(BaseAgent):
             agent. Defaults to python and julia
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
-        summarize_prompt (str): Prompt used to request concise summaries for
+        recap_prompt (str): Prompt used to request concise summaries for
             memory or final output.
-        tools (list[Tool]): Tools available to the agent (run_command, write_code,
-            edit_code, read_file, run_web_search, run_osti_search, run_arxiv_search).
+        tools (dict[str, Tool]): Tools available to the agent (run_command, write_code,
+            edit_code, read_file, run_web_search, run_osti_search, run_arxiv_search),
+            keyed by tool name for quick lookups.
         tool_node (ToolNode): Graph node that dispatches tool calls.
         llm (BaseChatModel): LLM instance bound to the available tools.
-        _action (StateGraph): Compiled execution graph that implements the
-            main loop and branching logic.
 
     Methods:
         query_executor(state): Send messages to the executor LLM, ensure
             workspace exists, and handle symlink setup before returning the
             model response.
-        summarize(state): Produce and optionally persist a summary of recent
+        recap(state): Produce and optionally persist a summary of recent
             interactions to the memory backend.
         safety_check(state): Validate pending run_command calls via the safety
             prompt and append ToolMessages for unsafe commands.
@@ -207,35 +188,26 @@ class ExecutionAgent(BaseAgent):
             of files that the agent has generated and can trust.
         _build_graph(): Construct and compile the StateGraph for the agent
             loop.
-        _invoke(inputs, recursion_limit=...): Internal entry that invokes the
-            compiled graph with a given recursion limit.
-        action (property): Disabled; direct access is not supported. Use
-            invoke or stream entry points instead.
 
     Raises:
         AttributeError: Accessing the .action attribute raises to encourage
             using .stream(...) or .invoke(...).
     """
 
+    state_type = ExecutionState
+
     def __init__(
         self,
         llm: BaseChatModel,
         agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
-        extra_tools: Optional[list[BaseTool]] = None,
+        extra_tools: Optional[list[BaseTool] | None] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         safe_codes: Optional[list[str]] = None,
         **kwargs,
     ):
-        """ExecutionAgent class initialization."""
-        super().__init__(llm, **kwargs)
-        self.agent_memory = agent_memory
-        self.safe_codes = safe_codes or ["python", "julia"]
-        self.get_safety_prompt = get_safety_prompt
-        self.executor_prompt = executor_prompt
-        self.summarize_prompt = summarize_prompt
-        self.tools = [
+        default_tools = [
             run_command,
             write_code,
             edit_code,
@@ -244,54 +216,109 @@ class ExecutionAgent(BaseAgent):
             run_osti_search,
             run_arxiv_search,
         ]
+        if extra_tools:
+            default_tools.extend(extra_tools)
+
+        super().__init__(llm=llm, tools=default_tools, **kwargs)
+        self.agent_memory = agent_memory
+        self.safe_codes = safe_codes or ["python", "julia"]
+        self.get_safety_prompt = get_safety_prompt
+        self.executor_prompt = executor_prompt
+        self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
-        if self.extra_tools is not None:
-            self.tools.extend(self.extra_tools)
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
-        self._action = self._build_graph()
-        self.context_summarizer = SummarizationMiddleware(
-            model=self.llm,
-            max_tokens_before_summary=tokens_before_summarize,
-            messages_to_keep=messages_to_keep,
-        )
+        self.tokens_before_summarize = tokens_before_summarize
+        self.messages_to_keep = messages_to_keep
 
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
-        summarized_messages = self.context_summarizer.before_model(state, None)
-        if summarized_messages:
-            tokens_before_summarize = self.context_summarizer.token_counter(
-                state["messages"]
-            )
-            state["messages"] = summarized_messages["messages"]
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                state["messages"][1:]
+        new_state = state.copy()
+        tokens_before_summarize = count_tokens_approximately(
+            new_state["messages"][1:]
+        )
+
+        if tokens_before_summarize > self.tokens_before_summarize:
+            # Start from 1 to skip system message.
+            conversation_to_summarize = new_state["messages"][
+                1 : -self.messages_to_keep
+            ]
+            conversation_to_keep = new_state["messages"][
+                -self.messages_to_keep :
+            ]
+            tool_ids = []
+            for msg in conversation_to_summarize:
+                if hasattr(msg, "tool_calls"):
+                    for call in msg.tool_calls:
+                        tool_ids.append(call["id"])
+                if isinstance(msg, ToolMessage):
+                    tool_ids.remove(msg.tool_call_id)
+            if tool_ids:
+                print(
+                    f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
+                )
+                for msg in conversation_to_keep:
+                    if (
+                        isinstance(msg, ToolMessage)
+                        and msg.tool_call_id in tool_ids
+                    ):
+                        conversation_to_summarize.append(msg)
+                        conversation_to_keep.remove(msg)
+                        tool_ids.remove(msg.tool_call_id)
+                    elif isinstance(msg, ToolMessage):
+                        print(
+                            f"This is a Tool that happened in the last {self.messages_to_keep} messages:\n{str(msg)}\nbut not in {tool_ids}"
+                        )
+            if tool_ids:
+                # We may need to implement something here for if a tool has not
+                # responded but its tool call is far enough back that it is being
+                # summarized away. Likely an edge case for non-async, but async
+                # may cause a problem here.
+                print(
+                    f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
+                )
+                pass
+
+            summarize_prompt = f"""
+            Your only tasks is to provide a detailed, comprehensive summary of the following 
+            conversation. 
+
+            Your summary will be the only information retained from the conversation, so ensure 
+            it contains all details that need to be remembered to meet the goals of the work. 
+
+            Conversation to summarize:
+            {conversation_to_summarize}
+            """
+            summary = self.llm.invoke(summarize_prompt)
+            summarized_messages = [
+                SystemMessage(content=self.executor_prompt),
+                summary,
+            ]
+            summarized_messages.extend(conversation_to_keep)
+            tokens_after_summarize = count_tokens_approximately(
+                summarized_messages
             )
             console.print(
                 Panel(
                     (
                         f"Summarized Conversation History:\n"
+                        f"Summary:\n{summary.text}\n"
                         f"Approximate tokens before: {tokens_before_summarize}\n"
                         f"Approximate tokens after: {tokens_after_summarize}\n"
                     ),
-                    title="[bold yellow1 on black]:clipboard: Plan",
+                    title="[bold yellow1 on black]Summarize Past Context",
                     border_style="yellow1",
                     style="bold yellow1 on black",
                 )
             )
-        else:
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                state["messages"]
-            )
-        return state
+            new_state["messages"] = summarized_messages
+        return new_state
 
     # Define the function that calls the model
     def query_executor(self, state: ExecutionState) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
         This method copies the incoming state, ensures a workspace directory exists
-        (creating one with a random name when absent), optionally creates a symlink
+        (creating one with a default name when absent), optionally creates a symlink
         described by state["symlinkdir"], sets or injects the executor system prompt
         as the first message, and invokes the bound LLM. When logging is enabled,
         it persists the pre-invocation state to disk.
@@ -313,13 +340,13 @@ class ExecutionAgent(BaseAgent):
 
         # 1) Ensure a workspace directory exists, creating a named one if absent.
         if "workspace" not in new_state.keys():
-            new_state["workspace"] = randomname.get_name()
+            new_state["workspace"] = self.workspace
             print(
                 f"{RED}Creating the folder "
                 f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "
                 f"for this project.{RESET}"
             )
-        os.makedirs(new_state["workspace"], exist_ok=True)
+        Path(new_state["workspace"]).mkdir(exist_ok=True)
 
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
@@ -377,7 +404,34 @@ class ExecutionAgent(BaseAgent):
         # Return the model's response and the workspace path as a partial state update.
         return new_state
 
-    def summarize(self, state: ExecutionState) -> ExecutionState:
+    def tool_use(self, state: ExecutionState) -> ExecutionState:
+        new_state = state.copy()
+        update = self.tool_node.invoke(state)
+        # Could be implemented better, but handles the different forms of tool response:
+        #     dict of messages, list of Commands, etc.
+        try:
+            if isinstance(update, dict) and "messages" in update:
+                new_state["messages"].extend(update["messages"])
+            elif isinstance(update, list):
+                for resp in update:
+                    if isinstance(resp, Command):
+                        new_state["messages"].extend(resp.update["messages"])
+                        new_state.setdefault("code_files", []).extend(
+                            resp.update["code_files"]
+                        )
+                    else:
+                        new_state["messages"].extend(resp["messages"])
+            elif isinstance(update, Command):
+                new_state["messages"].extend(update.update["messages"])
+                new_state.setdefault("code_files", []).extend(
+                    update.update["code_files"]
+                )
+        except Exception as e:
+            print(f"SOMETHING IS WRONG WITH {update}: {e}")
+            new_state["messages"].extend(update["messages"])
+        return new_state
+
+    def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
@@ -389,7 +443,7 @@ class ExecutionAgent(BaseAgent):
 
         Returns:
             ExecutionState: A partial update with a single string message containing
-                the summary.
+                the recap.
         """
         new_state = state.copy()
 
@@ -397,26 +451,36 @@ class ExecutionAgent(BaseAgent):
         new_state = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
-        messages = (
-            new_state["messages"]
-            if isinstance(new_state["messages"][0], SystemMessage)
-            else [SystemMessage(content=summarize_prompt)]
-            + new_state["messages"]
-        )
+        if isinstance(new_state["messages"][0], SystemMessage):
+            messages = new_state["messages"].copy()
+            messages[0] = SystemMessage(content=recap_prompt)
+        else:
+            messages = [SystemMessage(content=recap_prompt)] + new_state[
+                "messages"
+            ]
 
-        # 2) Invoke the LLM to generate a summary; capture content even on failure.
+        # 2) Invoke the LLM to generate a recap; capture content even on failure.
         response_content = ""
         try:
             response = self.llm.invoke(
-                messages, self.build_config(tags=["summarize"])
+                messages, self.build_config(tags=["recap"])
             )
-            response_content = response.content
+            response_content = response.text
             new_state["messages"].append(response)
         except Exception as e:
             print("Error: ", e, " ", messages[-1].content)
             new_state["messages"].append(
                 AIMessage(content=f"Response error {e}")
             )
+        console.print(
+            Panel(
+                Markdown(response_content),
+                title="[bold grey85 on black]Recap of Work",
+                border_style="grey85 on black",
+                style="grey85 on black",
+                expand=False,  # Make panel fit content width
+            )
+        )
 
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
@@ -520,123 +584,44 @@ class ExecutionAgent(BaseAgent):
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
-        # Create a graph over the agent's execution state.
-        graph = StateGraph(ExecutionState)
+
+        # Bind tools to llm and context summarizer
+        self.llm = self.llm.bind_tools(self.tools.values())
 
         # Register nodes:
         # - "agent": LLM planning/execution step
         # - "action": tool dispatch (run_command, write_code, etc.)
-        # - "summarize": summary/finalization step
+        # - "recap": summary/finalization step
         # - "safety_check": gate for shell command safety
-        self.add_node(graph, self.query_executor, "agent")
-        self.add_node(graph, self.tool_node, "action")
-        self.add_node(graph, self.summarize, "summarize")
-        self.add_node(graph, self.safety_check, "safety_check")
+        self.add_node(self.query_executor, "agent")
+        self.add_node(self.tool_use, "action")
+        self.add_node(self.recap, "recap")
+        self.add_node(self.safety_check, "safety_check")
 
         # Set entrypoint: execution starts with the "agent" node.
-        graph.set_entry_point("agent")
+        self.graph.set_entry_point("agent")
 
-        # From "agent", either continue (tools) or finish (summarize),
+        # From "agent", either continue (tools) or finish (recap),
         # based on presence of tool calls in the last message.
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "safety_check", "summarize": "summarize"},
+            {"continue": "safety_check", "recap": "recap"},
         )
 
         # From "safety_check", route to tools if safe, otherwise back to agent
         # to revise the plan without executing unsafe commands.
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "safety_check",
             self._wrap_cond(command_safe, "command_safe", "execution"),
             {"safe": "action", "unsafe": "agent"},
         )
 
         # After tools run, return control to the agent for the next step.
-        graph.add_edge("action", "agent")
+        self.graph.add_edge("action", "agent")
 
-        # The graph completes at the "summarize" node.
-        graph.set_finish_point("summarize")
+        # The graph completes at the "recap" node.
+        self.graph.set_finish_point("recap")
 
-        # Compile and return the executable graph (optionally with a checkpointer).
-        return graph.compile(checkpointer=self.checkpointer)
-
-    async def add_mcp_tool(
-        self, mcp_tools: Callable[..., Any] | list[Callable[..., Any]]
-    ) -> None:
-        client = MultiServerMCPClient(mcp_tools)
-        tools = await client.get_tools()
-        self.add_tool(tools)
-
-    def add_tool(
-        self, new_tools: Callable[..., Any] | list[Callable[..., Any]]
-    ) -> None:
-        if isinstance(new_tools, list):
-            self.tools.extend([convert_to_tool(x) for x in new_tools])
-        elif isinstance(new_tools, StructuredTool) or isinstance(
-            new_tools, Callable
-        ):
-            self.tools.append(convert_to_tool(new_tools))
-        else:
-            raise TypeError("Expected a callable or a list of callables.")
-        self.tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
-        self._action = self._build_graph()
-
-    def list_tools(self) -> None:
-        print(
-            f"Available tool names are: {', '.join([x.name for x in self.tools])}."
-        )
-
-    def remove_tool(self, cut_tools: str | list[str]) -> None:
-        if isinstance(cut_tools, str):
-            self.remove_tool([cut_tools])
-        elif isinstance(cut_tools, list):
-            self.tools = [x for x in self.tools if x.name not in cut_tools]
-            self.tool_node = ToolNode(self.tools)
-            self.llm = self.llm.bind_tools(self.tools)
-            self._action = self._build_graph()
-        else:
-            raise TypeError(
-                "Expected a string or a list of strings describing the tools to remove."
-            )
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
-
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
-        """
-        # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # Delegate execution to the compiled graph.
-        return self._action.invoke(inputs, config)
-
-    def _ainvoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 999_999, **_
-    ):
-        """Invoke the compiled graph with inputs under a specified recursion limit.
-
-        This method builds a LangGraph config with the provided recursion limit
-        and a "graph" tag, then delegates to the compiled graph's invoke method.
-        """
-        # Build invocation config with a generous recursion limit for long runs.
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        # Delegate execution to the compiled graph.
-        return self._action.ainvoke(inputs, config)
-
-    # This property is trying to stop people bypassing invoke
-    @property
-    def action(self):
-        """Property used to affirm `action` attribute is unsupported."""
-        raise AttributeError(
-            "Use .stream(...) or .invoke(...); direct .action access is unsupported."
-        )
+    def format_result(self, state: ExecutionState) -> str:
+        return state["messages"][-1].content
