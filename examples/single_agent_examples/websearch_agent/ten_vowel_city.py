@@ -19,8 +19,6 @@ websearcher = WebSearchAgent(llm=model, enable_metrics=True)
 websearch_output = asyncio.run(websearcher.ainvoke(problem))
 
 # Print results
-print("Final summary: \n", websearch_output["messages"][-1].content)
-# for x in websearch_output["messages"]:
-#     print(x.content)
+print("Final summary: \n", websearch_output["final_summary"])
 
 print("Citations: \n", [x for x in websearch_output.get("urls_visited", [])])

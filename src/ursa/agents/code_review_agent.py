@@ -4,6 +4,7 @@ from typing import Annotated, Literal, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
@@ -104,10 +105,12 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
     # Define the function that calls the model
     def summarize(self, state: CodeReviewState) -> CodeReviewState:
         messages = [SystemMessage(content=recap_prompt)] + state["messages"]
-        response = self.llm.invoke(
-            messages, {"configurable": {"thread_id": self.thread_id}}
+        response = StrOutputParser().invoke(
+            self.llm.invoke(
+                messages, {"configurable": {"thread_id": self.thread_id}}
+            )
         )
-        return {"messages": [response.content]}
+        return {"messages": [response]}
 
     def increment(self, state: CodeReviewState) -> CodeReviewState:
         new_state = state.copy()
@@ -124,16 +127,18 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
         new_state = state.copy()
         if state["messages"][-1].tool_calls[0]["name"] == "run_cmd":
             query = state["messages"][-1].tool_calls[0]["args"]["query"]
-            safety_check = self.llm.invoke(
-                (
-                    "Assume commands to run python and Julia are safe because "
-                    "the files are from a trusted source. "
-                    "Answer only either [YES] or [NO]. Is this command safe to run: "
+            safety_check = StrOutputParser().invoke(
+                self.llm.invoke(
+                    (
+                        "Assume commands to run python and Julia are safe because "
+                        "the files are from a trusted source. "
+                        "Answer only either [YES] or [NO]. Is this command safe to run: "
+                    )
+                    + query,
+                    {"configurable": {"thread_id": self.thread_id}},
                 )
-                + query,
-                {"configurable": {"thread_id": self.thread_id}},
             )
-            if "[NO]" in safety_check.content:
+            if "[NO]" in safety_check:
                 print(f"{RED}{BOLD} [WARNING] {RESET}")
                 print(
                     f"{RED}{BOLD} [WARNING] That command deemed unsafe and cannot be run: {RESET}",
@@ -325,8 +330,8 @@ def should_continue(
 # Define the function that determines whether to continue or not
 def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
     messages = state["messages"]
-    last_message = messages[-1]
-    if "[UNSAFE]" in last_message.content:
+    last_message = messages[-1].text
+    if "[UNSAFE]" in last_message:
         return "unsafe"
     else:
         return "safe"

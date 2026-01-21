@@ -86,7 +86,8 @@ def main(mode: str):
 
         console.print(
             Panel(
-                planning_output["messages"][-1].content, title="[yellow]📋 Plan"
+                planning_output["messages"][-1].text,
+                title="[yellow]📋 Plan",
             )
         )
 
@@ -173,7 +174,7 @@ def main(mode: str):
                         },
                     )
 
-                    last_sub_summary = final_results["messages"][-1].content
+                    last_sub_summary = final_results["messages"][-1]
                     progress.console.log(last_sub_summary)  # live streaming log
                     progress.advance(sub_task)
 

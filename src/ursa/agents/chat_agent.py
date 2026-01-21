@@ -32,7 +32,7 @@ class ChatAgent(BaseAgent[ChatState]):
         return state
 
     def format_result(self, result: ChatState) -> str:
-        return result["messages"][-1].content
+        return result["messages"][-1].text
 
     def _build_graph(self):
         self.add_node(self._response_node)

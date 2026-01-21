@@ -43,6 +43,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.types import Command
 
 # Rich
@@ -79,7 +80,7 @@ class ExecutionState(TypedDict):
     """TypedDict representing the execution agent's mutable run state used by nodes.
 
     Fields:
-    - messages: list of messages (System/Human/AI/Tool) with add_messages metadata.
+    - messages: list of messages (System/Human/AI/Tool).
     - current_progress: short status string describing agent progress.
     - code_files: list of filenames created or edited in the workspace.
     - workspace: path to the working directory where files and commands run.
@@ -128,7 +129,7 @@ def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
     message = state["messages"][index]
     # Loop through all the consecutive tool messages in reverse order
     while isinstance(message, ToolMessage):
-        if "[UNSAFE]" in message.content:
+        if "[UNSAFE]" in message.text:
             return "unsafe"
 
         index -= 1
@@ -392,7 +393,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             )
             new_state["messages"].append(response)
         except Exception as e:
-            print("Error: ", e, " ", new_state["messages"][-1].content)
+            msg = new_state["messages"][-1].text
+            print("Error: ", e, " ", msg)
             new_state["messages"].append(
                 AIMessage(content=f"Response error {e}")
             )
@@ -468,7 +470,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             response_content = response.text
             new_state["messages"].append(response)
         except Exception as e:
-            print("Error: ", e, " ", messages[-1].content)
+            print("Error: ", e, " ", messages[-1].text)
             new_state["messages"].append(
                 AIMessage(content=f"Response error {e}")
             )
@@ -487,10 +489,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             memories: list[str] = []
             # Collect human/system/tool message content; for AI tool calls, store args.
             for msg in new_state["messages"]:
+                msg_content = msg.text
                 if not isinstance(msg, AIMessage):
-                    memories.append(msg.content)
+                    memories.append(msg_content)
                 elif not msg.tool_calls:
-                    memories.append(msg.content)
+                    memories.append(msg_content)
                 else:
                     tool_strings = []
                     for tool in msg.tool_calls:
@@ -542,19 +545,21 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 continue
 
             query = tool_call["args"]["query"]
-            safety_result = self.llm.invoke(
-                self.get_safety_prompt(
-                    query, self.safe_codes, new_state.get("code_files", [])
-                ),
-                self.build_config(tags=["safety_check"]),
+            safety_result = StrOutputParser().invoke(
+                self.llm.invoke(
+                    self.get_safety_prompt(
+                        query, self.safe_codes, new_state.get("code_files", [])
+                    ),
+                    self.build_config(tags=["safety_check"]),
+                )
             )
 
-            if "[NO]" in safety_result.content:
+            if "[NO]" in safety_result:
                 any_unsafe = True
                 tool_response = (
                     "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
                     "For reason: {r}"
-                ).format(q=query, r=safety_result.content)
+                ).format(q=query, r=safety_result)
                 console.print(
                     "[bold red][WARNING][/bold red] Command deemed unsafe:",
                     query,
@@ -624,4 +629,4 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.graph.set_finish_point("recap")
 
     def format_result(self, state: ExecutionState) -> str:
-        return state["messages"][-1].content
+        return state["messages"][-1].text

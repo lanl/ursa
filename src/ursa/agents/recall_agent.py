@@ -1,6 +1,7 @@
 from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
+from langchain_core.output_parsers import StrOutputParser
 
 from ursa.util.memory_logger import AgentMemory
 
@@ -36,8 +37,10 @@ class RecallAgent(BaseAgent):
 
         for memory in memories:
             summarize_query += f"Memory: {memory} \n\n"
-        res = await self.llm.ainvoke(summarize_query)
-        return {"memory": res.content}
+        state["memory"] = StrOutputParser().invoke(
+            await self.llm.ainvoke(summarize_query)
+        )
+        return state
 
     def _build_graph(self):
         self.add_node(self._remember)

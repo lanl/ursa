@@ -49,6 +49,3 @@ else:
     final_results = executor.invoke(problem)
 
 render_session_summary(executor.thread_id)
-
-for x in final_results["messages"]:
-    print(x.content)

@@ -68,7 +68,7 @@ for event in agent.stream(
     {"messages": [HumanMessage(content="Your problem here")]},
     {"configurable": {"thread_id": agent.thread_id}}
 ):
-    print(event[list(event.keys())[0]]["messages"][-1].content)
+    print(event[list(event.keys())[0]]["messages"][-1].text)
 ```
 
 ### Setting a Recursion Limit

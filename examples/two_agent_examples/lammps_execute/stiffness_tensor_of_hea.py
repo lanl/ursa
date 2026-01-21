@@ -46,10 +46,7 @@ async def main():
         Summarize the contents of this file in a markdown document. Include a plot, if relevent.
         """
 
-        final_results = await executor.ainvoke(exe_plan)
-
-        for x in final_results["messages"]:
-            print(x.content)
+        _ = await executor.ainvoke(exe_plan)
 
 
 if __name__ == "__main__":

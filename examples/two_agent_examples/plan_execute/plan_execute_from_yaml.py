@@ -118,13 +118,7 @@ def _last_message_text(messages) -> str:
     if not messages:
         return "<no messages>"
     last = messages[-1]
-    # LangChain Message object
-    if hasattr(last, "content"):
-        return last.content
-    # dict-like message
-    if isinstance(last, dict):
-        return str(last.get("content") or last.get("text") or last)
-    return str(last)
+    return last.text
 
 
 #########################################################################
@@ -970,7 +964,7 @@ def run_substeps(
                 },
             )
 
-            last_sub_summary = sub_result["messages"][-1].content
+            last_sub_summary = sub_result["messages"][-1].text
             last_ran_summary = last_sub_summary  # <—
             sub_progress.console.log(last_sub_summary)
             sub_progress.advance(sub_task)
