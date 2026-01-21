@@ -3,6 +3,7 @@
 *.csv
 iteration*txt
 *.swp
+.env
 
 # Python-generated files
 __pycache__/

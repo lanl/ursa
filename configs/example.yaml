@@ -1,0 +1,48 @@
+# The URSA configuration options are defined by UrsaConfig in src/ursa/cli/config.py
+# For most keys, the exact configuration options are a combination of model/agent dependent
+# A subset of these options are surfaced via command line flags or environmental variables.
+# The rest must be set by providing a configuration file via the `--config` flag
+# To see the default configuration run `ursa --print-config`
+llm_model:
+  # Additional configuration options can be specified here
+  # Exact options are model dependent, see the LangGraph docs
+  # https://reference.langchain.com/python/langchain/models/#langchain.chat_models.init_chat_model
+  # Provider Overview: https://docs.langchain.com/oss/python/integrations/providers/overview
+  model: openai:gpt-5.2
+  max_completion_tokens: 10000
+  api_key: SUPER_SECRET_API_KEY
+emb_model:
+  # The embedding model (default none) can similarly be configured
+  # Exact options are model/provider dependent, see the LangGraph docs
+  # https://reference.langchain.com/python/langchain/embeddings/#langchain.embeddings.init_embeddings
+  model: ollama:nomic-embed-text:latest
+agent_config:
+  # Agents can be configured by providing configuration dicts keyed to the Agents name in the HITL
+  # To get a list of agent names, launch the URSA HITL (`ursa`) then type `help`
+  execute:
+    safe_codes:
+      - python
+      - julia
+      - fortran
+# MCP Servers can be connected to agents by providing a dict of MCP servers
+mcp_servers:
+  # Servers should specify a transport (stdio, streamable-http) and additional configuration
+  # parameters. The following gives an example of a stdio and streamable-http configurations
+  # Additional options are documented at:
+  #   stdio: https://modelcontextprotocol.github.io/python-sdk/api/?h=stdioserverparameters#mcp.StdioServerParameters
+  #   streamable-http: https://github.com/modelcontextprotocol/python-sdk/blob/main/src/mcp/client/session_group.py#L49
+  ursa:
+    transport: stdio
+    command: ursa
+    args:
+      - --model llm_model.model openai:gpt-5-nano
+      - --config
+      - config.yaml
+    env:
+      OPENAI_API_KEY: SUPER_SECRET_API_KEY
+      # More environmental variables to set for the mcp server
+  ursa-http:
+    # streamable-http servers are configured when started, not here
+    transport: streamable_http
+    url: http://localhost:8000/mcp
+    timeout: 60 # Time out in seconds

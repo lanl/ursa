@@ -1,28 +1,27 @@
-import os
+from langchain_core.messages import HumanMessage
 
-from langchain.chat_models import init_chat_model
-from langchain.messages import HumanMessage
+from ursa.agents.planning_agent import Plan, PlanningAgent
 
-from ursa.agents import PlanningAgent
-from ursa.observability.timing import render_session_summary
 
-# def test_planning_agent():
-planning_agent = PlanningAgent(
-    llm=init_chat_model(model=os.getenv("URSA_TEST_LLM", "openai:gpt-5-nano")),
-    enable_metrics=True,
-)
+async def test_planning_agent_creates_structured_plan(chat_model, tmpdir):
+    planning_agent = PlanningAgent(
+        llm=chat_model.model_copy(update={"max_tokens": 4000}),
+        workspace=tmpdir,
+        max_reflection_steps=0,
+    )
 
-# problem_string = "Calculate Pi to 1000 decimal places."
-problem_string = "Create a one step plan for computing 1+1."
+    prompt = "Outline a concise plan for adding the numbers 1 and 2 together."
+    result = await planning_agent.ainvoke({
+        "messages": [HumanMessage(content=prompt)],
+        "reflection_steps": 0,
+    })
 
-inputs = {
-    "messages": [HumanMessage(content=problem_string)],
-    "reflection_steps": 1,  # if 0, a generation is done once, but no reflection is done.
-}
+    assert "plan" in result
+    plan = result["plan"]
+    assert isinstance(plan, Plan)
+    assert len(plan.steps) > 0, "expected at least one plan step"
+    assert isinstance(str(plan), str)
 
-result = planning_agent(inputs)
-
-for msg in result["messages"]:
-    msg.pretty_print()
-
-render_session_summary(planning_agent.thread_id)
+    assert "messages" in result
+    assert result["messages"], "agent should return at least one message"
+    assert getattr(result["messages"][-1], "content", None)

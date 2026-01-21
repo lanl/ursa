@@ -1,21 +1,14 @@
 ruff := "uvx ruff@0.12.10"
 name := "ursa"
-version := `uv run ursa version`
+version := `uv run ursa --version`
 tag := version + "-" + `arch`
 sqfs := name + "-" + tag + ".sqfs"
 
 help:
     just -l -u
 
-# Run tests with ollama models. 
-test-ollama llm="ollama:ministral-3" emb="ollama:nomic-embed-text": clean
-    URSA_TEST_LLM={{ llm }} URSA_TEST_EMB={{ emb }} uv run pytest -s
-
-# Run tests with openai models. 
-test-openai llm="openai:gpt-5-nano" emb="openai:text-embedding-3-small": clean
-    URSA_TEST_LLM={{ llm }} URSA_TEST_EMB={{ emb }} uv run pytest -s
-
-test: test-ollama test-openai
+test:
+    uv run pytest -s
 
 clean-workspaces:
 	rm -rf workspace

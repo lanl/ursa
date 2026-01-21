@@ -5,13 +5,13 @@
 [![PyPI Version][pypi-version]](https://pypi.org/project/ursa-ai/)
 [![PyPI Downloads][monthly-downloads]](https://pypistats.org/packages/ursa-ai)
 
-The flexible agentic workflow for accelerating scientific tasks. 
+The flexible agentic workflow for accelerating scientific tasks.
 Composes information flow between agents for planning, code writing and execution, and online research to solve complex problems.
 
-The original arxiv paper is [here](https://arxiv.org/abs/2506.22653).
+The original ArXiv paper is [here](https://arxiv.org/abs/2506.22653).
 
 ## Installation
-You can install `ursa` via `pip` or `uv`. Installing `ursa` in a clean
+You can install `ursa` via `pip` or [`uv`](https://docs.astral.sh/uv/). Installing `ursa` in a clean
 environment with python 3.10-3.12 may be necessary. (Some `ursa` dependencies
 currently do not support `python>=3.13`.)
 
@@ -39,7 +39,7 @@ conda run --live-stream -n ursa-env python -m pip install ursa-ai
 Better documentation will be incoming, but for examples in the `examples/`
 folder demonstrates how to set up some basic problems. They also should give
 some idea of how to pass results from one agent to another. I will look to add
-things with multi-agent graphs, etc. in the future. 
+things with multi-agent graphs, etc. in the future.
 
 Documentation for each URSA agent:
 - [Planning Agent](docs/planning_agent.md)
@@ -53,9 +53,9 @@ Documentation for combining agents:
 - [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md)
 
 
-## Command line usage
+## Command Line Usage
 
-You can install `ursa` as a command line app with `pip install`; or with `uv` via
+You can install `ursa` as a command line app with `pip install`; or with [`uv`](https://docs.astral.sh/uv/) via
 
 ```bash
 uv tool install ursa-ai
@@ -64,7 +64,7 @@ uv tool install ursa-ai
 To use the command line app, run
 
 ```
-ursa run
+ursa --llm_model.model openai:gpt-5.2
 ```
 
 This will start a REPL in your terminal.
@@ -79,7 +79,7 @@ For help, type: ? or help. Exit with Ctrl+d.
 ursa>
 ```
 
-Within the REPL, you can get help by typing `?` or `help`. 
+Within the REPL, you can get help by typing `?` or `help`.
 
 You can chat with an LLM by simply typing into the terminal.
 
@@ -92,7 +92,13 @@ You can run various agents by typing the name of the agent. For example,
 
 ```
 ursa> plan
-Enter your prompt for Planning Agent: Write a python script to do linear regression using only numpy.
+plan: Write a python script to do linear regression using only numpy.
+```
+
+Or by prepending the agent name to the query:
+
+```shell
+ursa> plan Write a python script to do linear regression using only numpy.
 ```
 
 If you run subsequent agents, the last output will be appended to the prompt for the next agent.
@@ -100,70 +106,69 @@ If you run subsequent agents, the last output will be appended to the prompt for
 So, to run the Planning Agent followed by the Execution Agent:
 ```
 ursa> plan
-Enter your prompt for Planning Agent: Write a python script to do linear regression using only numpy.
+plan: Write a python script to do linear regression using only numpy.
 
 ...
 
 ursa> execute
-Enter your prompt for Execution Agent: Execute the plan.
+execute: Execute the plan.
 ```
 
 You can get a list of available command line options via
 ```
-ursa run --help
+ursa --help
 ```
 
-## MCP serving
+### Configuring URSA
 
-You can install `ursa` as a command line app via `pip` or `uv`:
+See the example [configuration file](./configs/example.yaml) and [documentation](./configs/README.md) for more details.
 
-**pip**
+## URSA MCP Server
+
+You can connect `ursa` as an [Model Context Protocol](https://modelcontextprotocol.io) Server
+to other agentic frameworks or interfaces. To start the MCP server, run:
+
 
 ```shell
-pip install 'ursa-ai[mcp]'
+ursa mcp-server --transport streamable-http
 ```
 
-**uv**
+This will start an MCP server on localhost on port 8000.
+
+> [!WARNING]
+> The MCP Server does not isolate sessions from one another. As such, using the server in a multi-user context
+> is not recommended.
+
+
+### MCP Inspector
+
+After installing the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector), you can test the Ursa MCP server by running:
 
 ```shell
-uv tool install 'ursa-ai[mcp]'
+npx @modelcontextprotocol/inspector \
+    uv run ursa mcp-server
 ```
 
-To start hosting URSA as a local MCP server, run
+Or by connecting to an existing MCP server using the `streamable-http` transport by running:
 
 ```shell
-ursa serve
+npx @modelcontextprotocol/inspector \
+    --transport http \
+    --server-url http://localhost:8000/mcp
 ```
 
-This will start an MCP server on localhost (127.0.0.1) on port 8000.
 
 You can test the server using curl from another terminal:
 
-```shell
-curl -X POST \
-    -H "Content-Type: application/json" \
-    -d '{"agent": "execute", "query": "Plot the first 1000 prime numbers with matplotlib"}' \
-    http://localhost:8000/run
+
+The MCP server configuration options can be seen with:
+```
+ursa mcp-server --help
 ```
 
-The resulting code is written in the `ursa_mcp` subfolder of the serving
-location. The curl query will get the final summary of what the agent carried
-out. 
+The served instance of ursa can be configured via a configuration file (`ursa --config config.yaml mcp-server...`)
+or command line arguments (`ursa --llm_model.model openai:gpt-5 ... mcp-server ...`).
 
-When served locally, URSA can then be set up as an MCP tool that can be couple
-to other agentic workflows. The set of agents is the same as the cli (execute,
-plan, arxiv, web, recall, chat)
-
-You can get a list of available command line options via
-```
-ursa serve --help
-```
-
-For API documentation, after `ursa serve`, go to your browser at
-
-```
-http://localhost:8000/docs
-```
 
 ## Sandboxing
 The Execution Agent is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
@@ -177,7 +182,7 @@ The Web Search Agent scrapes data from urls, so has the potential to attempt to 
 Some suggestions for sandboxing the agent:
 - Creating a specific environment such that limits URSA's access to only what you want. Examples:
     - Creating/using a virtual machine that is sandboxed from the rest of your machine
-    - Creating a new account on your machine specifically for URSA 
+    - Creating a new account on your machine specifically for URSA
 - Creating a network blacklist/whitelist to ensure that network commands and webscraping are contained to safe sources
 
 You have a duty for ensuring that you use URSA responsibly.

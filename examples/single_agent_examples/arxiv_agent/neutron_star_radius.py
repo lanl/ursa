@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -5,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from ursa.agents import ArxivAgent
 
 
-def main():
+async def main():
     llm = ChatOpenAI(model="gpt-5-mini", max_completion_tokens=20000)
 
     Path("workspace").mkdir(exist_ok=True)
@@ -21,13 +22,13 @@ def main():
         enable_metrics=True,
     )
 
-    result = agent.invoke(
+    result = await agent.ainvoke(
         arxiv_search_query="Experimental Constraints on neutron star radius",
         context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
     )
 
-    print(result)
+    print(result["final_summary"])
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
