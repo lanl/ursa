@@ -21,7 +21,7 @@ def chat_model():
     return bind_kwargs(
         init_chat_model,
         model="openai:gpt-5-nano",
-        max_tokens=500,
+        max_tokens=1500,
         temperature=0.0,
     )
 

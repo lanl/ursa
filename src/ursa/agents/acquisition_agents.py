@@ -321,12 +321,10 @@ class BaseAcquisitionAgent(BaseAgent):
         if summary := state["final_summary"]:
             return summary
 
-        # Fallback to dumping the state to a string if `self.summarize=False`.
+        # Fallback to dumping an empty string if `self.summarize=False`.
         # This only happens if a user disables summarization when configuring
-        # URSA. This is likely a bad idea (the state can be massive), but it
-        # has been explicitly requested by the user.
-        assert self.summarize is False, "Missing final_summary in state"
-        return str(state)
+        # URSA or if the final_summary is an empty string itself.
+        return ""
 
     async def _search_query(self, state: AcquisitionState) -> AcquisitionState:
         """Generate a search query from the input search task (context)"""
