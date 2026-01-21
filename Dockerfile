@@ -8,7 +8,7 @@ COPY dist/*.whl /wheelhouse/
 RUN uv init -p 3.12
 RUN uv add `ls /wheelhouse/*.whl`
 ENV PATH=/app/.venv/bin:$PATH
-RUN ursa version
+RUN ursa --version
 
 # Set environment in /app as default uv environment
 ENV UV_PROJECT=/app
