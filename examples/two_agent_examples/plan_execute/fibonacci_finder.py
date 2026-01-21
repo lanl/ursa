@@ -42,6 +42,7 @@ planner = PlanningAgent(
     llm=planner_model,
     enable_metrics=True,
     thread_id=tid + "_planner",
+    workspace=workspace,
     checkpointer=checkpointer,
 )
 
@@ -51,6 +52,7 @@ executor = ExecutionAgent(
     llm=executor_model,
     enable_metrics=True,
     thread_id=tid + "_executor",
+    workspace=workspace,
     checkpointer=checkpointer,
 )
 

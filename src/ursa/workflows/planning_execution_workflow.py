@@ -1,11 +1,11 @@
 import sqlite3
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
 
+from ursa.util.plan_renderer import render_plan_steps_rich
 from ursa.workflows.base_workflow import BaseWorkflow
 
 console = get_console()
@@ -42,22 +42,13 @@ class PlanningExecutorWorkflow(BaseWorkflow):
             planner_prompt = (
                 f"Break this down into one step per technique:\n{task}"
             )
-            planning_output = self.planner.invoke({
-                "messages": [HumanMessage(content=planner_prompt)]
-            })
+            planning_output = self.planner.invoke(planner_prompt)
 
-            console.print(
-                Panel(
-                    planning_output["messages"][-1].content,
-                    title="[bold yellow1 on black]:clipboard: Plan",
-                    border_style="yellow1 on black",
-                    style="yellow1 on black",
-                )
-            )
+            render_plan_steps_rich(planning_output["plan"].steps)
 
         # Execution loop
         last_step_summary = "No previous step."
-        for i, step in enumerate(planning_output["plan_steps"]):
+        for i, step in enumerate(planning_output["plan"].steps):
             step_prompt = (
                 f"You are contributing to the larger solution:\n"
                 f"{task}\n\n"
@@ -80,12 +71,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                 )
             )
 
-            result = self.executor.invoke(
-                {
-                    "messages": [HumanMessage(content=step_prompt)],
-                    "workspace": self.workspace,
-                },
-            )
+            result = self.executor.invoke(step_prompt)
 
             last_step_summary = result["messages"][-1].content
 

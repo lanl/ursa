@@ -626,22 +626,25 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     planner_checkpointer = SqliteSaver(pconn)
 
     # Initialize the agents
+    thread_id = Path(workspace).name
+
     planner = PlanningAgent(
         llm=model,
         checkpointer=planner_checkpointer,
         enable_metrics=True,
-        metrics_dir=Path(workspace) / "ursa_metrics",
+        metrics_dir="ursa_metrics",
+        thread_id=thread_id,
+        workspace=workspace,
     )  # include checkpointer
+
     executor = ExecutionAgent(
         llm=model,
         checkpointer=executor_checkpointer,
         enable_metrics=True,
-        metrics_dir=Path(workspace) / "ursa_metrics",
+        metrics_dir="ursa_metrics",
+        thread_id=thread_id,
+        workspace=workspace,
     )  # include checkpointer
-    # Use the workspace as the thread id (one thread per workspace)
-    thread_id = Path(workspace).name
-    planner.thread_id = thread_id
-    executor.thread_id = thread_id
 
     print(f"[dbg] planner_db_abs: {Path(pdb_path).resolve()}")
     print(f"[dbg] cwd: {Path.cwd().resolve()}")
@@ -765,26 +768,41 @@ def main_plan_load_or_perform(
     if values:
         # title = "[yellow]📋 Resumed Plan" if values else "[yellow]📋 Plan"
         # choose the dict that has messages/plan_steps
-        plan_dict = values
+        plan_dict = values["__root__"]
+
+        plan_dict["plan_steps"] = [
+            {
+                "name": plan_step.name,
+                "description": plan_step.description,
+                "expected_outputs": plan_step.expected_outputs,
+                "success_criteria": plan_step.success_criteria,
+                "requires_code": plan_step.requires_code,
+            }
+            for plan_step in plan_dict["plan"].steps
+        ]
         # NOTE: This path is where we've recovered from a checkpoint
     else:
         # Fresh plan - need to do a plan
         with console.status(
             "[bold green]Planning overarching steps . . .", spinner="point"
         ):
-            planning_output = planner.invoke(
-                {"messages": [HumanMessage(content=problem)]},
-                config={
-                    "recursion_limit": 999_999,
-                    "configurable": {"thread_id": planner.thread_id},
-                },
-            )
+            planning_output = planner.invoke(problem)
+
+        planning_output["plan_steps"] = [
+            {
+                "name": plan_step.name,
+                "description": plan_step.description,
+                "expected_outputs": plan_step.expected_outputs,
+                "success_criteria": plan_step.success_criteria,
+                "requires_code": plan_step.requires_code,
+            }
+            for plan_step in planning_output["plan"].steps
+        ]
+
         plan_dict = planning_output
 
         # pretty table with steps
-        render_plan_steps_rich(
-            planning_output.get("plan_steps"), highlight_index=0
-        )
+        render_plan_steps_rich(planning_output["plan"].steps, highlight_index=0)
 
         # This is where we force an exit to demonstrate checkpointing - the following isn't normal,
         # it's specifically to demonstrate this functionality!
@@ -857,6 +875,17 @@ def get_or_create_subplan(
         )
     finally:
         planner.thread_id = _old_tid
+
+    sub_output["plan_steps"] = [
+        {
+            "name": plan_step.name,
+            "description": plan_step.description,
+            "expected_outputs": plan_step.expected_outputs,
+            "success_criteria": plan_step.success_criteria,
+            "requires_code": plan_step.requires_code,
+        }
+        for plan_step in sub_output["plan"].steps
+    ]
 
     sub_steps = sub_output.get("plan_steps") or []
     sub_sig = _hash_plan(sub_steps)
@@ -932,7 +961,7 @@ def run_substeps(
             sub_result = executor.invoke(
                 {
                     "messages": [HumanMessage(content=sub_exec_prompt)],
-                    "workspace": workspace,
+                    "workspace": executor.workspace,
                     "symlinkdir": symlinkdict,
                 },
                 config={
@@ -1337,6 +1366,7 @@ def main(
         elif planning_mode == "single":
             # figure out where to resume execution
             exec_prog = load_exec_progress(workspace)
+
             if exec_prog.get("plan_hash") != plan_sig:
                 start_idx = 0
                 prev_summary = (

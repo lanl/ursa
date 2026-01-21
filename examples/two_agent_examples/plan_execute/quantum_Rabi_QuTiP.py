@@ -34,8 +34,8 @@ def main():
         print(f"\nSolving problem: {problem}\n")
 
         # Initialize the agent
-        planner = PlanningAgent(llm=model)
-        executor = ExecutionAgent(llm=model)
+        planner = PlanningAgent(llm=model, workspace=workspace)
+        executor = ExecutionAgent(llm=model, workspace=workspace)
 
         workflow = PlanningExecutorWorkflow(
             planner=planner,
