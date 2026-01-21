@@ -23,7 +23,6 @@ class DummyPotential:
         return "pair_style eam\npair_coeff * * dummy.potential Cu"
 
 
-@pytest.mark.asyncio
 async def test_lammps_agent_runs_with_preselected_potential(
     chat_model, tmp_path: Path, monkeypatch
 ) -> None:

@@ -9,7 +9,7 @@ from langgraph.prebuilt import InjectedState
 
 # Set a limit for message characters - the user could overload
 # that in their env, or maybe we could pull this out of the LLM parameters
-MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "50000"))
+MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "30000"))
 
 
 @tool
@@ -45,6 +45,14 @@ def run_command(query: str, state: Annotated[dict, InjectedState]) -> str:
     except KeyboardInterrupt:
         print("Keyboard Interrupt of command: ", query)
         stdout, stderr = "", "KeyboardInterrupt:"
+    except UnicodeDecodeError:
+        print(
+            f"Invalid Command: {query} - only 'utf-8' decodable characters allowed."
+        )
+        stdout, stderr = (
+            "",
+            f"Invalid Command: {query} - only 'utf-8' decodable characters allowed.:",
+        )
 
     # Fit BOTH streams under a single overall cap
     stdout_fit, stderr_fit = _fit_streams_to_budget(

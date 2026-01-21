@@ -11,4 +11,4 @@ context = (
     "2) Then, for the single lowest-energy-above-hull candidate, "
     "retrieve and explain its crystal structure."
 )
-print(agent.invoke(mp_query=query, context=context))
+print(agent.invoke(query=query, context=context))

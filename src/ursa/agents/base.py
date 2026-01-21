@@ -33,11 +33,14 @@ from typing import (
 from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
+from langchain.tools import BaseTool
 from langchain_core.load import dumps
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
@@ -150,7 +153,7 @@ class BaseAgent(Generic[TState], ABC):
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
         """
-        self.llm = llm
+        self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or "ursa_workspace")
         self.thread_id = thread_id or uuid4().hex
         self.checkpointer = checkpointer
@@ -454,6 +457,31 @@ class BaseAgent(Generic[TState], ABC):
             config=config,
             **kwargs,
         )
+
+    def format_query(self, prompt: str, state: TState | None = None) -> TState:
+        """Format a plain text prompt into the agent's input schema
+        possibly incorporating the prior state.
+
+        Agents should override this method for their operation
+        """
+
+        if state is not None and "messages" in state:
+            state["messages"].append(HumanMessage(content=str(prompt)))
+            return state
+        return self._normalize_inputs(prompt)
+
+    def format_result(self, result: TState) -> str:
+        """Extracts a plain text response from the Agent's output schema
+
+        Agents should override this method for their operation
+        """
+
+        if "messages" in result:
+            if isinstance(result["messages"], list) and isinstance(
+                result["messages"][-1], BaseMessage
+            ):
+                return result["messages"][-1].text
+        raise NotImplementedError()
 
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         """Normalizes various input formats into a standardized mapping.
@@ -788,3 +816,84 @@ class BaseAgent(Generic[TState], ABC):
                 "ursa_agent": self.name,
             },
         )
+
+
+class AgentWithTools:
+    """Mixin that equips an agent with LangGraph tools management."""
+
+    def __init__(
+        self,
+        *args,
+        tools: list[BaseTool] | dict[str, BaseTool] | None = None,
+        **kwargs,
+    ):
+        self._tools: dict[str, BaseTool] = {}
+        self.tool_node = ToolNode([])
+        self._apply_tools(tools, rebuild_graph=False)
+        super().__init__(*args, **kwargs)
+
+    def __post_init__(self):
+        super().__post_init__()
+
+    @property
+    def tools(self) -> dict[str, BaseTool]:
+        return dict(self._tools)
+
+    @tools.setter
+    def tools(self, tools: dict[str, BaseTool] | list[BaseTool] | None):
+        self._apply_tools(tools)
+
+    def add_tool(self, tools: BaseTool | list[BaseTool]) -> None:
+        bundle = tools if isinstance(tools, list) else [tools]
+        merged = dict(self._tools)
+        merged.update({tool.name: tool for tool in bundle})
+        self._apply_tools(merged)
+
+    async def add_mcp_tools(
+        self,
+        client: MultiServerMCPClient,
+        tool_name: None | str | list[str] = None,
+    ) -> None:
+        """Add tools from an MCP client to the agent
+
+        Args:
+           client: the MCP client to add tools from
+           tool_name: if provided, only add named tools
+        """
+        tools = await client.get_tools()
+        if tool_name is not None:
+            tool_name = (
+                tool_name if isinstance(tool_name, list) else [tool_name]
+            )
+            tools = [tool for tool in tools if tool.name in tool_name]
+        self.add_tool(tools)
+
+    def remove_tool(self, tool_names: str | list[str]) -> None:
+        names = tool_names if isinstance(tool_names, list) else [tool_names]
+        trimmed = {
+            name: tool
+            for name, tool in self._tools.items()
+            if name not in names
+        }
+        self._apply_tools(trimmed)
+
+    def _apply_tools(
+        self,
+        tools: dict[str, BaseTool] | list[BaseTool] | None,
+        *,
+        rebuild_graph: bool = True,
+    ) -> None:
+        if tools is None:
+            mapping: dict[str, BaseTool] = {}
+        elif isinstance(tools, dict):
+            mapping = dict(tools)
+        else:
+            mapping = {tool.name: tool for tool in tools}
+
+        self._tools = mapping
+        self.tool_node = ToolNode(list(self._tools.values()))
+
+        if rebuild_graph and hasattr(self, "build_graph"):
+            self.__dict__.pop("compiled_graph", None)
+            if hasattr(self, "graph"):
+                self.build_graph()

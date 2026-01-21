@@ -9,22 +9,23 @@ from pathlib import Path
 from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage
 from rich import get_console
-from rich.panel import Panel
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer
-from ursa.util.plan_renderer import render_plan_steps_rich
+from ursa.workflows import PlanningExecutorWorkflow
 
 console = get_console()
+
+tid = "run-" + uuid4().hex[:8]
 
 # Define the workspace
 workspace = "example_fibonacci_finder"
 
 # Define a simple problem
 index_to_find = 35
+
 problem = (
     f"Create a single python script to compute the Fibonacci \n"
     f"number at position {index_to_find} in the sequence.\n\n"
@@ -32,67 +33,37 @@ problem = (
     f"benchmark and compare the approaches then explain which one is the best."
 )
 
-
-# Init the model
-model = init_chat_model(model="openai:gpt-5-mini")
-
 # Setup checkpointing
 checkpointer = Checkpointer.from_workspace(Path(workspace))
 
-# Init the agents with the model and checkpointer
-thread_id = uuid4().hex
-executor = ExecutionAgent(
-    llm=model, checkpointer=checkpointer, thread_id=thread_id
-)
+# Setup Planning Agent
+planner_model = init_chat_model(model="openai:o4-mini")
 planner = PlanningAgent(
-    llm=model, checkpointer=checkpointer, thread_id=thread_id
+    llm=planner_model,
+    enable_metrics=True,
+    thread_id=tid + "_planner",
+    workspace=workspace,
+    checkpointer=checkpointer,
 )
 
-# Create a plan
-with console.status(
-    "[bold deep_pink1]Planning overarching steps . . .",
-    spinner="point",
-    spinner_style="deep_pink1",
-):
-    planner_prompt = f"Break this down into one step per technique:\n{problem}"
+# Setup Execution Agent
+executor_model = init_chat_model(model="openai:o4-mini")
+executor = ExecutionAgent(
+    llm=executor_model,
+    enable_metrics=True,
+    thread_id=tid + "_executor",
+    workspace=workspace,
+    checkpointer=checkpointer,
+)
 
-    planning_output = planner.invoke({
-        "messages": [HumanMessage(content=planner_prompt)],
-        "reflection_steps": 0,
-    })
+# Initialize workflow
+workflow = PlanningExecutorWorkflow(
+    planner=planner, executor=executor, workspace=workspace
+)
 
-    render_plan_steps_rich(planning_output["plan_steps"])
+# Run problem through the workflow
+workflow.invoke(problem)
 
-
-# Execution loop
-last_step_summary = "No previous step."
-for i, step in enumerate(planning_output["plan_steps"]):
-    step_prompt = (
-        f"You are contributing to the larger solution:\n"
-        f"{problem}\n\n"
-        f"Previous-step summary:\n"
-        f"{last_step_summary}\n\n"
-        f"Current step:\n"
-        f"{step}"
-    )
-
-    console.print(
-        f"[bold orange3]Solving Step {i}:[/]\n[orange3]{step_prompt}[/]"
-    )
-
-    # Invoke the agent
-    result = executor.invoke({
-        "messages": [HumanMessage(content=step_prompt)],
-        "workspace": workspace,
-    })
-
-    last_step_summary = result["messages"][-1].content
-    console.print(
-        Panel(
-            last_step_summary,
-            title=f"Step {i + 1} Final Response",
-            border_style="orange3",
-        )
-    )
-
-render_session_summary(thread_id)
+# Print agent telemetry data
+render_session_summary(tid + "_planner")
+render_session_summary(tid + "_executor")

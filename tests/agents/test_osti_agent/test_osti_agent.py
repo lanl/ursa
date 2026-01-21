@@ -31,7 +31,7 @@ class FakeSoup:
 
 @pytest.mark.asyncio
 async def test_osti_agent_ainvoke_returns_summary(
-    chat_model, tmp_path, monkeypatch
+    chat_model, tmpdir, monkeypatch
 ):
     api_base = "https://osti.test/api/v1/records"
     query = "high-temperature superconductors"
@@ -75,7 +75,7 @@ async def test_osti_agent_ainvoke_returns_summary(
     agent = OSTIAgent(
         llm=chat_model,
         api_base=api_base,
-        workspace=tmp_path,
+        workspace=tmpdir,
         database_path="osti_db",
         summaries_path="osti_summaries",
         vectorstore_path="osti_vectors",
