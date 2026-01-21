@@ -1,6 +1,6 @@
 ruff := "uvx ruff@0.12.10"
 name := "ursa"
-version := `uv run ursa version`
+version := `uv run ursa --version`
 tag := version + "-" + `arch`
 sqfs := name + "-" + tag + ".sqfs"
 

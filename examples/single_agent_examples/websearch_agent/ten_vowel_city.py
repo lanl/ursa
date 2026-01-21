@@ -1,3 +1,5 @@
+import asyncio
+
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import WebSearchAgent
@@ -14,7 +16,7 @@ model = init_chat_model(model="openai:gpt-5-mini", max_completion_tokens=20000)
 websearcher = WebSearchAgent(llm=model, enable_metrics=True)
 
 # Solve the problem
-websearch_output = websearcher.invoke(problem)
+websearch_output = asyncio.run(websearcher.ainvoke(problem))
 
 # Print results
 print("Final summary: \n", websearch_output["final_summary"])

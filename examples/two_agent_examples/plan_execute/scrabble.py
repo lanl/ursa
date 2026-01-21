@@ -108,12 +108,12 @@ def main(mode: str):
             # steps that need to be carried out
 
             main_task = progress.add_task(
-                "Main plan steps", total=len(planning_output["plan_steps"])
+                "Main plan steps", total=len(planning_output["plan"].steps)
             )
 
             # for each of the overarching planning steps . . .
             main_step_number = 1
-            for main_step in planning_output["plan_steps"]:
+            for main_step in planning_output["plan"].steps:
                 # ---- detail planning -------------------------------------------------
                 step_prompt = (
                     f"You are contributing to the larger solution:\n{problem}\n\n"
@@ -142,12 +142,12 @@ def main(mode: str):
                 # ---- sub-steps execution --------------------------------------------
                 sub_task = progress.add_task(
                     f"Sub-steps for: {str(main_step)[:40]}…",
-                    total=len(detail_output["plan_steps"]),
+                    total=len(detail_output["plan"].steps),
                 )
 
                 last_sub_summary = "Start sub-steps."
                 sub_step_number = 1
-                for sub in detail_output["plan_steps"]:
+                for sub in detail_output["plan"].steps:
                     sub_prompt = (
                         f"You are contributing to the larger solution:\n{problem}\n\n"
                         f"Previous-substep summary: {last_sub_summary}\n"
