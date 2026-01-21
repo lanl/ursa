@@ -28,14 +28,12 @@ Entry points:
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from pathlib import Path
 from typing import (
-    Annotated,
     Any,
     Literal,
     Optional,
     TypedDict,
 )
 
-from langchain.agents.middleware import SummarizationMiddleware
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool
 from langchain_core.messages import (
@@ -44,10 +42,12 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langgraph.graph.message import add_messages
+from langchain_core.messages.utils import count_tokens_approximately
+from langgraph.types import Command
 
 # Rich
 from rich import get_console
+from rich.markdown import Markdown
 from rich.panel import Panel
 
 from ursa.agents.base import AgentWithTools, BaseAgent
@@ -87,7 +87,7 @@ class ExecutionState(TypedDict):
       is_linked).
     """
 
-    messages: Annotated[list[AnyMessage], add_messages]
+    messages: list[AnyMessage]
     current_progress: str
     code_files: list[str]
     workspace: Path
@@ -227,27 +227,81 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
         self.log_state = log_state
-        self.context_summarizer = SummarizationMiddleware(
-            model=self.llm,
-            max_tokens_before_summary=tokens_before_summarize,
-            messages_to_keep=messages_to_keep,
-        )
+        self.tokens_before_summarize = tokens_before_summarize
+        self.messages_to_keep = messages_to_keep
 
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
-        summarized_messages = self.context_summarizer.before_model(state, None)
-        if summarized_messages:
-            tokens_before_summarize = self.context_summarizer.token_counter(
-                state["messages"]
-            )
-            state["messages"] = summarized_messages["messages"]
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                state["messages"][1:]
+        new_state = state.copy()
+        tokens_before_summarize = count_tokens_approximately(
+            new_state["messages"][1:]
+        )
+
+        if tokens_before_summarize > self.tokens_before_summarize:
+            # Start from 1 to skip system message.
+            conversation_to_summarize = new_state["messages"][
+                1 : -self.messages_to_keep
+            ]
+            conversation_to_keep = new_state["messages"][
+                -self.messages_to_keep :
+            ]
+            tool_ids = []
+            for msg in conversation_to_summarize:
+                if hasattr(msg, "tool_calls"):
+                    for call in msg.tool_calls:
+                        tool_ids.append(call["id"])
+                if isinstance(msg, ToolMessage):
+                    tool_ids.remove(msg.tool_call_id)
+            if tool_ids:
+                print(
+                    f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
+                )
+                for msg in conversation_to_keep:
+                    if (
+                        isinstance(msg, ToolMessage)
+                        and msg.tool_call_id in tool_ids
+                    ):
+                        conversation_to_summarize.append(msg)
+                        conversation_to_keep.remove(msg)
+                        tool_ids.remove(msg.tool_call_id)
+                    elif isinstance(msg, ToolMessage):
+                        print(
+                            f"This is a Tool that happened in the last {self.messages_to_keep} messages:\n{str(msg)}\nbut not in {tool_ids}"
+                        )
+            if tool_ids:
+                # We may need to implement something here for if a tool has not
+                # responded but its tool call is far enough back that it is being
+                # summarized away. Likely an edge case for non-async, but async
+                # may cause a problem here.
+                print(
+                    f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
+                )
+                pass
+
+            summarize_prompt = f"""
+            Your only tasks is to provide a detailed, comprehensive summary of the following 
+            conversation. 
+
+            Your summary will be the only information retained from the conversation, so ensure 
+            it contains all details that need to be remembered to meet the goals of the work. 
+
+            Conversation to summarize:
+            {conversation_to_summarize}
+            """
+            summary = self.llm.invoke(summarize_prompt)
+            summarized_messages = [
+                SystemMessage(content=self.executor_prompt),
+                summary,
+            ]
+            summarized_messages.extend(conversation_to_keep)
+            tokens_after_summarize = count_tokens_approximately(
+                summarized_messages
             )
             console.print(
                 Panel(
                     (
                         f"Summarized Conversation History:\n"
+                        f"Summary:\n{summary.text}\n"
                         f"Approximate tokens before: {tokens_before_summarize}\n"
                         f"Approximate tokens after: {tokens_after_summarize}\n"
                     ),
@@ -256,11 +310,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                     style="bold yellow1 on black",
                 )
             )
-        else:
-            tokens_after_summarize = self.context_summarizer.token_counter(
-                state["messages"]
-            )
-        return state
+            new_state["messages"] = summarized_messages
+        return new_state
 
     # Define the function that calls the model
     def query_executor(self, state: ExecutionState) -> ExecutionState:
@@ -353,6 +404,33 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # Return the model's response and the workspace path as a partial state update.
         return new_state
 
+    def tool_use(self, state: ExecutionState) -> ExecutionState:
+        new_state = state.copy()
+        update = self.tool_node.invoke(state)
+        # Could be implemented better, but handles the different forms of tool response:
+        #     dict of messages, list of Commands, etc.
+        try:
+            if isinstance(update, dict) and "messages" in update:
+                new_state["messages"].extend(update["messages"])
+            elif isinstance(update, list):
+                for resp in update:
+                    if isinstance(resp, Command):
+                        new_state["messages"].extend(resp.update["messages"])
+                        new_state.setdefault("code_files", []).extend(
+                            resp.update["code_files"]
+                        )
+                    else:
+                        new_state["messages"].extend(resp["messages"])
+            elif isinstance(update, Command):
+                new_state["messages"].extend(update.update["messages"])
+                new_state.setdefault("code_files", []).extend(
+                    update.update["code_files"]
+                )
+        except Exception as e:
+            print(f"SOMETHING IS WRONG WITH {update}: {e}")
+            new_state["messages"].extend(update["messages"])
+        return new_state
+
     def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
@@ -373,11 +451,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
-        messages = (
-            new_state["messages"]
-            if isinstance(new_state["messages"][0], SystemMessage)
-            else [SystemMessage(content=recap_prompt)] + new_state["messages"]
-        )
+        if isinstance(new_state["messages"][0], SystemMessage):
+            messages = new_state["messages"].copy()
+            messages[0] = SystemMessage(content=recap_prompt)
+        else:
+            messages = [SystemMessage(content=recap_prompt)] + new_state[
+                "messages"
+            ]
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
         response_content = ""
@@ -385,13 +465,22 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             response = self.llm.invoke(
                 messages, self.build_config(tags=["recap"])
             )
-            response_content = response.content
+            response_content = response.text
             new_state["messages"].append(response)
         except Exception as e:
             print("Error: ", e, " ", messages[-1].content)
             new_state["messages"].append(
                 AIMessage(content=f"Response error {e}")
             )
+        console.print(
+            Panel(
+                Markdown(response_content),
+                title="[bold grey85 on black]Recap of Work",
+                border_style="grey85 on black",
+                style="grey85 on black",
+                expand=False,  # Make panel fit content width
+            )
+        )
 
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
@@ -498,7 +587,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # Bind tools to llm and context summarizer
         self.llm = self.llm.bind_tools(self.tools.values())
-        self.context_summarizer.model = self.llm
 
         # Register nodes:
         # - "agent": LLM planning/execution step
@@ -506,7 +594,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # - "recap": summary/finalization step
         # - "safety_check": gate for shell command safety
         self.add_node(self.query_executor, "agent")
-        self.add_node(self.tool_node, "action")
+        self.add_node(self.tool_use, "action")
         self.add_node(self.recap, "recap")
         self.add_node(self.safety_check, "safety_check")
 
