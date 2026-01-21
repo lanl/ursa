@@ -114,10 +114,18 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
             "messages": [HumanMessage(query)],
             "reflection_steps": max_reflection_steps,
         })
-        # return result["messages"][-1].content
-        plan_steps = [{"task": query}] + result["plan_steps"]
+        plan_steps = [{"task": query}] + [
+            {
+                "name": plan_step.name,
+                "description": plan_step.description,
+                "expected_outputs": plan_step.expected_outputs,
+                "success_criteria": plan_step.success_criteria,
+                "requires_code": plan_step.requires_code,
+            }
+            for plan_step in result["plan"].steps
+        ]
+
         plan = f"<PLAN>\n{json.dumps(plan_steps)}\n</PLAN>"
-        # print(json.dumps(plan_steps, indent=4))
         print(yaml.dump(plan_steps))
         return plan
 
