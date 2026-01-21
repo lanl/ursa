@@ -15,7 +15,6 @@ import randomname
 import yaml
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import StrOutputParser
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # rich console stuff for beautification
@@ -119,7 +118,7 @@ def _last_message_text(messages) -> str:
     if not messages:
         return "<no messages>"
     last = messages[-1]
-    return StrOutputParser().invoke(last)
+    return last.text
 
 
 #########################################################################
@@ -965,9 +964,7 @@ def run_substeps(
                 },
             )
 
-            last_sub_summary = StrOutputParser().invoke(
-                sub_result["messages"][-1]
-            )
+            last_sub_summary = sub_result["messages"][-1].text
             last_ran_summary = last_sub_summary  # <—
             sub_progress.console.log(last_sub_summary)
             sub_progress.advance(sub_task)

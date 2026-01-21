@@ -175,11 +175,7 @@ def _should_regenerate(state: PlanningState):
     reviewMaxLength = 0  # 0 = no limit, else some character limit like 300 (only used for console printing)
 
     # Latest reviewer output (if present)
-    last_content = (
-        StrOutputParser().invoke(state["messages"][-1])
-        if state.get("messages")
-        else ""
-    )
+    last_content = state["messages"][-1].text if state.get("messages") else ""
 
     # Approved?
     if "[APPROVED]" in last_content:

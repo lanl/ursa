@@ -177,6 +177,6 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 def should_continue(state: WebSearchState):
     if len(state["messages"]) > (state.get("max_websearch_steps", 100) + 3):
         return "_response_node"
-    if "[APPROVED]" in StrOutputParser().invoke(state["messages"][-1]):
+    if "[APPROVED]" in state["messages"][-1].text:
         return "_response_node"
     return "_create_react"

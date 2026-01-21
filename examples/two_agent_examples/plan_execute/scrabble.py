@@ -4,7 +4,6 @@ from pathlib import Path
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import StrOutputParser
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 # rich console stuff for beautification
@@ -87,7 +86,7 @@ def main(mode: str):
 
         console.print(
             Panel(
-                StrOutputParser().invoke(planning_output["messages"][-1]),
+                planning_output["messages"][-1].text,
                 title="[yellow]📋 Plan",
             )
         )
@@ -175,9 +174,7 @@ def main(mode: str):
                         },
                     )
 
-                    last_sub_summary = StrOutputParser().invoke(
-                        final_results["messages"][-1]
-                    )
+                    last_sub_summary = final_results["messages"][-1]
                     progress.console.log(last_sub_summary)  # live streaming log
                     progress.advance(sub_task)
 

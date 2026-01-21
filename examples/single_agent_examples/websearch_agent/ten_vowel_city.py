@@ -20,7 +20,5 @@ websearch_output = asyncio.run(websearcher.ainvoke(problem))
 
 # Print results
 print("Final summary: \n", websearch_output["final_summary"])
-# for x in websearch_output["messages"]:
-#     print(x.content)
 
 print("Citations: \n", [x for x in websearch_output.get("urls_visited", [])])

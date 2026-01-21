@@ -56,11 +56,8 @@ will be reviewed by experts in the field so technical accuracy and clarity is cr
 init = {"messages": [HumanMessage(content=execution_plan)]}
 
 # Execute the plan
-final_results = executor.invoke(init)
+_ = executor.invoke(init)
 
-# Display results
-for message in final_results["messages"]:
-    print(message.content)
 ```
 
 ## Parameters

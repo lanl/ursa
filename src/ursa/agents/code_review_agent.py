@@ -330,7 +330,7 @@ def should_continue(
 # Define the function that determines whether to continue or not
 def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
     messages = state["messages"]
-    last_message = StrOutputParser().invoke(messages[-1])
+    last_message = messages[-1].text
     if "[UNSAFE]" in last_message:
         return "unsafe"
     else:

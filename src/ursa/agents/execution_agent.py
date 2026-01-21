@@ -629,4 +629,4 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.graph.set_finish_point("recap")
 
     def format_result(self, state: ExecutionState) -> str:
-        return state["messages"][-1].content
+        return state["messages"][-1].text

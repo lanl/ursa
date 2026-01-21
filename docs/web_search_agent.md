@@ -19,11 +19,10 @@ websearcher = WebSearchAgent(llm=model)
 result = websearcher.invoke("Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?")
 
 # Access the web search results
-final_summary = result["messages"][-1].content
 sources = result["urls_visited"]
 
 print("Web Search Summary:")
-print(final_summary)
+print(result["final_summary"])
 print("Sources:", sources)
 ```
 

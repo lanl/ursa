@@ -386,7 +386,7 @@ def main():
     """
     inputs = {"user_input": problem_string}
     result = execution_agent.invoke(inputs)
-    print(StrOutputParser().invoke(result["messages"][-1]))
+    print(result["messages"][-1].text)
     return result
 
 
