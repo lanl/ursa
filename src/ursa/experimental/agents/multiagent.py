@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -45,8 +46,18 @@ def tag(tag_name: str, content: str):
 
 # NOTE: Resources
 # https://docs.langchain.com/oss/python/langchain/multi-agent#where-to-customize
-def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
-    execution_agent = ExecutionAgent(llm)
+def make_execute_plan_tool(
+    llm: BaseChatModel,
+    workspace: Path,
+    thread_id: str,
+    checkpointer: Checkpointer,
+):
+    execution_agent = ExecutionAgent(
+        llm,
+        workspace=workspace,
+        checkpointer=checkpointer,
+        thread_id=thread_id + "_plan_executor",
+    )
 
     @tool(
         "execute_plan_tool",
@@ -59,9 +70,17 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
         if plan.startswith("<PLAN>") and plan.endswith("</PLAN>"):
             summaries = []
 
-            task_and_plan_steps = json.loads(
+            plan_string = (
                 plan.replace("<PLAN>", "").replace("</PLAN>", "").strip()
             )
+            # Slight format cleaning.
+            #     Remove control characters except \t, \n, \r
+            #     Some LLMs respond with invalid control characters
+            plan_string = re.sub(
+                r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]", "", plan_string
+            )
+            task_and_plan_steps = json.loads(plan_string)
+
             task = task_and_plan_steps[0]["task"]
             plan_steps = task_and_plan_steps[1:]
             for step in plan_steps:
@@ -82,11 +101,8 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
                 step_prompt += tag("NEXT_STEP", yaml.dump(step).strip())
                 print(step_prompt)
 
-                result = execution_agent.invoke({
-                    "messages": [HumanMessage(step_prompt)],
-                    "workspace": str(workspace),
-                })
-                last_step_summary = result["messages"][-1].content
+                result = execution_agent.invoke(step_prompt)
+                last_step_summary = result["messages"][-1].text
                 summaries.append(last_step_summary)
             return "Grand summary of plan execution:\n\n" + "\n\n".join(
                 summaries
@@ -100,9 +116,17 @@ def make_execute_plan_tool(llm: BaseChatModel, workspace: Path):
     return execute_plan
 
 
-def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
+def make_planning_tool(
+    llm: BaseChatModel,
+    max_reflection_steps: int,
+    thread_id: str,
+    checkpointer: Checkpointer,
+):
     planning_agent = PlanningAgent(
-        llm, max_reflection_steps=max_reflection_steps
+        llm,
+        checkpointer=checkpointer,
+        thread_id=thread_id + "_planner",
+        max_reflection_steps=max_reflection_steps,
     )
 
     @tool(
@@ -132,19 +156,26 @@ def make_planning_tool(llm: BaseChatModel, max_reflection_steps: int):
     return call_agent
 
 
-def make_execution_tool(llm: BaseChatModel, workspace: Path):
-    execution_agent = ExecutionAgent(llm)
+def make_execution_tool(
+    llm: BaseChatModel,
+    workspace: Path,
+    thread_id: str,
+    checkpointer: Checkpointer,
+):
+    execution_agent = ExecutionAgent(
+        llm,
+        workspace=workspace,
+        checkpointer=checkpointer,
+        thread_id=thread_id + "_executor",
+    )
 
     @tool(
         "execution_agent",
         description="Read and edit scripts/code, and execute arbitrary commands on command line.",
     )
     def call_agent(query: str):
-        result = execution_agent.invoke({
-            "messages": [HumanMessage(query)],
-            "workspace": str(workspace),
-        })
-        return result["messages"][-1].content
+        result = execution_agent.invoke(query)
+        return result["messages"][-1].text
 
     return call_agent
 
@@ -177,11 +208,24 @@ class Ursa:
         kwargs: for `create_agent`
         """
         self.subagents = [
-            make_execution_tool(llm=self.llm, workspace=self.workspace),
-            make_planning_tool(
-                llm=self.llm, max_reflection_steps=self.max_reflection_steps
+            make_execution_tool(
+                llm=self.llm,
+                workspace=self.workspace,
+                thread_id=self.thread_id,
+                checkpointer=self.checkpointer,
             ),
-            make_execute_plan_tool(llm=self.llm, workspace=self.workspace),
+            make_planning_tool(
+                llm=self.llm,
+                max_reflection_steps=self.max_reflection_steps,
+                thread_id=self.thread_id,
+                checkpointer=self.checkpointer,
+            ),
+            make_execute_plan_tool(
+                llm=self.llm,
+                workspace=self.workspace,
+                thread_id=self.thread_id,
+                checkpointer=self.checkpointer,
+            ),
         ]
         self.tools = self.subagents + self.extra_tools
         return create_agent(
