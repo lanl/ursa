@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from ursa.agents.arxiv_agent import ArxivAgentLegacy
@@ -7,7 +5,7 @@ from ursa.agents.arxiv_agent import ArxivAgentLegacy
 
 @pytest.mark.asyncio
 async def test_arxiv_agent_legacy_fetches_local_papers_without_network(
-    chat_model, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    chat_model, tmpdir, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
         "ursa.agents.arxiv_agent.requests.get",
@@ -21,7 +19,7 @@ async def test_arxiv_agent_legacy_fetches_local_papers_without_network(
         summarize=False,
         process_images=False,
         download_papers=False,
-        workspace=tmp_path,
+        workspace=tmpdir,
         database_path="papers",
         summaries_path="summaries",
         vectorstore_path="vectors",

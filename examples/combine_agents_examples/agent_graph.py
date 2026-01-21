@@ -1,26 +1,24 @@
-import os
-from typing import Annotated, Any, Literal, Mapping, TypedDict
+import asyncio
+from typing import Annotated, Literal, TypedDict
 
-import randomname
+from langchain.chat_models import BaseChatModel
+from langchain.embeddings import init_embeddings
 from langchain_core.messages import (
     AIMessage,
-    HumanMessage,
     SystemMessage,
 )
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langgraph.graph import StateGraph
+from langchain_openai import ChatOpenAI
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import InjectedState, ToolNode
+from langgraph.prebuilt import InjectedState
 
 from ursa.agents import (
     ArxivAgent,
-    BaseAgent,
-    BaseChatModel,
     ExecutionAgent,
-    ExecutionState,
     RecallAgent,
 )
+from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.agents.execution_agent import ExecutionState
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util.memory_logger import AgentMemory
 
@@ -30,6 +28,9 @@ BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
+
+
+workspace = "combined_workspace"
 
 runner_prompt = """
 You are a responsible and efficient agent tasked with coordinating agentic execution to solve a specific problem.
@@ -53,17 +54,18 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 
 
 model = ChatOpenAI(
-    model="gpt-5-mini",
-    max_completion_tokens=50000,
+    model="gpt-5-nano",
+    # max_completion_tokens=50000,
 )
-embedding = OpenAIEmbeddings()
+embedding = init_embeddings("openai:text-embedding-3-large")
 memory = AgentMemory(embedding_model=embedding)
 
 arxiver = ArxivAgent(
     llm=model,
+    workspace=workspace,
     summarize=True,
     process_images=False,
-    max_results=5,
+    max_results=3,
     rag_embedding=embedding,
     database_path="database_neutron_star",
     summaries_path="database_summaries_neutron_star",
@@ -71,13 +73,13 @@ arxiver = ArxivAgent(
     download=True,
 )
 
-executor = ExecutionAgent(llm=model)
+executor = ExecutionAgent(llm=model, workspace=workspace)
 
-rememberer = RecallAgent(llm=model, memory=memory)
+rememberer = RecallAgent(llm=model, memory=memory, workspace=workspace)
 
 
 @tool
-def query_arxiver(search_query: str, context: str) -> str:
+async def query_arxiver(search_query: str, context: str) -> str:
     """
     Use the Arxiv agent to search for research papers on Arxiv and summarize them using the specified context.
 
@@ -88,11 +90,11 @@ def query_arxiver(search_query: str, context: str) -> str:
     """
     print(f"{GREEN}[Arxiver Search] - {search_query}{RESET}")
     print(f"{GREEN}[Arxiver Context] - {context}{RESET}")
-    return arxiver.invoke(arxiv_search_query=search_query, context=context)
+    return await arxiver.ainvoke(query=search_query, context=context)
 
 
 @tool
-def query_executor(
+async def query_executor(
     request: str, state: Annotated[dict, InjectedState]
 ) -> ExecutionState:
     """
@@ -102,16 +104,12 @@ def query_executor(
         request: Text request of the task to be carried out. Be clear about the goals and any important details
 
     """
-    init = {
-        "messages": [HumanMessage(content=request)],
-        "workspace": state["workspace"],
-    }
     print(f"{RED}[Executor Request] - {request}{RESET}")
-    return executor.invoke(init)
+    return await executor.ainvoke(request)
 
 
 @tool
-def query_rememberer(request: str) -> str:
+async def query_rememberer(request: str) -> str:
     """
     Check logs of past tasks to see if you have a memory of doing something similar
 
@@ -120,64 +118,64 @@ def query_rememberer(request: str) -> str:
 
     """
     print(f"{BLUE}[Rememberer Request] - {request}{RESET}")
-    return rememberer.invoke(query=request)
+    return await rememberer.ainvoke(query=request)
 
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
     current_progress: str
     code_files: list[str]
-    workspace: str
 
 
-class CombinedAgent(BaseAgent):
+class CombinedAgent(AgentWithTools, BaseAgent):
+    state_type = State
+
     def __init__(
         self,
         llm: BaseChatModel,
         log_state: bool = False,
         **kwargs,
     ):
-        super().__init__(llm, **kwargs)
+        tools = [query_arxiver, query_executor, query_rememberer]
+        super().__init__(llm, tools=tools, **kwargs)
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
-        self.tools = [query_arxiver, query_executor, query_rememberer]
-        self._tool_node = ToolNode(self.tools)
-        self.llm = self.llm.bind_tools(self.tools)
         self.log_state = log_state
 
-        self._action = self._build_graph()
-
     # Define the function that calls the model
-    def _runner(self, state: State) -> State:
-        new_state = state.copy()
-        if "workspace" not in new_state.keys():
-            new_state["workspace"] = randomname.get_name()
-            print(
-                f"{RED}Creating the folder {BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} for this project.{RESET}"
-            )
-        os.makedirs(new_state["workspace"], exist_ok=True)
-
-        if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(content=self.runner_prompt)
+    async def _runner(self, state: State) -> State:
+        existing_messages = state.get("messages", [])
+        if existing_messages and isinstance(
+            existing_messages[0], SystemMessage
+        ):
+            prepared_messages = existing_messages.copy()
+            prepared_messages[0] = SystemMessage(content=self.runner_prompt)
         else:
-            new_state["messages"] = [
-                SystemMessage(content=self.runner_prompt)
-            ] + state["messages"]
-        response = self.llm.invoke(
-            new_state["messages"],
+            prepared_messages = [
+                SystemMessage(content=self.runner_prompt),
+                *existing_messages,
+            ]
+
+        response = await self.llm.ainvoke(
+            prepared_messages,
             {"configurable": {"thread_id": self.thread_id}},
         )
+        updated_messages = [*prepared_messages, response]
+
         if self.log_state:
-            self.write_state("combined_agent.json", new_state)
-        return {"messages": [response], "workspace": new_state["workspace"]}
+            saved_state = state.copy()
+            saved_state["messages"] = updated_messages
+            self.write_state("combined_agent.json", saved_state)
+
+        return {"messages": updated_messages}
 
     # Define the function that calls the model
-    def _summarize(self, state: ExecutionState) -> ExecutionState:
+    async def _summarize(self, state: ExecutionState) -> ExecutionState:
         messages = [SystemMessage(content=recap_prompt)] + state["messages"]
-        response = self.llm.invoke(
+        response = await self.llm.ainvoke(
             messages, {"configurable": {"thread_id": self.thread_id}}
         )
-        memories = []
+        memories: list[str] = []
         # Handle looping through the messages
         for x in state["messages"]:
             if not isinstance(x, AIMessage):
@@ -196,24 +194,25 @@ class CombinedAgent(BaseAgent):
                 memories.append("\n".join(tool_strings))
         memories.append(response.content)
         memory.add_memories(memories)
-        save_state = state.copy()
-        save_state["messages"].append(response)
+        updated_messages = [*state["messages"], response]
+
         if self.log_state:
-            self.write_state("combined_agent.json", save_state)
-        return {"messages": [response.content]}
+            save_state = state.copy()
+            save_state["messages"] = updated_messages
+            self.write_state(self.workspace / "combined_agent.json", save_state)
+        return {"messages": updated_messages}
 
     def _build_graph(self):
-        graph = StateGraph(State)
-
-        self.add_node(graph, self._runner)
-        self.add_node(graph, self._tool_node, "_tool_node")
-        self.add_node(graph, self._summarize)
+        self.llm = self.llm.bind_tools(self.tools.values())
+        self.add_node(self._runner)
+        self.add_node(self.tool_node, "_tool_node")
+        self.add_node(self._summarize)
 
         # Set the entrypoint as `agent`
         # This means that this node is the first one called
-        graph.set_entry_point("_runner")
+        self.graph.set_entry_point("_runner")
 
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_runner",
             should_continue,
             {
@@ -222,18 +221,8 @@ class CombinedAgent(BaseAgent):
             },
         )
 
-        graph.add_edge("_tool_node", "_runner")
-        graph.set_finish_point("_summarize")
-
-        return graph.compile(checkpointer=self.checkpointer)
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
+        self.graph.add_edge("_tool_node", "_runner")
+        self.graph.set_finish_point("_summarize")
 
 
 # Define the function that determines whether to continue or not
@@ -248,13 +237,13 @@ def should_continue(state: ExecutionState) -> Literal["summarize", "continue"]:
         return "continue"
 
 
-def main():
-    agent = CombinedAgent(llm=model, log_state=True)
-    result = agent.invoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints? 
-                Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This 
+async def main():
+    agent = CombinedAgent(llm=model, log_state=True, workspace=workspace)
+    result = await agent.ainvoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints?
+                Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This
                 will be reviewed by experts in the field so technical accuracy and clarity is critical.""")
     print(result["messages"][-1].content)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

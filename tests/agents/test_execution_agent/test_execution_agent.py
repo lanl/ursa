@@ -67,10 +67,10 @@ def stub_execution_tools(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execution_agent_ainvoke_returns_ai_message(
-    chat_model, tmp_path: Path
+    chat_model, tmpdir: Path
 ):
-    execution_agent = ExecutionAgent(llm=chat_model)
-    workspace = tmp_path / ".ursa"
+    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    workspace = tmpdir / ".ursa"
     inputs = {
         "messages": [
             HumanMessage(
@@ -98,14 +98,18 @@ async def test_execution_agent_ainvoke_returns_ai_message(
 
 
 @pytest.mark.asyncio
-async def test_execution_agent_invokes_extra_tool(chat_model, tmp_path: Path):
+async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
     @tool
     def do_magic(a: int, b: int) -> float:
         """Return the hypotenuse for the provided right-triangle legs."""
         return sqrt(a**2 + b**2)
 
-    execution_agent = ExecutionAgent(llm=chat_model, extra_tools=[do_magic])
-    workspace = tmp_path / ".ursa_with_tool"
+    execution_agent = ExecutionAgent(
+        llm=chat_model,
+        extra_tools=[do_magic],
+        workspace=tmpdir,
+    )
+    workspace = tmpdir / ".ursa_with_tool"
     prompt = "List every tool you have access to and provide the names only."
     inputs = {
         "messages": [HumanMessage(content=prompt)],
@@ -115,7 +119,7 @@ async def test_execution_agent_invokes_extra_tool(chat_model, tmp_path: Path):
     result = await execution_agent.ainvoke(inputs)
 
     assert "messages" in result
-    tool_names = [tool.name for tool in execution_agent.tools]
+    tool_names = list(execution_agent.tools.keys())
     assert "fake_run_command" in tool_names
     assert "do_magic" in tool_names
     ai_messages = [
