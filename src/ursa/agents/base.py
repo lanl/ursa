@@ -15,7 +15,9 @@ Agents built on this base class benefit from consistent behavior, observability,
 integration capabilities while only needing to implement the core _invoke method.
 """
 
+from dataclasses import dataclass
 import re
+import sqlite3
 from abc import ABC, abstractmethod
 from functools import cached_property
 from pathlib import Path
@@ -35,12 +37,16 @@ from uuid import uuid4
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool
 from langchain_core.load import dumps
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.runnables import RunnableLambda
+from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph, StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.runtime import Runtime
+from langgraph.store.base import BaseStore
+from pydantic import BaseModel
+from langgraph.store.sqlite import SqliteStore
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
@@ -48,6 +54,17 @@ from ursa.observability.timing import (
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentContext:
+    """Immutable context provided during graph execution"""
+
+    workspace: Path
+    """ Workspace path for the agent """
+
+    tool_character_limit: int = 3000
+    """ Suggested limit on tool call responses """
 
 
 def _to_snake(s: str) -> str:
@@ -169,6 +186,11 @@ class BaseAgent(Generic[TState], ABC):
     def name(self) -> str:
         """Agent name."""
         return self.__class__.__name__
+
+    @property
+    def context(self) -> AgentContext:
+        """Immutable run-scoped information provided to the Agent's graph"""
+        return AgentContext(workspace=self.workspace)
 
     def add_node(
         self,
@@ -512,10 +534,22 @@ class BaseAgent(Generic[TState], ABC):
     def compiled_graph(self) -> CompiledStateGraph:
         """Return the compiled StateGraph application for the agent."""
         graph = self.build_graph()
-        compiled = graph.compile(checkpointer=self.checkpointer).with_config({
-            "recursion_limit": 50000
-        })
+        compiled = graph.compile(
+            checkpointer=self.checkpointer,
+            store=self.storage,
+        ).with_config({"recursion_limit": 50000})
         return self._finalize_graph(compiled)
+
+    @cached_property
+    def storage(self) -> BaseStore:
+        """Create a SQLite-backed LangGraph store for persistent graph data."""
+        store_path = self.workspace / "graph_store.sqlite"
+        conn = sqlite3.connect(
+            store_path, check_same_thread=False, isolation_level=None
+        )
+        store = SqliteStore(conn)
+        store.setup()
+        return store
 
     @final
     def build_graph(self) -> StateGraph:
