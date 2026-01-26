@@ -98,9 +98,9 @@ def write_code(
     )
 
     # Append the file to the list in agent's state for later reference
-    file_list = state.get("code_files", [])
+    file_list = state.get("code_files", set([]))
     if filename not in file_list:
-        file_list.append(filename)
+        file_list.add(filename)
 
     # Create a tool message to send back to acknowledge success.
     msg = ToolMessage(
@@ -122,6 +122,7 @@ def edit_code(
     old_code: str,
     new_code: str,
     filename: str,
+    tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[dict, InjectedState],
 ) -> str:
     """Replace the **first** occurrence of *old_code* with *new_code* in *filename*.
@@ -183,9 +184,20 @@ def edit_code(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
         f"[green]File updated:[/] {code_file}"
     )
-    file_list = state.get("code_files", [])
+    file_list = state.get("code_files", set([]))
     if code_file not in file_list:
-        file_list.append(filename)
+        file_list.add(filename)
     state["code_files"] = file_list
 
-    return f"File {filename} updated successfully."
+    # Create a tool message to send back to acknowledge success.
+    msg = ToolMessage(
+        content=f"File {filename} updated successfully.",
+        tool_call_id=tool_call_id,
+    )
+
+    return Command(
+        update={
+            "code_files": file_list,
+            "messages": [msg],
+        }
+    )

@@ -21,6 +21,7 @@ async def test_websearch_agent_legacy_websearch_flow(
     class FakeResponse:
         def __init__(self, content: bytes):
             self.content = content
+            self.text = str(content)
 
     monkeypatch.setattr(
         "ursa.agents.websearch_agent.requests.get",

@@ -26,7 +26,7 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 """
 
 recap_prompt = """
-You are a summarizing agent.  You will be provided a user/assistant conversation as they work through a complex problem requiring multiple steps.
+You are a summarizing agent.  You have a user/assistant conversation as they work through a complex problem requiring multiple steps.
 
 Your responsibilities is to write a condensed summary of the conversation.
     - Keep all important points from the conversation.
