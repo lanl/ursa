@@ -6,6 +6,7 @@ from typing import (
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.embeddings import init_embeddings
+from langchain_core.tools import tool
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import ExecutionAgent, RAGAgent
@@ -54,6 +55,7 @@ class SimulatorAgent(ExecutionAgent):
             )
             self.rag_agent.thread_id = "simulation_documentation_rag"
 
+            @tool
             def documentation_rag(query: str) -> str:
                 """
                 Query a RAG database for information from documentation on the scientific computing model.
