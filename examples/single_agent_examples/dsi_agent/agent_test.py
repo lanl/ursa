@@ -7,6 +7,7 @@ current_file = Path(__file__).resolve()
 current_dir = current_file.parent
 
 dataset_path = current_dir / "data/oceans_11/ocean_11_datasets.db"
+print(dataset_path)
 
 model = ChatOpenAI( model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2)
 

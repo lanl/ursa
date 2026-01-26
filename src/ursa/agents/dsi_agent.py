@@ -4,6 +4,10 @@ from time import time as now
 from typing import Annotated, Any, Dict, Mapping, TypedDict
 from pathlib import Path
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown as RichMarkdown
+
 from langchain_core.tools import Tool
 from langchain.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
@@ -174,6 +178,32 @@ class DSIAgent(BaseAgent):
             load_dsi_tool,
         ]
 
+        self.prompt = f"""
+        You are a data-analysis agent who can write python code, SQL queries, and generate plots to answer user questions based on the data available in a DSI object.
+        Use the load_dsi_tool tool to load DSI files that have a .db extension
+        The currently loaded DSI object is stored in dsi_store global variable. Use query_dsi_tool to run SQL queries on it.
+        When a user asks for data or dataset or ... you have, do NOT list the schema or metadata information you have about tables. Query the DSI objects for data and list the data in the tables.
+        
+        You can:
+        - write and execute Python code,
+        - compose SQL statements,
+        - generate plots and diagrams,
+        - analyze and summarize data.
+
+        The dsi_explorer master dataset is avilable at {self.master_datbase_path} in case you need to reload it.
+
+        Requirements:
+        - Planning: Think carefully about the problem, but **do not show your reasoning**.
+        - Data:
+            - Always use the provided tools when available — never simulate results.
+            - Never fabricate or assume sample data. Query or compute real values only.
+            - When creating plots or files, always save them directly to disk (do not embed inline output).
+            - Do not infer or assume any data beyond what is provided by the tools.
+        - Keep all responses concise and focused on the requested task.
+        - Do not restate the prompt or reasoning; just act and report the outcome briefly.
+        """
+
+
         self.llm = self.llm.bind_tools(self.tools)
         self._build_graph()
         print(f"Dataset {db_index_name} has been loaded.\nThe DSI Data Explorer agent is ready.")
@@ -199,7 +229,7 @@ class DSIAgent(BaseAgent):
             f"A valid DSI file is required. Failed to load: {master_db_path}"
         )
 
-
+    # __call__ from my agent
     def _response_node(self, state):
         messages = state["messages"]
 
@@ -221,6 +251,7 @@ class DSIAgent(BaseAgent):
         self._action = graph.compile(checkpointer=self.checkpointer)
 
 
+    # matches __call__
     def _invoke(self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_):
         config = self.build_config(
             recursion_limit=recursion_limit, tags=["graph"]
@@ -284,7 +315,7 @@ class DSIAgent(BaseAgent):
 
         msg = self.craft_message(user_query)
 
-        result = self.app.invoke(
+        result = self._invoke(
             msg,
             config={"configurable": {"thread_id": self.thread_id}}
         )
