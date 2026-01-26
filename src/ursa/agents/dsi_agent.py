@@ -8,16 +8,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown as RichMarkdown
 
+from langchain_core.tools import tool
 from langchain_core.tools import Tool
 from langchain.chat_models import BaseChatModel
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode
-
-from mistune import Markdown
-from networkx import display
+from langgraph.graph import END, START, StateGraph
 
 from ursa.tools.search_tools import (
     run_arxiv_search,
@@ -137,11 +135,55 @@ load_dsi_tool = Tool(
 )
 
 
+@tool
+def query_dsi_tool(query_str: str) -> list:
+    """Execute a SQL query on a DSI object
+
+    Arg:
+        query_str (str): the SQL query to run on DSI object
+
+    Returns:
+        collection: the results of the query
+    """
+    print("\n\n\nTool called: query_dsi_tool\n\n\n")
+    global dsi_store   
+    s = dsi_store
+
+    df = s.query(query_str, collection=True)
+        
+    if df is None:
+        return {}
+
+    return df.to_dict(orient="records")
+
+
+
 class DSIState(TypedDict):
     messages: Annotated[list, add_messages]
     response: str
     metadata: Dict[str, Any]
     thread_id: str
+
+
+
+def should_call_tools(state: DSIState) -> str:
+    """Decide whether to call tools or continue.
+    
+    Arg:
+        state (State): the current state of the graph   
+        
+    Returns:
+        str: "call_tools" or "continue"
+    """
+    
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "call_tools"
+    
+    return "continue"
+
+
+
 
 
 class DSIAgent(BaseAgent):
@@ -176,6 +218,7 @@ class DSIAgent(BaseAgent):
             run_osti_search,
             run_arxiv_search,
             load_dsi_tool,
+            query_dsi_tool,
         ]
 
         self.prompt = f"""
@@ -205,6 +248,7 @@ class DSIAgent(BaseAgent):
 
 
         self.llm = self.llm.bind_tools(self.tools)
+        self.tool_node = ToolNode(self.tools)
         self._build_graph()
         print(f"Dataset {db_index_name} has been loaded.\nThe DSI Data Explorer agent is ready.")
 
@@ -215,6 +259,7 @@ class DSIAgent(BaseAgent):
         Arg:
             path (str): the path to the DSI object
         """
+
         
         if master_db_path != "":
             output_msg = load_dsi(master_db_path)
@@ -236,19 +281,35 @@ class DSIAgent(BaseAgent):
         conversation = [SystemMessage(content=self.prompt)] + messages
         response = self.llm.invoke(conversation)
 
+
         return {
             "messages": messages + [response],
             "response": response.content,
             "metadata": response.response_metadata
         }
         
+
+
     
     def _build_graph(self):
-        graph = StateGraph(DSIState)
-        self.add_node(graph, self._response_node)
-        graph.set_entry_point("_response_node")
-        graph.set_finish_point("_response_node")
-        self._action = graph.compile(checkpointer=self.checkpointer)
+        self.graph = StateGraph(DSIState)
+
+        self.graph.add_node("response", self._response_node)
+        self.graph.add_node("tools", self.tool_node)
+
+        self.graph.add_edge(START, "response")
+        self.graph.add_conditional_edges(
+            "response",
+            should_call_tools,
+            {
+                "call_tools": "tools",
+                "continue": END,
+            },
+        )
+        self.graph.add_edge("tools", "response")
+
+        self.action = self.graph.compile(checkpointer=self.checkpointer)
+
 
 
     # matches __call__
@@ -256,7 +317,7 @@ class DSIAgent(BaseAgent):
         config = self.build_config(
             recursion_limit=recursion_limit, tags=["graph"]
         )
-        return self._action.invoke(inputs, config)
+        return self.action.invoke(inputs, config)
     
     
     def craft_message(self, human_msg):
@@ -324,12 +385,12 @@ class DSIAgent(BaseAgent):
         response_text = result["response"] 
         cleaned_output = response_text.strip()
         if self.output_mode == "jupyter":
+            from IPython.display import display, Markdown
             display(Markdown(cleaned_output))
         elif self.output_mode == "console":
             console = Console()
             md = RichMarkdown(cleaned_output)
             console.print(md)
-            #print("\n" + cleaned_output)
         else:
             print(cleaned_output)
 
