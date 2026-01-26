@@ -1252,6 +1252,7 @@ def main(
             )
             if chosen_ckpt:
                 restore_executor_from_snapshot(workspace, chosen_ckpt)
+                # (Optional) also print a gentle reminder:
                 print(
                     "Press Ctrl-C now to abort and rerun with a different --resume-from, if this was unintentional."
                 )
@@ -1271,33 +1272,41 @@ def main(
         )
 
         # ---- One-time project logo kickoff (per workspace) -----------------
+        # Use run_meta.json to ensure we do this only once for this workspace.
         meta = load_run_meta(workspace)
+        # MINIMAL CONFIG
         logo_cfg = getattr(cfg, "logo", {}) or {}
         logo_enabled = bool(logo_cfg.get("enabled", True))
 
         if logo_enabled and not meta.get("logo_created"):
-            scene_style = logo_cfg.get("scene", "random")
+            scene_style = logo_cfg.get(
+                "scene", "random"
+            )  # noir/sci-fi/etc or "random"
             stickers_enabled = bool(logo_cfg.get("stickers", True))
             n_variants = int(logo_cfg.get("n", 4))
             logo_model_choice = logo_cfg.get("model", "openai:gpt-image-1")
 
+            # pick the model string & a providers map
             providers = (getattr(cfg, "models", {}) or {}).get(
                 "providers", {}
             ) or {}
+
             v_provider, v_model, v_extra = _resolve_model_choice(
                 logo_model_choice, {"providers": providers}
             )
             scene_dir = Path(workspace) / "logo_art" / "scenes"
             sticker_dir = Path(workspace) / "logo_art" / "stickers"
             try:
+                # SCENE artwork — uses existing defaults for everything else
                 _ = kickoff_logo(
                     problem_text=problem,
                     workspace=workspace,
                     out_dir=scene_dir,
+                    # size omitted (auto with aspect)
                     background="opaque",
                     quality="high",
                     n=n_variants,
-                    style=scene_style,
+                    style=scene_style,  # <- only knob exposed via YAML
                     mode="scene",
                     aspect="wide",
                     style_intensity="overt",
@@ -1319,6 +1328,7 @@ def main(
                     ),
                 )
 
+                # STICKER artwork — optional
                 if stickers_enabled:
                     _ = kickoff_logo(
                         problem_text=problem,
@@ -1348,12 +1358,14 @@ def main(
                     )
 
             finally:
+                # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
+                # Remove this flag manually if you want to re-generate art for this workspace.
                 save_run_meta(workspace, logo_created=True)
         # --------------------------------------------------------------------
 
-        # NEW: setup agents now builds per-agent LLMs using YAML profiles
         models_cfg = getattr(config, "models", {}) or {}
 
+        # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(
             workspace=workspace,
             model_choice=model_name,
@@ -1362,10 +1374,12 @@ def main(
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
 
+        # print the problem we're solving in a nice little box / panel
         console.print(
             Panel.fit(
                 Text.from_markup(
                     f"[bold cyan]Solving problem:[/] {problem}",
+                    # justify="center",
                 ),
                 border_style="cyan",
             )
@@ -1373,6 +1387,7 @@ def main(
 
         save_run_meta(workspace, thread_id=thread_id, model_name=model_name)
 
+        # do the main planning step, or load it from checkpoint
         plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
             planner,
             planner_checkpointer,
@@ -1402,6 +1417,7 @@ def main(
                 resume_main_0 = max(0, _m1 - 1)
                 resume_sub_next = int(_s1) if _s1 is not None else 0
 
+        # Simple resume summary
         if planning_mode == "single" and chosen_ckpt is not None:
             k, _ = parse_snapshot_indices(chosen_ckpt)
             if k is not None:
@@ -1421,6 +1437,7 @@ def main(
             )
 
         if planning_mode == "hierarchical":
+            # ----- MAIN PLAN PROGRESS -----
             hprog = load_hier_progress(workspace)
             if hprog.get("main", {}).get("plan_hash") != plan_sig:
                 console.print(
@@ -1443,11 +1460,15 @@ def main(
                     data=hprog,
                 )
 
+            # we could be coming back into this plan at someplace in the middle, so this our start
+            # index for THIS instantiation
             main_start_idx = int(hprog["main"]["next_index"])
             total_main = len(plan_steps)
 
+            # Show main plan with highlight on the next main step to work on
             render_plan_steps_rich(plan_steps, highlight_index=main_start_idx)
 
+            # If all main steps done, you're finished
             if main_start_idx >= total_main:
                 console.print(
                     Panel.fit(
@@ -1457,6 +1478,7 @@ def main(
                 )
                 return "All hierarchical steps completed.", workspace
 
+            # ----- LOOP OVER MAIN STEPS (resuming at main_start_idx) -----
             for m_idx in range(main_start_idx, total_main):
                 main_step = plan_steps[m_idx]
                 step_num = m_idx + 1
@@ -1469,6 +1491,7 @@ def main(
                     )
                 )
 
+                # get or create the subplan (hierarchical=True)
                 sub_values, sub_sig, _sub_tid, _ = get_or_create_subplan(
                     planner,
                     planner_checkpointer,
@@ -1483,6 +1506,7 @@ def main(
 
                 sub_steps = sub_values.get("plan_steps") or []
 
+                # If we resumed into this main step, set its sub "next_index" before running
                 if (resume_main_0 is not None) and (m_idx == resume_main_0):
                     target_next = min(resume_sub_next, len(sub_steps))
                     save_hier_sub_progress(
@@ -1493,6 +1517,7 @@ def main(
                         last_summary=f"Resumed from snapshot {chosen_ckpt.name}",
                     )
 
+                # closures for reading/writing sub-progress with plan-hash guard
                 def load_progress_h(m):
                     prog = load_hier_sub_progress(workspace, m)
                     if prog.get("plan_hash") != sub_sig:
@@ -1510,13 +1535,18 @@ def main(
                     return prog
 
                 def save_progress_h(m, next_idx, last_summary):
+                    # persist hierarchical sub-step progress
                     save_hier_sub_progress(
                         workspace, m, next_idx, sub_sig, last_summary
                     )
 
+                    # snapshot after each completed sub-step:
+                    # m is 0-based main step index; next_idx is the 1-based count of completed sub-steps
                     try:
                         main_no = m + 1
-                        sub_no = int(next_idx)
+                        sub_no = int(
+                            next_idx
+                        )  # just-finished sub-step (1-based)
                         snapshot_path = (
                             _ckpt_dir(workspace)
                             / f"executor_checkpoint_{main_no}_{sub_no}.db"
@@ -1544,6 +1574,7 @@ def main(
                     stepwise_exit,
                 )
 
+                # advance main progress and continue
                 hprog = save_hier_main_progress(
                     workspace,
                     next_index=m_idx + 1,
@@ -1559,8 +1590,11 @@ def main(
 
             return "All hierarchical steps completed.", workspace
 
+        # this is the single planning step pathway, not hierarchical
         elif planning_mode == "single":
+            # figure out where to resume execution
             exec_prog = load_exec_progress(workspace)
+
             if exec_prog.get("plan_hash") != plan_sig:
                 start_idx = 0
                 prev_summary = (
@@ -1596,6 +1630,7 @@ def main(
                         )
                     )
 
+                    # synthetic 1-item sub-plan (hierarchical=False)
                     sub_values, sub_sig, _tid, _ = get_or_create_subplan(
                         planner,
                         None,
@@ -1610,15 +1645,18 @@ def main(
                     sub_steps = sub_values["plan_steps"]
 
                     def load_progress_single(_m):
+                        # always run the single sub-step for this main step
                         return {"next_index": 0, "last_summary": prev_summary}
 
                     def save_progress_single(m, _next_idx, last_summary):
+                        # advance main-step pointer
                         save_exec_progress(
                             workspace,
                             next_index=m + 1,
                             plan_hash=plan_sig,
                             last_summary=last_summary,
                         )
+                        # snapshot the executor checkpoint after completing top-level step m (1-based)
                         try:
                             step_no = m + 1
                             snapshot_path = (
@@ -1648,6 +1686,7 @@ def main(
                         stepwise_exit,
                     )
 
+        # Wrap-up
         answer = prev_summary or "Plan completed."
         render_session_summary(thread_id)
         return answer, workspace
