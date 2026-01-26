@@ -41,9 +41,7 @@ def test_write_code_records_store_entry(tmp_path: Path):
 
 def test_edit_code_updates_file_and_records(tmp_path: Path):
     target = tmp_path / "app.py"
-    target.write_text(
-        "print('hello')\nprint('hello')\n", encoding="utf-8"
-    )
+    target.write_text("print('hello')\nprint('hello')\n", encoding="utf-8")
     store = InMemoryStore()
     runtime = make_runtime(
         tmp_path, store=store, tool_call_id="tc-edit", thread_id="thread-7"
@@ -58,8 +56,7 @@ def test_edit_code_updates_file_and_records(tmp_path: Path):
 
     assert "updated successfully" in result
     assert (
-        target.read_text(encoding="utf-8")
-        == "print('bye')\nprint('hello')\n"
+        target.read_text(encoding="utf-8") == "print('bye')\nprint('hello')\n"
     )
     item = store.get(("workspace", "file_edit"), "app.py")
     assert item is not None

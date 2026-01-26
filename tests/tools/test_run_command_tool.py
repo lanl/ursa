@@ -9,7 +9,9 @@ from ursa.tools.run_command_tool import run_command
 from ursa.util.types import AsciiStr
 
 
-def test_run_command_invokes_subprocess_in_workspace(monkeypatch, tmp_path: Path):
+def test_run_command_invokes_subprocess_in_workspace(
+    monkeypatch, tmp_path: Path
+):
     recorded = {}
 
     def fake_run(*args, **kwargs):
@@ -21,7 +23,9 @@ def test_run_command_invokes_subprocess_in_workspace(monkeypatch, tmp_path: Path
 
     result = run_command.func(
         "echo hi",
-        runtime=make_runtime(tmp_path, thread_id="run-thread", tool_call_id="run-call"),
+        runtime=make_runtime(
+            tmp_path, thread_id="run-thread", tool_call_id="run-call"
+        ),
     )
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
@@ -67,14 +71,18 @@ def test_run_command_handles_keyboard_interrupt(monkeypatch, tmp_path: Path):
 
     result = run_command.func(
         "sleep 1",
-        runtime=make_runtime(tmp_path, tool_call_id="interrupt", thread_id="run-thread"),
+        runtime=make_runtime(
+            tmp_path, tool_call_id="interrupt", thread_id="run-thread"
+        ),
     )
 
     assert "KeyboardInterrupt:" in result
 
 
 def test_run_command_rejects_unicode_input(tmp_path: Path):
-    runtime = make_runtime(tmp_path, thread_id="run-thread", tool_call_id="unicode")
+    runtime = make_runtime(
+        tmp_path, thread_id="run-thread", tool_call_id="unicode"
+    )
 
     with pytest.raises(ValidationError):
         run_command.invoke({"query": "ls café", "runtime": runtime})

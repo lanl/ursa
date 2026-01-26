@@ -16,9 +16,7 @@ def stub_execution_tools(monkeypatch):
     """Replace external tools with lightweight stubs for deterministic testing."""
 
     @tool
-    def fake_run_command(
-        query: str, runtime: ToolRuntime
-    ) -> str:
+    def fake_run_command(query: str, runtime: ToolRuntime) -> str:
         """Return a placeholder response instead of executing shell commands."""
         return "STDOUT:\nstubbed output\nSTDERR:\n"
 
@@ -156,7 +154,9 @@ def test_write_code_edits_are_considered_in_safety_check(
         workspace=tmpdir,
     )
 
-    runtime = Runtime(context=execution_agent.context, store=execution_agent.storage)
+    runtime = Runtime(
+        context=execution_agent.context, store=execution_agent.storage
+    )
 
     write_call = AIMessage(
         content="",
@@ -170,7 +170,9 @@ def test_write_code_edits_are_considered_in_safety_check(
         ],
     )
 
-    execution_agent.tool_node.invoke({"messages": [write_call]}, runtime=runtime)
+    execution_agent.tool_node.invoke(
+        {"messages": [write_call]}, runtime=runtime
+    )
 
     captured = {}
 

@@ -34,10 +34,14 @@ def stub_duckduckgo(monkeypatch):
             }
 
     monkeypatch.setattr(
-        "ursa.agents.acquisition_agents.DDGS", lambda: DummyDDGS(), raising=False
+        "ursa.agents.acquisition_agents.DDGS",
+        lambda: DummyDDGS(),
+        raising=False,
     )
     monkeypatch.setattr(
-        "ursa.agents.hypothesizer_agent.DDGS", lambda: DummyDDGS(), raising=False
+        "ursa.agents.hypothesizer_agent.DDGS",
+        lambda: DummyDDGS(),
+        raising=False,
     )
 
 

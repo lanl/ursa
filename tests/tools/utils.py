@@ -18,9 +18,7 @@ def make_runtime(
     """Construct a minimal ToolRuntime populated with AgentContext."""
     return ToolRuntime(
         state={},
-        context=AgentContext(
-            workspace=workspace, tool_character_limit=limit
-        ),
+        context=AgentContext(workspace=workspace, tool_character_limit=limit),
         config={"metadata": {"thread_id": thread_id}},
         stream_writer=lambda _: None,
         tool_call_id=tool_call_id,
