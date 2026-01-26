@@ -607,10 +607,54 @@ def _print_next_step(prefix: str, next_zero: int, total: int, workspace: str):
 #########################################################################
 # END: Assorted other helpers
 #########################################################################
+_SECRET_KEY_SUBSTRS = (
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "secret",
+    "password",
+    "bearer",
+)
 
 
-def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
-    # first, setup checkpoint / recover pathways
+def _looks_like_secret_key(name: str) -> bool:
+    n = name.lower()
+    return any(s in n for s in _SECRET_KEY_SUBSTRS)
+
+
+def _mask_secret(value: str, keep_start: int = 6, keep_end: int = 4) -> str:
+    """
+    Mask a secret-like string, keeping only the beginning and end.
+    Example: sk-proj-abc123456789xyz -> sk-proj-…9xyz
+    """
+    if not isinstance(value, str):
+        return value
+    if len(value) <= keep_start + keep_end + 3:
+        return "…"  # too short to safely show anything
+    return f"{value[:keep_start]}...{value[-keep_end:]}"
+
+
+def _sanitize_for_logging(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if _looks_like_secret_key(str(k)):
+                out[k] = _mask_secret(v) if isinstance(v, str) else "..."
+            else:
+                out[k] = _sanitize_for_logging(v)
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_for_logging(v) for v in obj]
+    return obj
+
+
+def setup_agents(
+    workspace: str,
+    model_choice: str,
+    models_cfg: dict | None,
+) -> tuple[str, tuple, tuple]:
+    # --- checkpoint plumbing (unchanged) ---
     edb_path = _ckpt_dir(workspace) / "executor_checkpoint.db"
     econn = sqlite3.connect(str(edb_path), check_same_thread=False)
     executor_checkpointer = SqliteSaver(econn)
@@ -619,26 +663,36 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
     planner_checkpointer = SqliteSaver(pconn)
 
-    # Initialize the agents
-    thread_id = Path(workspace).name
+    # --- NEW: build separate LLMs (planner vs executor) ---
+    planner_llm = setup_llm(
+        model_choice=model_choice,
+        models_cfg=models_cfg or {},
+        agent_name="planner",
+    )
+    executor_llm = setup_llm(
+        model_choice=model_choice,
+        models_cfg=models_cfg or {},
+        agent_name="executor",
+    )
 
+    # Initialize the agents
     planner = PlanningAgent(
-        llm=model,
+        llm=planner_llm,
         checkpointer=planner_checkpointer,
         enable_metrics=True,
-        metrics_dir="ursa_metrics",
-        thread_id=thread_id,
-        workspace=workspace,
-    )  # include checkpointer
-
+        metrics_dir=Path(workspace) / "ursa_metrics",
+    )
     executor = ExecutionAgent(
-        llm=model,
+        llm=executor_llm,
         checkpointer=executor_checkpointer,
         enable_metrics=True,
-        metrics_dir="ursa_metrics",
-        thread_id=thread_id,
-        workspace=workspace,
-    )  # include checkpointer
+        metrics_dir=Path(workspace) / "ursa_metrics",
+    )
+
+    # Use the workspace as the thread id (one thread per workspace)
+    thread_id = Path(workspace).name
+    planner.thread_id = thread_id
+    executor.thread_id = thread_id
 
     print(f"[dbg] planner_db_abs: {Path(pdb_path).resolve()}")
     print(f"[dbg] cwd: {Path.cwd().resolve()}")
@@ -651,11 +705,151 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     )
 
 
+def _deep_merge_dicts(base: dict, override: dict) -> dict:
+    """
+    Recursively merge override into base and return a new dict.
+    - dict + dict => deep merge
+    - otherwise => override wins
+    """
+    base = dict(base or {})
+    override = dict(override or {})
+    out = dict(base)
+    for k, v in override.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge_dicts(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _resolve_llm_kwargs_for_agent(
+    models_cfg: dict | None, agent_name: str | None
+) -> dict:
+    """
+    Given the YAML `models:` dict, compute merged kwargs for init_chat_model(...)
+    for a specific agent ('planner' or 'executor').
+
+    Merge order (later wins):
+      1) {} (empty)
+      2) models.defaults.params (optional)
+      3) models.profiles[defaults.profile] (optional)
+      4) models.agents[agent_name].profile (optional; merges that profile on top)
+      5) models.agents[agent_name].params (optional)
+    """
+    models_cfg = models_cfg or {}
+    profiles = models_cfg.get("profiles") or {}
+    defaults = models_cfg.get("defaults") or {}
+    agents = models_cfg.get("agents") or {}
+
+    # Start with global defaults
+    merged = {}
+    merged = _deep_merge_dicts(merged, defaults.get("params") or {})
+
+    # Apply default profile
+    default_profile_name = defaults.get("profile")
+    if default_profile_name and default_profile_name in profiles:
+        merged = _deep_merge_dicts(merged, profiles[default_profile_name] or {})
+
+    # Apply agent-specific profile + params
+    if agent_name and isinstance(agents, dict) and agent_name in agents:
+        a = agents.get(agent_name) or {}
+        agent_profile_name = a.get("profile")
+        if agent_profile_name and agent_profile_name in profiles:
+            merged = _deep_merge_dicts(
+                merged, profiles[agent_profile_name] or {}
+            )
+        merged = _deep_merge_dicts(merged, a.get("params") or {})
+
+    return merged
+
+
+def _print_llm_init_banner(
+    agent_name: str | None,
+    provider: str,
+    model_name: str,
+    provider_extra: dict,
+    llm_kwargs: dict,
+    model_obj=None,
+) -> None:
+    who = agent_name or "llm"
+
+    safe_provider_extra = _sanitize_for_logging(provider_extra or {})
+    safe_llm_kwargs = _sanitize_for_logging(llm_kwargs or {})
+
+    console.print(
+        Panel.fit(
+            Text.from_markup(
+                f"[bold cyan]LLM init ({who})[/]\n"
+                f"[bold]provider[/]: {provider}\n"
+                f"[bold]model[/]: {model_name}\n\n"
+                f"[bold]provider kwargs[/]: {json.dumps(safe_provider_extra, indent=2)}\n\n"
+                f"[bold]llm kwargs (merged)[/]: {json.dumps(safe_llm_kwargs, indent=2)}"
+            ),
+            border_style="cyan",
+        )
+    )
+
+    # Best-effort readback from the LangChain model object
+    if model_obj is None:
+        return
+
+    readback = {}
+    for attr in (
+        "model_name",
+        "model",
+        "reasoning",
+        "temperature",
+        "max_completion_tokens",
+        "max_tokens",
+    ):
+        if hasattr(model_obj, attr):
+            try:
+                readback[attr] = getattr(model_obj, attr)
+            except Exception:
+                pass
+
+    for attr in ("model_kwargs", "kwargs"):
+        if hasattr(model_obj, attr):
+            try:
+                readback[attr] = getattr(model_obj, attr)
+            except Exception:
+                pass
+
+    if readback:
+        console.print(
+            Panel.fit(
+                Text.from_markup(
+                    "[bold green]LLM readback (best-effort from LangChain object)[/]\n"
+                    + json.dumps(_sanitize_for_logging(readback), indent=2)
+                ),
+                border_style="green",
+            )
+        )
+
+    effort = None
+    try:
+        effort = (llm_kwargs or {}).get("reasoning", {}).get("effort")
+    except Exception:
+        effort = None
+
+    if effort:
+        console.print(
+            Panel.fit(
+                Text.from_markup(
+                    f"[bold yellow]Reasoning effort requested[/]: {effort}\n"
+                    "Note: This confirms what we sent to init_chat_model; actual enforcement is provider-side."
+                ),
+                border_style="yellow",
+            )
+        )
+
+
 def _resolve_model_choice(model_choice: str, models_cfg: dict):
     """
-    Accepts strings like 'openai:gpt-5-mini' or 'metis:gpt-oss-120b-131072'.
+    Accepts strings like 'openai:gpt-5.2' or 'my_endpoint:openai/gpt-oss-120b'.
     Looks up per-provider settings from cfg.models.providers.
-    Returns: model_provider, model_name, extra_kwargs_for_init
+
+    Returns: (model_provider, pure_model, provider_extra_kwargs_for_init)
     """
     if ":" in model_choice:
         alias, pure_model = model_choice.split(":", 1)
@@ -665,7 +859,7 @@ def _resolve_model_choice(model_choice: str, models_cfg: dict):
     providers = (models_cfg or {}).get("providers", {})
     prov = providers.get(alias, {})
 
-    # Which LangChain integration to use (eg "openai", "mistral", etc.)
+    # Which LangChain integration to use (e.g. "openai", "mistral", etc.)
     model_provider = prov.get("model_provider", alias)
 
     # auth: prefer env var; optionally load via function if configured
@@ -676,27 +870,65 @@ def _resolve_model_choice(model_choice: str, models_cfg: dict):
         mod, fn = prov["token_loader"].rsplit(".", 1)
         api_key = getattr(importlib.import_module(mod), fn)()
 
-    extra = {}
+    provider_extra = {}
     if prov.get("base_url"):
-        extra["base_url"] = prov["base_url"]
+        provider_extra["base_url"] = prov["base_url"]
     if api_key:
-        # For ChatOpenAI this is "api_key"
-        extra["api_key"] = api_key
+        provider_extra["api_key"] = api_key
 
-    return model_provider, pure_model, extra
+    return model_provider, pure_model, provider_extra
 
 
-def setup_llm(model_choice: str, models_cfg: dict | None = None):
-    provider, pure_model, extra = _resolve_model_choice(
-        model_choice, models_cfg or {}
+def setup_llm(
+    model_choice: str,
+    models_cfg: dict | None = None,
+    agent_name: str | None = None,
+):
+    """
+    Build a LangChain chat model via init_chat_model(...), optionally applying
+    YAML-driven params:
+      models.profiles
+      models.defaults
+      models.agents.<agent_name>
+
+    Back-compat: if those blocks don't exist, you get your previous behavior.
+    """
+    models_cfg = models_cfg or {}
+
+    provider, pure_model, provider_extra = _resolve_model_choice(
+        model_choice, models_cfg
     )
+
+    # Your existing hardcoded defaults (keep these so older YAML behaves the same)
+    base_llm_kwargs = {
+        "max_completion_tokens": 10000,
+        "max_retries": 2,
+    }
+
+    # YAML-driven kwargs (safe if absent)
+    yaml_llm_kwargs = _resolve_llm_kwargs_for_agent(models_cfg, agent_name)
+
+    # Merge: base defaults < YAML overrides
+    llm_kwargs = _deep_merge_dicts(base_llm_kwargs, yaml_llm_kwargs)
+
+    # Initialize
     model = init_chat_model(
         model=pure_model,
-        model_provider=provider,  # <-- lets langchain pick the right integration
-        max_completion_tokens=10000,
-        max_retries=2,
-        **extra,  # <-- base_url, api_key, etc. flow through
+        model_provider=provider,
+        **llm_kwargs,
+        **(provider_extra or {}),
     )
+
+    # Print confirmation early
+    _print_llm_init_banner(
+        agent_name=agent_name,
+        provider=provider,
+        model_name=pure_model,
+        provider_extra=provider_extra,
+        llm_kwargs=llm_kwargs,
+        model_obj=model,
+    )
+
     return model
 
 
@@ -1006,8 +1238,6 @@ def main(
         project = getattr(config, "project", "run")
         symlinkdict = getattr(config, "symlink", {}) or None
 
-        # sets up the LLM, model parameters, providers, endpoints, etc.
-        model = setup_llm(model_name, getattr(config, "models", {}) or {})
         # sets up the workspace, run config json, etc.
         workspace = setup_workspace(
             user_specified_workspace, project, model_name
@@ -1022,7 +1252,6 @@ def main(
             )
             if chosen_ckpt:
                 restore_executor_from_snapshot(workspace, chosen_ckpt)
-                # (Optional) also print a gentle reminder:
                 print(
                     "Press Ctrl-C now to abort and rerun with a different --resume-from, if this was unintentional."
                 )
@@ -1042,41 +1271,33 @@ def main(
         )
 
         # ---- One-time project logo kickoff (per workspace) -----------------
-        # Use run_meta.json to ensure we do this only once for this workspace.
         meta = load_run_meta(workspace)
-        # MINIMAL CONFIG
         logo_cfg = getattr(cfg, "logo", {}) or {}
         logo_enabled = bool(logo_cfg.get("enabled", True))
 
         if logo_enabled and not meta.get("logo_created"):
-            scene_style = logo_cfg.get(
-                "scene", "random"
-            )  # noir/sci-fi/etc or "random"
+            scene_style = logo_cfg.get("scene", "random")
             stickers_enabled = bool(logo_cfg.get("stickers", True))
             n_variants = int(logo_cfg.get("n", 4))
             logo_model_choice = logo_cfg.get("model", "openai:gpt-image-1")
 
-            # pick the model string & a providers map
             providers = (getattr(cfg, "models", {}) or {}).get(
                 "providers", {}
             ) or {}
-
             v_provider, v_model, v_extra = _resolve_model_choice(
                 logo_model_choice, {"providers": providers}
             )
             scene_dir = Path(workspace) / "logo_art" / "scenes"
             sticker_dir = Path(workspace) / "logo_art" / "stickers"
             try:
-                # SCENE artwork — uses existing defaults for everything else
                 _ = kickoff_logo(
                     problem_text=problem,
                     workspace=workspace,
                     out_dir=scene_dir,
-                    # size omitted (auto with aspect)
                     background="opaque",
                     quality="high",
                     n=n_variants,
-                    style=scene_style,  # <- only knob exposed via YAML
+                    style=scene_style,
                     mode="scene",
                     aspect="wide",
                     style_intensity="overt",
@@ -1098,7 +1319,6 @@ def main(
                     ),
                 )
 
-                # STICKER artwork — optional
                 if stickers_enabled:
                     _ = kickoff_logo(
                         problem_text=problem,
@@ -1128,24 +1348,24 @@ def main(
                     )
 
             finally:
-                # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
-                # Remove this flag manually if you want to re-generate art for this workspace.
                 save_run_meta(workspace, logo_created=True)
         # --------------------------------------------------------------------
 
-        # gets the agents we'll use for this example including their checkpointer handles and database
+        # NEW: setup agents now builds per-agent LLMs using YAML profiles
+        models_cfg = getattr(config, "models", {}) or {}
+
         thread_id, planner_tuple, executor_tuple = setup_agents(
-            workspace, model
+            workspace=workspace,
+            model_choice=model_name,
+            models_cfg=models_cfg,
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
 
-        # print the problem we're solving in a nice little box / panel
         console.print(
             Panel.fit(
                 Text.from_markup(
                     f"[bold cyan]Solving problem:[/] {problem}",
-                    # justify="center",
                 ),
                 border_style="cyan",
             )
@@ -1153,7 +1373,6 @@ def main(
 
         save_run_meta(workspace, thread_id=thread_id, model_name=model_name)
 
-        # do the main planning step, or load it from checkpoint
         plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
             planner,
             planner_checkpointer,
@@ -1183,7 +1402,6 @@ def main(
                 resume_main_0 = max(0, _m1 - 1)
                 resume_sub_next = int(_s1) if _s1 is not None else 0
 
-        # Simple resume summary
         if planning_mode == "single" and chosen_ckpt is not None:
             k, _ = parse_snapshot_indices(chosen_ckpt)
             if k is not None:
@@ -1203,7 +1421,6 @@ def main(
             )
 
         if planning_mode == "hierarchical":
-            # ----- MAIN PLAN PROGRESS -----
             hprog = load_hier_progress(workspace)
             if hprog.get("main", {}).get("plan_hash") != plan_sig:
                 console.print(
@@ -1226,15 +1443,11 @@ def main(
                     data=hprog,
                 )
 
-            # we could be coming back into this plan at someplace in the middle, so this our start
-            # index for THIS instantiation
             main_start_idx = int(hprog["main"]["next_index"])
             total_main = len(plan_steps)
 
-            # Show main plan with highlight on the next main step to work on
             render_plan_steps_rich(plan_steps, highlight_index=main_start_idx)
 
-            # If all main steps done, you're finished
             if main_start_idx >= total_main:
                 console.print(
                     Panel.fit(
@@ -1244,7 +1457,6 @@ def main(
                 )
                 return "All hierarchical steps completed.", workspace
 
-            # ----- LOOP OVER MAIN STEPS (resuming at main_start_idx) -----
             for m_idx in range(main_start_idx, total_main):
                 main_step = plan_steps[m_idx]
                 step_num = m_idx + 1
@@ -1257,7 +1469,6 @@ def main(
                     )
                 )
 
-                # get or create the subplan (hierarchical=True)
                 sub_values, sub_sig, _sub_tid, _ = get_or_create_subplan(
                     planner,
                     planner_checkpointer,
@@ -1272,7 +1483,6 @@ def main(
 
                 sub_steps = sub_values.get("plan_steps") or []
 
-                # If we resumed into this main step, set its sub "next_index" before running
                 if (resume_main_0 is not None) and (m_idx == resume_main_0):
                     target_next = min(resume_sub_next, len(sub_steps))
                     save_hier_sub_progress(
@@ -1283,7 +1493,6 @@ def main(
                         last_summary=f"Resumed from snapshot {chosen_ckpt.name}",
                     )
 
-                # closures for reading/writing sub-progress with plan-hash guard
                 def load_progress_h(m):
                     prog = load_hier_sub_progress(workspace, m)
                     if prog.get("plan_hash") != sub_sig:
@@ -1301,18 +1510,13 @@ def main(
                     return prog
 
                 def save_progress_h(m, next_idx, last_summary):
-                    # persist hierarchical sub-step progress
                     save_hier_sub_progress(
                         workspace, m, next_idx, sub_sig, last_summary
                     )
 
-                    # snapshot after each completed sub-step:
-                    # m is 0-based main step index; next_idx is the 1-based count of completed sub-steps
                     try:
                         main_no = m + 1
-                        sub_no = int(
-                            next_idx
-                        )  # just-finished sub-step (1-based)
+                        sub_no = int(next_idx)
                         snapshot_path = (
                             _ckpt_dir(workspace)
                             / f"executor_checkpoint_{main_no}_{sub_no}.db"
@@ -1340,7 +1544,6 @@ def main(
                     stepwise_exit,
                 )
 
-                # advance main progress and continue
                 hprog = save_hier_main_progress(
                     workspace,
                     next_index=m_idx + 1,
@@ -1356,11 +1559,8 @@ def main(
 
             return "All hierarchical steps completed.", workspace
 
-        # this is the single planning step pathway, not hierarchical
         elif planning_mode == "single":
-            # figure out where to resume execution
             exec_prog = load_exec_progress(workspace)
-
             if exec_prog.get("plan_hash") != plan_sig:
                 start_idx = 0
                 prev_summary = (
@@ -1396,7 +1596,6 @@ def main(
                         )
                     )
 
-                    # synthetic 1-item sub-plan (hierarchical=False)
                     sub_values, sub_sig, _tid, _ = get_or_create_subplan(
                         planner,
                         None,
@@ -1411,18 +1610,15 @@ def main(
                     sub_steps = sub_values["plan_steps"]
 
                     def load_progress_single(_m):
-                        # always run the single sub-step for this main step
                         return {"next_index": 0, "last_summary": prev_summary}
 
                     def save_progress_single(m, _next_idx, last_summary):
-                        # advance main-step pointer
                         save_exec_progress(
                             workspace,
                             next_index=m + 1,
                             plan_hash=plan_sig,
                             last_summary=last_summary,
                         )
-                        # snapshot the executor checkpoint after completing top-level step m (1-based)
                         try:
                             step_no = m + 1
                             snapshot_path = (
@@ -1452,7 +1648,6 @@ def main(
                         stepwise_exit,
                     )
 
-        # Wrap-up
         answer = prev_summary or "Plan completed."
         render_session_summary(thread_id)
         return answer, workspace

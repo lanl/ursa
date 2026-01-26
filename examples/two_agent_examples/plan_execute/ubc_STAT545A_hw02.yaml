@@ -36,6 +36,40 @@ models:
       base_url: "https://some.example.model.endpoint.url/vllm/v1" 
       api_key_env: SOME_API_KEY_HERE_THIS_PROVIDER_WILL_LOOK_FOR_IN_YOUR_USER_ENVIRONMENT
 
+  # this profiles section is optional, if you don't include it the LLM model will manage
+  # defaults, which might not be what you want.
+  profiles:
+    fast:
+      # i'm not confident temperature is even used in reasoning models anymore, i think this
+      # is entirely ignored
+      temperature: 0.2
+      max_completion_tokens: 6000
+      reasoning:
+        effort: low
+    balanced:
+      temperature: 0.2
+      max_completion_tokens: 8000
+      reasoning:
+        effort: medium
+    deep: 
+      temperature: 0.2 
+      max_completion_tokens: 10000
+      reasoning: 
+        effort: high
+
+  # defaults are the, well, default profiles
+  defaults: 
+    profile: fast 
+    params: {} # optional extra kwargs always applied
+    # Per-agent overrides (planner vs executor) 
+    
+  agents: 
+    planner: 
+      profile: fast 
+    executor: 
+      profile: fast
+
+
 # logos are a fun little thing where we use a vision model to generate 'logos' for your
 # project based on the project name and the randomly generated workspace name
 # 'scene' is a wide scene and 'stickers' are a logo-like mascot sticker for your

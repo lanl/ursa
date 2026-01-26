@@ -19,6 +19,7 @@ project: pi_multiple_ways
 # things are stochastic after all :).
 models:
   choices:
+    - openai:gpt-5.2
     - openai:gpt-5
     - openai:o3
     - openai:o3-mini
@@ -37,6 +38,38 @@ models:
       base_url: "https://some.example.model.endpoint.url/vllm/v1" 
       api_key_env: SOME_API_KEY_HERE_THIS_PROVIDER_WILL_LOOK_FOR_IN_YOUR_USER_ENVIRONMENT
 
+  # this profiles section is optional, if you don't include it the LLM model will manage
+  # defaults, which might not be what you want.
+  profiles:
+    fast:
+      # i'm not confident temperature is even used in reasoning models anymore, i think this
+      # is entirely ignored
+      temperature: 0.2
+      max_completion_tokens: 6000
+      reasoning:
+        effort: low
+    balanced:
+      temperature: 0.2
+      max_completion_tokens: 8000
+      reasoning:
+        effort: medium
+    deep: 
+      temperature: 0.2 
+      max_completion_tokens: 10000
+      reasoning: 
+        effort: high
+
+  # defaults are the, well, default profiles
+  defaults: 
+    profile: fast 
+    params: {} # optional extra kwargs always applied
+    # Per-agent overrides (planner vs executor) 
+    
+  agents: 
+    planner: 
+      profile: balanced 
+    executor: 
+      profile: balanced
 
 # planning_mode must either be 'single' or 'heirarchical'
 # single is one pass through planning and then it executes each
