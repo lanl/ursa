@@ -208,6 +208,20 @@ def test_metrics_toggle_off(tmpdir: Path, monkeypatch, pricing_file: Path):
     assert files == []
 
 
+def test_base_agent_provisions_sqlite_store(tmpdir: Path):
+    agent = Agent(llm=TinyCountingModel(), workspace=tmpdir)
+
+    store = agent.storage
+    store.put(("tests",), "key", {"value": "ok"})
+
+    item = store.get(("tests",), "key")
+    assert item is not None
+    assert item.value["value"] == "ok"
+
+    if hasattr(store, "conn"):
+        store.conn.close()
+
+
 async def test_chat_interface(tmpdir: Path):
     agent = Agent(
         llm=TinyCountingModel(),

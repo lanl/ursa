@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import unicodedata
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -406,13 +407,13 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     return txt[:max_chars]
 
 
-def read_pdf_text(path: str) -> str:
+def read_pdf_text(path: str | Path) -> str:
     loader = PyPDFLoader(path)
     pages = loader.load()
     return "\n".join(p.page_content for p in pages)
 
 
-def read_text_file(path: str) -> str:
+def read_text_file(path: str | Path) -> str:
     """
     Reads in a file at a given path into a string
 

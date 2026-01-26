@@ -43,7 +43,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
-from langchain_core.output_parsers import StrOutputParser
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 # Rich
@@ -51,7 +51,7 @@ from rich import get_console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     get_safety_prompt,
@@ -82,7 +82,6 @@ class ExecutionState(TypedDict):
     Fields:
     - messages: list of messages (System/Human/AI/Tool).
     - current_progress: short status string describing agent progress.
-    - code_files: list of filenames created or edited in the workspace.
     - workspace: path to the working directory where files and commands run.
     - symlinkdir: optional dict describing a symlink operation (source, dest,
       is_linked).
@@ -90,7 +89,6 @@ class ExecutionState(TypedDict):
 
     messages: list[AnyMessage]
     current_progress: str
-    code_files: list[str]
     workspace: Path
     symlinkdir: dict
     model: BaseChatModel
@@ -280,11 +278,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 pass
 
             summarize_prompt = f"""
-            Your only tasks is to provide a detailed, comprehensive summary of the following 
-            conversation. 
+            Your only tasks is to provide a detailed, comprehensive summary of the following
+            conversation.
 
-            Your summary will be the only information retained from the conversation, so ensure 
-            it contains all details that need to be remembered to meet the goals of the work. 
+            Your summary will be the only information retained from the conversation, so ensure
+            it contains all details that need to be remembered to meet the goals of the work.
 
             Conversation to summarize:
             {conversation_to_summarize}
@@ -418,16 +416,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 for resp in update:
                     if isinstance(resp, Command):
                         new_state["messages"].extend(resp.update["messages"])
-                        new_state.setdefault("code_files", []).extend(
-                            resp.update["code_files"]
-                        )
                     else:
                         new_state["messages"].extend(resp["messages"])
             elif isinstance(update, Command):
                 new_state["messages"].extend(update.update["messages"])
-                new_state.setdefault("code_files", []).extend(
-                    update.update["code_files"]
-                )
         except Exception as e:
             print(f"SOMETHING IS WRONG WITH {update}: {e}")
             new_state["messages"].extend(update["messages"])
@@ -514,7 +506,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 5) Return a partial state update with only the summary content.
         return new_state
 
-    def safety_check(self, state: ExecutionState) -> ExecutionState:
+    def safety_check(
+        self, state: ExecutionState, runtime: Runtime[AgentContext]
+    ) -> ExecutionState:
         """Assess pending shell commands for safety and inject ToolMessages with results.
 
         This method inspects the most recent AI tool calls, evaluates any run_command
@@ -544,15 +538,18 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             if tool_call["name"] != "run_command":
                 continue
 
-            query = tool_call["args"]["query"]
-            safety_result = StrOutputParser().invoke(
-                self.llm.invoke(
-                    self.get_safety_prompt(
-                        query, self.safe_codes, new_state.get("code_files", [])
-                    ),
-                    self.build_config(tags=["safety_check"]),
+            if runtime.store is not None:
+                search_results = runtime.store.search(
+                    ("workspace", "file_edit"), limit=1000
                 )
-            )
+                edited_files = [item.key for item in search_results]
+            else:
+                edited_files = []
+            query = tool_call["args"]["query"]
+            safety_result = self.llm.invoke(
+                self.get_safety_prompt(query, self.safe_codes, edited_files),
+                self.build_config(tags=["safety_check"]),
+            ).text
 
             if "[NO]" in safety_result:
                 any_unsafe = True

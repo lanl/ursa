@@ -1,15 +1,12 @@
-import os
-from typing import Annotated
-
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from langgraph.prebuilt import InjectedState
 
+from ursa.agents.base import AgentContext
 from ursa.util.parse import read_pdf_text, read_text_file
 
 
-# Tools for ExecutionAgent
 @tool
-def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
+def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
     """
     Reads in a file with a given filename into a string. Can read in PDF
     or files that are text/ASCII. Uses a PDF parser if the filename ends
@@ -18,12 +15,11 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
     Args:
         filename: string filename to read in
     """
-    workspace_dir = state["workspace"]
-    full_filename = os.path.join(workspace_dir, filename)
+    full_filename = runtime.context.workspace.joinpath(filename)
 
     print("[READING]: ", full_filename)
     try:
-        if full_filename.lower().endswith(".pdf"):
+        if full_filename.suffix == ".pdf":
             file_contents = read_pdf_text(full_filename)
         else:
             file_contents = read_text_file(full_filename)

@@ -1,19 +1,15 @@
-import os
 import subprocess
-from typing import Annotated
+from pathlib import Path
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from langgraph.prebuilt import InjectedState
 
-# Global variables for the module.
-
-# Set a limit for message characters - the user could overload
-# that in their env, or maybe we could pull this out of the LLM parameters
-MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "30000"))
+from ursa.agents.base import AgentContext
+from ursa.util.types import AsciiStr
 
 
 @tool
-def run_command(query: str, state: Annotated[dict, InjectedState]) -> str:
+def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     """Execute a shell command in the workspace and return its combined output.
 
     Runs the specified command using subprocess.run in the given workspace
@@ -29,9 +25,10 @@ def run_command(query: str, state: Annotated[dict, InjectedState]) -> str:
         A formatted string with "STDOUT:" followed by the truncated stdout and
         "STDERR:" followed by the truncated stderr.
     """
-    workspace_dir = state["workspace"]
+    workspace_dir = Path(runtime.context.workspace)
 
     print("RUNNING: ", query)
+
     try:
         result = subprocess.run(
             query,
@@ -45,18 +42,10 @@ def run_command(query: str, state: Annotated[dict, InjectedState]) -> str:
     except KeyboardInterrupt:
         print("Keyboard Interrupt of command: ", query)
         stdout, stderr = "", "KeyboardInterrupt:"
-    except UnicodeDecodeError:
-        print(
-            f"Invalid Command: {query} - only 'utf-8' decodable characters allowed."
-        )
-        stdout, stderr = (
-            "",
-            f"Invalid Command: {query} - only 'utf-8' decodable characters allowed.:",
-        )
 
     # Fit BOTH streams under a single overall cap
     stdout_fit, stderr_fit = _fit_streams_to_budget(
-        stdout or "", stderr or "", MAX_TOOL_MSG_CHARS
+        stdout or "", stderr or "", runtime.context.tool_character_limit
     )
 
     print("STDOUT: ", stdout_fit)
