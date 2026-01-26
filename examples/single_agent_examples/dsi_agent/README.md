@@ -21,4 +21,4 @@ jupyter lab&
 Copy the link from the terminal and paste in a browser.
 
 
-4. Open the dsi_explorer notebook and select the vene_ursa kernel
+4. Open the dsi_explorer notebook and select the venv_ursa kernel

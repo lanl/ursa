@@ -1,5 +1,6 @@
 import sys
 import os
+import random
 from time import time as now
 from typing import Annotated, Any, Dict, Mapping, TypedDict
 from pathlib import Path
@@ -16,11 +17,16 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode
 from langgraph.graph import END, START, StateGraph
+from contextlib import redirect_stdout, redirect_stderr
 
 from ursa.tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
     run_web_search,
+)
+
+from ursa.tools.read_file_tool import (
+    download_file_tool,
 )
 
 from .base import BaseAgent
@@ -48,7 +54,7 @@ def load_db_description(db_path: str) -> str:
 
     try:
         db_description_path = db_path.rsplit(".", 1)[0] + '_description.yaml'
-        print(f"load_db_description :: db_description_path: {db_description_path}")
+        #print(f"load_db_description :: db_description_path: {db_description_path}")
         
         with open(db_description_path, "r") as f:
             db_description = f.read()
@@ -91,9 +97,12 @@ def load_dsi(path: str) -> str:
     
     else:
         try:
-            temp_store = DSI(data_path, backend_name = "Sqlite", check_same_thread=False)
-            temp_tables = temp_store.list(True) # force things to fail if the table is empty
-            temp_store.close()
+            with open(os.devnull, "w") as devnull:
+                with redirect_stdout(devnull), redirect_stderr(devnull):
+                    temp_store = DSI(data_path, backend_name = "Sqlite", check_same_thread=False)
+                    temp_tables = temp_store.list(True) # force things to fail if the table is empty
+                    temp_store.close()
+
         except Exception as e:
             return f"Failed to extract database information at: {data_path}"
             
@@ -103,14 +112,16 @@ def load_dsi(path: str) -> str:
         if dsi_store is not None:
             dsi_store.close()
 
-        dsi_store = DSI(data_path, backend_name = "Sqlite", check_same_thread=False)
-        tables = dsi_store.list(True)
-        schema = dsi_store.schema()
+        with open(os.devnull, "w") as devnull:
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                dsi_store = DSI(data_path, backend_name = "Sqlite", check_same_thread=False)
+                tables = dsi_store.list(True)
+                schema = dsi_store.schema()
 
 
         # Append the database information to the context
-        print(f"""load_dsi :: Loading {dsi_store}; the DSI Object has a database that has {len(tables)} tables: {tables}.
-        The schema of the database is {schema} \n""")
+        # print(f"""load_dsi :: Loading {dsi_store}; the DSI Object has a database that has {len(tables)} tables: {tables}.
+        # The schema of the database is {schema} \n""")
         
         db_schema += f"""The DSI Object has a database that has {len(tables)} tables: {tables}.
             The schema of the database is {schema} \n"""
@@ -137,7 +148,7 @@ load_dsi_tool = Tool(
 
 @tool
 def query_dsi_tool(query_str: str) -> list:
-    """Execute a SQL query on a DSI object
+    """Execute a SQL query on a DSI object to find information from the DSI database
 
     Arg:
         query_str (str): the SQL query to run on DSI object
@@ -145,11 +156,14 @@ def query_dsi_tool(query_str: str) -> list:
     Returns:
         collection: the results of the query
     """
-    print("\n\n\nTool called: query_dsi_tool\n\n\n")
     global dsi_store   
     s = dsi_store
 
-    df = s.query(query_str, collection=True)
+    #print(f"query_dsi_tool :: Executing query on DSI database: {query_str}")
+
+    with open(os.devnull, "w") as devnull:
+        with redirect_stdout(devnull), redirect_stderr(devnull):
+            df = s.query(query_str, collection=True)
         
     if df is None:
         return {}
@@ -219,6 +233,7 @@ class DSIAgent(BaseAgent):
             run_arxiv_search,
             load_dsi_tool,
             query_dsi_tool,
+            download_file_tool,
         ]
 
         self.prompt = f"""
@@ -246,7 +261,7 @@ class DSIAgent(BaseAgent):
         - Do not restate the prompt or reasoning; just act and report the outcome briefly.
         """
 
-
+        self.thread_id = str(random.randint(1, 20000))
         self.llm = self.llm.bind_tools(self.tools)
         self.tool_node = ToolNode(self.tools)
         self._build_graph()
@@ -357,6 +372,7 @@ class DSIAgent(BaseAgent):
         else:
             messages = [HumanMessage(content=human_msg)]
 
+        #print("messages: ", messages)
         # clear
         db_schema = ""
         db_description = None
@@ -365,6 +381,7 @@ class DSIAgent(BaseAgent):
         return {"messages": messages}
 
     
+
     def ask(self, user_query) -> None:
         """Ask a question to the DSI Explorer agent.
 
@@ -400,16 +417,3 @@ class DSIAgent(BaseAgent):
 
         print(f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n")
 
-
-
-# def main():
-#     model = ChatOpenAI( model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2)
-#     dsi_explorer = DSIAgent(llm=model)
-#     problem_string = "What is your name?"
-#     print("Prompt: ", problem_string)
-#     result = dsi_explorer.invoke(problem_string)
-#     return result["messages"][-1].content
-
-
-# if __name__ == "__main__":
-#     print("Response: ", main())
