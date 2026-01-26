@@ -14,6 +14,7 @@ from .base import BaseAgent as BaseAgent
 from .base import BaseChatModel as BaseChatModel
 from .chat_agent import ChatAgent as ChatAgent
 from .chat_agent import ChatState as ChatState
+from .dsi_agent import DSIAgent as DSIAgent
 from .code_review_agent import CodeReviewAgent as CodeReviewAgent
 from .code_review_agent import CodeReviewState as CodeReviewState
 from .execution_agent import ExecutionAgent as ExecutionAgent
