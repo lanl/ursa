@@ -63,7 +63,7 @@ def write_code(
     console.print("[cyan]Writing file:[/]", filename)
 
     # Clean up markdown fences on submitted code.
-    code = _strip_fences(code)
+    # code = _strip_fences(code)
 
     # Show syntax-highlighted preview before writing to file
     try:
@@ -150,8 +150,8 @@ def edit_code(
         return f"Failed: {filename} not found."
 
     # Clean up markdown fences
-    old_code_clean = _strip_fences(old_code)
-    new_code_clean = _strip_fences(new_code)
+    old_code_clean = old_code  # _strip_fences(old_code)
+    new_code_clean = new_code  # _strip_fences(new_code)
 
     if old_code_clean not in content:
         console.print(
