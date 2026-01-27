@@ -663,7 +663,6 @@ def setup_agents(
     pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
     planner_checkpointer = SqliteSaver(pconn)
 
-    # --- NEW: build separate LLMs (planner vs executor) ---
     planner_llm = setup_llm(
         model_choice=model_choice,
         models_cfg=models_cfg or {},
@@ -676,23 +675,25 @@ def setup_agents(
     )
 
     # Initialize the agents
+    thread_id = Path(workspace).name
+
     planner = PlanningAgent(
         llm=planner_llm,
         checkpointer=planner_checkpointer,
         enable_metrics=True,
-        metrics_dir=Path(workspace) / "ursa_metrics",
-    )
+        metrics_dir="ursa_metrics",
+        thread_id=thread_id,
+        workspace=workspace,
+    )  # include checkpointer
+
     executor = ExecutionAgent(
         llm=executor_llm,
         checkpointer=executor_checkpointer,
         enable_metrics=True,
-        metrics_dir=Path(workspace) / "ursa_metrics",
-    )
-
-    # Use the workspace as the thread id (one thread per workspace)
-    thread_id = Path(workspace).name
-    planner.thread_id = thread_id
-    executor.thread_id = thread_id
+        metrics_dir="ursa_metrics",
+        thread_id=thread_id,
+        workspace=workspace,
+    )  # include checkpointer
 
     print(f"[dbg] planner_db_abs: {Path(pdb_path).resolve()}")
     print(f"[dbg] cwd: {Path.cwd().resolve()}")
@@ -1242,6 +1243,8 @@ def main(
         workspace = setup_workspace(
             user_specified_workspace, project, model_name
         )
+        print(workspace)
+        print(user_specified_workspace)
 
         # --- decide which checkpoint to start from ---
         try:
