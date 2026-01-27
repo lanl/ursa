@@ -179,9 +179,9 @@ class CombinedAgent(AgentWithTools, BaseAgent):
         # Handle looping through the messages
         for x in state["messages"]:
             if not isinstance(x, AIMessage):
-                memories.append(x.content)
+                memories.append(x.text)
             elif not x.tool_calls:
-                memories.append(x.content)
+                memories.append(x.text)
             else:
                 tool_strings = []
                 for tool in x.tool_calls:
@@ -192,7 +192,7 @@ class CombinedAgent(AgentWithTools, BaseAgent):
                             f"Arg: {str(y)}\nValue: {str(tool['args'][y])}"
                         )
                 memories.append("\n".join(tool_strings))
-        memories.append(response.content)
+        memories.append(response.text)
         memory.add_memories(memories)
         updated_messages = [*state["messages"], response]
 
@@ -242,7 +242,7 @@ async def main():
     result = await agent.ainvoke("""What are the constraints on the neutron star radius and what uncertainties are there on the constraints?
                 Summarize the results in a markdown document. Include a plot of the data extracted from the papers. This
                 will be reviewed by experts in the field so technical accuracy and clarity is critical.""")
-    print(result["messages"][-1].content)
+    print(result["messages"][-1].text)
 
 
 if __name__ == "__main__":

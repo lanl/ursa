@@ -119,7 +119,7 @@ def main(model_name: str):
             },
         )
 
-        last_step_summary = final_results["messages"][-1].content
+        last_step_summary = final_results["messages"][-1].text
 
         render_session_summary(executor.thread_id)
 

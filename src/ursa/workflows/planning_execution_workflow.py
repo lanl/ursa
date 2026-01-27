@@ -73,7 +73,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
 
             result = self.executor.invoke(step_prompt)
 
-            last_step_summary = result["messages"][-1].content
+            last_step_summary = result["messages"][-1].text
 
             console.print(
                 Panel(

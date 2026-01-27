@@ -32,9 +32,8 @@ simulator = SimulatorAgent(
     workspace=workspace,
     embedding=embedding,
     checkpointer=checkpointer,
+    thread_id="dcopf_test_executor",
     use_web=True,
-    tokens_before_summarize=20000,
 )
-simulator.thread_id = "dcopf_test_executor"
 
 result = simulator.invoke(problem)

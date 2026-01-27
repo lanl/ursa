@@ -58,11 +58,8 @@ critical.
 init = {"messages": [HumanMessage(content=execution_plan)]}
 
 # Execute the plan
-final_results = executor.invoke(init)
+_ = executor.invoke(init)
 
-# Display results
-for message in final_results["messages"]:
-    print(message.content)
 ```
 
 ## Parameters

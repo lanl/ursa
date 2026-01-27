@@ -47,6 +47,7 @@ def run_arxiv_search(
                 context=prompt,
             )
         )["final_summary"]
+
         console.print(
             Panel(
                 f"{arxiv_result}",
@@ -100,6 +101,7 @@ def run_web_search(
                 context=prompt,
             )
         )["final_summary"]
+
         console.print(
             Panel(
                 f"{web_result}",
@@ -155,6 +157,7 @@ def run_osti_search(
                 context=prompt,
             )
         )["final_summary"]
+
         console.print(
             Panel(
                 f"[cyan on black]{osti_result}",
