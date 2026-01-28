@@ -505,6 +505,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 1.5) Check message history length and summarize to shorten the token usage:
 
         # 2) Evaluate any pending run_command tool calls for safety.
+        tool_responses = []
         for tool_call in last_msg.tool_calls:
             if tool_call["name"] != "run_command":
                 continue
@@ -532,13 +533,21 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 console.print(
                     "[bold red][WARNING][/bold red] REASON:", tool_response
                 )
-                last_msg.tool_calls.remove(tool_call)
+                tool_responses.append(
+                    ToolMessage(
+                        content=tool_response, tool_call_id=tool_call["id"]
+                    )
+                )
+                # last_msg.tool_calls.remove(tool_call)
             else:
                 tool_response = f"Command `{query}` passed safety check."
                 console.print(
                     f"[green]Command passed safety check:[/green] {query}"
                 )
-        return {"messages": last_msg}
+        if tool_responses:
+            return {"messages": tool_responses}
+        else:
+            return {}
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
