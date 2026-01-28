@@ -6,7 +6,7 @@ WORKDIR /app
 ENV PATH=/root/.local/bin:$PATH
 COPY dist/*.whl /wheelhouse/
 RUN uv init -p 3.12
-RUN uv add `ls /wheelhouse/*.whl`
+RUN uv add "ursa-ai[dev] @ file:///`ls /wheelhouse/*.whl`"
 ENV PATH=/app/.venv/bin:$PATH
 RUN ursa --version
 
