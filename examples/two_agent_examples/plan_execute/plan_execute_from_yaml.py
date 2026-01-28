@@ -607,10 +607,54 @@ def _print_next_step(prefix: str, next_zero: int, total: int, workspace: str):
 #########################################################################
 # END: Assorted other helpers
 #########################################################################
+_SECRET_KEY_SUBSTRS = (
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "secret",
+    "password",
+    "bearer",
+)
 
 
-def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
-    # first, setup checkpoint / recover pathways
+def _looks_like_secret_key(name: str) -> bool:
+    n = name.lower()
+    return any(s in n for s in _SECRET_KEY_SUBSTRS)
+
+
+def _mask_secret(value: str, keep_start: int = 6, keep_end: int = 4) -> str:
+    """
+    Mask a secret-like string, keeping only the beginning and end.
+    Example: sk-proj-abc123456789xyz -> sk-proj-…9xyz
+    """
+    if not isinstance(value, str):
+        return value
+    if len(value) <= keep_start + keep_end + 3:
+        return "…"  # too short to safely show anything
+    return f"{value[:keep_start]}...{value[-keep_end:]}"
+
+
+def _sanitize_for_logging(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if _looks_like_secret_key(str(k)):
+                out[k] = _mask_secret(v) if isinstance(v, str) else "..."
+            else:
+                out[k] = _sanitize_for_logging(v)
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_for_logging(v) for v in obj]
+    return obj
+
+
+def setup_agents(
+    workspace: str,
+    model_choice: str,
+    models_cfg: dict | None,
+) -> tuple[str, tuple, tuple]:
+    # --- checkpoint plumbing (unchanged) ---
     edb_path = _ckpt_dir(workspace) / "executor_checkpoint.db"
     econn = sqlite3.connect(str(edb_path), check_same_thread=False)
     executor_checkpointer = SqliteSaver(econn)
@@ -619,11 +663,22 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
     planner_checkpointer = SqliteSaver(pconn)
 
+    planner_llm = setup_llm(
+        model_choice=model_choice,
+        models_cfg=models_cfg or {},
+        agent_name="planner",
+    )
+    executor_llm = setup_llm(
+        model_choice=model_choice,
+        models_cfg=models_cfg or {},
+        agent_name="executor",
+    )
+
     # Initialize the agents
     thread_id = Path(workspace).name
 
     planner = PlanningAgent(
-        llm=model,
+        llm=planner_llm,
         checkpointer=planner_checkpointer,
         enable_metrics=True,
         metrics_dir="ursa_metrics",
@@ -632,7 +687,7 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     )  # include checkpointer
 
     executor = ExecutionAgent(
-        llm=model,
+        llm=executor_llm,
         checkpointer=executor_checkpointer,
         enable_metrics=True,
         metrics_dir="ursa_metrics",
@@ -651,11 +706,151 @@ def setup_agents(workspace: str, model) -> tuple[str, tuple, tuple]:
     )
 
 
+def _deep_merge_dicts(base: dict, override: dict) -> dict:
+    """
+    Recursively merge override into base and return a new dict.
+    - dict + dict => deep merge
+    - otherwise => override wins
+    """
+    base = dict(base or {})
+    override = dict(override or {})
+    out = dict(base)
+    for k, v in override.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge_dicts(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _resolve_llm_kwargs_for_agent(
+    models_cfg: dict | None, agent_name: str | None
+) -> dict:
+    """
+    Given the YAML `models:` dict, compute merged kwargs for init_chat_model(...)
+    for a specific agent ('planner' or 'executor').
+
+    Merge order (later wins):
+      1) {} (empty)
+      2) models.defaults.params (optional)
+      3) models.profiles[defaults.profile] (optional)
+      4) models.agents[agent_name].profile (optional; merges that profile on top)
+      5) models.agents[agent_name].params (optional)
+    """
+    models_cfg = models_cfg or {}
+    profiles = models_cfg.get("profiles") or {}
+    defaults = models_cfg.get("defaults") or {}
+    agents = models_cfg.get("agents") or {}
+
+    # Start with global defaults
+    merged = {}
+    merged = _deep_merge_dicts(merged, defaults.get("params") or {})
+
+    # Apply default profile
+    default_profile_name = defaults.get("profile")
+    if default_profile_name and default_profile_name in profiles:
+        merged = _deep_merge_dicts(merged, profiles[default_profile_name] or {})
+
+    # Apply agent-specific profile + params
+    if agent_name and isinstance(agents, dict) and agent_name in agents:
+        a = agents.get(agent_name) or {}
+        agent_profile_name = a.get("profile")
+        if agent_profile_name and agent_profile_name in profiles:
+            merged = _deep_merge_dicts(
+                merged, profiles[agent_profile_name] or {}
+            )
+        merged = _deep_merge_dicts(merged, a.get("params") or {})
+
+    return merged
+
+
+def _print_llm_init_banner(
+    agent_name: str | None,
+    provider: str,
+    model_name: str,
+    provider_extra: dict,
+    llm_kwargs: dict,
+    model_obj=None,
+) -> None:
+    who = agent_name or "llm"
+
+    safe_provider_extra = _sanitize_for_logging(provider_extra or {})
+    safe_llm_kwargs = _sanitize_for_logging(llm_kwargs or {})
+
+    console.print(
+        Panel.fit(
+            Text.from_markup(
+                f"[bold cyan]LLM init ({who})[/]\n"
+                f"[bold]provider[/]: {provider}\n"
+                f"[bold]model[/]: {model_name}\n\n"
+                f"[bold]provider kwargs[/]: {json.dumps(safe_provider_extra, indent=2)}\n\n"
+                f"[bold]llm kwargs (merged)[/]: {json.dumps(safe_llm_kwargs, indent=2)}"
+            ),
+            border_style="cyan",
+        )
+    )
+
+    # Best-effort readback from the LangChain model object
+    if model_obj is None:
+        return
+
+    readback = {}
+    for attr in (
+        "model_name",
+        "model",
+        "reasoning",
+        "temperature",
+        "max_completion_tokens",
+        "max_tokens",
+    ):
+        if hasattr(model_obj, attr):
+            try:
+                readback[attr] = getattr(model_obj, attr)
+            except Exception:
+                pass
+
+    for attr in ("model_kwargs", "kwargs"):
+        if hasattr(model_obj, attr):
+            try:
+                readback[attr] = getattr(model_obj, attr)
+            except Exception:
+                pass
+
+    if readback:
+        console.print(
+            Panel.fit(
+                Text.from_markup(
+                    "[bold green]LLM readback (best-effort from LangChain object)[/]\n"
+                    + json.dumps(_sanitize_for_logging(readback), indent=2)
+                ),
+                border_style="green",
+            )
+        )
+
+    effort = None
+    try:
+        effort = (llm_kwargs or {}).get("reasoning", {}).get("effort")
+    except Exception:
+        effort = None
+
+    if effort:
+        console.print(
+            Panel.fit(
+                Text.from_markup(
+                    f"[bold yellow]Reasoning effort requested[/]: {effort}\n"
+                    "Note: This confirms what we sent to init_chat_model; actual enforcement is provider-side."
+                ),
+                border_style="yellow",
+            )
+        )
+
+
 def _resolve_model_choice(model_choice: str, models_cfg: dict):
     """
-    Accepts strings like 'openai:gpt-5-mini' or 'metis:gpt-oss-120b-131072'.
+    Accepts strings like 'openai:gpt-5.2' or 'my_endpoint:openai/gpt-oss-120b'.
     Looks up per-provider settings from cfg.models.providers.
-    Returns: model_provider, model_name, extra_kwargs_for_init
+
+    Returns: (model_provider, pure_model, provider_extra_kwargs_for_init)
     """
     if ":" in model_choice:
         alias, pure_model = model_choice.split(":", 1)
@@ -665,7 +860,7 @@ def _resolve_model_choice(model_choice: str, models_cfg: dict):
     providers = (models_cfg or {}).get("providers", {})
     prov = providers.get(alias, {})
 
-    # Which LangChain integration to use (eg "openai", "mistral", etc.)
+    # Which LangChain integration to use (e.g. "openai", "mistral", etc.)
     model_provider = prov.get("model_provider", alias)
 
     # auth: prefer env var; optionally load via function if configured
@@ -676,27 +871,65 @@ def _resolve_model_choice(model_choice: str, models_cfg: dict):
         mod, fn = prov["token_loader"].rsplit(".", 1)
         api_key = getattr(importlib.import_module(mod), fn)()
 
-    extra = {}
+    provider_extra = {}
     if prov.get("base_url"):
-        extra["base_url"] = prov["base_url"]
+        provider_extra["base_url"] = prov["base_url"]
     if api_key:
-        # For ChatOpenAI this is "api_key"
-        extra["api_key"] = api_key
+        provider_extra["api_key"] = api_key
 
-    return model_provider, pure_model, extra
+    return model_provider, pure_model, provider_extra
 
 
-def setup_llm(model_choice: str, models_cfg: dict | None = None):
-    provider, pure_model, extra = _resolve_model_choice(
-        model_choice, models_cfg or {}
+def setup_llm(
+    model_choice: str,
+    models_cfg: dict | None = None,
+    agent_name: str | None = None,
+):
+    """
+    Build a LangChain chat model via init_chat_model(...), optionally applying
+    YAML-driven params:
+      models.profiles
+      models.defaults
+      models.agents.<agent_name>
+
+    Back-compat: if those blocks don't exist, you get your previous behavior.
+    """
+    models_cfg = models_cfg or {}
+
+    provider, pure_model, provider_extra = _resolve_model_choice(
+        model_choice, models_cfg
     )
+
+    # Your existing hardcoded defaults (keep these so older YAML behaves the same)
+    base_llm_kwargs = {
+        "max_completion_tokens": 10000,
+        "max_retries": 2,
+    }
+
+    # YAML-driven kwargs (safe if absent)
+    yaml_llm_kwargs = _resolve_llm_kwargs_for_agent(models_cfg, agent_name)
+
+    # Merge: base defaults < YAML overrides
+    llm_kwargs = _deep_merge_dicts(base_llm_kwargs, yaml_llm_kwargs)
+
+    # Initialize
     model = init_chat_model(
         model=pure_model,
-        model_provider=provider,  # <-- lets langchain pick the right integration
-        max_completion_tokens=10000,
-        max_retries=2,
-        **extra,  # <-- base_url, api_key, etc. flow through
+        model_provider=provider,
+        **llm_kwargs,
+        **(provider_extra or {}),
     )
+
+    # Print confirmation early
+    _print_llm_init_banner(
+        agent_name=agent_name,
+        provider=provider,
+        model_name=pure_model,
+        provider_extra=provider_extra,
+        llm_kwargs=llm_kwargs,
+        model_obj=model,
+    )
+
     return model
 
 
@@ -1006,12 +1239,12 @@ def main(
         project = getattr(config, "project", "run")
         symlinkdict = getattr(config, "symlink", {}) or None
 
-        # sets up the LLM, model parameters, providers, endpoints, etc.
-        model = setup_llm(model_name, getattr(config, "models", {}) or {})
         # sets up the workspace, run config json, etc.
         workspace = setup_workspace(
             user_specified_workspace, project, model_name
         )
+        print(workspace)
+        print(user_specified_workspace)
 
         # --- decide which checkpoint to start from ---
         try:
@@ -1133,9 +1366,13 @@ def main(
                 save_run_meta(workspace, logo_created=True)
         # --------------------------------------------------------------------
 
+        models_cfg = getattr(config, "models", {}) or {}
+
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(
-            workspace, model
+            workspace=workspace,
+            model_choice=model_name,
+            models_cfg=models_cfg,
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
