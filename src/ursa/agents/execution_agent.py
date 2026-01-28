@@ -547,7 +547,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if tool_responses:
             return {"messages": tool_responses}
         else:
-            return None
+            return {}
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
