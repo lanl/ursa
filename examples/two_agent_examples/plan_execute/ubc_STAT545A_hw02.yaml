@@ -48,12 +48,12 @@ models:
         effort: low
     balanced:
       temperature: 0.2
-      max_completion_tokens: 8000
+      max_completion_tokens: 16000
       reasoning:
         effort: medium
     deep: 
       temperature: 0.2 
-      max_completion_tokens: 10000
+      max_completion_tokens: 50000
       reasoning: 
         effort: high
 
