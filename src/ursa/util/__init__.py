@@ -17,7 +17,9 @@ class Checkpointer:
         return SqliteSaver(conn)
 
     @classmethod
-    def from_path(cls, db_path: Path) -> SqliteSaver:
+    def from_path(
+        cls, db_path: Path, db_name: str = "checkpointer.db"
+    ) -> SqliteSaver:
         """Make checkpointer sqlite db.
 
         Args
@@ -26,5 +28,5 @@ class Checkpointer:
         """
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        conn = sqlite3.connect(str(db_path / db_name), check_same_thread=False)
         return SqliteSaver(conn)
