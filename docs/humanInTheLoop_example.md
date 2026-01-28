@@ -40,7 +40,7 @@ hypothesize  plan
 ```
 
 
-Some additional documentation on the URSA github repo: [LINK](github.com/lanl/ursa)
+Some additional documentation on the URSA github repo: [LINK](https://github.com/lanl/ursa)
 with more to come.
 
 We should have an in-depth documentation for it, but right now it's documented a bit on the main README and through the help flags with the CLI call. 
