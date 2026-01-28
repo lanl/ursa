@@ -66,7 +66,7 @@ for i, step_prompt in enumerate(problem):
 
     console.print(
         Panel(
-            result["messages"][-1].content,
+            result["messages"][-1].text,
             title=f"Step {i + 1} Final Response",
             border_style="orange3",
         )

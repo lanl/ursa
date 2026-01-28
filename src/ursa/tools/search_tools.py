@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from langchain.tools import ToolRuntime, tool
@@ -40,10 +41,13 @@ def run_arxiv_search(
         console.print(f"[bold cyan]Searching ArXiv for: [default]{query}")
         assert isinstance(query, str)
 
-        arxiv_result = agent.invoke(
-            arxiv_search_query=query,
-            context=prompt,
-        )
+        arxiv_result = asyncio.run(
+            agent.ainvoke(
+                arxiv_search_query=query,
+                context=prompt,
+            )
+        )["final_summary"]
+
         console.print(
             Panel(
                 f"{arxiv_result}",
@@ -91,10 +95,13 @@ def run_web_search(
         console.print(f"[bold cyan]Searching Web for: [default]{query}")
         assert isinstance(query, str)
 
-        web_result = agent.invoke(
-            query=query,
-            context=prompt,
-        )
+        web_result = asyncio.run(
+            agent.ainvoke(
+                query=query,
+                context=prompt,
+            )
+        )["final_summary"]
+
         console.print(
             Panel(
                 f"{web_result}",
@@ -144,10 +151,13 @@ def run_osti_search(
         console.print(f"[bold cyan]Searching OSTI.gov for: [default]{query}")
         assert isinstance(query, str)
 
-        osti_result = agent.invoke(
-            query=query,
-            context=prompt,
-        )
+        osti_result = asyncio.run(
+            agent.ainvoke(
+                query=query,
+                context=prompt,
+            )
+        )["final_summary"]
+
         console.print(
             Panel(
                 f"[cyan on black]{osti_result}",

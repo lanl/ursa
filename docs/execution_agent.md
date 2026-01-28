@@ -14,7 +14,7 @@ agent = ExecutionAgent()
 result = agent("Write and execute a python script to print the first 10 integers.")
 
 # Access the final response
-print(result["messages"][-1].content)
+print(result["messages"][-1].text)
 ```
 
 ## Parameters

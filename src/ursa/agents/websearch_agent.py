@@ -8,6 +8,7 @@ from langchain.agents import create_agent
 from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage, SystemMessage
 from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState
 from pydantic import Field
@@ -63,10 +64,12 @@ class WebSearchAgentLegacy(BaseAgent):
         translated = [SystemMessage(content=reflection_prompt)] + state[
             "messages"
         ]
-        res = self.llm.invoke(
-            translated, {"configurable": {"thread_id": self.thread_id}}
+        res = StrOutputParser().invoke(
+            self.llm.invoke(
+                translated, {"configurable": {"thread_id": self.thread_id}}
+            )
         )
-        return {"messages": [HumanMessage(content=res.content)]}
+        return {"messages": [HumanMessage(content=res)]}
 
     def _response_node(self, state: WebSearchState) -> WebSearchState:
         if not self.has_internet:
@@ -80,8 +83,10 @@ class WebSearchAgentLegacy(BaseAgent):
             }
 
         messages = state["messages"] + [SystemMessage(content=summarize_prompt)]
-        response = self.llm.invoke(
-            messages, {"configurable": {"thread_id": self.thread_id}}
+        response = StrOutputParser().invoke(
+            self.llm.invoke(
+                messages, {"configurable": {"thread_id": self.thread_id}}
+            )
         )
 
         urls_visited = []
@@ -89,7 +94,7 @@ class WebSearchAgentLegacy(BaseAgent):
             if message.model_dump().get("tool_calls", []):
                 if "url" in message.tool_calls[0]["args"]:
                     urls_visited.append(message.tool_calls[0]["args"]["url"])
-        return {"messages": [response.content], "urls_visited": urls_visited}
+        return {"messages": [response], "urls_visited": urls_visited}
 
     def _check_for_internet(self, url, timeout=2):
         """
@@ -157,12 +162,10 @@ def process_content(
     Carefully summarize the content in full detail, given the following context:
     {context}
     """
-    summarized_information = (
-        state["model"]
-        .invoke(
+    summarized_information = StrOutputParser().invoke(
+        state["model"].invoke(
             content_prompt, {"configurable": {"thread_id": state["thread_id"]}}
         )
-        .content
     )
     return summarized_information
 
@@ -174,6 +177,6 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 def should_continue(state: WebSearchState):
     if len(state["messages"]) > (state.get("max_websearch_steps", 100) + 3):
         return "_response_node"
-    if "[APPROVED]" in state["messages"][-1].content:
+    if "[APPROVED]" in state["messages"][-1].text:
         return "_response_node"
     return "_create_react"

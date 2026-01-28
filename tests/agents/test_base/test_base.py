@@ -206,3 +206,27 @@ def test_metrics_toggle_off(tmpdir: Path, monkeypatch, pricing_file: Path):
     # No files should be created
     files = list(Path(agent.telemetry.output_dir).glob("*.json"))
     assert files == []
+
+
+async def test_chat_interface(tmpdir: Path):
+    agent = Agent(
+        llm=TinyCountingModel(),
+        enable_metrics=False,  # <-- disable metrics
+        autosave_metrics=True,  # ignored when metrics disabled
+        workspace=tmpdir,
+    )
+
+    # Convert a string to a query
+    state = agent.format_query("Hello")
+    assert "messages" in state
+
+    state = await agent.ainvoke(state)
+    result = agent.format_result(state)
+    assert isinstance(result, str)
+
+    # Repeat to check state option
+    state = agent.format_query("Who are you?", state=state)
+    assert "messages" in state
+    state = await agent.ainvoke(state)
+    result = agent.format_result(state)
+    assert isinstance(result, str)

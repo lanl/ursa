@@ -1,11 +1,12 @@
+from textwrap import dedent
 from typing import Annotated, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
-from typing_extensions import Required  # noqa
 
 from ursa.prompt_library.planning_prompts import (
     planner_prompt,
@@ -35,16 +36,48 @@ class Plan(BaseModel):
         description="Ordered list of steps to solve the problem"
     )
 
+    def __str__(self):
+        plan = []
+        for id, step in enumerate(self.steps):
+            expected_outputs = [
+                f"- {output}" for output in step.expected_outputs
+            ]
+            expected_outputs = "\n".join(expected_outputs)
+            success_criteria = [
+                f"- {criterion}" for criterion in step.success_criteria
+            ]
+            success_criteria = "\n".join(success_criteria)
+
+            step_str = f"""
+            ## {id} -- {step.name}
+            Requires Code: {step.requires_code}
+
+            {step.description}
+
+            """
+            step_str = dedent(step_str)
+
+            step_str += "### Expected Outputs\n"
+            for output in step.expected_outputs:
+                step_str += f"- {output}\n"
+
+            step_str += "\n\n"
+            step_str += "### Success Criteria\n"
+            for criterion in step.success_criteria:
+                step_str += f"- {criterion}\n"
+
+            plan.append(step_str)
+
+        return "\n".join(plan)
+
 
 # planning state
 class PlanningState(TypedDict, total=False):
     """State dictionary for planning agent"""
 
-    messages: Annotated[
-        list, add_messages
-    ]  # Ordered steps in the solution plan
-    plan_steps: list[PlanStep]  # Plan in dictionary format
-    reflection_steps: Required[int]  # Number of reflection steps
+    plan: Plan
+    messages: Annotated[list, add_messages]
+    reflection_steps: int
 
 
 class PlanningAgent(BaseAgent[PlanningState]):
@@ -61,6 +94,9 @@ class PlanningAgent(BaseAgent[PlanningState]):
         self.reflection_prompt = reflection_prompt
         self.max_reflection_steps = max_reflection_steps
 
+    def format_result(self, state: PlanningState) -> str:
+        return str(state["plan"])
+
     def generation_node(self, state: PlanningState) -> PlanningState:
         """
         Plan generation with structured output. Produces a JSON string in messages
@@ -68,8 +104,6 @@ class PlanningAgent(BaseAgent[PlanningState]):
         """
 
         print("PlanningAgent: generating . . .")
-        state.setdefault("reflection_steps", self.max_reflection_steps)
-
         messages = cast(list, state.get("messages"))
         if isinstance(messages[0], SystemMessage):
             messages[0] = SystemMessage(content=self.planner_prompt)
@@ -77,27 +111,14 @@ class PlanningAgent(BaseAgent[PlanningState]):
             messages = [SystemMessage(content=self.planner_prompt)] + messages
 
         structured_llm = self.llm.with_structured_output(Plan)
-        plan_obj = cast(
-            Plan,
-            structured_llm.invoke(
-                messages, self.build_config(tags=["planner"])
-            ),
-        )
-
-        try:
-            json_text = plan_obj.model_dump_json(indent=2)
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to serialize Plan object with Pydantic v2: {e}"
-            )
+        plan = cast(Plan, structured_llm.invoke(messages))
 
         return {
-            "messages": [AIMessage(content=json_text)],
-            "plan_steps": [
-                cast(PlanStep, step.model_dump()) for step in plan_obj.steps
-            ],
-            "reflection_steps": state["reflection_steps"],
+            "plan": plan,
+            "messages": [AIMessage(content=plan.model_dump_json())],
+            "reflection_steps": state.get(
+                "reflection_steps", self.max_reflection_steps
+            ),
         }
 
     def reflection_node(self, state: PlanningState) -> PlanningState:
@@ -109,12 +130,15 @@ class PlanningAgent(BaseAgent[PlanningState]):
             for msg in state["messages"][1:]
         ]
         translated = [SystemMessage(content=reflection_prompt)] + translated
-        res = self.llm.invoke(
-            translated,
-            self.build_config(tags=["planner", "reflect"]),
+        res = StrOutputParser().invoke(
+            self.llm.invoke(
+                translated,
+                self.build_config(tags=["planner", "reflect"]),
+            )
         )
         return {
-            "messages": [HumanMessage(content=res.content)],
+            "plan": state["plan"],
+            "messages": [HumanMessage(content=res)],
             "reflection_steps": state["reflection_steps"] - 1,
         }
 
@@ -140,21 +164,18 @@ class PlanningAgent(BaseAgent[PlanningState]):
 
 def _should_reflect(state: PlanningState):
     # Hit the reflection cap?
-    steps = state["reflection_steps"]
-    if steps == 0:
-        print("PlanningAgent: Reached reflection limit")
-        return "END"
-    else:
+    if state["reflection_steps"] > 0:
         return "reflect"
+
+    print("PlanningAgent: Reached reflection limit")
+    return "END"
 
 
 def _should_regenerate(state: PlanningState):
     reviewMaxLength = 0  # 0 = no limit, else some character limit like 300 (only used for console printing)
 
     # Latest reviewer output (if present)
-    last_content = (
-        state["messages"][-1].content if state.get("messages") else ""
-    )
+    last_content = state["messages"][-1].text if state.get("messages") else ""
 
     # Approved?
     if "[APPROVED]" in last_content:

@@ -2,7 +2,7 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Mapping, TypedDict
+from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
@@ -157,37 +157,6 @@ You are a materials-science assistant. Given the following metadata about a mate
         else:
             self.graph.set_entry_point("_fetch_node")
             self.graph.set_finish_point("_fetch_node")
-
-    def _invoke(
-        self,
-        inputs: Mapping[str, Any],
-        *,
-        summarize: bool | None = None,
-        recursion_limit: int = 1000,
-        **_,
-    ) -> str:
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-
-        if "query" not in inputs:
-            if "mp_query" in inputs:
-                # make a shallow copy and rename the key
-                inputs = dict(inputs)
-                inputs["query"] = inputs.pop("mp_query")
-            else:
-                raise KeyError(
-                    "Missing 'query' in inputs (alias 'mp_query' also accepted)."
-                )
-
-        result = self._action.invoke(inputs, config)
-
-        use_summary = self.summarize if summarize is None else summarize
-        return (
-            result.get("final_summary", "No summary generated.")
-            if use_summary
-            else "\n\nFinished Fetching Materials Database Information!"
-        )
 
 
 if __name__ == "__main__":

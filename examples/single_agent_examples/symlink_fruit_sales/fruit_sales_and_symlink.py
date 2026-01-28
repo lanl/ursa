@@ -106,12 +106,11 @@ def main(model_name: str):
 
         # Initialize the agent
         # no planning agent for this one - let's YOLO and go risk it
-        executor = ExecutionAgent(llm=model)
+        executor = ExecutionAgent(llm=model, workspace=workspace)
 
         final_results = executor.invoke(
             {
                 "messages": [HumanMessage(content=problem)],
-                "workspace": workspace,
                 "symlinkdir": symlinkdict,
             },
             config={
@@ -120,7 +119,7 @@ def main(model_name: str):
             },
         )
 
-        last_step_summary = final_results["messages"][-1].content
+        last_step_summary = final_results["messages"][-1].text
 
         render_session_summary(executor.thread_id)
 
