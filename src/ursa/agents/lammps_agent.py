@@ -8,6 +8,7 @@ import tiktoken
 from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END
 from rich.console import Console
 from rich.panel import Panel
@@ -15,6 +16,7 @@ from rich.rule import Rule
 from rich.syntax import Syntax
 
 from .base import BaseAgent
+from ursa.agents.execution_agent import ExecutionAgent
 
 working = True
 try:
@@ -66,6 +68,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         mpirun_cmd: str = "mpirun",
         tiktoken_model: str = "gpt-5-mini",
         max_tokens: int = 200000,
+        summarize_results: bool = True,
         **kwargs,
     ):
         if not working:
@@ -95,6 +98,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.mpirun_cmd = mpirun_cmd
         self.tiktoken_model = tiktoken_model
         self.max_tokens = max_tokens
+        self.summarize_results = summarize_results
 
         self.console = Console()
 
@@ -637,6 +641,28 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "input_script": new_input,
             "fix_attempts": state.get("fix_attempts", 0) + 1,
         }
+        
+
+    def _summarize(self, state: LammpsState) -> LammpsState:
+        self._section("Now handing things off to execution agent for summarization/visualization")
+        
+        executor = ExecutionAgent(llm=self.llm)
+        
+        exe_plan = f"""
+        You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
+        A LAMMPS simulation has been done and the output is located in the file 'log.lammps'.
+        Summarize the contents of this file in a markdown document. Include a plot, if relevent.
+        """
+
+        exe_results = executor.invoke({"messages": [HumanMessage(content=exe_plan)],"workspace": self.workspace})
+
+        for x in exe_results["messages"]:
+            print(x.content)
+            
+        return state
+
+    def _post_run(self, state: LammpsState) -> LammpsState:
+        return state
 
     def _build_graph(self):
         self.add_node(self._entry_router)
@@ -648,6 +674,8 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.add_node(self._author)
         self.add_node(self._run_lammps)
         self.add_node(self._fix)
+        self.add_node(self._post_run)
+        self.add_node(self._summarize)
 
         self.graph.set_entry_point("_entry_router")
 
@@ -705,8 +733,21 @@ class LammpsAgent(BaseAgent[LammpsState]):
             self._route_run,
             {
                 "need_fix": "_fix",
-                "done_success": END,
+                "done_success": "_post_run",
                 "done_failed": END,
             },
         )
+        
         self.graph.add_edge("_fix", "_run_lammps")
+
+        self.graph.add_conditional_edges(
+            "_post_run",
+            lambda _: "summarize" if self.summarize_results else "skip",
+            {
+                "summarize": "_summarize",
+                "skip": END,
+            },
+        )
+
+        self.graph.add_edge("_summarize", END)
+        

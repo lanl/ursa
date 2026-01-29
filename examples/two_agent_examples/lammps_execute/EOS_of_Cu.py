@@ -27,6 +27,7 @@ wf = LammpsAgent(
     workspace=workspace,
     lammps_cmd="lmp_mpi",
     mpirun_cmd="mpirun",
+    summarize_results=True,
 )
 
 with open("eos_template.txt", "r") as file:
