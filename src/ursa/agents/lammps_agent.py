@@ -6,17 +6,18 @@ from typing import Any, Optional, TypedDict
 
 import tiktoken
 from langchain.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 from langgraph.graph import END
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.syntax import Syntax
 
-from .base import BaseAgent
 from ursa.agents.execution_agent import ExecutionAgent
+
+from .base import BaseAgent
 
 working = True
 try:
@@ -641,24 +642,28 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "input_script": new_input,
             "fix_attempts": state.get("fix_attempts", 0) + 1,
         }
-        
 
     def _summarize(self, state: LammpsState) -> LammpsState:
-        self._section("Now handing things off to execution agent for summarization/visualization")
-        
+        self._section(
+            "Now handing things off to execution agent for summarization/visualization"
+        )
+
         executor = ExecutionAgent(llm=self.llm)
-        
+
         exe_plan = f"""
         You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
         A LAMMPS simulation has been done and the output is located in the file 'log.lammps'.
         Summarize the contents of this file in a markdown document. Include a plot, if relevent.
         """
 
-        exe_results = executor.invoke({"messages": [HumanMessage(content=exe_plan)],"workspace": self.workspace})
+        exe_results = executor.invoke({
+            "messages": [HumanMessage(content=exe_plan)],
+            "workspace": self.workspace,
+        })
 
         for x in exe_results["messages"]:
             print(x.content)
-            
+
         return state
 
     def _post_run(self, state: LammpsState) -> LammpsState:
@@ -737,7 +742,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
                 "done_failed": END,
             },
         )
-        
+
         self.graph.add_edge("_fix", "_run_lammps")
 
         self.graph.add_conditional_edges(
@@ -750,4 +755,3 @@ class LammpsAgent(BaseAgent[LammpsState]):
         )
 
         self.graph.add_edge("_summarize", END)
-        
