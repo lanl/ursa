@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
 from dataclasses import dataclass, field
+=======
+import os
+
+# needed for SSL / PKI verifications, if the user needs that
+import ssl
+>>>>>>> 9b0fcdd (improvements to support some SSL things as well)
 from typing import Any
 
+import httpx
 from langchain.chat_models import init_chat_model
 
 """
@@ -57,6 +65,22 @@ def _mask_secret(value: Any) -> str:
     return "[REDACTED]"
 
 
+def _json_safe(obj: Any) -> Any:
+    """Best-effort conversion to something json.dumps can handle."""
+    # Primitives are fine
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    # Common containers
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_json_safe(v) for v in obj]
+    # Fallback: readable repr (keeps type info)
+    return f"<{obj.__class__.__name__}>"
+
+
 def _sanitize_for_logging(obj: Any) -> Any:
     if isinstance(obj, dict):
         out = {}
@@ -68,7 +92,7 @@ def _sanitize_for_logging(obj: Any) -> Any:
         return out
     if isinstance(obj, list):
         return [_sanitize_for_logging(v) for v in obj]
-    return obj
+    return _json_safe(obj)
 
 
 @dataclass
@@ -201,6 +225,36 @@ def _print_llm_init_banner(
             print(banner_text)
     else:
         print(banner_text)
+
+
+def _maybe_add_system_trust_httpx_clients(
+    provider: str, provider_extra: dict
+) -> dict:
+    """
+    If we're using OpenAI-compatible provider + running on macOS corporate PKI,
+    use system trust store via truststore to avoid certifi/conda OpenSSL issues.
+    """
+    if provider != "openai":
+        return provider_extra
+
+    # Don't override if caller already provided custom clients
+    if "http_client" in provider_extra or "http_async_client" in provider_extra:
+        return provider_extra
+
+    try:
+        import truststore  # pip install truststore
+    except Exception:
+        return provider_extra
+
+    ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    # Provide both sync + async so invoke() and ainvoke() both work.
+    provider_extra = dict(provider_extra or {})
+    provider_extra["http_client"] = httpx.Client(verify=ctx, trust_env=False)
+    provider_extra["http_async_client"] = httpx.AsyncClient(
+        verify=ctx, trust_env=False
+    )
+    return provider_extra
 
 
 # ---------------------------------------------------------------------
