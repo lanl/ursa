@@ -1,0 +1,114 @@
+project: hello_world
+
+# omit if not needed
+# this is where you might link in a local dataset you want the agents
+# to have access to, or a program (simulation, executable, etc) or
+# libraries you have locally that you want the agent to use.
+# to be clear, you'd then tell the agent (below) that it has
+# access to the files you describe in 'dest' in the symlink
+# below.
+# symlink:
+#  source: ./some-destination-directory
+#  dest: the-directory-name-symlinked-for-this-instance-to-see
+
+# this task is easy enough that you should consider running it with a low
+# quality / fast model like o3-mini
+# this demo isn't intended to give you really high quality results, but
+# o3-mini doesn't always work for agentic tasks like URSA, so don't be 
+# surprised if you need to pick a slower, higher quality model - these
+# things are stochastic after all :).
+models:
+  choices:
+    - openai:gpt-5.2
+    - openai:gpt-5
+    - openai:o3
+    - openai:o3-mini
+    - my_endpoint:openai/gpt-oss-120b # <— example external endpoint + model
+  default: openai:gpt-5
+
+  # map provider aliases to connection details
+  providers:
+    openai:
+      model_provider: openai             # LangChain provider to use
+      base_url: null                     # use OpenAI default
+      api_key_env: OPENAI_API_KEY
+
+    my_endpoint:
+      model_provider: openai             # uses ChatOpenAI client under the hood
+      base_url: "https://some.example.model.endpoint.url/vllm/v1" 
+      api_key_env: SOME_API_KEY_HERE_THIS_PROVIDER_WILL_LOOK_FOR_IN_YOUR_USER_ENVIRONMENT
+
+  # this profiles section is optional, if you don't include it the LLM model will manage
+  # defaults, which might not be what you want.
+  profiles:
+    fast:
+      # i'm not confident temperature is even used in reasoning models anymore, i think this
+      # is entirely ignored
+      temperature: 0.2
+      max_completion_tokens: 6000
+      reasoning:
+        effort: low
+    balanced:
+      temperature: 0.2
+      max_completion_tokens: 15000
+      reasoning:
+        effort: medium
+    deep: 
+      temperature: 0.2 
+      max_completion_tokens: 50000
+      reasoning: 
+        effort: high
+
+  # defaults are the, well, default profiles
+  defaults: 
+    profile: fast 
+    params: {} # optional extra kwargs always applied
+    # Per-agent overrides (planner vs executor) 
+    
+  agents: 
+    planner: 
+      profile: fast 
+    executor: 
+      profile: fast
+
+# planning_mode must either be 'single' or 'heirarchical'
+# single is one pass through planning and then it executes each
+#   step of the plan sequentially
+# heirarchical starts w/ a single plan, and THEN, for each step it
+#   plans that step again (effectively steps 1-10 might turn into
+#   1.1 -> 1.5, 2.1 -> 2.3, . . . 10.0 -> 10.7).  This can both
+#   increase runtime and result quality substantially
+# if you leave it empty, it will just prompt you
+planning_mode: # single
+
+# logos are a fun little thing where we use a vision model to generate 'logos' for your
+# project based on the project name and the randomly generated workspace name
+# 'scene' is a wide scene and 'stickers' are a logo-like mascot sticker for your
+# project.  
+logo:
+  enabled: false    # on/off
+  scene: random     # e.g., noir, sci-fi, horror, fantasy, etc. ("random" by default)
+  stickers: true    # also make sticker variants
+  n: 2              # how many variants for each batch
+  model: openai:gpt-image-1 # warning: most 'vision' models do not support image *GENERATION*, this one does
+
+
+problem: |
+  * TITLE: Hello World 
+
+  Your task is to write a Python hello world file.  
+
+  You are to use the Rich console functionality to write out a Hello World
+  example.  It should (1) demonstrate some features of Rich (at least several,
+  including colors), (2) include at least 1 emoji (bonus points for more, if
+  you can make them relevant), and (3) include some sort of ASCII art.
+  Finally (4) include some sort of meme or humor into this, at your
+  discretion.  Dealer's Choice!
+
+  CONSTRAINTS:
+     * There should be a single hello_world.py file created and modified
+       if necessary.
+     * You must run hello_world.py, which will display to the user.
+     * Do not install any additional packages.
+     * Do not use git for any reason.
+     * Make sure you make it colorful and fun!

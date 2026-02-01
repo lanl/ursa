@@ -2,11 +2,27 @@ import ast
 from datetime import datetime
 from operator import add, or_
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict, cast
+from typing import (
+    Annotated,
+    Literal,
+    Optional,
+    TypedDict,
+    cast,
+)
 
 from langchain.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.tools import BaseTool
+from langchain_core.tools import tool as lc_tool
+from langgraph.prebuilt import InjectedState, ToolNode
+
+from ursa.tools.read_file_tool import read_file
 
 try:
     from ddgs import DDGS  # pip install duckduckgo-search
@@ -14,20 +30,46 @@ except Exception:
     DDGS = None
 
 
+# from langchain_core.runnables.graph import MermaidDrawMethod
+from ursa.agents.base import BaseAgent
 from ursa.prompt_library.hypothesizer_prompts import (
     competitor_prompt,
     critic_prompt,
     hypothesizer_prompt,
 )
 
-# from langchain_core.runnables.graph import MermaidDrawMethod
-from .base import BaseAgent
-
 # --- ANSI color codes ---
 GREEN = "\033[92m"
 BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
+
+
+# add this as a LangChain (lc) tool so the LLM can figure out what docs there are if it wants to
+@lc_tool(
+    description="List filenames (and sizes) in input_docs_dir (or workspace)."
+)
+def list_input_docs(state: Annotated[dict, InjectedState]) -> str:
+    from pathlib import Path
+
+    root = state.get("input_docs_dir") or state.get("workspace")
+    if not root:
+        return "[Error]: no input_docs_dir or workspace set in state."
+
+    p = Path(root).resolve()
+    if not p.exists() or not p.is_dir():
+        return f"[Error]: input_docs_dir not a directory: {p}"
+
+    rows = []
+    for f in sorted([x for x in p.iterdir() if x.is_file()]):
+        try:
+            rows.append(f"{f.name} ({f.stat().st_size} bytes)")
+        except Exception:
+            rows.append(f"{f.name} (size unknown)")
+    ret = "\n".join(rows) if rows else "No files found."
+
+    # print(f"@lc_tool:list_input_docs() ->\n{ret}")
+    return ret
 
 
 # Define our state schema
@@ -37,24 +79,166 @@ class HypothesizerState(TypedDict, total=False):
     current_iteration: int
     max_iterations: int
     agent1_solution: Annotated[list[str], add]
-    agent2_critiques: list[str]
-    agent3_perspectives: list[str]
+    agent2_critiques: Annotated[list[str], add]
+    agent3_perspectives: Annotated[list[str], add]
     solution: str
     summary_report: str
     visited_sites: Annotated[set[str], or_]
+    input_docs_dir: str
+    use_search: bool
 
 
 class HypothesizerAgent(BaseAgent[HypothesizerState]):
     state_type = HypothesizerState
 
-    def __init__(self, llm: BaseChatModel, max_iterations: int = 3, **kwargs):
-        super().__init__(llm, **kwargs)
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        max_iterations: int = 3,
+        extra_tools: Optional[list[BaseTool] | None] = None,
+        **kwargs,
+    ):
+        super().__init__(llm=llm, **kwargs)
+        default_tools = [read_file, list_input_docs]
+        if extra_tools:
+            default_tools.extend(extra_tools)
+
+        # ---- coerce any plain callables into BaseTool via lc_tool ----
+        coerced_tools: list[BaseTool] = []
+        for t in default_tools:
+            if isinstance(t, BaseTool):
+                coerced_tools.append(t)
+            elif callable(t):
+                # wrap plain function into a LangChain-style tool
+                coerced_tools.append(lc_tool(t))
+            else:
+                raise TypeError(f"Unsupported tool type: {type(t)} for {t}")
+
+        # pass tools to BaseAgent like ExecutionAgent does
+        self.tools = coerced_tools
+
+        # Bind LLM to tools so it can emit tool calls
+        # (this returns a tool-capable llm wrapper)
+        try:
+            self.llm = self.llm.bind_tools(self.tools)
+        except Exception:
+            # fallback: some LLMs/versions want an iterable of tool objects
+            self.llm = self.llm.bind_tools(self.tools)
+
+        self.tool_node = ToolNode(self.tools)
+
+        # bind tools to the LLM for function/tool calling
+        self.llm_with_tools = llm.bind_tools(self.tools)
+
+        # debug print tools enabled
+        print("[HypothesizerAgent] Tools enabled:")
+        for t in self.tools:
+            try:
+                print(f"  - {t.name}")
+            except Exception:
+                print(f"  - (unnamed tool) {t}")
+
+        # keep existing setup
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
         self.competitor_prompt = competitor_prompt
-        self.search_tool = DDGS()
+        # Only create DDGS if the import worked - this helps w/ offline mode too
+        self.search_tool = DDGS() if DDGS else None
         self.strllm = self.llm | StrOutputParser()
         self.max_iterations = max_iterations
+
+    def _content_to_text(self, content) -> str:
+        """OpenAI Responses models may return list-of-blocks; normalize to plain text."""
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                # common shapes: {"type": "output_text", "text": "..."} or {"type": "...", ...}
+                if isinstance(block, dict):
+                    t = block.get("text")
+                    if isinstance(t, str) and t.strip():
+                        parts.append(t)
+                elif isinstance(block, str):
+                    if block.strip():
+                        parts.append(block)
+                else:
+                    # last resort
+                    s = str(block)
+                    if s.strip():
+                        parts.append(s)
+            return "\n".join(parts)
+        # fallback
+        return str(content)
+
+    async def _ainvoke_text_with_tools(
+        self,
+        messages: list[BaseMessage],
+        state: HypothesizerState,
+        max_rounds: int = 8,
+    ) -> str:
+        tool_state = dict(state)
+
+        if state.get("input_docs_dir"):
+            tool_state["workspace"] = state["input_docs_dir"]
+        elif "workspace" not in tool_state and getattr(self, "workspace", None):
+            tool_state["workspace"] = str(self.workspace)
+
+        for _ in range(max_rounds):
+            ai_msg = await self.llm_with_tools.ainvoke(messages)
+            messages.append(ai_msg)
+
+            tool_calls = getattr(ai_msg, "tool_calls", None)
+            print("[HypothesizerAgent] tool_calls raw:", tool_calls)
+            if not tool_calls:
+                return self._content_to_text(
+                    getattr(ai_msg, "content", None)
+                ).strip()
+
+            def _tc_name(tc):
+                if isinstance(tc, dict):
+                    return tc.get("name")
+                return (
+                    getattr(tc, "name", None)
+                    or getattr(tc, "tool", None)
+                    or str(tc)
+                )
+
+            print(
+                f"[HypothesizerAgent] Tool calls requested: {[_tc_name(tc) for tc in tool_calls]}"
+            )
+
+            invoke_state = dict(tool_state)
+            invoke_state["messages"] = list(messages)
+
+            tool_result = await self.tool_node.ainvoke(invoke_state)
+
+            # ToolNode returns ToolMessages that must be appended verbatim
+            if isinstance(tool_result, dict) and "messages" in tool_result:
+                returned_msgs = tool_result["messages"]
+            elif isinstance(tool_result, list):
+                returned_msgs = tool_result
+            else:
+                returned_msgs = []
+
+            print(
+                "[HypothesizerAgent] ToolNode returned:",
+                [type(m).__name__ for m in returned_msgs],
+            )
+
+            for m in returned_msgs:
+                if isinstance(m, ToolMessage):
+                    messages.append(m)
+                else:
+                    # fallback only (should be rare)
+                    messages.append(HumanMessage(content=f"[Tool output]\n{m}"))
+
+        print(
+            "[HypothesizerAgent] Tool loop max rounds reached without final text."
+        )
+        return ""
 
     def _normalize_inputs(self, inputs) -> HypothesizerState:
         if isinstance(inputs, str):
@@ -89,10 +273,38 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
 
         return visited_sites
 
+    def _describe_input_docs(self, input_dir: str | Path) -> str:
+        """
+        Return fingerprints for ALL files in input_dir (no content).
+        This nudges the LLM to use tools to fetch content selectively.
+        """
+        import hashlib
+        from pathlib import Path
+
+        p = Path(input_dir)
+        if not p.exists() or not p.is_dir():
+            return ""
+
+        lines = []
+        for fp in sorted([f for f in p.iterdir() if f.is_file()]):
+            try:
+                b = fp.read_bytes()
+                sha = hashlib.sha256(b).hexdigest()[:8]
+                size = fp.stat().st_size
+            except Exception:
+                sha = "????????"
+                size = -1
+            lines.append(f"- {fp.name} | bytes={size} | sha256_8={sha}")
+
+        return (
+            "DOC_FINGERPRINTS (files available via tools; content not preloaded):\n"
+            + "\n".join(lines)
+        )
+
     async def agent1_generate_solution(
         self, state: HypothesizerState
     ) -> HypothesizerState:
-        """Agent 1: Hypothesizer."""
+        """Agent 1: Hypothesizer. Can read local input docs if state['input_docs_dir'] is provided."""
         print(
             f"[iteration {state['current_iteration']}] Entering agent1_generate_solution. Iteration: {state['current_iteration']}"
         )
@@ -100,14 +312,16 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         current_iter = state["current_iteration"]
         user_content = f"Question: {state['question']}\n"
 
+        # Include previous iteration data if present
         if current_iter > 0:
-            user_content += (
-                f"\nPrevious solution: {state['agent1_solution'][-1]}"
-            )
-            user_content += f"\nCritique: {state['agent2_critiques'][-1]}"
-            user_content += (
-                f"\nCompetitor perspective: {state['agent3_perspectives'][-1]}"
-            )
+            if state.get("agent1_solution"):
+                user_content += (
+                    f"\nPrevious solution: {state['agent1_solution'][-1]}"
+                )
+            if state.get("agent2_critiques"):
+                user_content += f"\nCritique: {state['agent2_critiques'][-1]}"
+            if state.get("agent3_perspectives"):
+                user_content += f"\nCompetitor perspective: {state['agent3_perspectives'][-1]}"
 
             user_content += (
                 "\n\n**You must explicitly list how this new solution differs from the previous solution,** "
@@ -117,36 +331,76 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         else:
             user_content += "Research this problem and generate a solution."
 
-        search_query = await self.strllm.ainvoke(
-            f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
+        user_content += (
+            "\n\nTOOLING RULES:\n"
+            "- You have tools: list_input_docs and read_file.\n"
+            "- Before doing anything, be sure to call list_input_docs to figure out what is there.  Only after that, use read_file"
+            "  on relevant docs."
+            "- Before citing or relying on ANY local file content, you MUST call read_file on that file.\n"
+            "- If you are unsure what files exist, call list_input_docs first.\n"
+            "- Read only the minimum set of files needed (start with README if present).\n"
+            "- If a PDF looks relevant, explicitly read it with read_file.\n"
         )
-        if '"' in search_query:
-            search_query = search_query.split('"')[1]
-        raw_search_results = self.search_tool.text(
-            search_query or state["question"]
-        )
-        user_content += f"\nSearch results: {raw_search_results}"
 
-        # Parse the results if possible, so we can collect URLs
-        visited_sites = self.parse_visited_sites(raw_search_results)
+        # Option A: include local documents if provided
+        input_docs_dir = state.get("input_docs_dir")
+        docs_text = ""
+        if input_docs_dir:
+            fp_text = self._describe_input_docs(input_docs_dir)
+            if fp_text:
+                user_content += f"\n\nLOCAL FILES AVAILABLE (use tools to read):\n{fp_text}\n"
 
-        # Provide a system message to define this agent's role
+        # Option B: optionally run a short web search if requested and search tool available
+        use_search = state.get(
+            "use_search", False
+        )  # default False for local-doc workflows
+        search_query = ""
+        visited_sites = set()
+        if use_search and getattr(self, "search_tool", None):
+            # Ask the LLM to craft a compact search query
+            search_query = await self.strllm.ainvoke(
+                f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
+            )
+            if '"' in (search_query or ""):
+                # strip quoted part if model returns something like: "query here"
+                search_query = (
+                    search_query.split('"')[1]
+                    if '"' in search_query
+                    else search_query
+                )
+            raw_search_results = self.search_tool.text(
+                search_query or state["question"]
+            )
+            user_content += f"\n\nSearch results: {raw_search_results}"
+            visited_sites = self.parse_visited_sites(raw_search_results)
+        else:
+            # If not searching, tack on a short instruction letting the LLM know it should rely on local docs
+            if docs_text:
+                user_content += "\n\nNOTE: Use ONLY the local documents provided above for evidence and context unless asked otherwise."
+            else:
+                user_content += "\n\nNOTE: No local documents provided and web search disabled; rely on model knowledge."
+
+        # Provide a system message to define this agent's role (same as before)
         messages = [
             SystemMessage(content=self.hypothesizer_prompt),
             HumanMessage(content=user_content),
         ]
-        solution = await self.strllm.ainvoke(messages)
+        # solution = await self.strllm.ainvoke(messages)
+        solution = await self._ainvoke_text_with_tools(messages, state)
 
         # Print the entire solution in green
         print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
         print(
             f"[iteration {state['current_iteration']}] Exiting agent1_generate_solution."
         )
-        return {
+
+        out = {
             "agent1_solution": [solution],
             "question_search_query": search_query,
             "visited_sites": visited_sites,
         }
+
+        return out
 
     async def agent2_critique(
         self, state: HypothesizerState
@@ -163,17 +417,34 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "Provide a detailed critique of this solution. Identify potential flaws, assumptions, and areas for improvement."
         )
 
-        fact_check_query = f"fact check {state['question_search_query']} solution effectiveness"
+        user_content += (
+            "\n\nYou have tools to list and read local documents. "
+            "If any claim in the proposed solution depends on the documents, "
+            "you MUST verify by reading the relevant file sections and cite them."
+        )
 
-        fact_check_results = self.search_tool.text(fact_check_query)
-        visited_sites = self.parse_visited_sites(fact_check_results)
-        user_content += f"\nFact check results: {fact_check_results}"
+        use_search = bool(state.get("use_search", False))
+        visited_sites = set()
+
+        if use_search and getattr(self, "search_tool", None):
+            try:
+                fact_check_query = f"fact check {state.get('question_search_query', '')} solution effectiveness"
+                fact_check_results = self.search_tool.text(fact_check_query)
+                visited_sites = self.parse_visited_sites(fact_check_results)
+                user_content += f"\nFact check results: {fact_check_results}"
+            except Exception as e:
+                user_content += (
+                    f"\nNOTE: Web search failed ({type(e).__name__}: {e}). "
+                    "Proceeding without web results."
+                )
+        else:
+            user_content += "\nNOTE: Web search disabled; critique must rely on local docs + reasoning only."
 
         messages = [
             SystemMessage(content=self.critic_prompt),
             HumanMessage(content=user_content),
         ]
-        critique = await self.strllm.ainvoke(messages)
+        critique = await self._ainvoke_text_with_tools(messages, state)
 
         # Print the entire critique in blue
         print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
@@ -203,19 +474,37 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "Simulate how a competitor, government agency, or other stakeholder might respond to this solution."
         )
 
+        user_content += (
+            "\n\nYou have tools to list and read local documents. "
+            "Use them to ground the stakeholder response in the provided materials."
+        )
+
         competitor_search_query = (
             f"competitor responses to {state['question_search_query']}"
         )
 
-        competitor_info = self.search_tool.text(competitor_search_query)
-        visited_sites = self.parse_visited_sites(competitor_info)
-        user_content += f"\nCompetitor information: {competitor_info}"
+        use_search = bool(state.get("use_search", False))
+        visited_sites = set()
+
+        if use_search and getattr(self, "search_tool", None):
+            try:
+                competitor_search_query = f"competitor responses to {state.get('question_search_query', '')}"
+                competitor_info = self.search_tool.text(competitor_search_query)
+                visited_sites = self.parse_visited_sites(competitor_info)
+                user_content += f"\nCompetitor information: {competitor_info}"
+            except Exception as e:
+                user_content += (
+                    f"\nNOTE: Web search failed ({type(e).__name__}: {e}). "
+                    "Proceeding without web info."
+                )
+        else:
+            user_content += "\nNOTE: Web search disabled; simulate stakeholder reaction without external web info."
 
         messages = [
             SystemMessage(content=self.competitor_prompt),
             HumanMessage(content=user_content),
         ]
-        perspective = await self.strllm.ainvoke(messages)
+        perspective = await self._ainvoke_text_with_tools(messages, state)
 
         # Print the entire perspective in red
         print(
@@ -528,7 +817,7 @@ if __name__ == "__main__":
         "agent3_perspectives": [],
         "solution": "",
         "summary_report": "",
-        "visited_sites": [],
+        "visited_sites": set(),
     }
 
     print("Invoking the graph...")
