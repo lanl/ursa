@@ -18,21 +18,36 @@ def _pdf_page_count(path: str) -> int:
         return 0
 
 
-def _ocr_to_searchable_pdf(src_pdf: str, out_pdf: str) -> None:
-    cmd = [
-        "ocrmypdf",
-        "--skip-text",
-        "--rotate-pages",
-        "--deskew",
-        "--clean",
-        src_pdf,
-        out_pdf,
-    ]
+def _ocr_to_searchable_pdf(
+    src_pdf: str, out_pdf: str, *, mode: str = "skip"
+) -> None:
+    # mode:
+    #  - "skip":  only OCR pages that look like they need it (your current behavior)
+    #  - "force": rasterize + OCR everything (fixes vector/outlined “no images” PDFs)
+    cmd = ["ocrmypdf", "--rotate-pages", "--deskew", "--clean"]
+
+    if mode == "force":
+        cmd += ["--force-ocr"]
+    else:
+        cmd += ["--skip-text"]
+
+    # Optional: dump a sidecar text file for debugging confidence
+    if os.getenv("READ_FILE_OCR_SIDECAR", "0").lower() in ("1", "true", "yes"):
+        cmd += ["--sidecar", out_pdf + ".txt"]
+
+    cmd += [src_pdf, out_pdf]
+
+    # Don’t swallow stderr/stdout when debugging
+    debug = os.getenv("READ_FILE_OCR_DEBUG", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     subprocess.run(
         cmd,
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=None if debug else subprocess.PIPE,
+        stderr=None if debug else subprocess.PIPE,
         text=True,
     )
 
@@ -76,22 +91,54 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
 
         if ocr_enabled and pages >= min_pages and len(text) < min_chars:
             src = Path(full_filename)
-            ocr_pdf = str(src.with_suffix(src.suffix + ".ocr.pdf"))
 
-            # cache if already OCR’d and up-to-date
+            mode_env = os.getenv("READ_FILE_OCR_MODE", "auto").lower()
+            force_if_still_low = os.getenv(
+                "READ_FILE_OCR_FORCE_IF_STILL_LOW", "1"
+            ).lower() in ("1", "true", "yes")
+
+            # First pass (skip-text) unless user forces always-force
+            first_mode = "force" if mode_env == "force" else "skip"
+            ocr_pdf = str(
+                src.with_suffix(src.suffix + f".ocr.{first_mode}.pdf")
+            )
+
             if not os.path.exists(ocr_pdf) or os.path.getmtime(
                 ocr_pdf
             ) < os.path.getmtime(full_filename):
                 print(
-                    f"[OCR]: low extracted text ({len(text)} chars, {pages} pages) -> {ocr_pdf}"
+                    f"[OCR]: mode={first_mode} ({len(text)} chars, {pages} pages) -> {ocr_pdf}"
                 )
-                _ocr_to_searchable_pdf(full_filename, ocr_pdf)
+                _ocr_to_searchable_pdf(full_filename, ocr_pdf, mode=first_mode)
             else:
                 print(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
 
             text2 = read_pdf_text(ocr_pdf) or ""
             if len(text2) > len(text):
                 text = text2
+
+            # Second pass: if still low and we weren’t already forcing, try force-ocr
+            if (
+                force_if_still_low
+                and mode_env != "force"
+                and len(text) < min_chars
+            ):
+                force_pdf = str(src.with_suffix(src.suffix + ".ocr.force.pdf"))
+                if not os.path.exists(force_pdf) or os.path.getmtime(
+                    force_pdf
+                ) < os.path.getmtime(full_filename):
+                    print(
+                        f"[OCR]: still low after skip-text; retrying with force-ocr -> {force_pdf}"
+                    )
+                    _ocr_to_searchable_pdf(
+                        full_filename, force_pdf, mode="force"
+                    )
+                else:
+                    print(f"[OCR]: using cached force OCR PDF -> {force_pdf}")
+
+                text3 = read_pdf_text(force_pdf) or ""
+                if len(text3) > len(text):
+                    text = text3
 
         return text
 
