@@ -181,12 +181,36 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
     ) -> str:
         tool_state = dict(state)
 
+        def _dump_messages(tag: str) -> None:
+            from langchain_core.messages import (
+                AIMessage,
+                ToolMessage,
+            )
+
+            print(f"\n=== MESSAGE DUMP: {tag} ===")
+            for i, m in enumerate(messages):
+                t = type(m).__name__
+                role = getattr(m, "type", None) or getattr(m, "role", None)
+                print(f"{i:02d} {t} role={role}")
+
+                if isinstance(m, AIMessage):
+                    tc = getattr(m, "tool_calls", None)
+                    print("   tool_calls:", tc)
+
+                if isinstance(m, ToolMessage):
+                    print("   tool_call_id:", getattr(m, "tool_call_id", None))
+                    c = getattr(m, "content", None)
+                    print("   content_type:", type(c).__name__)
+                    s = c if isinstance(c, str) else str(c)
+                    print("   content_preview:", s[:200].replace("\n", "\\n"))
+
         if state.get("input_docs_dir"):
             tool_state["workspace"] = state["input_docs_dir"]
         elif "workspace" not in tool_state and getattr(self, "workspace", None):
             tool_state["workspace"] = str(self.workspace)
 
         for _ in range(max_rounds):
+            _dump_messages("before llm_with_tools.ainvoke")
             ai_msg = await self.llm_with_tools.ainvoke(messages)
             messages.append(ai_msg)
 
@@ -234,6 +258,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
                 else:
                     # fallback only (should be rare)
                     messages.append(HumanMessage(content=f"[Tool output]\n{m}"))
+            _dump_messages("after tool results appended")
 
         print(
             "[HypothesizerAgent] Tool loop max rounds reached without final text."
