@@ -100,3 +100,7 @@ shell:
 pygrep pattern:
     conda run --live-stream -n base watch \
         grep --exclude-dir=__pycache__ --exclude-dir=.venv -r '{{ pattern }}'
+
+[no-cd]
+python:
+    uv run ipython --no-autoindent
