@@ -1,21 +1,22 @@
 import argparse
+import asyncio
 
 # needed for checkpoint / restart
 import hashlib
 import importlib
 import json
 import os
-import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
 
+import aiosqlite
 import randomname
 import yaml
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 # rich console stuff for beautification
 from rich import get_console
@@ -54,7 +55,7 @@ def _extract_values_from_checkpoint_tuple(cp_tuple) -> dict | None:
     return values or None
 
 
-def load_latest_planner_state_from_sqlite(saver, thread_id: str):
+async def load_latest_planner_state_from_sqlite(saver, thread_id: str):
     """
     Try to fetch the latest checkpoint for this thread from the SqliteSaver.
     Returns (values_dict | None, resumed_cfg | None, debug_msg)
@@ -62,7 +63,7 @@ def load_latest_planner_state_from_sqlite(saver, thread_id: str):
     base_cfg = {"configurable": {"thread_id": thread_id}}
     # 1) Fast path: get_tuple (latest for thread)
     try:
-        tup = saver.get_tuple(base_cfg)
+        tup = await saver.aget_tuple(base_cfg)
         vals = _extract_values_from_checkpoint_tuple(tup)
         if vals:
             # include the resolved checkpoint_id so you can pin to it if needed
@@ -81,7 +82,7 @@ def load_latest_planner_state_from_sqlite(saver, thread_id: str):
     # 2) Fallback: iterate history (ordered newest→oldest)
     try:
         latest = None
-        for t in saver.list(base_cfg):  # generator, newest first
+        async for t in saver.alist(base_cfg):  # newest first
             latest = t
             break
         if latest:
@@ -649,19 +650,21 @@ def _sanitize_for_logging(obj):
     return obj
 
 
-def setup_agents(
+async def setup_agents(
     workspace: str,
     model_choice: str,
     models_cfg: dict | None,
 ) -> tuple[str, tuple, tuple]:
-    # --- checkpoint plumbing (unchanged) ---
+    # first, setup checkpoint / recover pathways
+    async def build_saver(db_path: Path) -> AsyncSqliteSaver:
+        conn = await aiosqlite.connect(str(db_path))
+        return AsyncSqliteSaver(conn)
+
     edb_path = _ckpt_dir(workspace) / "executor_checkpoint.db"
-    econn = sqlite3.connect(str(edb_path), check_same_thread=False)
-    executor_checkpointer = SqliteSaver(econn)
+    executor_checkpointer = await build_saver(edb_path)
 
     pdb_path = _ckpt_dir(workspace) / "planner_checkpoint.db"
-    pconn = sqlite3.connect(str(pdb_path), check_same_thread=False)
-    planner_checkpointer = SqliteSaver(pconn)
+    planner_checkpointer = await build_saver(pdb_path)
 
     planner_llm = setup_llm(
         model_choice=model_choice,
@@ -973,7 +976,7 @@ def setup_workspace(
     return workspace
 
 
-def main_plan_load_or_perform(
+async def main_plan_load_or_perform(
     planner,
     planner_checkpointer,
     pdb_path,
@@ -986,7 +989,7 @@ def main_plan_load_or_perform(
     with console.status(
         "[bold green]Checking planner checkpoint . . .", spinner="point"
     ):
-        values, _, dbg = load_latest_planner_state_from_sqlite(
+        values, _, dbg = await load_latest_planner_state_from_sqlite(
             planner_checkpointer, thread_id
         )
         print(dbg)
@@ -1013,7 +1016,7 @@ def main_plan_load_or_perform(
         with console.status(
             "[bold green]Planning overarching steps . . .", spinner="point"
         ):
-            planning_output = planner.invoke(problem)
+            planning_output = await planner.ainvoke(problem)
 
         planning_output["plan_steps"] = [
             {
@@ -1057,7 +1060,7 @@ def main_plan_load_or_perform(
     return plan_dict, plan_steps, plan_sig
 
 
-def get_or_create_subplan(
+async def get_or_create_subplan(
     planner,
     planner_checkpointer,
     thread_id: str,
@@ -1073,7 +1076,7 @@ def get_or_create_subplan(
         return {"plan_steps": [main_step]}, _hash_plan([main_step]), None, None
 
     sub_tid = f"{thread_id}::detail::{m_idx}"
-    sub_values, _, dbg = load_latest_planner_state_from_sqlite(
+    sub_values, _, dbg = await load_latest_planner_state_from_sqlite(
         planner_checkpointer, sub_tid
     )
     print(dbg)
@@ -1093,7 +1096,7 @@ def get_or_create_subplan(
     _old_tid = planner.thread_id
     planner.thread_id = sub_tid
     try:
-        sub_output = planner.invoke(
+        sub_output = await planner.ainvoke(
             {"messages": [HumanMessage(content=step_prompt)]},
             config={
                 "recursion_limit": 999_999,
@@ -1138,7 +1141,7 @@ def get_or_create_subplan(
     return {"plan_steps": sub_steps}, sub_sig, sub_tid, sub_output
 
 
-def run_substeps(
+async def run_substeps(
     executor,
     problem: str,
     main_step,
@@ -1185,7 +1188,7 @@ def run_substeps(
                 "Execute this sub-step and report the results fully—no placeholders."
             )
 
-            sub_result = executor.invoke(
+            sub_result = await executor.ainvoke(
                 {
                     "messages": [HumanMessage(content=sub_exec_prompt)],
                     "workspace": executor.workspace,
@@ -1225,7 +1228,7 @@ def run_substeps(
     return last_ran_summary
 
 
-def main(
+async def main(
     model_name: str,
     config: Any,
     planning_mode: str = "single",
@@ -1234,6 +1237,7 @@ def main(
     resume_from: str | None = None,
     interactive_timeout: int = 60,
 ):
+    workspace = None
     try:
         problem = getattr(config, "problem", "")
         project = getattr(config, "project", "run")
@@ -1351,7 +1355,7 @@ def main(
         models_cfg = getattr(config, "models", {}) or {}
 
         # gets the agents we'll use for this example including their checkpointer handles and database
-        thread_id, planner_tuple, executor_tuple = setup_agents(
+        thread_id, planner_tuple, executor_tuple = await setup_agents(
             workspace=workspace,
             model_choice=model_name,
             models_cfg=models_cfg,
@@ -1373,7 +1377,7 @@ def main(
         save_run_meta(workspace, thread_id=thread_id, model_name=model_name)
 
         # do the main planning step, or load it from checkpoint
-        plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
+        plan_dict, plan_steps, plan_sig = await main_plan_load_or_perform(
             planner,
             planner_checkpointer,
             pdb_path,
@@ -1477,7 +1481,7 @@ def main(
                 )
 
                 # get or create the subplan (hierarchical=True)
-                sub_values, sub_sig, _sub_tid, _ = get_or_create_subplan(
+                sub_values, sub_sig, _sub_tid, _ = await get_or_create_subplan(
                     planner,
                     planner_checkpointer,
                     thread_id,
@@ -1545,7 +1549,7 @@ def main(
                             f"[warn] failed to snapshot executor DB for main {m + 1} sub {next_idx}: {e}"
                         )
 
-                _ = run_substeps(
+                _ = await run_substeps(
                     executor,
                     problem,
                     main_step,
@@ -1616,7 +1620,7 @@ def main(
                     )
 
                     # synthetic 1-item sub-plan (hierarchical=False)
-                    sub_values, sub_sig, _tid, _ = get_or_create_subplan(
+                    sub_values, sub_sig, _tid, _ = await get_or_create_subplan(
                         planner,
                         None,
                         thread_id,
@@ -1657,7 +1661,7 @@ def main(
                                 f"[warn] failed to snapshot executor DB for step {m + 1}: {e}"
                             )
 
-                    prev_summary = run_substeps(
+                    prev_summary = await run_substeps(
                         executor,
                         problem,
                         main_step,
@@ -1681,7 +1685,7 @@ def main(
         import traceback
 
         traceback.print_exc()
-        return {"error": str(e)}
+        return {"error": str(e)}, workspace
 
 
 def parse_args_and_user_inputs():
@@ -1868,14 +1872,16 @@ if __name__ == "__main__":
     args, cfg, model, planning_mode = parse_args_and_user_inputs()
 
     # then, run the agentic workflow
-    final_output, workspace = main(
-        model_name=model,
-        config=cfg,
-        planning_mode=planning_mode,
-        user_specified_workspace=args.workspace,
-        stepwise_exit=args.stepwise_exit,
-        resume_from=args.resume_from,
-        interactive_timeout=args.interactive_timeout,
+    final_output, workspace = asyncio.run(
+        main(
+            model_name=model,
+            config=cfg,
+            planning_mode=planning_mode,
+            user_specified_workspace=args.workspace,
+            stepwise_exit=args.stepwise_exit,
+            resume_from=args.resume_from,
+            interactive_timeout=args.interactive_timeout,
+        )
     )
 
     display_final_output(final_output)
