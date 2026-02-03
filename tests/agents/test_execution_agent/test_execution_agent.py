@@ -108,7 +108,10 @@ async def test_execution_agent_ainvoke_returns_ai_message(
     ]
     assert ai_messages
     assert any((message.content or "").strip() for message in ai_messages)
-    assert Path(result["workspace"]).exists()
+    assert (
+        isinstance(execution_agent.workspace, Path)
+        and execution_agent.workspace.exists()
+    )
 
 
 @pytest.mark.asyncio
@@ -143,7 +146,10 @@ async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
     ]
     assert ai_messages
     assert isinstance(result["messages"][-1], AIMessage)
-    assert Path(result["workspace"]).exists()
+    assert (
+        isinstance(execution_agent.workspace, Path)
+        and execution_agent.workspace.exists()
+    )
 
 
 def test_write_code_edits_are_considered_in_safety_check(

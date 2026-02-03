@@ -41,7 +41,11 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph.state import CompiledStateGraph, StateGraph
+from langgraph.graph.state import (
+    CompiledStateGraph,
+    StateGraph,
+    coerce_to_runnable,
+)
 from langgraph.prebuilt import ToolNode
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
@@ -112,7 +116,7 @@ class BaseAgent(Generic[TState], ABC):
         - Must Override: _invoke() - Define your agent's core functionality
         - Can Override: _stream() - Enable streaming support
                         _normalize_inputs() - Customize input handling
-                        Various helper methods (_default_node_tags, _as_runnable, etc.)
+                        Various helper methods (_default_node_tags, etc.)
         - Never Override: invoke() - Final method with runtime enforcement
                           stream() - Handles telemetry and delegates to _stream
                           __call__() - Delegates to invoke
@@ -552,7 +556,10 @@ class BaseAgent(Generic[TState], ABC):
     @final
     def build_graph(self) -> StateGraph:
         """Build and return the StateGraph backing this agent."""
-        self.graph = StateGraph(self.state_type)
+        self.graph = StateGraph(
+            self.state_type,
+            context_schema=AgentContext,
+        )
         self._build_graph()
         return self.graph
 
@@ -578,15 +585,21 @@ class BaseAgent(Generic[TState], ABC):
 
     def _invoke(self, input, **config):
         config = self.build_config(**config)
-        return self.compiled_graph.invoke(input, config=config)
+        return self.compiled_graph.invoke(
+            input, config=config, context=self.context
+        )
 
     async def _ainvoke(self, input, **config):
         config = self.build_config(**config)
-        return await self.compiled_graph.ainvoke(input, config=config)
+        return await self.compiled_graph.ainvoke(
+            input, config=config, context=self.context
+        )
 
     def _stream(self, input, **config):
         config = self.build_config(**config)
-        yield from self.compiled_graph.stream(input, config=config)
+        yield from self.compiled_graph.stream(
+            input, config=config, context=self.context
+        )
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""
@@ -705,25 +718,6 @@ class BaseAgent(Generic[TState], ABC):
 
         return tags
 
-    def _as_runnable(self, fn: Any):
-        """Convert a function to a runnable if it isn't already.
-
-        Args:
-            fn: The function or object to convert to a runnable.
-
-        Returns:
-            A runnable object that can be used in the graph. If the input is already
-            runnable (has .with_config and .invoke methods), it's returned as is.
-            Otherwise, it's wrapped in a RunnableLambda.
-        """
-        # Check if the function already has the required runnable interface
-        # If so, return it as is; otherwise wrap it in a RunnableLambda
-        return (
-            fn
-            if hasattr(fn, "with_config") and hasattr(fn, "invoke")
-            else RunnableLambda(fn)
-        )
-
     def _node_cfg(self, name: str, *extra_tags: str) -> dict:
         """Build a consistent configuration for a node/runnable.
 
@@ -771,7 +765,7 @@ class BaseAgent(Generic[TState], ABC):
             A configured runnable with the agent's node configuration applied.
         """
         # Convert input to a runnable if it's not already one
-        r = self._as_runnable(runnable_or_fn)
+        r = coerce_to_runnable(runnable_or_fn, name=name, trace=True)
         # Apply node configuration and return the configured runnable
         return r.with_config(**self._node_cfg(name, *extra_tags))
 

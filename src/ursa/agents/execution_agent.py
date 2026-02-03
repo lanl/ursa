@@ -89,7 +89,6 @@ class ExecutionState(TypedDict):
 
     messages: list[AnyMessage]
     current_progress: str
-    workspace: Path
     symlinkdir: dict
     model: BaseChatModel
 
@@ -313,7 +312,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         return new_state
 
     # Define the function that calls the model
-    def query_executor(self, state: ExecutionState) -> ExecutionState:
+    def query_executor(
+        self, state: ExecutionState, runtime: Runtime[AgentContext]
+    ) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
         This method copies the incoming state, ensures a workspace directory exists
@@ -337,16 +338,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         state.setdefault("model", self.llm)
         new_state = state.copy()
 
-        # 1) Ensure a workspace directory exists, creating a named one if absent.
-        if "workspace" not in new_state.keys():
-            new_state["workspace"] = self.workspace
-            print(
-                f"{RED}Creating the folder "
-                f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "
-                f"for this project.{RESET}"
-            )
-        Path(new_state["workspace"]).mkdir(exist_ok=True)
-
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
 
@@ -357,10 +348,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             symlinkdir = sd
 
             src = Path(symlinkdir["source"]).expanduser().resolve()
-            workspace_root = Path(new_state["workspace"]).expanduser().resolve()
-            dst = (
-                workspace_root / symlinkdir["dest"]
-            )  # Link lives inside workspace.
+            dst = runtime.context.workspace.joinpath(symlinkdir["dest"])
 
             # If a file/link already exists at the destination, replace it.
             if dst.exists() or dst.is_symlink():
@@ -402,27 +390,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             self.write_state("execution_agent.json", new_state)
 
         # Return the model's response and the workspace path as a partial state update.
-        return new_state
-
-    def tool_use(self, state: ExecutionState) -> ExecutionState:
-        new_state = state.copy()
-        update = self.tool_node.invoke(state)
-        # Could be implemented better, but handles the different forms of tool response:
-        #     dict of messages, list of Commands, etc.
-        try:
-            if isinstance(update, dict) and "messages" in update:
-                new_state["messages"].extend(update["messages"])
-            elif isinstance(update, list):
-                for resp in update:
-                    if isinstance(resp, Command):
-                        new_state["messages"].extend(resp.update["messages"])
-                    else:
-                        new_state["messages"].extend(resp["messages"])
-            elif isinstance(update, Command):
-                new_state["messages"].extend(update.update["messages"])
-        except Exception as e:
-            print(f"SOMETHING IS WRONG WITH {update}: {e}")
-            new_state["messages"].extend(update["messages"])
         return new_state
 
     def recap(self, state: ExecutionState) -> ExecutionState:
@@ -596,7 +563,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # - "recap": summary/finalization step
         # - "safety_check": gate for shell command safety
         self.add_node(self.query_executor, "agent")
-        self.add_node(self.tool_use, "action")
+        self.add_node(self.tool_node, "action")
         self.add_node(self.recap, "recap")
         self.add_node(self.safety_check, "safety_check")
 

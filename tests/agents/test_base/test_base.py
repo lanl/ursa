@@ -9,9 +9,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.graph.message import add_messages
+from langgraph.runtime import Runtime
 
 # Your project imports
-from ursa.agents.base import BaseAgent
+from ursa.agents.base import AgentContext, BaseAgent
 
 
 # --- Tiny offline model that triggers LLM callbacks and returns usage ---
@@ -244,3 +245,30 @@ async def test_chat_interface(tmpdir: Path):
     state = await agent.ainvoke(state)
     result = agent.format_result(state)
     assert isinstance(result, str)
+
+
+def test_runtime_injection_preserved_for_nodes(tmp_path: Path):
+    captured: dict[str, Runtime[AgentContext]] = {}
+
+    class RuntimeAwareAgent(BaseAgent[SpecState]):
+        def __init__(self, **kwargs):
+            super().__init__(llm=TinyCountingModel(), **kwargs)
+
+        def _runtime_node(
+            self, state: SpecState, runtime: Runtime[AgentContext]
+        ) -> SpecState:
+            captured["runtime"] = runtime
+            return state
+
+        def _build_graph(self) -> None:
+            self.add_node(self._runtime_node, "runtime_node")
+            self.graph.set_entry_point("runtime_node")
+            self.graph.set_finish_point("runtime_node")
+
+    agent = RuntimeAwareAgent(workspace=tmp_path)
+    agent.invoke("ensure runtime exists")
+
+    runtime = captured.get("runtime")
+    assert runtime is not None
+    assert isinstance(runtime, Runtime)
+    assert runtime.context.workspace == Path(tmp_path)
