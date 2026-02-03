@@ -198,16 +198,12 @@ the following commands:
 # Pull the image
 docker pull ghcr.io/lanl/ursa
 
-# Run included example
-docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY ursa \
-    bash -c "uv run python examples/single_agent_examples/execution_agnet/integer_sum.py"
-
 # Run script from host system
 mkdir -p scripts
 echo "import ursa; print('Hello from ursa')" > scripts/my_script.py
 docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY \
     --mount type=bind,src=$PWD/scripts,dst=/mnt/workspace \
-    ursa \
+    ghcr.io/lanl/ursa \
     bash -c "uv run /mnt/workspace/my_script.py"
 ```
 
@@ -223,16 +219,6 @@ ch-image pull ghcr.io/lanl/ursa ursa
 
 # Convert image to sqfs, for use on another system
 ch-convert ursa ursa.sqfs
-
-# Run included example (if wanted, replace ursa with /path/to/ursa.sqfs)
-ch-run -W ursa \
-    --unset-env="*" \
-    --set-env \
-    --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
-    --bind ${PWD}:/mnt/workspace \
-    --cd /mnt/workspace \
-    -- bash -c \
-    "uv run --no-sync examples/single_agent_examples/execution_agent/integer_sum.py"
 
 # Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
 mkdir -p scripts

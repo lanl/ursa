@@ -94,9 +94,14 @@ def _make_tool(name: str):
 
 
 class DummyAgentWithTools(AgentWithTools, BaseAgent):
-    def __init__(self, llm, tools=None, **kwargs):
+    def __init__(self, llm, tools=None, handle_tool_errors=True, **kwargs):
         self.build_graph_calls = 0
-        super().__init__(llm=llm, tools=tools, **kwargs)
+        super().__init__(
+            llm=llm,
+            tools=tools,
+            handle_tool_errors=handle_tool_errors,
+            **kwargs,
+        )
 
     def _noop(self, state):
         return state
@@ -179,6 +184,23 @@ def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(
     assert agent.tools == {"beta": beta}
     assert agent.build_graph_calls == initial_calls + 1
     assert isinstance(agent.tool_node, ToolNode)
+
+
+@pytest.mark.parametrize("handle_tool_errors", [True, "Custom error message"])
+def test_handle_tool_errors_propagation(
+    chat_model, tmp_path, handle_tool_errors
+):
+    """Verify that handle_tool_errors is propagated to ToolNode."""
+    # Dummy tool used only for adding to the agent; no need to run it
+    alpha = _make_tool("alpha")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha],
+        workspace=tmp_path,
+        handle_tool_errors=handle_tool_errors,
+    )
+    # The ToolNode internally stores the error handling strategy
+    assert agent.tool_node._handle_tool_errors == handle_tool_errors
 
 
 @pytest.mark.asyncio

@@ -212,5 +212,4 @@ def test_write_code_edits_are_considered_in_safety_check(
     assert captured["files"], "safety prompt receives recorded edits"
     assert all(isinstance(entry, str) for entry in captured["files"])
     assert "tracked.py" in captured["files"]
-    # safe command should leave messages unchanged
-    assert result["messages"] == state["messages"]
+    assert "messages" not in result  # safe command should not update messages

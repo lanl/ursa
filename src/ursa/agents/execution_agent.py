@@ -28,6 +28,7 @@ Entry points:
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from pathlib import Path
 from typing import (
+    Annotated,
     Any,
     Literal,
     Optional,
@@ -39,12 +40,14 @@ from langchain.tools import BaseTool
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
+    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
+from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
-from langgraph.types import Command
+from langgraph.types import Overwrite
 
 # Rich
 from rich import get_console
@@ -87,7 +90,7 @@ class ExecutionState(TypedDict):
       is_linked).
     """
 
-    messages: list[AnyMessage]
+    messages: Annotated[list[AnyMessage], add_messages]
     current_progress: str
     symlinkdir: dict
     model: BaseChatModel
@@ -262,10 +265,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                         conversation_to_summarize.append(msg)
                         conversation_to_keep.remove(msg)
                         tool_ids.remove(msg.tool_call_id)
-                    elif isinstance(msg, ToolMessage):
-                        print(
-                            f"This is a Tool that happened in the last {self.messages_to_keep} messages:\n{str(msg)}\nbut not in {tool_ids}"
-                        )
             if tool_ids:
                 # We may need to implement something here for if a tool has not
                 # responded but its tool call is far enough back that it is being
@@ -370,7 +369,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             new_state["messages"] = [
                 SystemMessage(content=self.executor_prompt)
-            ] + state["messages"]
+            ] + new_state["messages"]
 
         # 4) Invoke the LLM with the prepared message sequence.
         try:
@@ -379,18 +378,18 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             )
             new_state["messages"].append(response)
         except Exception as e:
+            response = AIMessage(content=f"Response error {e}")
             msg = new_state["messages"][-1].text
             print("Error: ", e, " ", msg)
-            new_state["messages"].append(
-                AIMessage(content=f"Response error {e}")
-            )
+            new_state["messages"].append(response)
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
 
-        # Return the model's response and the workspace path as a partial state update.
-        return new_state
+        return {
+            "messages": Overwrite(new_state["messages"]),
+        }
 
     def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
@@ -412,27 +411,21 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
-        if isinstance(new_state["messages"][0], SystemMessage):
-            messages = new_state["messages"].copy()
-            messages[0] = SystemMessage(content=recap_prompt)
-        else:
-            messages = [SystemMessage(content=recap_prompt)] + new_state[
-                "messages"
-            ]
+        recap_message = HumanMessage(content=self.recap_prompt)
+        new_state["messages"] = new_state["messages"] + [recap_message]
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
-        response_content = ""
         try:
             response = self.llm.invoke(
-                messages, self.build_config(tags=["recap"])
+                input=new_state["messages"],
+                config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
-            new_state["messages"].append(response)
         except Exception as e:
-            print("Error: ", e, " ", messages[-1].text)
-            new_state["messages"].append(
-                AIMessage(content=f"Response error {e}")
-            )
+            response_content = f"Response error {e}"
+            response = AIMessage(content=response_content)
+            print("Error: ", e, " ", new_state["messages"][-1].text)
+
         console.print(
             Panel(
                 Markdown(response_content),
@@ -468,10 +461,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 4) Optionally write state to disk for debugging/auditing.
         if self.log_state:
+            new_state["messages"].append(response)
             self.write_state("execution_agent.json", new_state)
 
         # 5) Return a partial state update with only the summary content.
-        return new_state
+        return {"messages": [recap_message, response]}
 
     def safety_check(
         self, state: ExecutionState, runtime: Runtime[AgentContext]
@@ -496,11 +490,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         last_msg = new_state["messages"][-1]
 
         # 1.5) Check message history length and summarize to shorten the token usage:
-        new_state = self._summarize_context(new_state)
 
         # 2) Evaluate any pending run_command tool calls for safety.
-        tool_responses: list[ToolMessage] = []
-        any_unsafe = False
+        tool_responses = []
         for tool_call in last_msg.tool_calls:
             if tool_call["name"] != "run_command":
                 continue
@@ -519,7 +511,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             ).text
 
             if "[NO]" in safety_result:
-                any_unsafe = True
                 tool_response = (
                     "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
                     "For reason: {r}"
@@ -532,24 +523,21 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 console.print(
                     "[bold red][WARNING][/bold red] REASON:", tool_response
                 )
+                tool_responses.append(
+                    ToolMessage(
+                        content=tool_response, tool_call_id=tool_call["id"]
+                    )
+                )
+                # last_msg.tool_calls.remove(tool_call)
             else:
                 tool_response = f"Command `{query}` passed safety check."
                 console.print(
                     f"[green]Command passed safety check:[/green] {query}"
                 )
-
-            tool_responses.append(
-                ToolMessage(
-                    content=tool_response,
-                    tool_call_id=tool_call["id"],
-                )
-            )
-
-        # 3) If any command is unsafe, append all tool responses; otherwise keep state.
-        if any_unsafe:
-            new_state["messages"].extend(tool_responses)
-
-        return new_state
+        if tool_responses:
+            return {"messages": tool_responses}
+        else:
+            return {}
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""

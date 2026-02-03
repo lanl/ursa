@@ -35,7 +35,7 @@ from typing import (
 from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
-from langchain.tools import BaseTool
+from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
@@ -47,6 +47,7 @@ from langgraph.graph.state import (
     coerce_to_runnable,
 )
 from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
 
@@ -844,6 +845,14 @@ class BaseAgent(Generic[TState], ABC):
         )
 
 
+def _default_tool_error_handler(e: Exception):
+    if isinstance(e, ToolInvocationError):
+        return e.message
+    elif isinstance(e, ToolException):
+        return str(e)
+    raise e
+
+
 class AgentWithTools:
     """Mixin that equips an agent with LangGraph tools management."""
 
@@ -851,9 +860,11 @@ class AgentWithTools:
         self,
         *args,
         tools: list[BaseTool] | dict[str, BaseTool] | None = None,
+        handle_tool_errors=_default_tool_error_handler,
         **kwargs,
     ):
         self._tools: dict[str, BaseTool] = {}
+        self.handle_tool_errors = handle_tool_errors
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
@@ -917,7 +928,10 @@ class AgentWithTools:
             mapping = {tool.name: tool for tool in tools}
 
         self._tools = mapping
-        self.tool_node = ToolNode(list(self._tools.values()))
+        self.tool_node = ToolNode(
+            list(self._tools.values()),
+            handle_tool_errors=self.handle_tool_errors,
+        )
 
         if rebuild_graph and hasattr(self, "build_graph"):
             self.__dict__.pop("compiled_graph", None)
