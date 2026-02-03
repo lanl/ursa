@@ -1148,7 +1148,9 @@ async def main(
 
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = await setup_agents(
-            workspace, model, mcp_servers=cfg.get("mcp_servers")
+            workspace,
+            model,
+            mcp_servers=getattr(cfg, "mcp_servers", None),
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
