@@ -27,6 +27,7 @@ from rich.text import Text
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util.logo_generator import kickoff_logo
+from ursa.util.mcp import ServerParameters, start_mcp_client
 from ursa.util.plan_renderer import render_plan_steps_rich
 
 console = get_console()  # always returns the same instance
@@ -653,7 +654,8 @@ def _sanitize_for_logging(obj):
 async def setup_agents(
     workspace: str,
     model_choice: str,
-    models_cfg: dict | None,
+    models_cfg: dict | None = None,
+    mcp_servers: dict[str, ServerParameters] | None = None,
 ) -> tuple[str, tuple, tuple]:
     # first, setup checkpoint / recover pathways
     async def build_saver(db_path: Path) -> AsyncSqliteSaver:
@@ -697,6 +699,10 @@ async def setup_agents(
         thread_id=thread_id,
         workspace=workspace,
     )  # include checkpointer
+
+    # Connect MCP tools
+    mcp_client = start_mcp_client(mcp_servers or {})
+    await executor.add_mcp_tools(mcp_client)
 
     print(f"[dbg] planner_db_abs: {Path(pdb_path).resolve()}")
     print(f"[dbg] cwd: {Path.cwd().resolve()}")
@@ -1232,7 +1238,7 @@ async def main(
     model_name: str,
     config: Any,
     planning_mode: str = "single",
-    user_specified_workspace: str = None,
+    user_specified_workspace: str | None = None,
     stepwise_exit: bool = False,
     resume_from: str | None = None,
     interactive_timeout: int = 60,
@@ -1359,6 +1365,7 @@ async def main(
             workspace=workspace,
             model_choice=model_name,
             models_cfg=models_cfg,
+            mcp_servers=cfg.get("mcp_servers"),
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
