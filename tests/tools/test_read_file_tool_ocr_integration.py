@@ -37,10 +37,11 @@ def _make_scanned_pdf(path: Path, text: str = "Hello OCR 123") -> None:
 
 
 def _call_tool(filename: str, workspace: Path) -> str:
-    # Works with @tool wrappers
-    return rft.read_file.func(
-        filename=filename, state={"workspace": str(workspace)}
-    )
+    state = {"workspace": str(workspace)}
+    tool_obj = rft.read_file
+    if hasattr(tool_obj, "invoke"):
+        return tool_obj.invoke({"filename": filename, "state": state})
+    return tool_obj.func(filename=filename, state=state)
 
 
 def test_real_ocr_creates_openable_pdf_and_extracts_text(tmp_path):
@@ -70,7 +71,9 @@ def test_real_ocr_creates_openable_pdf_and_extracts_text(tmp_path):
     art_dir = repo_root / "artifacts"
     art_dir.mkdir(exist_ok=True)
 
-    ocr_pdf = tmp_path / "scanned.pdf.ocr.pdf"
+    ocr_pdf = tmp_path / "scanned.pdf.ocr.force.pdf"
+    if not ocr_pdf.exists():
+        ocr_pdf = tmp_path / "scanned.pdf.ocr.skip.pdf"
     assert ocr_pdf.exists()
 
     (art_dir / "scanned.input.pdf").write_bytes(pdf.read_bytes())
