@@ -63,10 +63,13 @@ TState = TypeVar("TState", bound=Mapping[str, Any])
 class AgentContext:
     """Immutable context provided during graph execution"""
 
+    llm: BaseChatModel
+    """ Chat model for use during tool calls """
+
     workspace: Path
     """ Workspace path for the agent """
 
-    tool_character_limit: int = 3000
+    tool_character_limit: int = 30000
     """ Suggested limit on tool call responses """
 
 
@@ -193,7 +196,7 @@ class BaseAgent(Generic[TState], ABC):
     @property
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
-        return AgentContext(workspace=self.workspace)
+        return AgentContext(llm=self.llm, workspace=self.workspace)
 
     def add_node(
         self,
