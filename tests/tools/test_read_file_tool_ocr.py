@@ -72,14 +72,13 @@ def test_ocr_runs_and_uses_ocr_pdf(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 22)
 
-    # Make read_pdf_text return tiny text for original, large for *.ocr.pdf   
+    # Make read_pdf_text return tiny text for original, large for *.ocr.pdf
     def fake_read_pdf_text(path: str) -> str:
         if ".ocr." in path and path.endswith(".pdf"):
             return "OCR_TEXT_" + ("Y" * 4000)
         return "tiny"
 
     monkeypatch.setattr(rft, "read_pdf_text", fake_read_pdf_text)
-
 
     def fake_ocr(src: str, dst: str, *, mode: str = "skip") -> None:
         Path(dst).write_bytes(b"%PDF-1.4\n%ocr\n")
@@ -121,7 +120,6 @@ def test_ocr_cache_skips_second_run(tmp_path, monkeypatch):
     # Original tiny, OCR big
     def fake_read_pdf_text(path: str) -> str:
         return "tiny" if ".ocr." not in path else "Z" * 5000
-
 
     monkeypatch.setattr(rft, "read_pdf_text", fake_read_pdf_text)
 
