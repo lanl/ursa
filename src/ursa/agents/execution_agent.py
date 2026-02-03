@@ -57,7 +57,6 @@ from rich.panel import Panel
 from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
-    get_safety_prompt,
     recap_prompt,
 )
 from ursa.tools import edit_code, read_file, run_command, write_code
@@ -97,6 +96,7 @@ class ExecutionState(TypedDict):
     workspace: Path
     symlinkdir: dict
     model: BaseChatModel
+    safe_codes: list[str]
 
 
 def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
@@ -226,7 +226,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         super().__init__(llm=llm, tools=default_tools, **kwargs)
         self.agent_memory = agent_memory
         self.safe_codes = safe_codes or ["python", "julia"]
-        self.get_safety_prompt = get_safety_prompt
         self.executor_prompt = executor_prompt
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
@@ -404,6 +403,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         return {
             "messages": Overwrite(new_state["messages"]),
             "workspace": new_state["workspace"],
+            "model": self.llm,
+            "safe_codes": self.safe_codes,
         }
 
     def recap(self, state: ExecutionState) -> ExecutionState:
@@ -512,12 +513,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
             query = tool_call["args"]["query"]
             safety_result = StrOutputParser().invoke(
-                self.llm.invoke(
-                    self.get_safety_prompt(
-                        query, self.safe_codes, new_state.get("code_files", [])
-                    ),
-                    self.build_config(tags=["safety_check"]),
-                )
+                self.llm.invoke("Say [NO]")
             )
 
             if "[NO]" in safety_result:
@@ -563,7 +559,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.add_node(self.query_executor, "agent")
         self.add_node(self.tool_node, "action")
         self.add_node(self.recap, "recap")
-        self.add_node(self.safety_check, "safety_check")
+        # self.add_node(self.safety_check, "safety_check")
 
         # Set entrypoint: execution starts with the "agent" node.
         self.graph.set_entry_point("agent")
@@ -573,16 +569,16 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "safety_check", "recap": "recap"},
+            {"continue": "action", "recap": "recap"},
         )
 
         # From "safety_check", route to tools if safe, otherwise back to agent
         # to revise the plan without executing unsafe commands.
-        self.graph.add_conditional_edges(
-            "safety_check",
-            self._wrap_cond(command_safe, "command_safe", "execution"),
-            {"safe": "action", "unsafe": "agent"},
-        )
+        # self.graph.add_conditional_edges(
+        #     "action",
+        #     self._wrap_cond(command_safe, "command_safe", "execution"),
+        #     {"safe": "action", "unsafe": "agent"},
+        # )
 
         # After tools run, return control to the agent for the next step.
         self.graph.add_edge("action", "agent")

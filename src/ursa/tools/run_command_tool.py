@@ -2,14 +2,22 @@ import os
 import subprocess
 from typing import Annotated
 
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
+from rich import get_console
+
+from ursa.prompt_library.execution_prompts import (
+    get_safety_prompt,
+)
 
 # Global variables for the module.
 
 # Set a limit for message characters - the user could overload
 # that in their env, or maybe we could pull this out of the LLM parameters
 MAX_TOOL_MSG_CHARS = int(os.getenv("MAX_TOOL_MSG_CHARS", "30000"))
+
+console = get_console()
 
 
 @tool
@@ -30,6 +38,29 @@ def run_command(query: str, state: Annotated[dict, InjectedState]) -> str:
         "STDERR:" followed by the truncated stderr.
     """
     workspace_dir = state["workspace"]
+    llm = state["model"]
+
+    safety_result = StrOutputParser().invoke(
+        llm.invoke(
+            get_safety_prompt(
+                query, state["safe_codes"], state.get("code_files", [])
+            )
+        )
+    )
+
+    if "[NO]" in safety_result:
+        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result}"
+        console.print(
+            "[bold red][WARNING][/bold red] Command deemed unsafe:",
+            query,
+        )
+        # Also surface the model's rationale for transparency.
+        console.print("[bold red][WARNING][/bold red] REASON:", tool_response)
+        return tool_response
+    else:
+        console.print(
+            f"[green]Command passed safety check:[/green] {query}\nFor reason: {safety_result}"
+        )
 
     print("RUNNING: ", query)
     try:
