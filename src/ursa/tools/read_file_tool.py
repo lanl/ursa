@@ -19,7 +19,7 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
 
     print("[READING]: ", full_filename)
     try:
-        if full_filename.suffix == ".pdf":
+        if full_filename.suffix.lower() == ".pdf":
             file_contents = read_pdf_text(full_filename)
         else:
             file_contents = read_text_file(full_filename)
