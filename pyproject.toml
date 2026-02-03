@@ -45,6 +45,9 @@ dependencies = [
     "jsonargparse>=4.45.0",
     "fastmcp>=2.13.3",
     "pyyaml>=6.0.3",
+    "langgraph>=1.0.2",
+    "aiosqlite>=0.21.0",
+    "langchain-core>=1.0.2",
 ]
 classifiers = [
     "Operating System :: OS Independent",
