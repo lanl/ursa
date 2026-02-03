@@ -93,7 +93,6 @@ class ExecutionState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     current_progress: str
     symlinkdir: dict
-    model: BaseChatModel
 
 
 def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
@@ -334,7 +333,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 - "workspace": The resolved workspace path.
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
-        state.setdefault("model", self.llm)
         new_state = state.copy()
 
         # 1.5) Check message history length and summarize to shorten the token usage:

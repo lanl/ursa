@@ -258,6 +258,8 @@ def test_runtime_injection_preserved_for_nodes(tmp_path: Path):
             self, state: SpecState, runtime: Runtime[AgentContext]
         ) -> SpecState:
             captured["runtime"] = runtime
+            assert isinstance(runtime.context, AgentContext)
+            assert runtime.store is not None
             return state
 
         def _build_graph(self) -> None:

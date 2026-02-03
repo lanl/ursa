@@ -239,6 +239,7 @@ def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
 
         def _inject_tool_call(self, state, runtime: Runtime[AgentContext]):
             messages = list(state["messages"])
+            assert isinstance(runtime.context, AgentContext)
             messages.append(
                 AIMessage(
                     content="",
