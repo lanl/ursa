@@ -7949,6 +7949,7 @@ wheels = [
 name = "ursa-ai"
 source = { editable = "." }
 dependencies = [
+    { name = "aiosqlite" },
     { name = "arxiv" },
     { name = "beautifulsoup4" },
     { name = "ddgs" },
@@ -7957,10 +7958,12 @@ dependencies = [
     { name = "langchain" },
     { name = "langchain-chroma" },
     { name = "langchain-community" },
+    { name = "langchain-core" },
     { name = "langchain-mcp-adapters" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langchain-text-splitters" },
+    { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
     { name = "mcp" },
     { name = "mp-api" },
@@ -8016,6 +8019,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.21.0" },
     { name = "arxiv", specifier = ">=2.2.0,<3.0" },
     { name = "atomman", marker = "extra == 'lammps'", specifier = ">=1.5.2" },
     { name = "beautifulsoup4", specifier = ">=4.13.4,<5.0" },
@@ -8025,10 +8029,12 @@ requires-dist = [
     { name = "langchain", specifier = ">=1.0.3" },
     { name = "langchain-chroma", specifier = ">=1.0.0" },
     { name = "langchain-community", specifier = ">=0.4.1" },
+    { name = "langchain-core", specifier = ">=1.0.2" },
     { name = "langchain-mcp-adapters", specifier = ">=0.1.12,<0.2" },
     { name = "langchain-ollama", specifier = ">=1.0.0" },
     { name = "langchain-openai", specifier = ">=1.0.1" },
     { name = "langchain-text-splitters", specifier = ">=1.0.0" },
+    { name = "langgraph", specifier = ">=1.0.2" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.20.0,<2.0" },
     { name = "mp-api", specifier = ">=0.45.8,<0.45.13" },
