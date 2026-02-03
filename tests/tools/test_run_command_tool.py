@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from langchain.chat_models import BaseChatModel
 import pytest
+from langchain.chat_models import BaseChatModel
 from pydantic import ValidationError
 
 from tests.tools.utils import make_runtime
