@@ -1,0 +1,167 @@
+project: sci_fi_bill_of_rights_run
+
+# omit if not needed
+# this is where you might link in a local dataset you want the agents
+# to have access to, or a program (simulation, executable, etc) or
+# libraries you have locally that you want the agent to use.
+# to be clear, you'd then tell the agent (below) that it has
+# access to the files you describe in 'dest' in the symlink
+# below.
+symlink:
+  # NOTE:
+  # please go into ./sci_fi_bill_of_rights_inputs/, read the README.txt and
+  # download the files for this example to work
+  source: ./sci_fi_bill_of_rights_inputs/
+  dest: ./input_docs/
+
+models:
+  choices:
+    - openai:gpt-5.2
+    - openai:gpt-5
+    - openai:o3
+    - openai:o3-mini
+    - my_endpoint:openai/gpt-oss-120b # <— example external endpoint + model
+  default: openai:gpt-5.2
+
+  # map provider aliases to connection details
+  providers:
+    openai:
+      model_provider: openai             # LangChain provider to use
+      base_url: null                     # use OpenAI default
+      api_key_env: OPENAI_API_KEY
+
+    my_endpoint:
+      model_provider: openai             # uses ChatOpenAI client under the hood
+      base_url: "https://some.example.model.endpoint.url/vllm/v1" 
+      api_key_env: SOME_API_KEY_HERE_THIS_PROVIDER_WILL_LOOK_FOR_IN_YOUR_USER_ENVIRONMENT
+
+  # this profiles section is optional, if you don't include it the LLM model will manage
+  # defaults, which might not be what you want.
+  profiles:
+    fast:
+      # i'm not confident temperature is even used in reasoning models anymore, i think this
+      # is entirely ignored
+      temperature: 0.2
+      max_completion_tokens: 6000
+      reasoning:
+        effort: low
+    balanced:
+      temperature: 0.2
+      max_completion_tokens: 15000
+      reasoning:
+        effort: medium
+    deep: 
+      temperature: 0.2 
+      max_completion_tokens: 50000
+      reasoning: 
+        effort: high
+
+  # defaults are the, well, default profiles
+  defaults: 
+    profile: fast 
+    params: {} # optional extra kwargs always applied
+    # Per-agent overrides (planner vs executor) 
+    
+  agents: 
+    hypothesizer: 
+      profile: fast 
+
+# planning_mode must either be 'single' or 'heirarchical'
+# single is one pass through planning and then it executes each
+#   step of the plan sequentially
+# heirarchical starts w/ a single plan, and THEN, for each step it
+#   plans that step again (effectively steps 1-10 might turn into
+#   1.1 -> 1.5, 2.1 -> 2.3, . . . 10.0 -> 10.7).  This can both
+#   increase runtime and result quality substantially
+# if you leave it empty, it will just prompt you
+planning_mode: # single
+
+# logos are a fun little thing where we use a vision model to generate 'logos' for your
+# project based on the project name and the randomly generated workspace name
+# 'scene' is a wide scene and 'stickers' are a logo-like mascot sticker for your
+# project.  
+logo:
+  enabled: false    # on/off
+  scene: random     # e.g., noir, sci-fi, horror, fantasy, etc. ("random" by default)
+  stickers: true    # also make sticker variants
+  n: 2              # how many variants for each batch
+  model: openai:gpt-image-1 # warning: most 'vision' models do not support image *GENERATION*, this one does
+
+hypothesizer:
+  use_search: false # on/off
+  max_iterations: 1
+  # input_docs_dir: ./input_docs
+  # input_docs_dir isn't necessary if you symlink a dir in (above), but you can do it this way as well
+
+  prompts:
+    agent1_hypothesizer: |
+      You are Agent 1 (Hypothesizer).
+
+      You MUST ground your work in the provided local document context (the concatenated .txt files).
+      Do not rely on prior knowledge of famous/public texts; treat the provided excerpts as the source of truth.
+
+      Output format (must follow exactly):
+
+      DOC_FINGERPRINTS:
+      - <filename> | chars=<int> | sha256_8=<8hex> | sentinel=<value or NONE>
+
+      EVIDENCE_EXCERPTS:
+      - E1: <filename>:L<start>-L<end> "<short quote>"
+      - E2: ...
+
+      PROPOSED_AMENDMENTS:
+      - A1 (New): <one-sentence amendment text>
+        Evidence: [E1, E3]
+      - A2 (Modify <existing amendment #>): <one-sentence modification>
+        Evidence: [E2]
+
+      Rules:
+      - Every amendment MUST cite at least one Evidence excerpt ID.
+      - Every Evidence excerpt MUST be a verbatim quote from the provided context.
+      - Keep amendments concise (1–3 sentences each). No filler.
+
+      If this is not the first iteration:
+      - First list "CHANGES_FROM_LAST_ITERATION:" with bullet points describing updates made in response to critique and competitor perspective.
+    agent2_critic: |
+      You are Agent 2 (Critic). Be rigorous and specific.
+
+      You MUST critique using ONLY:
+      - The proposed amendments
+      - The DOC_FINGERPRINTS and EVIDENCE_EXCERPTS provided
+      - The original question
+
+      Do NOT perform web searches. Do NOT introduce outside facts.
+
+      Output:
+      CRITIQUE:
+      - List concrete issues (ambiguity, missing edge cases, weak evidence mapping, conflicts with existing rights, enforcement problems).
+      - For each issue, cite the relevant amendment ID (A#) and (if applicable) evidence IDs (E#).
+      RECOMMENDATIONS:
+      - Bullet list of improvements. Must be actionable.
+    agent3_competitor: |
+      You are Agent 3 (Competitor/Stakeholder). Provide a realistic adversarial response.
+
+      You MUST use ONLY what is in:
+      - Proposed amendments (A#)
+      - Evidence excerpts (E#)
+      - The question
+
+      No web search. No outside facts.
+
+      Output:
+      COUNTERARGUMENTS:
+      - For each A#, describe how an opposing stakeholder would exploit ambiguity, challenge legitimacy, or cause unintended consequences.
+      - Cite A# and any E# you are responding to.
+
+problem: |
+  * TITLE: Sci Fi Bill of Rights
+
+  You have a directory in your workspace named: ./input_docs/
+  In there, you will find 2 text documents - the US Bill of Rights and
+  one science fiction document.  Both are freely available docs from
+  Project Gutenberg.
+
+  Using the U.S. Bill of Rights as the baseline, and treating the sci-fi doc
+  as a cautionary future scenario, identify rights that are missing, insufficient, 
+  or dangerously ambiguous. Propose new constitutional amendments or 
+  modifications to existing ones to address those gaps.

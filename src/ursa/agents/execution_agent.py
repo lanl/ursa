@@ -67,6 +67,7 @@ from ursa.tools.search_tools import (
     run_web_search,
 )
 from ursa.util.memory_logger import AgentMemory
+from ursa.util.workspace import ensure_symlink
 
 console = get_console()  # always returns the same instance
 
@@ -352,27 +353,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
-        if isinstance(sd, dict) and "is_linked" not in sd:
-            # symlinkdir structure: {"source": "/path/to/src", "dest": "link/name"}
-            symlinkdir = sd
-
-            src = Path(symlinkdir["source"]).expanduser().resolve()
-            workspace_root = Path(new_state["workspace"]).expanduser().resolve()
-            dst = (
-                workspace_root / symlinkdir["dest"]
-            )  # Link lives inside workspace.
-
-            # If a file/link already exists at the destination, replace it.
-            if dst.exists() or dst.is_symlink():
-                dst.unlink()
-
-            # Ensure parent directories for the link exist.
-            dst.parent.mkdir(parents=True, exist_ok=True)
-
-            # Create the symlink (tell pathlib if the target is a directory).
-            dst.symlink_to(src, target_is_directory=src.is_dir())
-            print(f"{RED}Symlinked {src} (source) --> {dst} (dest)")
-            new_state["symlinkdir"]["is_linked"] = True
+        linked = ensure_symlink(
+            workspace=new_state["workspace"], symlink_cfg=sd
+        )
+        if linked is not None:
+            new_state["symlinkdir"] = linked
 
         # 3) Ensure the executor prompt is the first SystemMessage.
         if isinstance(new_state["messages"][0], SystemMessage):
