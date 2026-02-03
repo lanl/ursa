@@ -1,15 +1,21 @@
 import time
 from pathlib import Path
 
+from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
 from tests.tools.utils import make_runtime
 from ursa.tools.write_code_tool import edit_code, write_code
 
 
-def test_write_code_strips_fences_and_writes(tmp_path: Path):
+def test_write_code_strips_fences_and_writes(
+    tmp_path: Path, chat_model: BaseChatModel
+):
     runtime = make_runtime(
-        tmp_path, thread_id="thread-1", tool_call_id="write-call"
+        tmp_path,
+        llm=chat_model,
+        thread_id="thread-1",
+        tool_call_id="write-call",
     )
 
     fenced = """```python
@@ -24,10 +30,16 @@ print(\"hello\")
     assert "written successfully" in result
 
 
-def test_write_code_records_store_entry(tmp_path: Path):
+def test_write_code_records_store_entry(
+    tmp_path: Path, chat_model: BaseChatModel
+):
     store = InMemoryStore()
     runtime = make_runtime(
-        tmp_path, store=store, tool_call_id="tc-1", thread_id="thread-1"
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="tc-1",
+        thread_id="thread-1",
     )
 
     write_code.func(code="print(42)", filename="sample.py", runtime=runtime)
@@ -39,12 +51,18 @@ def test_write_code_records_store_entry(tmp_path: Path):
     assert item.value["modified"] <= time.time()
 
 
-def test_edit_code_updates_file_and_records(tmp_path: Path):
+def test_edit_code_updates_file_and_records(
+    tmp_path: Path, chat_model: BaseChatModel
+):
     target = tmp_path / "app.py"
     target.write_text("print('hello')\nprint('hello')\n", encoding="utf-8")
     store = InMemoryStore()
     runtime = make_runtime(
-        tmp_path, store=store, tool_call_id="tc-edit", thread_id="thread-7"
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="tc-edit",
+        thread_id="thread-7",
     )
 
     result = edit_code.func(
@@ -64,11 +82,18 @@ def test_edit_code_updates_file_and_records(tmp_path: Path):
     assert item.value["thread_id"] == "thread-7"
 
 
-def test_edit_code_noop_when_old_code_missing(tmp_path: Path):
+def test_edit_code_noop_when_old_code_missing(
+    tmp_path: Path, chat_model: BaseChatModel
+):
     target = tmp_path / "script.py"
     target.write_text("print('hello')\n", encoding="utf-8")
     store = InMemoryStore()
-    runtime = make_runtime(tmp_path, store=store, tool_call_id="tc-miss")
+    runtime = make_runtime(
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="tc-miss",
+    )
 
     result = edit_code.func(
         old_code="print('world')",
@@ -82,9 +107,14 @@ def test_edit_code_noop_when_old_code_missing(tmp_path: Path):
     assert store.get(("workspace", "file_edit"), "script.py") is None
 
 
-def test_edit_code_missing_file(tmp_path: Path):
+def test_edit_code_missing_file(tmp_path: Path, chat_model: BaseChatModel):
     store = InMemoryStore()
-    runtime = make_runtime(tmp_path, store=store, tool_call_id="tc-missing")
+    runtime = make_runtime(
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="tc-missing",
+    )
 
     result = edit_code.func(
         old_code="print('hello')",

@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from langchain.chat_models import BaseChatModel
 import pytest
 from pydantic import ValidationError
 
@@ -10,7 +11,7 @@ from ursa.util.types import AsciiStr
 
 
 def test_run_command_invokes_subprocess_in_workspace(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     recorded = {}
 
@@ -24,7 +25,10 @@ def test_run_command_invokes_subprocess_in_workspace(
     result = run_command.func(
         "echo hi",
         runtime=make_runtime(
-            tmp_path, thread_id="run-thread", tool_call_id="run-call"
+            tmp_path,
+            llm=chat_model,
+            thread_id="run-thread",
+            tool_call_id="run-call",
         ),
     )
 
@@ -33,7 +37,9 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert recorded["kwargs"]["shell"] is True
 
 
-def test_run_command_truncates_output(monkeypatch, tmp_path: Path):
+def test_run_command_truncates_output(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
     long_stdout = "a" * 200
     long_stderr = "b" * 200
 
@@ -47,7 +53,11 @@ def test_run_command_truncates_output(monkeypatch, tmp_path: Path):
     result = run_command.func(
         "noop",
         runtime=make_runtime(
-            tmp_path, limit=64, tool_call_id="truncate", thread_id="run-thread"
+            tmp_path,
+            llm=chat_model,
+            limit=64,
+            tool_call_id="truncate",
+            thread_id="run-thread",
         ),
     )
 
@@ -61,7 +71,9 @@ def test_run_command_truncates_output(monkeypatch, tmp_path: Path):
     assert len(stderr_body) < len(long_stderr)
 
 
-def test_run_command_handles_keyboard_interrupt(monkeypatch, tmp_path: Path):
+def test_run_command_handles_keyboard_interrupt(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
     def raise_interrupt(*args, **kwargs):
         raise KeyboardInterrupt()
 
@@ -72,16 +84,24 @@ def test_run_command_handles_keyboard_interrupt(monkeypatch, tmp_path: Path):
     result = run_command.func(
         "sleep 1",
         runtime=make_runtime(
-            tmp_path, tool_call_id="interrupt", thread_id="run-thread"
+            tmp_path,
+            llm=chat_model,
+            tool_call_id="interrupt",
+            thread_id="run-thread",
         ),
     )
 
     assert "KeyboardInterrupt:" in result
 
 
-def test_run_command_rejects_unicode_input(tmp_path: Path):
+def test_run_command_rejects_unicode_input(
+    tmp_path: Path, chat_model: BaseChatModel
+):
     runtime = make_runtime(
-        tmp_path, thread_id="run-thread", tool_call_id="unicode"
+        tmp_path,
+        llm=chat_model,
+        thread_id="run-thread",
+        tool_call_id="unicode",
     )
 
     with pytest.raises(ValidationError):
