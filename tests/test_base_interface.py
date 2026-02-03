@@ -237,9 +237,7 @@ def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
         def __init__(self, **kwargs):
             super().__init__(llm=chat_model, tools=[write_code], **kwargs)
 
-        def _inject_tool_call(
-            self, state, runtime: Runtime[AgentContext]
-        ):
+        def _inject_tool_call(self, state, runtime: Runtime[AgentContext]):
             messages = list(state["messages"])
             messages.append(
                 AIMessage(
