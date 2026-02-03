@@ -154,7 +154,6 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
                 # Any other OCR-related failure: keep original extraction
                 print(f"[OCR Error]: {e}")
 
-
         return text
 
     except subprocess.CalledProcessError as e:
