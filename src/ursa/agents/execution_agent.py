@@ -45,8 +45,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
-from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph.message import add_messages
+from langgraph.runtime import Runtime
 from langgraph.types import Overwrite
 
 # Rich
@@ -54,7 +54,7 @@ from rich import get_console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     recap_prompt,
@@ -84,7 +84,6 @@ class ExecutionState(TypedDict):
     Fields:
     - messages: list of messages (System/Human/AI/Tool).
     - current_progress: short status string describing agent progress.
-    - code_files: list of filenames created or edited in the workspace.
     - workspace: path to the working directory where files and commands run.
     - symlinkdir: optional dict describing a symlink operation (source, dest,
       is_linked).
@@ -92,10 +91,7 @@ class ExecutionState(TypedDict):
 
     messages: Annotated[list[AnyMessage], add_messages]
     current_progress: str
-    code_files: set[str]
-    workspace: Path
     symlinkdir: dict
-    model: BaseChatModel
     safe_codes: list[str]
 
 
@@ -278,11 +274,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 pass
 
             summarize_prompt = f"""
-            Your only tasks is to provide a detailed, comprehensive summary of the following 
-            conversation. 
+            Your only tasks is to provide a detailed, comprehensive summary of the following
+            conversation.
 
-            Your summary will be the only information retained from the conversation, so ensure 
-            it contains all details that need to be remembered to meet the goals of the work. 
+            Your summary will be the only information retained from the conversation, so ensure
+            it contains all details that need to be remembered to meet the goals of the work.
 
             Conversation to summarize:
             {conversation_to_summarize}
@@ -312,7 +308,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["messages"] = summarized_messages
         return new_state
 
-    def query_executor(self, state: ExecutionState) -> ExecutionState:
+    # Define the function that calls the model
+    def query_executor(
+        self, state: ExecutionState, runtime: Runtime[AgentContext]
+    ) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
         This method copies the incoming state, ensures a workspace directory exists
@@ -333,18 +332,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 - "workspace": The resolved workspace path.
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
-        state.setdefault("model", self.llm)
         new_state = state.copy()
-
-        # 1) Ensure a workspace directory exists, creating a named one if absent.
-        if "workspace" not in new_state.keys():
-            new_state["workspace"] = self.workspace
-            print(
-                f"{RED}Creating the folder "
-                f"{BLUE}{BOLD}{new_state['workspace']}{RESET}{RED} "
-                f"for this project.{RESET}"
-            )
-        Path(new_state["workspace"]).mkdir(exist_ok=True)
 
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
@@ -356,10 +344,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             symlinkdir = sd
 
             src = Path(symlinkdir["source"]).expanduser().resolve()
-            workspace_root = Path(new_state["workspace"]).expanduser().resolve()
-            dst = (
-                workspace_root / symlinkdir["dest"]
-            )  # Link lives inside workspace.
+            dst = runtime.context.workspace.joinpath(symlinkdir["dest"])
 
             # If a file/link already exists at the destination, replace it.
             if dst.exists() or dst.is_symlink():
@@ -399,11 +384,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
 
-        # Return the model's response and the workspace path as a partial state update.
         return {
             "messages": Overwrite(new_state["messages"]),
-            "workspace": new_state["workspace"],
-            "model": self.llm,
             "safe_codes": self.safe_codes,
         }
 
@@ -483,7 +465,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 5) Return a partial state update with only the summary content.
         return {"messages": [recap_message, response]}
 
-    def safety_check(self, state: ExecutionState) -> ExecutionState:
+    def safety_check(
+        self, state: ExecutionState, runtime: Runtime[AgentContext]
+    ) -> ExecutionState:
         """Assess pending shell commands for safety and inject ToolMessages with results.
 
         This method inspects the most recent AI tool calls, evaluates any run_command
@@ -511,10 +495,18 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             if tool_call["name"] != "run_command":
                 continue
 
+            if runtime.store is not None:
+                search_results = runtime.store.search(
+                    ("workspace", "file_edit"), limit=1000
+                )
+                edited_files = [item.key for item in search_results]
+            else:
+                edited_files = []
             query = tool_call["args"]["query"]
-            safety_result = StrOutputParser().invoke(
-                self.llm.invoke("Say [NO]")
-            )
+            safety_result = self.llm.invoke(
+                self.get_safety_prompt(query, self.safe_codes, edited_files),
+                self.build_config(tags=["safety_check"]),
+            ).text
 
             if "[NO]" in safety_result:
                 tool_response = (
@@ -549,6 +541,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """Construct and compile the agent's LangGraph state machine."""
 
         # Bind tools to llm and context summarizer
+
         self.llm = self.llm.bind_tools(self.tools.values())
 
         # Register nodes:
