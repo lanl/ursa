@@ -15,30 +15,6 @@ from ursa.util.types import AsciiStr
 console = get_console()
 
 
-def _strip_fences(snippet: str) -> str:
-    """Remove markdown fences from a code snippet.
-
-    This function strips leading triple backticks and any language
-    identifiers from a markdown-formatted code snippet and returns
-    only the contained code.
-
-    Args:
-        snippet: The markdown-formatted code snippet.
-
-    Returns:
-        The snippet content without leading markdown fences.
-    """
-    if "```" not in snippet:
-        return snippet
-
-    parts = snippet.split("```")
-    if len(parts) < 3:
-        return snippet
-
-    body = parts[1]
-    return "\n".join(body.split("\n")[1:]) if "\n" in body else body.strip()
-
-
 @tool(description="Write source code to a file")
 def write_code(
     code: str,
@@ -57,9 +33,6 @@ def write_code(
     # Determine the full path to the target file
     workspace_dir = runtime.context.workspace
     console.print("[cyan]Writing file:[/]", filename)
-
-    # Clean up markdown fences on submitted code.
-    # code = _strip_fences(code)
 
     # Show syntax-highlighted preview before writing to file
     try:
@@ -140,8 +113,8 @@ def edit_code(
         return f"Failed: {filename} not found."
 
     # Clean up markdown fences
-    old_code_clean = old_code  # _strip_fences(old_code)
-    new_code_clean = new_code  # _strip_fences(new_code)
+    old_code_clean = old_code
+    new_code_clean = new_code
 
     if old_code_clean not in content:
         console.print(
