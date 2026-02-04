@@ -23,7 +23,10 @@ wf = LammpsAgent(
 with open("elastic_template.txt", "r") as file:
     template = file.read()
 
-simulation_task = "Carry out a LAMMPS simulation of the high entropy alloy Co-Cr-Fe-Mn-Ni to determine its stiffness tensor."
+simulation_task = (
+    "Carry out a LAMMPS simulation of the high entropy alloy Co-Cr-Fe-Mn-Ni "
+    "to determine its stiffness tensor."
+)
 
 elements = ["Co", "Cr", "Fe", "Mn", "Ni"]
 

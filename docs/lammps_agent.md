@@ -14,9 +14,9 @@ The agent writes the outputs into a local `workspace` directory and uses rich co
 
 ## Dependencies
 
-The main dependency is the [LAMMPS](https://www.lammps.org) code that needs to be installed separately. LAMMPS is a classical molecular dynamics code developed by Sandia National Laboratories. Installation instructions can be found [here](https://docs.lammps.org/Install.html). On macOS and linux systems, the simplest way to install LAMMPS is often via [Conda](https://anaconda.org/channels/conda-forge/packages/lammps/overview), in the same conda environment where `ursa` is installed.  
+The main dependency is the [LAMMPS](https://www.lammps.org) code that needs to be separately installed. LAMMPS is a classical molecular dynamics code developed by Sandia National Laboratories. Installation instructions can be found [here](https://docs.lammps.org/Install.html). On MacOS and Linux systems, the simplest way to install LAMMPS is often via [Conda](https://anaconda.org/channels/conda-forge/packages/lammps/overview), in the same conda environment where `ursa` is installed.  
 
-Two additional dependencies, that are not installed along with `ursa`, are `atomman` and `trafilatura`. These can be installed via `pip install atomman` and `pip install trafilatura`.  
+One additional dependency, that are not installed along with `ursa`, is `atomman`. This can be installed via `pip install atomman`.  
 
 ---
 
