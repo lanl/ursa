@@ -1058,7 +1058,7 @@ async def main(
         # Use run_meta.json to ensure we do this only once for this workspace.
         meta = load_run_meta(workspace)
         # MINIMAL CONFIG
-        logo_cfg = getattr(cfg, "logo", {}) or {}
+        logo_cfg = getattr(config, "logo", {}) or {}
         logo_enabled = bool(logo_cfg.get("enabled", True))
 
         if logo_enabled and not meta.get("logo_created"):
@@ -1070,7 +1070,7 @@ async def main(
             logo_model_choice = logo_cfg.get("model", "openai:gpt-image-1")
 
             # pick the model string & a providers map
-            providers = (getattr(cfg, "models", {}) or {}).get(
+            providers = (getattr(config, "models", {}) or {}).get(
                 "providers", {}
             ) or {}
 
@@ -1150,7 +1150,7 @@ async def main(
         thread_id, planner_tuple, executor_tuple = await setup_agents(
             workspace,
             model,
-            mcp_servers=getattr(cfg, "mcp_servers", None),
+            mcp_servers=getattr(config, "mcp_servers", None),
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
