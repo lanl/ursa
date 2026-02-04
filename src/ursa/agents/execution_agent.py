@@ -541,6 +541,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """Construct and compile the agent's LangGraph state machine."""
 
         # Bind tools to llm and context summarizer
+
         self.llm = self.llm.bind_tools(self.tools.values())
 
         # Register nodes:

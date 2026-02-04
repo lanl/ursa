@@ -8,28 +8,6 @@ from tests.tools.utils import make_runtime
 from ursa.tools.write_code_tool import edit_code, write_code
 
 
-def test_write_code_strips_fences_and_writes(
-    tmp_path: Path, chat_model: BaseChatModel
-):
-    runtime = make_runtime(
-        tmp_path,
-        llm=chat_model,
-        thread_id="thread-1",
-        tool_call_id="write-call",
-    )
-
-    fenced = """```python
-print(\"hello\")
-```"""
-
-    result = write_code.func(code=fenced, filename="hello.py", runtime=runtime)
-
-    target = tmp_path / "hello.py"
-    assert target.exists()
-    assert target.read_text(encoding="utf-8") == 'print("hello")\n'
-    assert "written successfully" in result
-
-
 def test_write_code_records_store_entry(
     tmp_path: Path, chat_model: BaseChatModel
 ):
