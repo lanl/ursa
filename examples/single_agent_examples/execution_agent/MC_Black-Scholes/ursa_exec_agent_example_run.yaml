@@ -1,0 +1,96 @@
+project: ursa_exec_agent_example_run
+symlink:
+ source: ./ursa
+ dest: ursa
+
+models:
+  choices:
+    - openai:gpt-5.2
+  default: openai:gpt-5.2
+
+  # map provider aliases to connection details
+  providers:
+    openai:
+      model_provider: openai             # LangChain provider to use
+      base_url: null                     # use OpenAI default
+      api_key_env: OPENAI_API_KEY
+
+  # this profiles section is optional, if you don't include it the LLM model will manage
+  # defaults, which might not be what you want.
+  profiles:
+    fast:
+      # i'm not confident temperature is even used in reasoning models anymore, i think this
+      # is entirely ignored
+      temperature: 0.2
+      max_completion_tokens: 6000
+      reasoning:
+        effort: low
+    balanced:
+      temperature: 0.2
+      max_completion_tokens: 15000
+      reasoning:
+        effort: medium
+    deep: 
+      temperature: 0.2 
+      max_completion_tokens: 50000
+      reasoning: 
+        effort: high
+
+  # defaults are the, well, default profiles
+  defaults: 
+    profile: fast 
+    params: {} # optional extra kwargs always applied
+    # Per-agent overrides (planner vs executor) 
+    
+  agents: 
+    planner: 
+      profile: deep 
+    executor: 
+      profile: deep
+
+planning_mode: # single
+
+# logos are a fun little thing where we use a vision model to generate 'logos' for your
+# project based on the project name and the randomly generated workspace name
+# 'scene' is a wide scene and 'stickers' are a logo-like mascot sticker for your
+# project.  
+logo:
+  enabled: false    # on/off
+  scene: random     # e.g., noir, sci-fi, horror, fantasy, etc. ("random" by default)
+  stickers: true    # also make sticker variants
+  n: 2              # how many variants for each batch
+  model: openai:gpt-image-1 # warning: most 'vision' models do not support image *GENERATION*, this one does
+
+
+problem: |
+  TITLE: URSA Tester
+
+  You have access to an agentic software toolkit, already cloned from git,
+  in ./ursa/.  URSA is written using LangChain and LangGraph.
+
+  TASKS:
+    1. Your task is to build an interesting example of using URSA's ExecutionAgent.
+    2. Look at the examples in the ./ursa/examples/single_agent_examples/execution_agent/
+       directory to familiarize yourself with what has already been done.
+    3. If you need to generate any data or download it from the web to carry out
+       this example, you may do so under the constraints listed below.
+    4. All generated code should be runnable afterwards by a human, using rich
+       console (colors, panels, etc).  Be verbose, not silent!  Add colorful
+       (but meaningful) print statements along all steps to inform a later
+       human how a run is progressing.
+    5. You must RUN this new example and debug any errors, fixing them until
+       the example runs to completion.
+    6. Write a small README.md that explains what this example does.
+
+  CONSTRAINTS:
+    * Do NOT write into the ./ursa/ directory, treat it as read-only.
+    * Do not use the 'git' command for ANYTHING.
+    * Do not create or modify the conda environment - there should be no need
+      to install any packages, remove environments, etc.
+    * You are already running within a conda environment that has URSA, so you
+      do not need to install the one in ./ursa/
+    * Your shell environment has the user's OPENAI_API_KEY.
+    * Do not prompt the user for anything (e.g. input()) nor display ANYTHING
+      on the screen.  This task is autonomous.
+    * You may search the web if necessary to carry out this task, though it
+      is expected that it is not needed.

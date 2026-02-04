@@ -16,7 +16,9 @@ integration capabilities while only needing to implement the core _invoke method
 """
 
 import re
+import sqlite3
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import (
@@ -33,14 +35,21 @@ from typing import (
 from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
-from langchain.tools import BaseTool
+from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph.state import CompiledStateGraph, StateGraph
+from langgraph.graph.state import (
+    CompiledStateGraph,
+    StateGraph,
+    coerce_to_runnable,
+)
 from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt.tool_node import ToolInvocationError
+from langgraph.store.base import BaseStore
+from langgraph.store.sqlite import SqliteStore
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
@@ -48,6 +57,20 @@ from ursa.observability.timing import (
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentContext:
+    """Immutable context provided during graph execution"""
+
+    llm: BaseChatModel
+    """ Chat model for use during tool calls """
+
+    workspace: Path
+    """ Workspace path for the agent """
+
+    tool_character_limit: int = 30000
+    """ Suggested limit on tool call responses """
 
 
 def _to_snake(s: str) -> str:
@@ -97,7 +120,7 @@ class BaseAgent(Generic[TState], ABC):
         - Must Override: _invoke() - Define your agent's core functionality
         - Can Override: _stream() - Enable streaming support
                         _normalize_inputs() - Customize input handling
-                        Various helper methods (_default_node_tags, _as_runnable, etc.)
+                        Various helper methods (_default_node_tags, etc.)
         - Never Override: invoke() - Final method with runtime enforcement
                           stream() - Handles telemetry and delegates to _stream
                           __call__() - Delegates to invoke
@@ -169,6 +192,11 @@ class BaseAgent(Generic[TState], ABC):
     def name(self) -> str:
         """Agent name."""
         return self.__class__.__name__
+
+    @property
+    def context(self) -> AgentContext:
+        """Immutable run-scoped information provided to the Agent's graph"""
+        return AgentContext(llm=self.llm, workspace=self.workspace)
 
     def add_node(
         self,
@@ -512,15 +540,30 @@ class BaseAgent(Generic[TState], ABC):
     def compiled_graph(self) -> CompiledStateGraph:
         """Return the compiled StateGraph application for the agent."""
         graph = self.build_graph()
-        compiled = graph.compile(checkpointer=self.checkpointer).with_config({
-            "recursion_limit": 50000
-        })
+        compiled = graph.compile(
+            checkpointer=self.checkpointer,
+            store=self.storage,
+        ).with_config({"recursion_limit": 50000})
         return self._finalize_graph(compiled)
+
+    @cached_property
+    def storage(self) -> BaseStore:
+        """Create a SQLite-backed LangGraph store for persistent graph data."""
+        store_path = self.workspace / "graph_store.sqlite"
+        conn = sqlite3.connect(
+            store_path, check_same_thread=False, isolation_level=None
+        )
+        store = SqliteStore(conn)
+        store.setup()
+        return store
 
     @final
     def build_graph(self) -> StateGraph:
         """Build and return the StateGraph backing this agent."""
-        self.graph = StateGraph(self.state_type)
+        self.graph = StateGraph(
+            self.state_type,
+            context_schema=AgentContext,
+        )
         self._build_graph()
         return self.graph
 
@@ -546,15 +589,21 @@ class BaseAgent(Generic[TState], ABC):
 
     def _invoke(self, input, **config):
         config = self.build_config(**config)
-        return self.compiled_graph.invoke(input, config=config)
+        return self.compiled_graph.invoke(
+            input, config=config, context=self.context
+        )
 
     async def _ainvoke(self, input, **config):
         config = self.build_config(**config)
-        return await self.compiled_graph.ainvoke(input, config=config)
+        return await self.compiled_graph.ainvoke(
+            input, config=config, context=self.context
+        )
 
     def _stream(self, input, **config):
         config = self.build_config(**config)
-        yield from self.compiled_graph.stream(input, config=config)
+        yield from self.compiled_graph.stream(
+            input, config=config, context=self.context
+        )
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""
@@ -673,25 +722,6 @@ class BaseAgent(Generic[TState], ABC):
 
         return tags
 
-    def _as_runnable(self, fn: Any):
-        """Convert a function to a runnable if it isn't already.
-
-        Args:
-            fn: The function or object to convert to a runnable.
-
-        Returns:
-            A runnable object that can be used in the graph. If the input is already
-            runnable (has .with_config and .invoke methods), it's returned as is.
-            Otherwise, it's wrapped in a RunnableLambda.
-        """
-        # Check if the function already has the required runnable interface
-        # If so, return it as is; otherwise wrap it in a RunnableLambda
-        return (
-            fn
-            if hasattr(fn, "with_config") and hasattr(fn, "invoke")
-            else RunnableLambda(fn)
-        )
-
     def _node_cfg(self, name: str, *extra_tags: str) -> dict:
         """Build a consistent configuration for a node/runnable.
 
@@ -739,7 +769,7 @@ class BaseAgent(Generic[TState], ABC):
             A configured runnable with the agent's node configuration applied.
         """
         # Convert input to a runnable if it's not already one
-        r = self._as_runnable(runnable_or_fn)
+        r = coerce_to_runnable(runnable_or_fn, name=name, trace=True)
         # Apply node configuration and return the configured runnable
         return r.with_config(**self._node_cfg(name, *extra_tags))
 
@@ -818,6 +848,14 @@ class BaseAgent(Generic[TState], ABC):
         )
 
 
+def _default_tool_error_handler(e: Exception):
+    if isinstance(e, ToolInvocationError):
+        return e.message
+    elif isinstance(e, ToolException):
+        return str(e)
+    raise e
+
+
 class AgentWithTools:
     """Mixin that equips an agent with LangGraph tools management."""
 
@@ -825,9 +863,11 @@ class AgentWithTools:
         self,
         *args,
         tools: list[BaseTool] | dict[str, BaseTool] | None = None,
+        handle_tool_errors=_default_tool_error_handler,
         **kwargs,
     ):
         self._tools: dict[str, BaseTool] = {}
+        self.handle_tool_errors = handle_tool_errors
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
@@ -891,7 +931,10 @@ class AgentWithTools:
             mapping = {tool.name: tool for tool in tools}
 
         self._tools = mapping
-        self.tool_node = ToolNode(list(self._tools.values()))
+        self.tool_node = ToolNode(
+            list(self._tools.values()),
+            handle_tool_errors=self.handle_tool_errors,
+        )
 
         if rebuild_graph and hasattr(self, "build_graph"):
             self.__dict__.pop("compiled_graph", None)
