@@ -49,11 +49,11 @@ result = agent("Create a Flask web application that displays 'Hello World'")
 ### Customizing the Workspace
 
 The agent creates a workspace folder with a randomly generated name for each
-run. You can access this workspace path from the result:
+run. You can access this workspace path from the agent:
 
 ```python
 result = agent("Create a Python script"))
-workspace_path = result["workspace"]
+workspace_path = agent.workspace
 print(f"Files were created in: {workspace_path}")
 ```
 
@@ -63,7 +63,7 @@ For complex tasks, you may need to adjust the recursion limit:
 
 ```python
 result = agent.invoke(
-    "Create a complex project with multiple files and tests", 
+    "Create a complex project with multiple files and tests",
     recursion_limit=2000
 )
 ```
@@ -89,7 +89,7 @@ The agent includes built-in safety checks for shell commands:
        @tool
        def do_magic(a: int, b: int) -> float:
            """Do magic with integers a and b.
-       
+
            Args:
                a: first integer
                b: second integer

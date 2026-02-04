@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
-# import the module (not just the symbol) so monkeypatch works cleanly
 import ursa.tools.read_file_tool as rft
+
+# import the module (not just the symbol) so monkeypatch works cleanly
+from tests.tools.utils import make_runtime
 
 
 def _touch(p: Path, content: bytes = b"%PDF-1.4\n%fake\n") -> None:
@@ -24,15 +26,19 @@ def _touch(p: Path, content: bytes = b"%PDF-1.4\n%fake\n") -> None:
 
 
 def _call_tool(filename: str, workspace: Path) -> str:
-    state = {"workspace": str(workspace)}
     tool_obj = rft.read_file
 
+    runtime = make_runtime(
+        workspace=workspace,
+        llm=None,
+        tool_call_id="read-file-call",
+    )
     # Prefer the stable tool interface across langchain_core versions
     if hasattr(tool_obj, "invoke"):
-        return tool_obj.invoke({"filename": filename, "state": state})
+        return tool_obj.invoke({"filename": filename, "runtime": runtime})
 
     # Fallback (older behavior)
-    return tool_obj.func(filename=filename, state=state)
+    return tool_obj.func(filename=filename, runtime=runtime)
 
 
 def test_no_ocr_when_text_is_sufficient(tmp_path, monkeypatch):
@@ -73,8 +79,8 @@ def test_ocr_runs_and_uses_ocr_pdf(tmp_path, monkeypatch):
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 22)
 
     # Make read_pdf_text return tiny text for original, large for *.ocr.pdf
-    def fake_read_pdf_text(path: str) -> str:
-        if ".ocr." in path and path.endswith(".pdf"):
+    def fake_read_pdf_text(path: Path) -> str:
+        if ".ocr." in str(path) and str(path).endswith(".pdf"):
             return "OCR_TEXT_" + ("Y" * 4000)
         return "tiny"
 
@@ -118,8 +124,8 @@ def test_ocr_cache_skips_second_run(tmp_path, monkeypatch):
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 22)
 
     # Original tiny, OCR big
-    def fake_read_pdf_text(path: str) -> str:
-        return "tiny" if ".ocr." not in path else "Z" * 5000
+    def fake_read_pdf_text(path: Path) -> str:
+        return "tiny" if ".ocr." not in str(path) else "Z" * 5000
 
     monkeypatch.setattr(rft, "read_pdf_text", fake_read_pdf_text)
 

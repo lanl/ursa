@@ -1,11 +1,11 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Annotated
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from langgraph.prebuilt import InjectedState
 
+from ursa.agents.base import AgentContext
 from ursa.util.parse import read_pdf_text, read_text_file
 
 
@@ -53,7 +53,7 @@ def _ocr_to_searchable_pdf(
 
 
 @tool
-def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
+def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Read a file from the workspace.
 
     - If filename ends with .pdf, extract text from the PDF.
@@ -62,18 +62,16 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]) -> str:
 
     Args:
         filename: File name relative to the workspace directory.
-        state: Injected graph state containing "workspace".
 
     Returns:
         Extracted text content.
     """
-    workspace_dir = state["workspace"]
-    full_filename = os.path.join(workspace_dir, filename)
+    full_filename = runtime.context.workspace.joinpath(filename)
 
     print("[READING]:", full_filename)
 
     try:
-        if not full_filename.lower().endswith(".pdf"):
+        if not (full_filename.suffix.lower() == ".pdf"):
             return read_text_file(full_filename)
 
         # 1) normal extraction

@@ -5,11 +5,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from langchain.tools import tool
+from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.runtime import Runtime
 
-from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
+from ursa.tools.write_code_tool import write_code
 from ursa.util.memory_logger import AgentMemory
 
 
@@ -91,9 +94,14 @@ def _make_tool(name: str):
 
 
 class DummyAgentWithTools(AgentWithTools, BaseAgent):
-    def __init__(self, llm, tools=None, **kwargs):
+    def __init__(self, llm, tools=None, handle_tool_errors=True, **kwargs):
         self.build_graph_calls = 0
-        super().__init__(llm=llm, tools=tools, **kwargs)
+        super().__init__(
+            llm=llm,
+            tools=tools,
+            handle_tool_errors=handle_tool_errors,
+            **kwargs,
+        )
 
     def _noop(self, state):
         return state
@@ -178,6 +186,23 @@ def test_agent_with_tools_setter_updates_mapping_and_rebuilds_graph(
     assert isinstance(agent.tool_node, ToolNode)
 
 
+@pytest.mark.parametrize("handle_tool_errors", [True, "Custom error message"])
+def test_handle_tool_errors_propagation(
+    chat_model, tmp_path, handle_tool_errors
+):
+    """Verify that handle_tool_errors is propagated to ToolNode."""
+    # Dummy tool used only for adding to the agent; no need to run it
+    alpha = _make_tool("alpha")
+    agent = DummyAgentWithTools(
+        llm=chat_model,
+        tools=[alpha],
+        workspace=tmp_path,
+        handle_tool_errors=handle_tool_errors,
+    )
+    # The ToolNode internally stores the error handling strategy
+    assert agent.tool_node._handle_tool_errors == handle_tool_errors
+
+
 @pytest.mark.asyncio
 async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
     alpha = _make_tool("alpha")
@@ -205,3 +230,47 @@ async def test_agent_with_tools_add_mcp_tools_filters_by_name(
     await agent.add_mcp_tools(client, tool_name="beta")
 
     assert agent.tools == {"beta": beta}
+
+
+def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
+    class WriteToolAgent(AgentWithTools, BaseAgent):
+        def __init__(self, **kwargs):
+            super().__init__(llm=chat_model, tools=[write_code], **kwargs)
+
+        def _inject_tool_call(self, state, runtime: Runtime[AgentContext]):
+            messages = list(state["messages"])
+            assert isinstance(runtime.context, AgentContext)
+            messages.append(
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "tool_call_write_code",
+                            "name": "write_code",
+                            "args": {
+                                "code": "print('runtime ok')",
+                                "filename": "runtime_check.py",
+                            },
+                        }
+                    ],
+                )
+            )
+            return {"messages": messages}
+
+        def _build_graph(self):
+            self.add_node(self._inject_tool_call, "inject")
+            self.add_node(self.tool_node, "tools")
+            self.graph.set_entry_point("inject")
+            self.graph.add_edge("inject", "tools")
+            self.graph.set_finish_point("tools")
+
+    agent = WriteToolAgent(workspace=tmp_path)
+    result = agent.invoke("trigger tool")
+
+    written_file = Path(tmp_path, "runtime_check.py")
+    assert written_file.exists()
+    assert written_file.read_text(encoding="utf-8") == "print('runtime ok')"
+    assert any(
+        getattr(msg, "tool_call_id", "") == "tool_call_write_code"
+        for msg in result["messages"]
+    )
