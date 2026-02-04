@@ -1,16 +1,16 @@
-import os
-from typing import Annotated
+import time
+from pathlib import Path
 
-from langchain_core.messages import ToolMessage
-from langchain_core.tools import InjectedToolCallId, tool
-from langgraph.prebuilt import InjectedState
-from langgraph.types import Command
+from langchain.tools import ToolRuntime
+from langchain_core.tools import tool
 from rich import get_console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
+from ursa.agents.base import AgentContext
 from ursa.util.diff_renderer import DiffRenderer
 from ursa.util.parse import read_text_file
+from ursa.util.types import AsciiStr
 
 console = get_console()
 
@@ -39,27 +39,23 @@ def _strip_fences(snippet: str) -> str:
     return "\n".join(body.split("\n")[1:]) if "\n" in body else body.strip()
 
 
-@tool
+@tool(description="Write source code to a file")
 def write_code(
     code: str,
-    filename: str,
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[dict, InjectedState],
-) -> Command:
-    """Write source code to a file and update the agent’s workspace state.
+    filename: AsciiStr,
+    runtime: ToolRuntime[AgentContext],
+) -> str:
+    """Write source code to a file
+
+    Records successful file edits to the graph's store
 
     Args:
         code: The source code content to be written to disk.
         filename: Name of the target file (including its extension).
-        tool_call_id: Identifier for this tool invocation.
-        state: Agent state dict holding workspace path and file list.
 
-    Returns:
-        Command: Contains an updated state (including code_files) and
-        a ToolMessage acknowledging success or failure.
     """
     # Determine the full path to the target file
-    workspace_dir = state["workspace"]
+    workspace_dir = runtime.context.workspace
     console.print("[cyan]Writing file:[/]", filename)
 
     # Clean up markdown fences on submitted code.
@@ -80,7 +76,7 @@ def write_code(
     )
 
     # Write cleaned code to disk
-    code_file = os.path.join(workspace_dir, filename)
+    code_file = workspace_dir.joinpath(filename)
     try:
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(code)
@@ -97,33 +93,28 @@ def write_code(
         f"[green]File written:[/] {code_file}"
     )
 
-    # Append the file to the list in agent's state for later reference
-    file_list = state.get("code_files", set([]))
-    if filename not in file_list:
-        file_list.add(filename)
-
-    # Create a tool message to send back to acknowledge success.
-    msg = ToolMessage(
-        content=f"File {filename} written successfully.",
-        tool_call_id=tool_call_id,
-    )
-
-    # Return updated code files list & the message
-    return Command(
-        update={
-            "code_files": file_list,
-            "messages": [msg],
-        }
-    )
+    # Record the edit operation
+    if (store := runtime.store) is not None:
+        store.put(
+            ("workspace", "file_edit"),
+            filename,
+            {
+                "modified": time.time(),
+                "tool_call_id": runtime.tool_call_id,
+                "thread_id": runtime.config.get("metadata", {}).get(
+                    "thread_id", None
+                ),
+            },
+        )
+    return f"File {filename} written successfully."
 
 
 @tool
 def edit_code(
     old_code: str,
     new_code: str,
-    filename: str,
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[dict, InjectedState],
+    filename: AsciiStr,
+    runtime: ToolRuntime[AgentContext],
 ) -> str:
     """Replace the **first** occurrence of *old_code* with *new_code* in *filename*.
 
@@ -135,17 +126,16 @@ def edit_code(
     Returns:
         Success / failure message.
     """
-    workspace_dir = state["workspace"]
+    workspace_dir = runtime.context.workspace
     console.print("[cyan]Editing file:[/cyan]", filename)
 
-    code_file = os.path.join(workspace_dir, filename)
+    code_file = Path(workspace_dir, filename)
     try:
         content = read_text_file(code_file)
     except FileNotFoundError:
         console.print(
             "[bold bright_white on red] :heavy_multiplication_x: [/] "
             "[red]File not found:[/]",
-            filename,
         )
         return f"Failed: {filename} not found."
 
@@ -184,20 +174,18 @@ def edit_code(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
         f"[green]File updated:[/] {code_file}"
     )
-    file_list = state.get("code_files", set([]))
-    if code_file not in file_list:
-        file_list.add(filename)
-    state["code_files"] = file_list
 
-    # Create a tool message to send back to acknowledge success.
-    msg = ToolMessage(
-        content=f"File {filename} updated successfully.",
-        tool_call_id=tool_call_id,
-    )
-
-    return Command(
-        update={
-            "code_files": file_list,
-            "messages": [msg],
-        }
-    )
+    # Record the edit operation
+    if (store := runtime.store) is not None:
+        store.put(
+            ("workspace", "file_edit"),
+            filename,
+            {
+                "modified": time.time(),
+                "tool_call_id": runtime.tool_call_id,
+                "thread_id": runtime.config.get("metadata", {}).get(
+                    "thread_id", None
+                ),
+            },
+        )
+    return f"File {filename} updated successfully."
