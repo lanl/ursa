@@ -33,14 +33,17 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     """
     workspace_dir = Path(runtime.context.workspace)
     llm = runtime.context.model
+    if runtime.store is not None:
+        search_results = runtime.store.search(
+            ("workspace", "file_edit"), limit=1000
+        )
+        edited_files = [item.key for item in search_results]
+    else:
+        edited_files = []
 
     state = {}
     safety_result = StrOutputParser().invoke(
-        llm.invoke(
-            get_safety_prompt(
-                query, state["safe_codes"], state.get("code_files", [])
-            )
-        )
+        llm.invoke(get_safety_prompt(query, state["safe_codes"], edited_files))
     )
 
     if "[NO]" in safety_result:

@@ -552,7 +552,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.add_node(self.query_executor, "agent")
         self.add_node(self.tool_node, "action")
         self.add_node(self.recap, "recap")
-        # self.add_node(self.safety_check, "safety_check")
 
         # Set entrypoint: execution starts with the "agent" node.
         self.graph.set_entry_point("agent")
@@ -564,14 +563,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             self._wrap_cond(should_continue, "should_continue", "execution"),
             {"continue": "action", "recap": "recap"},
         )
-
-        # From "safety_check", route to tools if safe, otherwise back to agent
-        # to revise the plan without executing unsafe commands.
-        # self.graph.add_conditional_edges(
-        #     "action",
-        #     self._wrap_cond(command_safe, "command_safe", "execution"),
-        #     {"safe": "action", "unsafe": "agent"},
-        # )
 
         # After tools run, return control to the agent for the next step.
         self.graph.add_edge("action", "agent")
