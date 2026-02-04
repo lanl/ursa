@@ -1,6 +1,9 @@
 from langchain_openai import ChatOpenAI
+from rich import get_console
 
 from ursa.agents import LammpsAgent
+
+console = get_console()
 
 model = "gpt-5"
 
@@ -35,4 +38,6 @@ final_lammps_state = wf.invoke(
 )
 
 if final_lammps_state.get("run_returncode") == 0:
-    print("\nLAMMPS Workflow completed successfully. Exiting.....")
+    console.print(
+        "\n[green]LAMMPS Workflow completed successfully.[/green] Exiting....."
+    )
