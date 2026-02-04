@@ -17,6 +17,34 @@ from ursa.cli.config import ModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, UrsaRepl
 
 
+@pytest.fixture(autouse=True)
+def stub_duckduckgo(monkeypatch):
+    class DummyDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def text(self, *args, **kwargs):
+            yield {
+                "href": "https://example.com",
+                "title": "Example Result",
+                "body": "Example summary",
+            }
+
+    monkeypatch.setattr(
+        "ursa.agents.acquisition_agents.DDGS",
+        lambda: DummyDDGS(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "ursa.agents.hypothesizer_agent.DDGS",
+        lambda: DummyDDGS(),
+        raising=False,
+    )
+
+
 @pytest.fixture(scope="function")
 def ursa_config(tmpdir, chat_model, embedding_model):
     config = UrsaConfig(

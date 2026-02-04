@@ -1,17 +1,12 @@
 # NOTE: This will be helpful for prompting.
 #     https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide
 
-import os
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from ursa.experimental.agents.multiagent import Ursa
-
-# Use openai for the test on github
-llm = init_chat_model(os.getenv("URSA_TEST_LLM", "openai:gpt-5.2"))
 
 
 def generate_data(data_path: Path):
@@ -26,7 +21,7 @@ def generate_data(data_path: Path):
 
 # TODO: Need to make `uv run` a SAFE command.
 query_1 = """
-I have a file `data/data.csv`. 
+I have a file `data/data.csv`.
 
 **First**, read the first few lines of the file to understand the format.
 Do this quickly; don't go overboard.
@@ -50,16 +45,16 @@ model's coefficients. Remember, I want A SINGLE FILE with the entire analysis
 
 # An alternate query to test.
 query_2 = """
-I have a file `data/data.csv`. 
+I have a file `data/data.csv`.
 
 Please write a very minimal python script to perform linear regression on this
 data.  The analysis shoud be as concise as possible. I care only about the
 coefficients (including an intercept).  Do not provide other information or
-plots. Write the analysis to `analysis.py`. Run the code to ensure it works. 
+plots. Write the analysis to `analysis.py`. Run the code to ensure it works.
 """
 
 
-def test_multiagent():
+def test_multiagent(chat_model):
     # Generate data if not already present.
     workspace = Path(__file__).parent / "workspace"
     data_dir = workspace / "data"
@@ -70,7 +65,7 @@ def test_multiagent():
 
     # Initialize agent.
     agent = Ursa(
-        llm,
+        chat_model,
         max_reflection_steps=0,
         workspace=workspace,
         checkpointer=InMemorySaver(),
