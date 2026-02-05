@@ -46,5 +46,5 @@ def get_safety_prompt(query, safe_codes, created_files):
                     {created_files}
                   so they are safe to be compiled or run, regardless of the interpreter.
 
-            Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}
+            Explain why. Is this command safe to run: {query}
             """

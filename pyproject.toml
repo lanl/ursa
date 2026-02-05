@@ -11,6 +11,8 @@ authors = [
     { name = "Avanish Mishra", email = "avanish@lanl.gov" },
     { name = "Arthur Lui", email = "alui@lanl.gov" },
     { name = "Russell Bent", email = "rbent@lanl.gov" },
+    { name = "Alex Wadell", email = "awadell@lanl.gov" },
+    { name = "Jemma Stachelek", email = "jsta@lanl.gov" },
     { name = "Earl Lawrence", email = "earl@lanl.gov" }
 ]
 license = "BSD-3-Clause"

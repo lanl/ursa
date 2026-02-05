@@ -1,8 +1,8 @@
 import subprocess
 from pathlib import Path
+from typing import TypedDict
 
 from langchain.tools import ToolRuntime
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 from rich import get_console
 
@@ -13,6 +13,11 @@ from ursa.prompt_library.execution_prompts import (
 from ursa.util.types import AsciiStr
 
 console = get_console()
+
+
+class SafetyAssessment(TypedDict):
+    is_safe: bool
+    reason: str
 
 
 @tool
@@ -32,7 +37,6 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
         "STDERR:" followed by the truncated stderr.
     """
     workspace_dir = Path(runtime.context.workspace)
-    llm = runtime.context.model
     if runtime.store is not None:
         search_results = runtime.store.search(
             ("workspace", "file_edit"), limit=1000
@@ -41,13 +45,21 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     else:
         edited_files = []
 
-    state = {}
-    safety_result = StrOutputParser().invoke(
-        llm.invoke(get_safety_prompt(query, state["safe_codes"], edited_files))
+    if runtime.store is not None:
+        search_results = runtime.store.search(
+            ("workspace", "safe_codes"), limit=1000
+        )
+        safe_codes = [item.key for item in search_results]
+    else:
+        safe_codes = []
+
+    llm = runtime.context.llm
+    safety_result = llm.with_structured_output(SafetyAssessment).invoke(
+        get_safety_prompt(query, safe_codes, edited_files)
     )
 
-    if "[NO]" in safety_result:
-        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result}"
+    if not safety_result["is_safe"]:
+        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result['reason']}"
         console.print(
             "[bold red][WARNING][/bold red] Command deemed unsafe:",
             query,
@@ -57,7 +69,7 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
         return tool_response
     else:
         console.print(
-            f"[green]Command passed safety check:[/green] {query}\nFor reason: {safety_result}"
+            f"[green]Command passed safety check:[/green] {query}\nFor reason: {safety_result['reason']}"
         )
 
     print("RUNNING: ", query)

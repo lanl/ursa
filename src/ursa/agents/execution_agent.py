@@ -9,7 +9,7 @@ Key features:
 - Code authoring and edits through write_code and edit_code with rich previews.
 - Web search capability through DuckDuckGoSearchResults.
 - Summarization of the session and optional memory logging.
-- Configurable graph with nodes for agent, safety_check, action, and summarize.
+- Configurable graph with nodes for agent, action, and summarize.
 
 Implementation notes:
 - LLM prompts are sourced from prompt_library.execution_prompts.
@@ -26,6 +26,7 @@ Entry points:
 """
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
+from copy import deepcopy
 from pathlib import Path
 from typing import (
     Annotated,
@@ -83,16 +84,12 @@ class ExecutionState(TypedDict):
 
     Fields:
     - messages: list of messages (System/Human/AI/Tool).
-    - current_progress: short status string describing agent progress.
-    - workspace: path to the working directory where files and commands run.
     - symlinkdir: optional dict describing a symlink operation (source, dest,
       is_linked).
     """
 
     messages: Annotated[list[AnyMessage], add_messages]
-    current_progress: str
     symlinkdir: dict
-    safe_codes: list[str]
 
 
 def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
@@ -181,11 +178,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             model response.
         recap(state): Produce and optionally persist a summary of recent
             interactions to the memory backend.
-        safety_check(state): Validate pending run_command calls via the safety
-            prompt and append ToolMessages for unsafe commands.
-        get_safety_prompt(query, safe_codes, created_files): Get the LLM prompt for safety_check
-            that includes an editable list of available programming languages and gets the context
-            of files that the agent has generated and can trust.
         _build_graph(): Construct and compile the StateGraph for the agent
             loop.
 
@@ -332,7 +324,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 - "workspace": The resolved workspace path.
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
-        new_state = state.copy()
+        new_state = deepcopy(state)
 
         # 1.5) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
@@ -403,7 +395,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             ExecutionState: A partial update with a single string message containing
                 the recap.
         """
-        new_state = state.copy()
+        new_state = deepcopy(state)
 
         # 0) Check message history length and summarize to shorten the token usage:
         new_state = self._summarize_context(new_state)
@@ -465,78 +457,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 5) Return a partial state update with only the summary content.
         return {"messages": [recap_message, response]}
 
-    def safety_check(
-        self, state: ExecutionState, runtime: Runtime[AgentContext]
-    ) -> ExecutionState:
-        """Assess pending shell commands for safety and inject ToolMessages with results.
-
-        This method inspects the most recent AI tool calls, evaluates any run_command
-        queries against the safety prompt, and constructs ToolMessages that either
-        flag unsafe commands with reasons or confirm safe execution. If any command
-        is unsafe, the generated ToolMessages are appended to the state so the agent
-        can react without executing the command.
-
-        Args:
-            state (ExecutionState): Current execution state.
-
-        Returns:
-            ExecutionState: Either the unchanged state (all safe) or a copy with one
-                or more ToolMessages appended when unsafe commands are detected.
-        """
-        # 1) Work on a shallow copy; inspect the most recent model message.
-        new_state = state.copy()
-        last_msg = new_state["messages"][-1]
-
-        # 1.5) Check message history length and summarize to shorten the token usage:
-
-        # 2) Evaluate any pending run_command tool calls for safety.
-        tool_responses = []
-        for tool_call in last_msg.tool_calls:
-            if tool_call["name"] != "run_command":
-                continue
-
-            if runtime.store is not None:
-                search_results = runtime.store.search(
-                    ("workspace", "file_edit"), limit=1000
-                )
-                edited_files = [item.key for item in search_results]
-            else:
-                edited_files = []
-            query = tool_call["args"]["query"]
-            safety_result = self.llm.invoke(
-                self.get_safety_prompt(query, self.safe_codes, edited_files),
-                self.build_config(tags=["safety_check"]),
-            ).text
-
-            if "[NO]" in safety_result:
-                tool_response = (
-                    "[UNSAFE] That command `{q}` was deemed unsafe and cannot be run.\n"
-                    "For reason: {r}"
-                ).format(q=query, r=safety_result)
-                console.print(
-                    "[bold red][WARNING][/bold red] Command deemed unsafe:",
-                    query,
-                )
-                # Also surface the model's rationale for transparency.
-                console.print(
-                    "[bold red][WARNING][/bold red] REASON:", tool_response
-                )
-                tool_responses.append(
-                    ToolMessage(
-                        content=tool_response, tool_call_id=tool_call["id"]
-                    )
-                )
-                # last_msg.tool_calls.remove(tool_call)
-            else:
-                tool_response = f"Command `{query}` passed safety check."
-                console.print(
-                    f"[green]Command passed safety check:[/green] {query}"
-                )
-        if tool_responses:
-            return {"messages": tool_responses}
-        else:
-            return {}
-
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
 
@@ -548,7 +468,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # - "agent": LLM planning/execution step
         # - "action": tool dispatch (run_command, write_code, etc.)
         # - "recap": summary/finalization step
-        # - "safety_check": gate for shell command safety
         self.add_node(self.query_executor, "agent")
         self.add_node(self.tool_node, "action")
         self.add_node(self.recap, "recap")
@@ -572,3 +491,14 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
     def format_result(self, state: ExecutionState) -> str:
         return state["messages"][-1].text
+
+    def hook_storage_setup(self, store):
+        # Record the edit operation
+        if store is None:
+            return
+        for safe_code in self.safe_codes:
+            store.put(
+                ("workspace", "safe_codes"),
+                safe_code,
+                None,
+            )
