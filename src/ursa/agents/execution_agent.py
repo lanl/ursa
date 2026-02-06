@@ -224,6 +224,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
         new_state = state.copy()
+        summarized = False
         tokens_before_summarize = count_tokens_approximately(
             new_state["messages"][1:]
         )
@@ -298,7 +299,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 )
             )
             new_state["messages"] = summarized_messages
-        return new_state
+            summarized = True
+        return new_state, summarized
 
     # Define the function that calls the model
     def query_executor(
@@ -325,9 +327,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
+        full_overwrite = False
 
         # 1.5) Check message history length and summarize to shorten the token usage:
-        new_state = self._summarize_context(new_state)
+        new_state, full_overwrite = self._summarize_context(new_state)
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
@@ -347,23 +350,21 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
             # Create the symlink (tell pathlib if the target is a directory).
             dst.symlink_to(src, target_is_directory=src.is_dir())
-            print(f"{RED}Symlinked {src} (source) --> {dst} (dest)")
+            print(f"{RED}Symlinked:{RESET} {src} (source) --> {dst} (dest)")
             new_state["symlinkdir"]["is_linked"] = True
+            full_overwrite = True
 
         # 3) Ensure the executor prompt is the first SystemMessage.
-        if isinstance(new_state["messages"][0], SystemMessage):
-            new_state["messages"][0] = SystemMessage(
-                content=self.executor_prompt
-            )
+        messages = deepcopy(new_state["messages"])
+        if isinstance(messages[0], SystemMessage):
+            messages[0] = SystemMessage(content=self.executor_prompt)
         else:
-            new_state["messages"] = [
-                SystemMessage(content=self.executor_prompt)
-            ] + new_state["messages"]
+            messages = [SystemMessage(content=self.executor_prompt)] + messages
 
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.llm.invoke(
-                new_state["messages"], self.build_config(tags=["agent"])
+                messages, self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
         except Exception as e:
@@ -376,10 +377,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
 
-        return {
-            "messages": Overwrite(new_state["messages"]),
-            "safe_codes": self.safe_codes,
-        }
+        if full_overwrite:
+            return Overwrite(new_state)
+        else:
+            return {"messages": response}
 
     def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
@@ -396,9 +397,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 the recap.
         """
         new_state = deepcopy(state)
+        full_overwrite = False
 
         # 0) Check message history length and summarize to shorten the token usage:
-        new_state = self._summarize_context(new_state)
+        new_state, full_overwrite = self._summarize_context(new_state)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
         recap_message = HumanMessage(content=self.recap_prompt)
@@ -449,13 +451,17 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             memories.append(response_content)
             self.agent_memory.add_memories(memories)
 
-        # 4) Optionally write state to disk for debugging/auditing.
-        if self.log_state:
+        if full_overwrite:
+            # 4) Optionally write state to disk for debugging/auditing.
             new_state["messages"].append(response)
-            self.write_state("execution_agent.json", new_state)
-
-        # 5) Return a partial state update with only the summary content.
-        return {"messages": [recap_message, response]}
+            if self.log_state:
+                self.write_state("execution_agent.json", new_state)
+            return Overwrite(new_state)
+        else:
+            if self.log_state:
+                new_state["messages"].append(response)
+                self.write_state("execution_agent.json", new_state)
+            return {"messages": [recap_message, response]}
 
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
