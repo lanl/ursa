@@ -336,7 +336,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
-        if isinstance(sd, dict) and "is_linked" not in sd:
+        if sd and "is_linked" not in sd:
             # symlinkdir structure: {"source": "/path/to/src", "dest": "link/name"}
             symlinkdir = sd
 
