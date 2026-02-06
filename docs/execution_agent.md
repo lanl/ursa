@@ -80,7 +80,6 @@ The agent includes built-in safety checks for shell commands:
 
 1. **State Machine**: The agent uses a directed graph to manage its workflow:
    - `agent` node: Processes user requests and generates responses
-   - `safety_check` node: Evaluates command safety
    - `action` node: Executes tools (`run_cmd`, `write_code`, `edit_code`, `search`)
      - extra tools can be provided to the agent as follows:
        ```py

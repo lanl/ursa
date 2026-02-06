@@ -123,7 +123,6 @@ async def query_rememberer(request: str) -> str:
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
-    current_progress: str
     code_files: list[str]
 
 

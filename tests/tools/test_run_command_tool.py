@@ -3,17 +3,46 @@ from types import SimpleNamespace
 
 import pytest
 from langchain.chat_models import BaseChatModel
+from langgraph.store.memory import InMemoryStore
 from pydantic import ValidationError
 
 from tests.tools.utils import make_runtime
-from ursa.tools.run_command_tool import run_command
+from ursa.tools.run_command_tool import SafetyAssessment, run_command
 from ursa.util.types import AsciiStr
+
+
+def _patch_safety_result(
+    monkeypatch,
+    chat_model: BaseChatModel,
+    *,
+    is_safe: bool,
+    reason: str = "Evaluated in test",
+):
+    captured = {}
+
+    def fake_with_structured_output(self, schema):
+        captured["schema"] = schema
+
+        class Invoker:
+            def invoke(self_inner, prompt):
+                captured["prompt"] = prompt
+                return {"is_safe": is_safe, "reason": reason}
+
+        return Invoker()
+
+    monkeypatch.setattr(
+        chat_model.__class__,
+        "with_structured_output",
+        fake_with_structured_output,
+    )
+    return captured
 
 
 def test_run_command_invokes_subprocess_in_workspace(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     recorded = {}
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
     def fake_run(*args, **kwargs):
         recorded["args"] = args
@@ -42,6 +71,7 @@ def test_run_command_truncates_output(
 ):
     long_stdout = "a" * 200
     long_stderr = "b" * 200
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
     monkeypatch.setattr(
         "ursa.tools.run_command_tool.subprocess.run",
@@ -74,6 +104,8 @@ def test_run_command_truncates_output(
 def test_run_command_handles_keyboard_interrupt(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
+    _patch_safety_result(monkeypatch, chat_model, is_safe=True)
+
     def raise_interrupt(*args, **kwargs):
         raise KeyboardInterrupt()
 
@@ -118,3 +150,55 @@ def test_run_command_schema_has_regex_constraint():
     ]
     assert ascii_constraints
     assert constraints[0].pattern == ascii_constraints[0].pattern
+
+
+def test_run_command_blocks_commands_that_fail_safety_check(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    captured = _patch_safety_result(
+        monkeypatch, chat_model, is_safe=False, reason="Not safe in test"
+    )
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess.run should not be called for unsafe commands"
+        ),
+    )
+
+    store = InMemoryStore()
+    store.put(("workspace", "file_edit"), "script.py", {})
+    store.put(("workspace", "safe_codes"), "python", {})
+    store.put(("workspace", "safe_codes"), "julia", {})
+
+    search_calls = []
+    original_search = InMemoryStore.search
+
+    def tracked_search(self, namespace_prefix, /, **kwargs):
+        if self is store:
+            search_calls.append((namespace_prefix, kwargs.get("limit")))
+        return original_search(self, namespace_prefix, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, "search", tracked_search)
+
+    result = run_command.func(
+        "rm -rf important_files",
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            store=store,
+            tool_call_id="unsafe",
+            thread_id="run-thread",
+        ),
+    )
+
+    assert result.startswith(
+        "[UNSAFE] That command `rm -rf important_files` was deemed unsafe"
+    )
+    assert captured["schema"] is SafetyAssessment
+    assert "python" in captured["prompt"]
+    assert "julia" in captured["prompt"]
+    assert "script.py" in captured["prompt"]
+    assert search_calls == [
+        (("workspace", "file_edit"), 1000),
+        (("workspace", "safe_codes"), 1000),
+    ]
