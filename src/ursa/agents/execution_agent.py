@@ -327,6 +327,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
+        new_state.setdefault("symlinkdir", {})
+
         full_overwrite = False
 
         # 1.5) Check message history length and summarize to shorten the token usage:
