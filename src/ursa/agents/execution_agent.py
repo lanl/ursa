@@ -376,11 +376,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 5) Optionally persist the pre-invocation state for audit/debugging.
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
-
         if full_overwrite:
-            return Overwrite(new_state)
+            return {
+                "messages": Overwrite(new_state["messages"]),
+                "symlinkdir": new_state["symlinkdir"],
+            }
         else:
-            return {"messages": response}
+            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
     def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
