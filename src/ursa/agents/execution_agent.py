@@ -213,7 +213,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         super().__init__(llm=llm, tools=default_tools, **kwargs)
         self.agent_memory = agent_memory
-        self.safe_codes = safe_codes or ["python", "julia"]
+        self.safe_codes = set(safe_codes or ["python", "julia"])
         self.executor_prompt = executor_prompt
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
@@ -500,5 +500,5 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             store.put(
                 ("workspace", "safe_codes"),
                 safe_code,
-                None,
+                {},
             )

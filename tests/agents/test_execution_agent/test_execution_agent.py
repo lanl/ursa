@@ -149,3 +149,17 @@ async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
         isinstance(execution_agent.workspace, Path)
         and execution_agent.workspace.exists()
     )
+
+
+def test_safe_codes_in_store(chat_model, tmpdir):
+    execution_agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmpdir,
+    )
+    assert len(execution_agent.safe_codes) > 0
+    store = execution_agent.storage
+    safe_codes = [
+        item.key
+        for item in store.search(("workspace", "safe_codes"), limit=1000)
+    ]
+    assert set(safe_codes) == set(execution_agent.safe_codes)
