@@ -7954,6 +7954,9 @@ dependencies = [
 fm = [
     { name = "torch" },
 ]
+lammps = [
+    { name = "atomman" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -7971,9 +7974,6 @@ docs = [
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
 ]
-lammps = [
-    { name = "atomman" },
-]
 opt = [
     { name = "ortools" },
 ]
@@ -7985,6 +7985,7 @@ otel = [
 [package.metadata]
 requires-dist = [
     { name = "arxiv", specifier = ">=2.2.0,<3.0" },
+    { name = "atomman", marker = "extra == 'lammps'", specifier = ">=1.5.2" },
     { name = "beautifulsoup4", specifier = ">=4.13.4,<5.0" },
     { name = "ddgs", specifier = ">=9.5.5" },
     { name = "fastmcp", specifier = ">=2.13.3" },
@@ -8012,7 +8013,7 @@ requires-dist = [
     { name = "trafilatura", specifier = ">=1.6.1,<1.7" },
     { name = "typer", specifier = ">=0.16.1" },
 ]
-provides-extras = ["fm"]
+provides-extras = ["fm", "lammps"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -8030,7 +8031,6 @@ docs = [
     { name = "mkdocs-material", specifier = ">=9.6.21" },
     { name = "mkdocstrings-python", specifier = ">=1.18.2" },
 ]
-lammps = [{ name = "atomman", specifier = ">=1.5.2" }]
 opt = [{ name = "ortools", specifier = ">=9.14,<9.15" }]
 otel = [
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.0" },
