@@ -143,12 +143,6 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
                 "run_osti_search",
                 "run_arxiv_search",
             ])
-        if not self.use_web:
-            self.runner.remove_tool([
-                "run_web_search",
-                "run_osti_search",
-                "run_arxiv_search",
-            ])
 
         if self.embedding:
             self.rag_agent = RAGAgent(
