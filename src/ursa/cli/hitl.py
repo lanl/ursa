@@ -149,6 +149,7 @@ class HITL:
         self.hypothesizer_state = {}
         self.planner_state = {}
         self.websearcher_state = []
+        self.dsi_state = {"messages": []}
 
     def update_last_agent_result(self, result: str):
         self.last_agent_result = result
@@ -326,6 +327,28 @@ class HITL:
         self.update_last_agent_result(chat_output.content)
         # return f"[{self.model.model_name}]: {self.last_agent_result}"
         return f"{self.last_agent_result}"
+    
+
+    def run_dsi(self, prompt: str) -> str:
+        self.dsi_state["messages"].append(
+            HumanMessage(
+                content=f"The last agent output was: {self.last_agent_result}\n The user stated: {prompt}"
+            )
+        )
+        self.dsi_state = self.dsi.invoke(
+            self.dsi_state,
+        )
+        dsi_output = self.dsi_state["messages"][-1]
+
+        if not isinstance(dsi_output.content, str):
+            raise TypeError(
+                f"dsi_output is not a str! Instead, it is: {type(dsi_output.content)}."
+            )
+
+        self.update_last_agent_result(dsi_output.content)
+        # return f"[{self.model.model_name}]: {self.last_agent_result}"
+        return f"{self.last_agent_result}"
+
 
     def run_hypothesizer(self, prompt: str) -> str:
         question = f"The last agent output was: {self.last_agent_result}\n\nThe user stated: {prompt}"

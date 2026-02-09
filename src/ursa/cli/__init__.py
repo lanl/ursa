@@ -378,6 +378,10 @@ def serve(
         @mcp.tool(description="Direct chat with the hosted LLM.")
         def chat(query):
             return hitl.run_chatter(query)
+        
+        @mcp.tool(description="Search a DSI database.")
+        def dsi_search(query):
+            return hitl.run_dsi(query)
 
         # Optional: a quick ping/health tool (some clients call this)
         @mcp.tool(description="Liveness check.")

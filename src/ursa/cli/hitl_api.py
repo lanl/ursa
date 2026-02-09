@@ -14,7 +14,7 @@ mcp_app = FastAPI(
 
 class QueryRequest(BaseModel):
     agent: Literal[
-        "arxiv", "plan", "execute", "web", "recall", "chat", "hypothesize"
+        "arxiv", "dsi", "plan", "execute", "web", "recall", "chat", "hypothesize"
     ]
     query: Annotated[
         str,
@@ -43,6 +43,7 @@ def run_ursa(req: QueryRequest, hitl=Depends(get_hitl)):
         RecallAgent: Perform RAG on previous ExecutionAgent steps saved in a memory database
         HypothesizerAgent: Perform detailed reasoning to propose an approach to solve a given user problem/query
         ChatAgent: Query the hosted LLM as a straightforward chatbot.
+        DSIAgent: Explore a dataset using natural language queries, with the ability to use tools to load and interact with the dataset.
 
     Arguments:
         agent: str, one of: arxiv, plan, execute, web, recall, hypothesize, or chat. Directs the query to the corresponding agent
@@ -67,6 +68,8 @@ def run_ursa(req: QueryRequest, hitl=Depends(get_hitl)):
                 response = hitl.run_hypothesizer(req.query)
             case "chat":
                 response = hitl.run_chatter(req.query)
+            case "dsi":
+                response = hitl.run_dsi(req.query)
             case _:
                 response = f"Agent '{req.agent}' not found."
         return QueryResponse(response=response)
