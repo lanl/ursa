@@ -1,6 +1,6 @@
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from typing import Annotated, Any, Mapping, TypedDict
+from typing import Annotated, Any, TypedDict
 
 import requests
 from bs4 import BeautifulSoup
@@ -8,7 +8,7 @@ from langchain.agents import create_agent
 from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage, SystemMessage
 from langchain_community.tools import DuckDuckGoSearchResults
-from langgraph.graph import StateGraph
+from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState
 from pydantic import Field
@@ -41,11 +41,7 @@ class WebSearchState(TypedDict):
 
 
 class WebSearchAgentLegacy(BaseAgent):
-    def __init__(
-        self,
-        llm: BaseChatModel,
-        **kwargs,
-    ):
+    def __init__(self, llm: BaseChatModel, **kwargs):
         super().__init__(llm, **kwargs)
         self.websearch_prompt = websearch_prompt
         self.reflection_prompt = reflection_prompt
@@ -53,7 +49,6 @@ class WebSearchAgentLegacy(BaseAgent):
         self.has_internet = self._check_for_internet(
             kwargs.get("url", "http://www.lanl.gov")
         )
-        self._build_graph()
 
     def _review_node(self, state: WebSearchState) -> WebSearchState:
         if not self.has_internet:
@@ -69,10 +64,12 @@ class WebSearchAgentLegacy(BaseAgent):
         translated = [SystemMessage(content=reflection_prompt)] + state[
             "messages"
         ]
-        res = self.llm.invoke(
-            translated, {"configurable": {"thread_id": self.thread_id}}
+        res = StrOutputParser().invoke(
+            self.llm.invoke(
+                translated, {"configurable": {"thread_id": self.thread_id}}
+            )
         )
-        return {"messages": [HumanMessage(content=res.content)]}
+        return {"messages": [HumanMessage(content=res)]}
 
     def _response_node(self, state: WebSearchState) -> WebSearchState:
         if not self.has_internet:
@@ -86,8 +83,10 @@ class WebSearchAgentLegacy(BaseAgent):
             }
 
         messages = state["messages"] + [SystemMessage(content=summarize_prompt)]
-        response = self.llm.invoke(
-            messages, {"configurable": {"thread_id": self.thread_id}}
+        response = StrOutputParser().invoke(
+            self.llm.invoke(
+                messages, {"configurable": {"thread_id": self.thread_id}}
+            )
         )
 
         urls_visited = []
@@ -95,7 +94,7 @@ class WebSearchAgentLegacy(BaseAgent):
             if message.model_dump().get("tool_calls", []):
                 if "url" in message.tool_calls[0]["args"]:
                     urls_visited.append(message.tool_calls[0]["args"]["url"])
-        return {"messages": [response.content], "urls_visited": urls_visited}
+        return {"messages": [response], "urls_visited": urls_visited}
 
     def _check_for_internet(self, url, timeout=2):
         """
@@ -122,18 +121,17 @@ class WebSearchAgentLegacy(BaseAgent):
         return react_agent.invoke(state)
 
     def _build_graph(self):
-        graph = StateGraph(WebSearchState)
-        self.add_node(graph, self._state_store_node)
-        self.add_node(graph, self._create_react)
-        self.add_node(graph, self._review_node)
-        self.add_node(graph, self._response_node)
+        self.add_node(self._state_store_node)
+        self.add_node(self._create_react)
+        self.add_node(self._review_node)
+        self.add_node(self._response_node)
 
-        graph.set_entry_point("_state_store_node")
-        graph.add_edge("_state_store_node", "_create_react")
-        graph.add_edge("_create_react", "_review_node")
-        graph.set_finish_point("_response_node")
+        self.graph.set_entry_point("_state_store_node")
+        self.graph.add_edge("_state_store_node", "_create_react")
+        self.graph.add_edge("_create_react", "_review_node")
+        self.graph.set_finish_point("_response_node")
 
-        graph.add_conditional_edges(
+        self.graph.add_conditional_edges(
             "_review_node",
             should_continue,
             {
@@ -141,16 +139,6 @@ class WebSearchAgentLegacy(BaseAgent):
                 "_response_node": "_response_node",
             },
         )
-        self._action = graph.compile(checkpointer=self.checkpointer)
-        # self._action.get_graph().draw_mermaid_png(output_file_path="./websearch_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
 
 
 def process_content(
@@ -174,12 +162,10 @@ def process_content(
     Carefully summarize the content in full detail, given the following context:
     {context}
     """
-    summarized_information = (
-        state["model"]
-        .invoke(
+    summarized_information = StrOutputParser().invoke(
+        state["model"].invoke(
             content_prompt, {"configurable": {"thread_id": state["thread_id"]}}
         )
-        .content
     )
     return summarized_information
 
@@ -191,6 +177,6 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 def should_continue(state: WebSearchState):
     if len(state["messages"]) > (state.get("max_websearch_steps", 100) + 3):
         return "_response_node"
-    if "[APPROVED]" in state["messages"][-1].content:
+    if "[APPROVED]" in state["messages"][-1].text:
         return "_response_node"
     return "_create_react"

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Annotated, Any, Mapping, TypedDict
+from typing import Annotated, TypedDict
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -8,11 +8,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 # LangChain core bits
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.runtime import Runtime
 
 # Your project imports
-from ursa.agents.base import BaseAgent
+from ursa.agents.base import AgentContext, BaseAgent
 
 
 # --- Tiny offline model that triggers LLM callbacks and returns usage ---
@@ -71,14 +71,11 @@ class Agent(BaseAgent):
     ):
         super().__init__(
             llm,
-            checkpointer,
-            enable_metrics,
-            metrics_dir,
-            autosave_metrics,
+            checkpointer=checkpointer,
+            enable_metrics=enable_metrics,
+            metrics_dir=metrics_dir,
             **kwargs,
         )
-        self.graph = self._build_graph()
-        self._action = self.graph
 
     def _run_impl(self, state: SpecState):
         # Make one LLM call with callbacks + metadata wired in via build_config()
@@ -88,24 +85,9 @@ class Agent(BaseAgent):
         return {"messages": [AIMessage(content="done")]}
 
     def _build_graph(self):
-        builder = StateGraph(SpecState)
-        builder.add_node(
-            "run_impl",
-            self._wrap_node(self._run_impl, "run_impl", "test"),
-        )
-        builder.set_entry_point("run_impl")
-        builder.set_finish_point("run_impl")
-
-        graph = builder.compile()
-        return graph
-
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 100000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self._action.invoke(inputs, config)
+        self.add_node(self._run_impl, "run_impl")
+        self.graph.set_entry_point("run_impl")
+        self.graph.set_finish_point("run_impl")
 
 
 @pytest.fixture
@@ -138,7 +120,7 @@ def _read_single_metrics_file(metrics_dir: Path) -> dict:
 
 
 def test_base_agent_metrics_and_pricing(
-    tmp_path: Path, monkeypatch, pricing_file: Path
+    tmpdir: Path, monkeypatch, pricing_file: Path
 ):
     """
     End-to-end: BaseAgent.invoke() triggers telemetry + pricing using a fake chat model.
@@ -148,10 +130,6 @@ def test_base_agent_metrics_and_pricing(
       - costs computed from pricing.json
       - totals sane
     """
-    # Make a dedicated metrics dir for this test
-    metrics_dir = tmp_path / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-
     # Point loader at our local pricing.json
     monkeypatch.setenv("URSA_PRICING_JSON", str(pricing_file))
 
@@ -160,7 +138,7 @@ def test_base_agent_metrics_and_pricing(
         llm=TinyCountingModel(),
         enable_metrics=True,
         autosave_metrics=True,
-        metrics_dir=str(metrics_dir),
+        workspace=tmpdir,
     )
 
     # Run once (no network); prints telemetry and writes JSON
@@ -169,7 +147,8 @@ def test_base_agent_metrics_and_pricing(
     assert "messages" in out
 
     # Read the latest metrics JSON
-    payload = _read_single_metrics_file(metrics_dir)
+    assert Path(agent.telemetry.output_dir).is_dir()
+    payload = _read_single_metrics_file(agent.telemetry.output_dir)
 
     # Basic structure present
     assert "llm_events" in payload
@@ -209,14 +188,11 @@ def test_base_agent_metrics_and_pricing(
     assert pytest.approx(cd["total_cost"], rel=1e-9, abs=1e-9) == 0.000048
 
 
-def test_metrics_toggle_off(tmp_path: Path, monkeypatch, pricing_file: Path):
+def test_metrics_toggle_off(tmpdir: Path, monkeypatch, pricing_file: Path):
     """
     When metrics=False, callbacks are disabled and render() prints nothing.
     No JSON should be saved to metrics_dir.
     """
-    metrics_dir = tmp_path / "metrics_off"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-
     # Still set pricing, but it shouldn't be used
     monkeypatch.setenv("URSA_PRICING_JSON", str(pricing_file))
 
@@ -224,10 +200,77 @@ def test_metrics_toggle_off(tmp_path: Path, monkeypatch, pricing_file: Path):
         llm=TinyCountingModel(),
         enable_metrics=False,  # <-- disable metrics
         autosave_metrics=True,  # ignored when metrics disabled
-        metrics_dir=str(metrics_dir),
+        workspace=tmpdir,
     )
 
     _ = agent.invoke("hello")
     # No files should be created
-    files = list(metrics_dir.glob("*.json"))
+    files = list(Path(agent.telemetry.output_dir).glob("*.json"))
     assert files == []
+
+
+def test_base_agent_provisions_sqlite_store(tmpdir: Path):
+    agent = Agent(llm=TinyCountingModel(), workspace=tmpdir)
+
+    store = agent.storage
+    store.put(("tests",), "key", {"value": "ok"})
+
+    item = store.get(("tests",), "key")
+    assert item is not None
+    assert item.value["value"] == "ok"
+
+    if hasattr(store, "conn"):
+        store.conn.close()
+
+
+async def test_chat_interface(tmpdir: Path):
+    agent = Agent(
+        llm=TinyCountingModel(),
+        enable_metrics=False,  # <-- disable metrics
+        autosave_metrics=True,  # ignored when metrics disabled
+        workspace=tmpdir,
+    )
+
+    # Convert a string to a query
+    state = agent.format_query("Hello")
+    assert "messages" in state
+
+    state = await agent.ainvoke(state)
+    result = agent.format_result(state)
+    assert isinstance(result, str)
+
+    # Repeat to check state option
+    state = agent.format_query("Who are you?", state=state)
+    assert "messages" in state
+    state = await agent.ainvoke(state)
+    result = agent.format_result(state)
+    assert isinstance(result, str)
+
+
+def test_runtime_injection_preserved_for_nodes(tmp_path: Path):
+    captured: dict[str, Runtime[AgentContext]] = {}
+
+    class RuntimeAwareAgent(BaseAgent[SpecState]):
+        def __init__(self, **kwargs):
+            super().__init__(llm=TinyCountingModel(), **kwargs)
+
+        def _runtime_node(
+            self, state: SpecState, runtime: Runtime[AgentContext]
+        ) -> SpecState:
+            captured["runtime"] = runtime
+            assert isinstance(runtime.context, AgentContext)
+            assert runtime.store is not None
+            return state
+
+        def _build_graph(self) -> None:
+            self.add_node(self._runtime_node, "runtime_node")
+            self.graph.set_entry_point("runtime_node")
+            self.graph.set_finish_point("runtime_node")
+
+    agent = RuntimeAwareAgent(workspace=tmp_path)
+    agent.invoke("ensure runtime exists")
+
+    runtime = captured.get("runtime")
+    assert runtime is not None
+    assert isinstance(runtime, Runtime)
+    assert runtime.context.workspace == Path(tmp_path)

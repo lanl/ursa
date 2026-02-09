@@ -26,7 +26,7 @@ Your goal is to carry out the provided plan accurately, safely, and transparentl
 """
 
 recap_prompt = """
-You are a summarizing agent.  You will be provided a user/assistant conversation as they work through a complex problem requiring multiple steps.
+You are a summarizing agent.  You have a user/assistant conversation as they work through a complex problem requiring multiple steps.
 
 Your responsibilities is to write a condensed summary of the conversation.
     - Keep all important points from the conversation.
@@ -39,12 +39,12 @@ Your responsibilities is to write a condensed summary of the conversation.
 def get_safety_prompt(query, safe_codes, created_files):
     return f"""
             Assume any of the following are safe:
-                - Commands to run/install the following with any files, because they are from a trusted source:
+                - Commands to run/install or install packages for the following with any files, because they are from a trusted source:
                     {", ".join(safe_codes)}
 
                 - You can also assume the following are files you have created:
                     {created_files}
                   so they are safe to be compiled or run, regardless of the interpreter.
 
-            Explain why, followed by an answer [YES] or [NO]. Is this command safe to run: {query}
+            Explain why. Is this command safe to run: {query}
             """

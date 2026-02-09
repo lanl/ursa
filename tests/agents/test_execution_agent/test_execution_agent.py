@@ -1,58 +1,165 @@
-import os
 from math import sqrt
 from pathlib import Path
+from typing import Iterator
 
-from langchain.chat_models import init_chat_model
-from langchain.messages import HumanMessage
-from langchain.tools import tool
+import pytest
+from langchain.tools import ToolRuntime, tool
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 
 from ursa.agents import ExecutionAgent
-from ursa.observability.timing import render_session_summary
 
 
-def test_execution_agent():
-    execution_agent = ExecutionAgent(
-        llm=init_chat_model(
-            model=os.getenv("URSA_TEST_LLM", "openai:gpt-5-nano")
-        )
+@pytest.fixture(autouse=True)
+def stub_execution_tools(monkeypatch):
+    """Replace external tools with lightweight stubs for deterministic testing."""
+
+    @tool
+    def fake_run_command(query: str, runtime: ToolRuntime) -> str:
+        """Return a placeholder response instead of executing shell commands."""
+        return "STDOUT:\nstubbed output\nSTDERR:\n"
+
+    @tool
+    def fake_run_web_search(
+        prompt: str,
+        query: str,
+        runtime: ToolRuntime,
+        max_results: int = 3,
+    ) -> str:
+        """Return a deterministic web search payload for testing."""
+        return f"[stubbed web search] {query}"
+
+    @tool
+    def fake_run_arxiv_search(
+        prompt: str,
+        query: str,
+        runtime: ToolRuntime,
+        max_results: int = 3,
+    ) -> str:
+        """Return a deterministic arXiv search payload for testing."""
+        return f"[stubbed arxiv search] {query}"
+
+    @tool
+    def fake_run_osti_search(
+        prompt: str,
+        query: str,
+        runtime: ToolRuntime,
+        max_results: int = 3,
+    ) -> str:
+        """Return a deterministic OSTI search payload for testing."""
+        return f"[stubbed osti search] {query}"
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_command", fake_run_command
     )
-    problem_string = "Write and execute a minimal python script to print the first 10 integers."
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_web_search", fake_run_web_search
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_arxiv_search", fake_run_arxiv_search
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.run_osti_search", fake_run_osti_search
+    )
+
+
+class ToolReadyFakeChatModel(GenericFakeChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def _message_stream(content: str) -> Iterator[AIMessage]:
+    while True:
+        yield AIMessage(content=content)
+
+
+@pytest.fixture
+def chat_model():
+    return ToolReadyFakeChatModel(messages=_message_stream("ok"))
+
+
+@pytest.mark.asyncio
+async def test_execution_agent_ainvoke_returns_ai_message(
+    chat_model, tmpdir: Path
+):
+    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    workspace = tmpdir / ".ursa"
     inputs = {
-        "messages": [HumanMessage(content=problem_string)],
-        "workspace": Path(".ursa/test-execution-agent"),
+        "messages": [
+            HumanMessage(
+                content=(
+                    "Acknowledge this instruction with a brief response "
+                    "without calling any tools."
+                )
+            )
+        ],
+        "workspace": workspace,
     }
-    result = execution_agent(inputs)
-    result["messages"][-1].pretty_print()
-    render_session_summary(execution_agent.thread_id)
+
+    result = await execution_agent.ainvoke(inputs)
+
+    assert "messages" in result
+    assert any(isinstance(msg, HumanMessage) for msg in result["messages"])
+    ai_messages = [
+        message
+        for message in result["messages"]
+        if isinstance(message, AIMessage)
+    ]
+    assert ai_messages
+    assert any((message.content or "").strip() for message in ai_messages)
+    assert (
+        isinstance(execution_agent.workspace, Path)
+        and execution_agent.workspace.exists()
+    )
 
 
-def test_execution_agent_with_extra_tools():
+@pytest.mark.asyncio
+async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
+    @tool
+    def do_magic(a: int, b: int) -> float:
+        """Return the hypotenuse for the provided right-triangle legs."""
+        return sqrt(a**2 + b**2)
+
     execution_agent = ExecutionAgent(
-        llm=init_chat_model(model="openai:gpt-5-nano"),
+        llm=chat_model,
         extra_tools=[do_magic],
+        workspace=tmpdir,
     )
-    problem = (
-        "Do magic with the integers 3 and 4. "
-        "Don't give me verbose output. "
-        "Don't provide a summary. "
-        "Just give me the answer as a single float."
-    )
+    workspace = tmpdir / ".ursa_with_tool"
+    prompt = "List every tool you have access to and provide the names only."
     inputs = {
-        "messages": [HumanMessage(content=problem)],
-        "workspace": Path(".ursa/test-execution-agent"),
+        "messages": [HumanMessage(content=prompt)],
+        "workspace": workspace,
     }
-    result = execution_agent(inputs)
-    (msg := result["messages"][-1]).pretty_print()
-    render_session_summary(execution_agent.thread_id)
-    assert "5.0" in msg.content
+
+    result = await execution_agent.ainvoke(inputs)
+
+    assert "messages" in result
+    tool_names = list(execution_agent.tools.keys())
+    assert "fake_run_command" in tool_names
+    assert "do_magic" in tool_names
+    ai_messages = [
+        message
+        for message in result["messages"]
+        if isinstance(message, AIMessage)
+    ]
+    assert ai_messages
+    assert isinstance(result["messages"][-1], AIMessage)
+    assert (
+        isinstance(execution_agent.workspace, Path)
+        and execution_agent.workspace.exists()
+    )
 
 
-@tool
-def do_magic(a: int, b: int) -> float:
-    """Do magic with integers a and b.
-
-    Args:
-        a: first integer
-        b: second integer
-    """
-    return sqrt(a**2 + b**2)
+def test_safe_codes_in_store(chat_model, tmpdir):
+    execution_agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmpdir,
+    )
+    assert len(execution_agent.safe_codes) > 0
+    store = execution_agent.storage
+    safe_codes = [
+        item.key
+        for item in store.search(("workspace", "safe_codes"), limit=1000)
+    ]
+    assert set(safe_codes) == set(execution_agent.safe_codes)

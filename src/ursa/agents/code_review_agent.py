@@ -4,8 +4,9 @@ from typing import Annotated, Literal, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState, ToolNode
 
@@ -50,12 +51,10 @@ class CodeReviewState(TypedDict):
     iteration: int
 
 
-class CodeReviewAgent(BaseAgent):
-    def __init__(
-        self,
-        llm: BaseChatModel,
-        **kwargs,
-    ):
+class CodeReviewAgent(BaseAgent[CodeReviewState]):
+    state_type = CodeReviewState
+
+    def __init__(self, llm: BaseChatModel, **kwargs):
         super().__init__(llm, **kwargs)
         print("### WORK IN PROGRESS ###")
         print(
@@ -65,8 +64,6 @@ class CodeReviewAgent(BaseAgent):
         self.tools = [run_cmd, write_file, read_file]
         self.tool_node = ToolNode(self.tools)
         self.llm = self.llm.bind_tools(self.tools)
-
-        self._initialize_agent()
 
     # Define the function that calls the model
     def plan_review(self, state: CodeReviewState) -> CodeReviewState:
@@ -108,10 +105,12 @@ class CodeReviewAgent(BaseAgent):
     # Define the function that calls the model
     def summarize(self, state: CodeReviewState) -> CodeReviewState:
         messages = [SystemMessage(content=recap_prompt)] + state["messages"]
-        response = self.llm.invoke(
-            messages, {"configurable": {"thread_id": self.thread_id}}
+        response = StrOutputParser().invoke(
+            self.llm.invoke(
+                messages, {"configurable": {"thread_id": self.thread_id}}
+            )
         )
-        return {"messages": [response.content]}
+        return {"messages": [response]}
 
     def increment(self, state: CodeReviewState) -> CodeReviewState:
         new_state = state.copy()
@@ -128,16 +127,18 @@ class CodeReviewAgent(BaseAgent):
         new_state = state.copy()
         if state["messages"][-1].tool_calls[0]["name"] == "run_cmd":
             query = state["messages"][-1].tool_calls[0]["args"]["query"]
-            safety_check = self.llm.invoke(
-                (
-                    "Assume commands to run python and Julia are safe because "
-                    "the files are from a trusted source. "
-                    "Answer only either [YES] or [NO]. Is this command safe to run: "
+            safety_check = StrOutputParser().invoke(
+                self.llm.invoke(
+                    (
+                        "Assume commands to run python and Julia are safe because "
+                        "the files are from a trusted source. "
+                        "Answer only either [YES] or [NO]. Is this command safe to run: "
+                    )
+                    + query,
+                    {"configurable": {"thread_id": self.thread_id}},
                 )
-                + query,
-                {"configurable": {"thread_id": self.thread_id}},
             )
-            if "[NO]" in safety_check.content:
+            if "[NO]" in safety_check:
                 print(f"{RED}{BOLD} [WARNING] {RESET}")
                 print(
                     f"{RED}{BOLD} [WARNING] That command deemed unsafe and cannot be run: {RESET}",
@@ -171,9 +172,7 @@ class CodeReviewAgent(BaseAgent):
 
         return new_state
 
-    def _initialize_agent(self):
-        self.graph = StateGraph(CodeReviewState)
-
+    def _build_graph(self):
         self.graph.add_node("plan_review", self.plan_review)
         self.graph.add_node("file_review", self.file_review)
         self.graph.add_node("increment", self.increment)
@@ -208,9 +207,6 @@ class CodeReviewAgent(BaseAgent):
         self.graph.add_edge("action", "file_review")
         self.graph.add_edge("increment", "file_review")
         self.graph.add_edge("summarize", END)
-
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
-        # self.action.get_graph().draw_mermaid_png(output_file_path="code_review_agent_graph.png", draw_method=MermaidDrawMethod.PYPPETEER)
 
     def run(self, prompt, workspace):
         code_files = [
@@ -334,8 +330,8 @@ def should_continue(
 # Define the function that determines whether to continue or not
 def command_safe(state: CodeReviewState) -> Literal["safe", "unsafe"]:
     messages = state["messages"]
-    last_message = messages[-1]
-    if "[UNSAFE]" in last_message.content:
+    last_message = messages[-1].text
+    if "[UNSAFE]" in last_message:
         return "unsafe"
     else:
         return "safe"
