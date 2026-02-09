@@ -29,7 +29,7 @@ def run_arxiv_search(
     """
     try:
         agent = ArxivAgent(
-            llm=runtime.state.get("model"),
+            llm=runtime.context.llm,
             summarize=True,
             process_images=False,
             max_results=max_results,
@@ -84,7 +84,7 @@ def run_web_search(
     """
     try:
         agent = WebSearchAgent(
-            llm=runtime.state.get("model"),
+            llm=runtime.context.llm,
             summarize=True,
             process_images=False,
             max_results=max_results,
@@ -140,7 +140,7 @@ def run_osti_search(
     max_results
     try:
         agent = OSTIAgent(
-            llm=runtime.state.get("model"),
+            llm=runtime.context.llm,
             summarize=True,
             process_images=False,
             max_results=max_results,
