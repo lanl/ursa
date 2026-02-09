@@ -28,7 +28,7 @@ from ursa.tools.search_tools import (
 )
 
 from ursa.tools.read_file_tool import (
-    download_file_tool,
+    read_file,
 )
 
 from ursa.tools.dsi_search_tools import (
@@ -224,7 +224,7 @@ class DSIAgent(BaseAgent):
             run_arxiv_search,
             load_dsi_tool,
             query_dsi_tool,
-            download_file_tool,
+            read_file,
         ]
 
         self.prompt = f"""
