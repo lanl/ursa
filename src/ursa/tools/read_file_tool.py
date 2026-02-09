@@ -29,16 +29,6 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
     # Move all the reading to a function in the parse util
     text = read_text_from_file(full_filename)
     return text
-    print("[READING]: ", full_filename)
-    try:
-        if full_filename.lower().endswith(".pdf"):
-            file_contents = read_pdf_text(full_filename)
-        else:
-            file_contents = read_text_file(full_filename)
-    except Exception as e:
-        print(f"[Error]: {e}")
-        file_contents = f"[Error]: {e}"
-    return file_contents
 
 
 @tool
@@ -72,3 +62,4 @@ def download_file_tool(url: Annotated[str, "web link for the file"], output_path
     except Exception as e:
         return f"Error downloading file: {str(e)}"
 
+        return f"[Error]: {e}"
