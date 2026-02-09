@@ -9,6 +9,7 @@ authors = [
     { name = "Rahul Somasundaram", email = "rsomasundaram@lanl.gov" },
     { name = "Isaac Michaud", email = "imichaud@lanl.gov" },
     { name = "Avanish Mishra", email = "avanish@lanl.gov" },
+    { name = "Pascal Grosset", email = "pascalgrosset@lanl.gov" },
     { name = "Arthur Lui", email = "alui@lanl.gov" },
     { name = "Russell Bent", email = "rbent@lanl.gov" },
     { name = "Alex Wadell", email = "awadell@lanl.gov" },
