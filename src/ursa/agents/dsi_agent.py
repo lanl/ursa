@@ -24,10 +24,16 @@ from ursa.tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
     run_web_search,
+
 )
 
 from ursa.tools.read_file_tool import (
     download_file_tool,
+)
+
+from ursa.tools.dsi_search_tools import (
+    load_dsi_tool,
+    query_dsi_tool,
 )
 
 from .base import BaseAgent
@@ -41,35 +47,6 @@ from dsi.dsi import DSI
 
 ########################################################################
 #### Utility functions
-
-def extract_message_texts(result) -> str:
-    """Extract readable message content from either a dict or list of LangGraph messages."""
-    if isinstance(result, dict) and "messages" in result:
-        messages = result["messages"]
-    elif isinstance(result, list):
-        messages = result
-    else:
-        messages = []
-
-    lines = []
-    for m in messages:
-        if hasattr(m, "content"):
-            text = m.content
-        elif isinstance(m, dict) and "content" in m:
-            text = m["content"]
-        else:
-            text = m
-
-        # Ensure text is a string (ToolMessage content can be list/dict)
-        if isinstance(text, (list, dict)):
-            text = json.dumps(text, indent=2, default=str)
-        else:
-            text = str(text)
-
-        text = text.replace("\\n", "\n")
-        lines.append(text.strip())
-
-    return "\n\n".join(lines)
 
 
 
@@ -180,103 +157,9 @@ def get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
     return master_database_path, master_db_folder
 
 
+
 ########################################################################
-#### Tools Available
-
-@tool
-def load_dsi_tool(path: str, run_path: str = "", master_db_folder: str = "") -> dict:
-    """Load a DSI object from the path and add information to the context for the llm to use.
-
-    Arg:
-        path (str): the path to the DSI object to load
-        run_path (str): the path this code is being run from
-        master_db_folder (str): the folder containing the master database, used to resolve relative paths when loading new databases
-        
-    Returns:
-        str: message indicating success or failure
-    """
-
-    master_database_previously_set = True
-    if master_db_folder == "":
-        master_database_previously_set = False
-        # the ai is loading the master database for the first time
-        master_database_path, master_db_folder = get_db_abs_path(path, run_path)
-        data_path = master_database_path.strip()
-    else:
-        p = Path(path)
-        if not p.is_absolute():
-            db_path = str(master_db_folder + '/' + path)
-        else:
-            db_path = path
-
-        data_path = db_path.strip()
-        
-
-    if not check_db_valid(data_path):
-        return f"Failed to load DSI database at: {data_path}. Please check the path and ensure it points to a valid DSI .db file."
-            
-    try:
-        _, _db_schema, _db_description = get_db_info(data_path)
-        _current_db_abs_path = data_path
-
-        if master_database_previously_set == False:
-            return {
-                "the current working database path (current_db_abs_path) is": _current_db_abs_path,
-                "the master database path (master_database_path) is": master_database_path,
-                "the master databse folder (master_db_folder) is": master_db_folder,
-                "the current databse schema is": _db_schema,
-                "the database description is": _db_description
-            }
-        else:
-            return {
-                "the current working database path (current_db_abs_path) is": _current_db_abs_path,
-                "the current databse schema is": _db_schema,
-                "the database description is": _db_description
-            }
-        
-        
-    except Exception as e:
-        return "Failed to load database information"
-    
-
-
-@tool
-def query_dsi_tool(query_str: str, db_path: str) ->dict:
-    """Execute a SQL query on a DSI object
-
-    Arg:
-        query_str (str): the SQL query to run on DSI object
-        db_path (str): the absolute path to the DSI database to query
-
-    Returns:
-        collection: the results of the query
-    """
-
-    #print(f"query {query_str}, db_path: {db_path}")
-    
-    _store = None
-    try:
-        with open(os.devnull, "w") as fnull:
-            with redirect_stdout(fnull), redirect_stderr(fnull):
-                _store = DSI(db_path, check_same_thread=False)
-                df = _store.query(query_str, collection=True)
-                
-        if df is None:
-            return {}
-        return df.to_dict(orient="records")
-    
-    except Exception as e:   
-        return {}
-    
-    finally:
-        if _store is not None:
-            try:
-                with open(os.devnull, "w") as fnull:
-                    with redirect_stdout(fnull), redirect_stderr(fnull):
-                        _store.close()
-            except Exception:
-                pass
-
+#### Main code
 
 
 class DSIState(TypedDict):
