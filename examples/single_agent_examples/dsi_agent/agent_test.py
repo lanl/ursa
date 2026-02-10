@@ -36,3 +36,9 @@ ai.ask("Tell me everything you have about that Ignition dataset")
 
 print("\nQuery: Can you find some arxiv papers related to this?")
 ai.ask("can you find some arxiv papers related to this")
+
+print("\nQuery: Can you find some OSTI papers related to this?")
+ai.ask("can you find some OSTI papers related to this")
+
+print("\nQuery: Can you find a websearch on implosion?")
+ai.ask("can you find some websearch on implosion?")
