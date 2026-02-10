@@ -30,6 +30,15 @@ from ursa.tools.read_file_tool import (
     read_file,
 )
 
+from ursa.tools.run_command_tool import (
+    run_command,
+)
+
+from ursa.tools.write_code_tool import (
+    write_code,
+    edit_code,
+)
+
 from ursa.tools.dsi_search_tools import (
     load_dsi_tool,
     query_dsi_tool,
@@ -224,6 +233,9 @@ class DSIAgent(BaseAgent):
             load_dsi_tool,
             query_dsi_tool,
             read_file,
+            run_command,
+            write_code,
+            edit_code,
         ]
 
         self.prompt = f"""
