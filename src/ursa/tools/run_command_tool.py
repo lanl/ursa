@@ -20,6 +20,21 @@ class SafetyAssessment(TypedDict):
     reason: str
 
 
+def clean_env(workspace: Path):
+    import os
+
+    env = dict(os.environ)
+    for k in ["VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"]:
+        env.pop(k, None)
+
+    old = env.get("PATH", env.get("PATH", ""))
+    parts = [p for p in old.split(os.pathsep) if "\\.venv\\" not in p.lower()]
+    env["PATH"] = os.pathsep.join(parts)
+
+    env["UV_PROJECT"] = str(workspace.resolve())
+    return env
+
+
 @tool
 def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     """Execute a shell command in the workspace and return its combined output.
@@ -81,6 +96,7 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
             shell=True,
             timeout=60000,
             capture_output=True,
+            env=clean_env(workspace_dir),
             cwd=workspace_dir,
         )
         stdout, stderr = result.stdout, result.stderr
