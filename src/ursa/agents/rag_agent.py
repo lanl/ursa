@@ -16,6 +16,54 @@ from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
 
+# Curate this for your environment. Start broad, tighten later.
+TEXT_EXTENSIONS = {
+    # plain text & docs
+    ".txt",
+    ".md",
+    ".rst",
+    ".rtf",
+    ".tex",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".log",
+    ".xml",
+    ".html",
+    ".htm",
+    # source code (common)
+    ".py",
+    ".pyi",
+    ".ipynb",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cc",
+    ".java",
+    ".kt",
+    ".scala",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+}
+
+SPECIAL_TEXT_FILENAMES = {
+    "makefile",
+    "readme",
+    "license",
+}
+
 
 class RAGMetadata(TypedDict):
     k: int
