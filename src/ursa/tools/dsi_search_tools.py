@@ -1,17 +1,12 @@
-import json
+import io
 import os
 from pathlib import Path
-
 from langchain_core.tools import tool
-
 from contextlib import redirect_stdout, redirect_stderr
 
 from dsi.dsi import DSI
 
-
-
-
-
+_NULL = io.StringIO()  # Hides DSI outout
 
 ########################################################################
 #### Utility functions
@@ -52,11 +47,10 @@ def _check_db_valid(db_path: str) -> bool:
         return False
     else:
         try:
-            with open(os.devnull, "w") as fnull:
-                with redirect_stdout(fnull), redirect_stderr(fnull):
-                    temp_store = DSI(db_path, check_same_thread=False)
-                    temp_tables = temp_store.list(True) # force things to fail if the table is empty
-                    temp_store.close()
+            with redirect_stdout(_NULL), redirect_stderr(_NULL):
+                temp_store = DSI(db_path, check_same_thread=False)
+                temp_tables = temp_store.list(True) # force things to fail if the table is empty
+                temp_store.close()
                     
         except Exception as e:
             return False
@@ -85,15 +79,14 @@ def _get_db_info(db_path: str) -> tuple[list, dict, str]:
         return tables, schema, desc
     
     try:
-        with open(os.devnull, "w") as fnull:
-            with redirect_stdout(fnull), redirect_stderr(fnull):
-                _dsi_store = DSI(db_path, check_same_thread=False)
-                tables = _dsi_store.list(True)
-                schema = _dsi_store.schema()
-                desc = _load_db_description(db_path)
-                _dsi_store.close()
-             
-            return tables, schema, desc
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            _dsi_store = DSI(db_path, check_same_thread=False)
+            tables = _dsi_store.list(True)
+            schema = _dsi_store.schema()
+            desc = _load_db_description(db_path)
+            _dsi_store.close()
+            
+        return tables, schema, desc
 
     except Exception as e:
         return tables, schema, desc
@@ -199,10 +192,9 @@ def query_dsi_tool(query_str: str, db_path: str) ->dict:
     
     _store = None
     try:
-        with open(os.devnull, "w") as fnull:
-            with redirect_stdout(fnull), redirect_stderr(fnull):
-                _store = DSI(db_path, check_same_thread=False)
-                df = _store.query(query_str, collection=True)
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            _store = DSI(db_path, check_same_thread=False)
+            df = _store.query(query_str, collection=True)
                 
         if df is None:
             return {}
@@ -214,8 +206,7 @@ def query_dsi_tool(query_str: str, db_path: str) ->dict:
     finally:
         if _store is not None:
             try:
-                with open(os.devnull, "w") as fnull:
-                    with redirect_stdout(fnull), redirect_stderr(fnull):
-                        _store.close()
+                with redirect_stdout(_NULL), redirect_stderr(_NULL):
+                    _store.close()
             except Exception:
                 pass

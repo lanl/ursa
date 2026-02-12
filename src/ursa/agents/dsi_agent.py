@@ -1,5 +1,4 @@
-import json
-import sys
+import io
 import os
 import random
 from time import time as now
@@ -48,15 +47,11 @@ from .base import BaseAgent
 
 from dsi.dsi import DSI
 
-
-
-
+_NULL = io.StringIO()  # Hides DSI outout
 
 
 ########################################################################
 #### Utility functions
-
-
 
 def load_db_description(db_path: str) -> str:
     """Load the database description from a YAML file when provided with the path to a DSI database.
@@ -94,11 +89,10 @@ def check_db_valid(db_path: str) -> bool:
         return False
     else:
         try:
-            with open(os.devnull, "w") as fnull:
-                with redirect_stdout(fnull), redirect_stderr(fnull):
-                    temp_store = DSI(db_path, check_same_thread=False)
-                    temp_tables = temp_store.list(True) # force things to fail if the table is empty
-                    temp_store.close()
+            with redirect_stdout(_NULL), redirect_stderr(_NULL):
+                temp_store = DSI(db_path, check_same_thread=False)
+                temp_tables = temp_store.list(True) # force things to fail if the table is empty
+                temp_store.close()
                     
         except Exception as e:
             return False
@@ -127,15 +121,16 @@ def get_db_info(db_path: str) -> tuple[list, dict, str]:
         return tables, schema, desc
     
     try:
-        with open(os.devnull, "w") as fnull:
-            with redirect_stdout(fnull), redirect_stderr(fnull):
-                _dsi_store = DSI(db_path, check_same_thread=False)
-                tables = _dsi_store.list(True)
-                schema = _dsi_store.schema()
-                desc = load_db_description(db_path)
-                _dsi_store.close()
-             
-            return tables, schema, desc
+        # with open(os.devnull, "w") as fnull:
+        #     with redirect_stdout(fnull), redirect_stderr(fnull):
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            _dsi_store = DSI(db_path, check_same_thread=False)
+            tables = _dsi_store.list(True)
+            schema = _dsi_store.schema()
+            desc = load_db_description(db_path)
+            _dsi_store.close()
+            
+        return tables, schema, desc
 
     except Exception as e:
         return tables, schema, desc
