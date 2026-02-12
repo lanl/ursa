@@ -170,3 +170,19 @@ def test_model_config_kwargs_includes_extra():
     assert kwargs["max_completion_tokens"] == 1024
     assert "http_client" in kwargs  # ssl_verify False triggers custom client
     assert kwargs["timeout"] == 30
+
+
+def test_api_key_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEST_ENV_API_KEY", "super-secret-key")
+    parser = build_parser()
+    args = parser.parse_args([
+        "--workspace",
+        str(tmp_path),
+        "--llm_model.api_key_env",
+        "TEST_ENV_API_KEY",
+    ])
+
+    config = UrsaConfig.from_namespace(args)
+    assert config.llm_model.api_key_env == "TEST_ENV_API_KEY"
+    assert config.llm_model.kwargs["api_key"] == "super-secret-key"
+    assert "api_key_env" not in config.llm_model.kwargs.keys()

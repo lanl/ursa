@@ -1,6 +1,7 @@
 import json
 from copy import deepcopy
 from dataclasses import dataclass
+from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
@@ -27,6 +28,9 @@ class ModelConfig(BaseModel):
     base_url: str | None = None
     """Base URL for model API access"""
 
+    api_key_env: str | None = None
+    """Environmental variable containing the API key for this session"""
+
     max_completion_tokens: int | None = None
     """Maximum tokens for LLM to output"""
 
@@ -41,6 +45,8 @@ class ModelConfig(BaseModel):
         kwargs = {k: v for k, v in self.model_dump().items() if v is not None}
         if kwargs.pop("ssl_verify", None) is False:
             kwargs["http_client"] = httpx.Client(verify=False)
+        if api_key_env := kwargs.pop("api_key_env", None):
+            kwargs["api_key"] = environ.get(api_key_env, None)
         return kwargs
 
 
