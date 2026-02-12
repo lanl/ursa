@@ -653,8 +653,9 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         exe_plan = f"""
         You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
-        A LAMMPS simulation has been done and the output is located in the file 'log.lammps'.
-        Summarize the contents of this file in a markdown document. Include a plot, if relevent.
+        A LAMMPS simulation has been done and all output files are located in the current workspace directory. 
+        The simulation logs are recorded in the file 'log.lammps'.
+        Summarize the outcome of this simulation in a markdown document. Include plots, if relevent.
         """
 
         exe_results = executor.invoke(exe_plan)
