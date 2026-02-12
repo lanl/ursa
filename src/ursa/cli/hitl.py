@@ -273,6 +273,9 @@ class UrsaRepl(Cmd):
         )
 
         base_url = get_base_url(self.hitl.model)
+        if not base_url:
+            base_url = "Default"
+
         model_name = self.hitl.model.model_name
         self.llm_model_panel = Panel.fit(
             Text.from_markup(
