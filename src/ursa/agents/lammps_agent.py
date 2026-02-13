@@ -238,6 +238,21 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.console.print(
             Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan")
         )
+        
+
+    def _normalize_pair_info(self, pair_info: str) -> str:
+        return "\n".join(
+            " ".join(
+                f"./{os.path.basename(p)}"
+                if ("/" in p or "\\" in p)
+                else p
+                for p in line.split()
+            )
+            if line.strip().startswith("pair_coeff")
+            else line
+            for line in pair_info.splitlines()
+        )
+        
 
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
@@ -473,6 +488,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         if not self.use_user_potential:
             state["chosen_potential"].download_files(self.workspace)
         pair_info = state["chosen_potential"].pair_info()
+        pair_info = self._normalize_pair_info(pair_info)
 
         data_content = ""
         if self.data_file:
@@ -594,6 +610,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
     def _fix(self, state: LammpsState) -> LammpsState:
         pair_info = state["chosen_potential"].pair_info()
+        pair_info = self._normalize_pair_info(pair_info)
 
         hist = state.get("run_history", [])
         if not hist:
