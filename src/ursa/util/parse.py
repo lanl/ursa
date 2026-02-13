@@ -3,6 +3,8 @@ import os
 import re
 import shutil
 import unicodedata
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
@@ -12,6 +14,23 @@ import requests
 import trafilatura
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
+
+# Check for optional dependencies
+docx_installed = False
+pptx_installed = False
+try:
+    from docx import Document
+
+    docx_installed = True
+except Exception:
+    pass
+
+try:
+    from pptx import Presentation
+
+    pptx_installed = True
+except Exception:
+    pass
 
 
 def extract_json(text: str) -> list[dict]:
@@ -407,7 +426,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     return txt[:max_chars]
 
 
-def read_pdf_text(path: str | Path) -> str:
+def read_pdf(path: str | Path) -> str:
     loader = PyPDFLoader(path)
     pages = loader.load()
     return "\n".join(p.page_content for p in pages)
@@ -423,3 +442,55 @@ def read_text_file(path: str | Path) -> str:
     with open(path, "r", encoding="utf-8") as file:
         file_contents = file.read()
     return file_contents
+
+
+# helper to extract text from OpenDocument formats (.odt/.odp)
+def read_odf(path: Path) -> str:
+    with zipfile.ZipFile(path, "r") as zf:
+        xml_bytes = zf.read("content.xml")
+
+    root = ET.fromstring(xml_bytes)
+    # simple, robust extraction: gather all text nodes
+    chunks = [t.strip() for t in root.itertext() if t and t.strip()]
+    return "\n".join(chunks)
+
+
+# helper to parse .docx via python-docx
+def read_docx(path: Path) -> str:
+    if docx_installed:
+        doc = Document(str(path))
+        parts: list[str] = []
+
+        for para in doc.paragraphs:
+            txt = (para.text or "").strip()
+            if txt:
+                parts.append(txt)
+
+        # also pull table text
+        for table in doc.tables:
+            for row in table.rows:
+                row_txt = "\t".join(
+                    (cell.text or "").strip() for cell in row.cells
+                ).strip()
+                if row_txt:
+                    parts.append(row_txt)
+
+        return "\n".join(parts)
+    else:
+        return f"No DOCX reader so skipping {str(path)}"
+
+
+# helper to parse .pptx via python-pptx
+def read_pptx(path: Path) -> str:
+    if pptx_installed:
+        prs = Presentation(str(path))
+        parts: list[str] = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    txt = (shape.text or "").strip()
+                    if txt:
+                        parts.append(txt)
+        return "\n".join(parts)
+    else:
+        return f"No PPTX reader so skipping {str(path)}"

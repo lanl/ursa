@@ -2,19 +2,26 @@ import os
 import re
 import statistics
 from functools import cached_property
+from pathlib import Path
 from threading import Lock
 from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings, init_embeddings
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
+from ursa.util.parse import (
+    read_docx,
+    read_odf,
+    read_pdf,
+    read_pptx,
+    read_text_file,
+)
 
 # Curate this for your environment. Start broad, tighten later.
 TEXT_EXTENSIONS = {
@@ -63,6 +70,8 @@ SPECIAL_TEXT_FILENAMES = {
     "readme",
     "license",
 }
+
+OFFICE_EXTENSIONS = {".docx", ".pptx", ".odt", ".odp"}
 
 
 class RAGMetadata(TypedDict):
@@ -172,38 +181,65 @@ class RAGAgent(BaseAgent[RAGState]):
 
     def _read_docs_node(self, state: RAGState) -> RAGState:
         print("[RAG Agent] Reading Documents....")
-        papers = []
         new_state = state.copy()
 
-        pdf_files = [
-            f
-            for f in os.listdir(self.database_path)
-            if f.lower().endswith(".pdf")
-        ]
+        base_dir = Path(self.database_path)
+        ingestible_paths: list[Path] = []
 
-        doc_ids = [
-            pdf_filename.rsplit(".pdf", 1)[0] for pdf_filename in pdf_files
-        ]
-        pdf_files = [
-            pdf_filename
-            for pdf_filename, id in zip(pdf_files, doc_ids)
-            if not self._paper_exists_in_vectorstore(id)
-        ]
+        for name in os.listdir(base_dir):
+            p = base_dir / name
+            if not p.is_file():
+                continue
 
-        for pdf_filename in tqdm(pdf_files, desc="RAG parsing text"):
+            ext = p.suffix.lower()
+            is_special_text = p.name.lower() in SPECIAL_TEXT_FILENAMES
+
+            if (
+                ext == ".pdf"
+                or ext in TEXT_EXTENSIONS
+                or is_special_text
+                or ext in OFFICE_EXTENSIONS
+            ):
+                ingestible_paths.append(p)
+
+        candidates: list[tuple[Path, str]] = []
+        for p in ingestible_paths:
+            doc_id = (
+                p.stem if p.suffix else p.name
+            )  # handles files with or without extension
+            if not self._paper_exists_in_vectorstore(doc_id):
+                candidates.append((p, doc_id))
+
+        papers: list[str] = []
+        doc_ids: list[str] = []
+        for path, doc_id in tqdm(candidates, desc="RAG parsing text"):
             full_text = ""
+            ext = path.suffix.lower()
 
             try:
-                loader = PyPDFLoader(
-                    os.path.join(self.database_path, pdf_filename)
-                )
-                pages = loader.load()
-                full_text = "\n".join([p.page_content for p in pages])
-
+                match ext:
+                    case ".pdf":
+                        full_text = read_pdf(path)
+                    case ".odt" | ".odp":
+                        full_text = read_odf(path)
+                    case ".docx":
+                        full_text = read_docx(path)
+                    case ".pptx":
+                        full_text = read_pptx(path)
+                    case _:
+                        if (
+                            ext in TEXT_EXTENSIONS
+                            or path.name.lower() in SPECIAL_TEXT_FILENAMES
+                        ):
+                            full_text = read_text_file(path)
+                        else:
+                            # Maybe add a warning here?
+                            full_text = f"Unsupported file type: {path.name}"
             except Exception as e:
-                full_text = f"Error loading paper: {e}"
+                full_text = f"Error loading {path.name}: {e}"
 
             papers.append(full_text)
+            doc_ids.append(doc_id)
 
         new_state["doc_texts"] = papers
         new_state["doc_ids"] = doc_ids
