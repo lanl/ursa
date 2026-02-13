@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from pypdf import PdfReader
 
 from ursa.agents.base import AgentContext
-from ursa.util.parse import read_pdf_text, read_text_file
+from ursa.util.parse import read_pdf, read_text_file
 
 
 def _pdf_page_count(path: Path) -> int:
@@ -87,7 +87,7 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
             return read_text_file(full_filename)
 
         # 1) normal extraction
-        text = read_pdf_text(full_filename) or ""
+        text = read_pdf(full_filename) or ""
 
         # 2) decide if OCR fallback is needed
         pages = _pdf_page_count(full_filename)
@@ -126,7 +126,7 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
                 else:
                     print(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
 
-                text2 = read_pdf_text(ocr_pdf) or ""
+                text2 = read_pdf(ocr_pdf) or ""
                 if len(text2) > len(text):
                     text = text2
 
@@ -153,7 +153,7 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
                             f"[OCR]: using cached force OCR PDF -> {force_pdf}"
                         )
 
-                    text3 = read_pdf_text(force_pdf) or ""
+                    text3 = read_pdf(force_pdf) or ""
                     if len(text3) > len(text):
                         text = text3
 

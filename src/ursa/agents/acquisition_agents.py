@@ -29,7 +29,7 @@ from ursa.util.parse import (
     _get_soup,
     _is_pdf_response,
     extract_main_text_only,
-    read_pdf_text,
+    read_pdf,
     resolve_pdf_from_osti_record,
 )
 
@@ -270,7 +270,7 @@ class BaseAcquisitionAgent(BaseAgent):
                     full_text = ""
                     try:
                         if fname.lower().endswith(".pdf"):
-                            full_text = read_pdf_text(local_path)
+                            full_text = read_pdf(local_path)
                         else:
                             with open(
                                 local_path,
@@ -523,7 +523,7 @@ class WebSearchAgent(BaseAcquisitionAgent):
                     self.database_path, _safe_filename(item_id) + ".pdf"
                 )
                 _download(url, local_path)
-                full_text = read_pdf_text(local_path)
+                full_text = read_pdf(local_path)
             else:
                 r = requests.get(url, headers=headers, timeout=20)
                 r.raise_for_status()
@@ -651,7 +651,7 @@ class OSTIAgent(BaseAcquisitionAgent):
                         _download_stream_to(local_path, r)
                         # Extract PDF text
                         try:
-                            full_text = read_pdf_text(local_path)
+                            full_text = read_pdf(local_path)
                         except Exception as e:
                             full_text = (
                                 f"[Downloaded but text extraction failed: {e}]"
@@ -788,7 +788,7 @@ class ArxivAgent(BaseAcquisitionAgent):
         full_text = ""
         try:
             _download(pdf_url, local_path)
-            full_text = read_pdf_text(local_path)
+            full_text = read_pdf(local_path)
         except Exception as e:
             full_text = f"[Error loading ArXiv {arxiv_id}: {e}]"
         full_text = self._postprocess_text(full_text, local_path)
