@@ -50,7 +50,7 @@ def test_no_ocr_when_text_is_sufficient(tmp_path, monkeypatch):
     monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
 
     # Pretend this PDF already has plenty of text
-    monkeypatch.setattr(rft, "read_pdf_text", lambda path: "X" * 5000)
+    monkeypatch.setattr(rft, "read_pdf", lambda path: "X" * 5000)
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 10)
 
     called = {"ocr": 0}
@@ -78,13 +78,13 @@ def test_ocr_runs_and_uses_ocr_pdf(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 22)
 
-    # Make read_pdf_text return tiny text for original, large for *.ocr.pdf
-    def fake_read_pdf_text(path: Path) -> str:
+    # Make read_pdf return tiny text for original, large for *.ocr.pdf
+    def fake_read_pdf(path: Path) -> str:
         if ".ocr." in str(path) and str(path).endswith(".pdf"):
             return "OCR_TEXT_" + ("Y" * 4000)
         return "tiny"
 
-    monkeypatch.setattr(rft, "read_pdf_text", fake_read_pdf_text)
+    monkeypatch.setattr(rft, "read_pdf", fake_read_pdf)
 
     def fake_ocr(src: str, dst: str, *, mode: str = "skip") -> None:
         Path(dst).write_bytes(b"%PDF-1.4\n%ocr\n")
@@ -124,10 +124,10 @@ def test_ocr_cache_skips_second_run(tmp_path, monkeypatch):
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 22)
 
     # Original tiny, OCR big
-    def fake_read_pdf_text(path: Path) -> str:
+    def fake_read_pdf(path: Path) -> str:
         return "tiny" if ".ocr." not in str(path) else "Z" * 5000
 
-    monkeypatch.setattr(rft, "read_pdf_text", fake_read_pdf_text)
+    monkeypatch.setattr(rft, "read_pdf", fake_read_pdf)
 
     called = {"ocr": 0}
     monkeypatch.setattr(
@@ -153,7 +153,7 @@ def test_ocr_failure_returns_original_text(tmp_path, monkeypatch):
     monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
 
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 22)
-    monkeypatch.setattr(rft, "read_pdf_text", lambda path: "tiny")
+    monkeypatch.setattr(rft, "read_pdf", lambda path: "tiny")
 
     def fail_ocr(src: str, dst: str, *, mode: str = "skip") -> None:
         raise RuntimeError("ocr failed")

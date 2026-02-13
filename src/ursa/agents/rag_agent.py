@@ -73,6 +73,12 @@ SPECIAL_TEXT_FILENAMES = {
 
 OFFICE_EXTENSIONS = {".docx", ".pptx", ".odt", ".odp"}
 
+# Set a minimum number of characters in a file to
+#     to ingest it. Avoids files with minimal content
+#     that would be unlikely to give meaningful
+#     information to perform RAG on.
+MIN_CHARS = 30
+
 
 class RAGMetadata(TypedDict):
     k: int
@@ -90,6 +96,10 @@ class RAGState(TypedDict, total=False):
 
 def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
+
+
+def _is_meaningful(text: str) -> bool:
+    return len(text) >= MIN_CHARS
 
 
 class RAGAgent(BaseAgent[RAGState]):
@@ -186,8 +196,7 @@ class RAGAgent(BaseAgent[RAGState]):
         base_dir = Path(self.database_path)
         ingestible_paths: list[Path] = []
 
-        for name in os.listdir(base_dir):
-            p = base_dir / name
+        for p in base_dir.rglob("*"):
             if not p.is_file():
                 continue
 
@@ -204,9 +213,7 @@ class RAGAgent(BaseAgent[RAGState]):
 
         candidates: list[tuple[Path, str]] = []
         for p in ingestible_paths:
-            doc_id = (
-                p.stem if p.suffix else p.name
-            )  # handles files with or without extension
+            doc_id = str(p)
             if not self._paper_exists_in_vectorstore(doc_id):
                 candidates.append((p, doc_id))
 
@@ -235,6 +242,10 @@ class RAGAgent(BaseAgent[RAGState]):
                         else:
                             # Maybe add a warning here?
                             full_text = f"Unsupported file type: {path.name}"
+                # skip files with very few characters to
+                #    avoid parsing/rag ingestion problems
+                if not _is_meaningful(full_text):
+                    continue
             except Exception as e:
                 full_text = f"Error loading {path.name}: {e}"
 
@@ -258,6 +269,7 @@ class RAGAgent(BaseAgent[RAGState]):
             raise RuntimeError("Unexpected error: doc_texts not in state!")
 
         batch_docs, batch_ids = [], []
+
         for paper, id in tqdm(
             zip(state["doc_texts"], state["doc_ids"]),
             total=len(state["doc_texts"]),
