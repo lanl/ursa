@@ -198,7 +198,7 @@ def should_call_tools(state: DSIState) -> str:
 
 
 
-class DSIAgent(BaseAgent):
+class DSIAgent(BaseAgent[DSIState]):
     def __init__(
         self,
         llm: BaseChatModel,
