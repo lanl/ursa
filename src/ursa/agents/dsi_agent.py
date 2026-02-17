@@ -203,7 +203,7 @@ class DSIAgent(BaseAgent[DSIState]):
         self,
         llm: BaseChatModel,
         database_path:str="", 
-        output_mode:str="jupyter",
+        output_mode:str="agent",
         run_path: str = "",
         **kwargs,
     ):
@@ -416,19 +416,31 @@ class DSIAgent(BaseAgent[DSIState]):
         # Get and display the cleaned output
         response_text = result["response"] 
         cleaned_output = response_text.strip()
+        
+        elapsed = now() - start
+        total_tokens = str(result["metadata"].get("token_usage", {}).get("total_tokens", 0)).strip()
+
+        
+        
         if self.output_mode == "jupyter":
             from IPython.display import display, Markdown
             display(Markdown(cleaned_output))
+            
+            print(f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n")
+
         elif self.output_mode == "console":
             console = Console()
             md = RichMarkdown(cleaned_output)
             console.print(md)
+            
+            print(f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n")
+            
+        elif self.output_mode == "agent":
+            # do not print the output, just return it as a string
+            pass
+        
         else:
             print(cleaned_output)
 
 
-        elapsed = now() - start
-        total_tokens = str(result["metadata"].get("token_usage", {}).get("total_tokens", 0)).strip()
-
-        print(f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n")
-
+        
