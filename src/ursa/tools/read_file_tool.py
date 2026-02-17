@@ -1,21 +1,26 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
+from pypdf import PdfReader
 
 from ursa.agents.base import AgentContext
 from ursa.util.parse import read_pdf_text, read_text_file
 
 
-def _pdf_page_count(path: str) -> int:
+def _pdf_page_count(path: Path) -> int:
     try:
-        from pypdf import PdfReader
-
         return len(PdfReader(path).pages)
-    except Exception:
+    except Exception as e:
+        print("[Error]: ", e)
         return 0
+
+
+def ocrmypdf_is_installed() -> bool:
+    return shutil.which("ocrmypdf") is not None
 
 
 def _ocr_to_searchable_pdf(
@@ -24,6 +29,13 @@ def _ocr_to_searchable_pdf(
     # mode:
     #  - "skip":  only OCR pages that look like they need it (your current behavior)
     #  - "force": rasterize + OCR everything (fixes vector/outlined “no images” PDFs)
+    if not ocrmypdf_is_installed():
+        raise ImportError(
+            "ocrmypdf was not found in your path. "
+            "See installation instructions:"
+            "https://github.com/ocrmypdf/OCRmyPDF?tab=readme-ov-file#installation"
+        )
+
     cmd = ["ocrmypdf", "--rotate-pages", "--deskew", "--clean"]
 
     if mode == "force":

@@ -555,7 +555,11 @@ class BaseAgent(Generic[TState], ABC):
         )
         store = SqliteStore(conn)
         store.setup()
+        self.hook_storage_setup(store)
         return store
+
+    def hook_storage_setup(self, store: BaseStore) -> None:
+        pass
 
     @final
     def build_graph(self) -> StateGraph:

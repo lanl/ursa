@@ -239,7 +239,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan")
         )
         
-
     def _normalize_pair_info(self, pair_info: str) -> str:
         return "\n".join(
             " ".join(
@@ -253,7 +252,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             for line in pair_info.splitlines()
         )
         
-
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
         s = s.strip()
@@ -489,7 +487,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
             state["chosen_potential"].download_files(self.workspace)
         pair_info = state["chosen_potential"].pair_info()
         pair_info = self._normalize_pair_info(pair_info)
-
+        
         data_content = ""
         if self.data_file:
             data_content = self._read_and_trim_data_file(self.data_file)
@@ -611,7 +609,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
     def _fix(self, state: LammpsState) -> LammpsState:
         pair_info = state["chosen_potential"].pair_info()
         pair_info = self._normalize_pair_info(pair_info)
-
+        
         hist = state.get("run_history", [])
         if not hist:
             hist = [
@@ -665,7 +663,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self._section(
             "Now handing things off to execution agent for summarization/visualization"
         )
-
+        
         executor = ExecutionAgent(llm=self.llm, workspace=self.workspace, thread_id="summarize_lammps")
 
         exe_plan = f"""
@@ -680,7 +678,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
         render_session_summary(executor.thread_id)
 
         return state
-        
 
     def _post_run(self, state: LammpsState) -> LammpsState:
         return state

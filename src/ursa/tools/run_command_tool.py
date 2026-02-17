@@ -1,11 +1,23 @@
 import subprocess
 from pathlib import Path
+from typing import TypedDict
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
+from rich import get_console
 
 from ursa.agents.base import AgentContext
+from ursa.prompt_library.execution_prompts import (
+    get_safety_prompt,
+)
 from ursa.util.types import AsciiStr
+
+console = get_console()
+
+
+class SafetyAssessment(TypedDict):
+    is_safe: bool
+    reason: str
 
 
 @tool
@@ -19,13 +31,46 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
 
     Args:
         query: The shell command to execute.
-        state: A dict with injected state; must include the 'workspace' path.
 
     Returns:
         A formatted string with "STDOUT:" followed by the truncated stdout and
         "STDERR:" followed by the truncated stderr.
     """
     workspace_dir = Path(runtime.context.workspace)
+    if runtime.store is not None:
+        search_results = runtime.store.search(
+            ("workspace", "file_edit"), limit=1000
+        )
+        edited_files = [item.key for item in search_results]
+    else:
+        edited_files = []
+
+    if runtime.store is not None:
+        search_results = runtime.store.search(
+            ("workspace", "safe_codes"), limit=1000
+        )
+        safe_codes = [item.key for item in search_results]
+    else:
+        safe_codes = []
+
+    llm = runtime.context.llm
+    safety_result = llm.with_structured_output(SafetyAssessment).invoke(
+        get_safety_prompt(query, safe_codes, edited_files)
+    )
+
+    if not safety_result["is_safe"]:
+        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result['reason']}"
+        console.print(
+            "[bold red][WARNING][/bold red] Command deemed unsafe:",
+            query,
+        )
+        # Also surface the model's rationale for transparency.
+        console.print("[bold red][WARNING][/bold red] REASON:", tool_response)
+        return tool_response
+    else:
+        console.print(
+            f"[green]Command passed safety check:[/green] {query}\nFor reason: {safety_result['reason']}"
+        )
 
     print("RUNNING: ", query)
 
