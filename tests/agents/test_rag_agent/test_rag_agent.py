@@ -1,7 +1,5 @@
 from pathlib import Path
 
-from langchain_core.documents import Document
-
 from ursa.agents import RAGAgent
 
 
@@ -18,21 +16,16 @@ async def test_rag_agent_retrieves_contextual_documents(
 
     (database_dir / "mechanical_entanglement.pdf").write_bytes(b"%PDF-1.4\n")
 
-    doc_text = (
-        "Quantum entanglement between mechanical resonators enables "
-        "ultra-sensitive force detection in cryogenic setups."
-    )
-
-    class _FakePDFLoader:
-        def __init__(self, file_path: str):
-            self.file_path = file_path
-
-        def load(self):
-            return [Document(page_content=doc_text)]
+    def fakePDFLoader(path_name):
+        doc_text = (
+            "Quantum entanglement between mechanical resonators enables "
+            "ultra-sensitive force detection in cryogenic setups."
+        )
+        return doc_text
 
     monkeypatch.setattr(
-        "ursa.agents.rag_agent.PyPDFLoader",
-        _FakePDFLoader,
+        "ursa.agents.rag_agent.read_pdf",
+        fakePDFLoader,
     )
 
     agent = RAGAgent(
