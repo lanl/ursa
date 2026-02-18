@@ -278,7 +278,7 @@ class UrsaRepl(Cmd):
 
         try:
             model_name = self.hitl.model.model_name
-        except:
+        except Exception as e:
             model_name = self.hitl.model.model
         self.llm_model_panel = Panel.fit(
             Text.from_markup(
