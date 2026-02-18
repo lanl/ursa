@@ -1275,47 +1275,37 @@ def main(
         )
 
         # ---- One-time project logo kickoff (per workspace) -----------------
-        # Use run_meta.json to ensure we do this only once for this workspace.
         meta = load_run_meta(workspace)
-        # MINIMAL CONFIG
         logo_cfg = getattr(cfg, "logo", {}) or {}
         logo_enabled = bool(logo_cfg.get("enabled", True))
 
         if logo_enabled and not meta.get("logo_created"):
-            scene_style = logo_cfg.get(
-                "scene", "random"
-            )  # noir/sci-fi/etc or "random"
+            # knobs (you can keep reading from cfg, or hard-code)
+            scene_n = int(logo_cfg.get("scene_n", 2))
+            sticker_n = int(logo_cfg.get("sticker_n", 4))
             stickers_enabled = bool(logo_cfg.get("stickers", True))
-            n_variants = int(logo_cfg.get("n", 4))
-            logo_model_choice = logo_cfg.get("model", "openai:gpt-image-1")
 
-            # pick the model string & a providers map
-            providers = (getattr(cfg, "models", {}) or {}).get(
-                "providers", {}
-            ) or {}
+            # IMPORTANT: to get 4 DIFFERENT scene styles, use random
+            scene_style = "random"
 
-            v_provider, v_model, v_extra = _resolve_model_choice(
-                logo_model_choice, {"providers": providers}
-            )
+            # Optional: aperture to open/close prompt constraints (0..1)
+            aperture = float(logo_cfg.get("aperture", 0.75))
+
             scene_dir = Path(workspace) / "logo_art" / "scenes"
             sticker_dir = Path(workspace) / "logo_art" / "stickers"
+
             try:
-                # SCENE artwork — uses existing defaults for everything else
                 _ = kickoff_logo(
                     problem_text=problem,
                     workspace=workspace,
                     out_dir=scene_dir,
-                    # size omitted (auto with aspect)
-                    background="opaque",
                     quality="high",
-                    n=n_variants,
-                    style=scene_style,  # <- only knob exposed via YAML
+                    n=scene_n,  # e.g. 4
+                    style=scene_style,  # MUST be "random" for multi-style scenes
                     mode="scene",
                     aspect="wide",
                     style_intensity="overt",
-                    image_model=v_model,
-                    image_model_provider=v_provider,
-                    image_provider_kwargs=v_extra,
+                    aperture=aperture,
                     console=console,
                     on_done=lambda p: console.print(
                         Panel.fit(
@@ -1331,20 +1321,16 @@ def main(
                     ),
                 )
 
-                # STICKER artwork — optional
                 if stickers_enabled:
                     _ = kickoff_logo(
                         problem_text=problem,
                         workspace=workspace,
                         out_dir=sticker_dir,
                         size="1024x1024",
-                        background="opaque",
                         quality="high",
-                        n=n_variants,
+                        n=sticker_n,
                         style="sticker",
-                        image_model=v_model,
-                        image_model_provider=v_provider,
-                        image_provider_kwargs=v_extra,
+                        aperture=aperture,
                         console=console,
                         on_done=lambda p: console.print(
                             Panel.fit(
@@ -1359,12 +1345,8 @@ def main(
                             )
                         ),
                     )
-
             finally:
-                # Even if kickoff_logo fails, mark that we attempted it so we don't spam runs.
-                # Remove this flag manually if you want to re-generate art for this workspace.
                 save_run_meta(workspace, logo_created=True)
-        # --------------------------------------------------------------------
 
         models_cfg = getattr(config, "models", {}) or {}
 

@@ -159,7 +159,7 @@ async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
 
     agent = await hitl.get_agent("chat")
     assert agent._agent is not None
-    assert agent._agent.thread_id == "custom-thread_chat"
+    assert agent._agent.thread_id == "custom-thread"
 
 
 def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
