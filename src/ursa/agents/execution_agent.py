@@ -24,6 +24,7 @@ Entry points:
 - ExecutionAgent._invoke(...) runs the compiled graph.
 - main() shows a minimal demo that writes and runs a script.
 """
+
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from copy import deepcopy
 from pathlib import Path
