@@ -662,8 +662,8 @@ def read_docx(path: Path) -> str:
         return "\n".join(parts)
     else:
         return (
-            f"No DOCX reader so skipping {str(path)}"
-            "Consider installing via `pip install 'ursa-ai[office_readers]'`.
+            f"No DOCX reader so skipping {str(path)}.\n",
+            "Consider installing via `pip install 'ursa-ai[office_readers]'`.",
         )
 
 
@@ -681,8 +681,8 @@ def read_pptx(path: Path) -> str:
         return "\n".join(parts)
     else:
         return (
-            f"No PPTX reader so skipping {str(path)}. "
-            "Consider installing via `pip install 'ursa-ai[office_readers]'`.
+            f"No PPTX reader so skipping {str(path)}.\n",
+            "Consider installing via `pip install 'ursa-ai[office_readers]'`.",
         )
 
 
