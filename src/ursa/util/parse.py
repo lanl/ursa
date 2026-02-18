@@ -677,7 +677,10 @@ def read_pptx(path: Path) -> str:
                         parts.append(txt)
         return "\n".join(parts)
     else:
-        return f"No PPTX reader so skipping {str(path)}"
+        return (
+            f"No PPTX reader so skipping {str(path)}. "
+            "Consider installing via `pip install 'ursa-ai[office_readers]'`.
+        )
 
 
 def read_text_from_file(path):
