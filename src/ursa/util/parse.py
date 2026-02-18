@@ -661,7 +661,10 @@ def read_docx(path: Path) -> str:
 
         return "\n".join(parts)
     else:
-        return f"No DOCX reader so skipping {str(path)}"
+        return (
+            f"No DOCX reader so skipping {str(path)}"
+            "Consider installing via `pip install 'ursa-ai[office_readers]'`.
+        )
 
 
 # helper to parse .pptx via python-pptx
