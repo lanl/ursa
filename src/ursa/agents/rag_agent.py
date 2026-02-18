@@ -16,62 +16,11 @@ from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
 from ursa.util.parse import (
-    read_docx,
-    read_odf,
-    read_pdf,
-    read_pptx,
-    read_text_file,
+    OFFICE_EXTENSIONS,
+    SPECIAL_TEXT_FILENAMES,
+    TEXT_EXTENSIONS,
+    read_text_from_file,
 )
-
-# Curate this for your environment. Start broad, tighten later.
-TEXT_EXTENSIONS = {
-    # plain text & docs
-    ".txt",
-    ".md",
-    ".rst",
-    ".rtf",
-    ".tex",
-    ".csv",
-    ".tsv",
-    ".json",
-    ".jsonl",
-    ".log",
-    ".xml",
-    ".html",
-    ".htm",
-    # source code (common)
-    ".py",
-    ".pyi",
-    ".ipynb",
-    ".c",
-    ".h",
-    ".cpp",
-    ".hpp",
-    ".cc",
-    ".java",
-    ".kt",
-    ".scala",
-    ".js",
-    ".ts",
-    ".jsx",
-    ".tsx",
-    ".go",
-    ".rs",
-    ".rb",
-    ".php",
-    ".sh",
-    ".bash",
-    ".zsh",
-    ".ps1",
-}
-
-SPECIAL_TEXT_FILENAMES = {
-    "makefile",
-    "readme",
-    "license",
-}
-
-OFFICE_EXTENSIONS = {".docx", ".pptx", ".odt", ".odp"}
 
 # Set a minimum number of characters in a file to
 #     to ingest it. Avoids files with minimal content
@@ -220,35 +169,11 @@ class RAGAgent(BaseAgent[RAGState]):
         papers: list[str] = []
         doc_ids: list[str] = []
         for path, doc_id in tqdm(candidates, desc="RAG parsing text"):
-            full_text = ""
-            ext = path.suffix.lower()
-
-            try:
-                match ext:
-                    case ".pdf":
-                        full_text = read_pdf(path)
-                    case ".odt" | ".odp":
-                        full_text = read_odf(path)
-                    case ".docx":
-                        full_text = read_docx(path)
-                    case ".pptx":
-                        full_text = read_pptx(path)
-                    case _:
-                        if (
-                            ext in TEXT_EXTENSIONS
-                            or path.name.lower() in SPECIAL_TEXT_FILENAMES
-                        ):
-                            full_text = read_text_file(path)
-                        else:
-                            # Maybe add a warning here?
-                            full_text = f"Unsupported file type: {path.name}"
-                # skip files with very few characters to
-                #    avoid parsing/rag ingestion problems
-                if not _is_meaningful(full_text):
-                    continue
-            except Exception as e:
-                full_text = f"Error loading {path.name}: {e}"
-
+            full_text = read_text_from_file(path)
+            # skip files with very few characters to
+            #    avoid parsing/rag ingestion problems
+            if not _is_meaningful(full_text):
+                continue
             papers.append(full_text)
             doc_ids.append(doc_id)
 

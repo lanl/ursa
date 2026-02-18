@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
@@ -31,6 +32,57 @@ try:
     pptx_installed = True
 except Exception:
     pass
+
+
+# Curate this for your environment. Start broad, tighten later.
+TEXT_EXTENSIONS = {
+    # plain text & docs
+    ".txt",
+    ".md",
+    ".rst",
+    ".rtf",
+    ".tex",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".log",
+    ".xml",
+    ".html",
+    ".htm",
+    # source code (common)
+    ".py",
+    ".pyi",
+    ".ipynb",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cc",
+    ".java",
+    ".kt",
+    ".scala",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+}
+
+SPECIAL_TEXT_FILENAMES = {
+    "makefile",
+    "readme",
+    "license",
+}
+
+OFFICE_EXTENSIONS = {".docx", ".pptx", ".odt", ".odp"}
 
 
 def extract_json(text: str) -> list[dict]:
@@ -213,21 +265,59 @@ def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> Optional[str]:
     return None
 
 
-# def _resolve_pdf_via_unpaywall(doi: str, email: str, timeout: int = 15) -> Optional[str]:
-#     # Optional helper: respects publisher OA; returns None if no OA PDF
-#     try:
-#         url = f"https://api.unpaywall.org/v2/{doi}"
-#         r = requests.get(url, params={"email": email}, timeout=timeout)
-#         r.raise_for_status()
-#         data = r.json()
-#         loc = data.get("best_oa_location") or {}
-#         pdf = loc.get("url_for_pdf") or loc.get("url")
-#         if pdf and PDF_EXT_RE.search(pdf):
-#             return pdf
-#         # Sometimes url points to landing; try it anyway.
-#         return pdf
-#     except Exception:
-#         return None
+def _pdf_page_count(path: Path) -> int:
+    try:
+        loader = PyPDFLoader(path)
+        pages = loader.load()
+        return len(pages)
+    except Exception as e:
+        print("[Error]: ", e)
+        return 0
+
+
+def ocrmypdf_is_installed() -> bool:
+    return shutil.which("ocrmypdf") is not None
+
+
+def _ocr_to_searchable_pdf(
+    src_pdf: str, out_pdf: str, *, mode: str = "skip"
+) -> None:
+    # mode:
+    #  - "skip":  only OCR pages that look like they need it (your current behavior)
+    #  - "force": rasterize + OCR everything (fixes vector/outlined “no images” PDFs)
+    if not ocrmypdf_is_installed():
+        raise ImportError(
+            "ocrmypdf was not found in your path. "
+            "See installation instructions:"
+            "https://github.com/ocrmypdf/OCRmyPDF?tab=readme-ov-file#installation"
+        )
+
+    cmd = ["ocrmypdf", "--rotate-pages", "--deskew", "--clean"]
+
+    if mode == "force":
+        cmd += ["--force-ocr"]
+    else:
+        cmd += ["--skip-text"]
+
+    # Optional: dump a sidecar text file for debugging confidence
+    if os.getenv("READ_FILE_OCR_SIDECAR", "0").lower() in ("1", "true", "yes"):
+        cmd += ["--sidecar", out_pdf + ".txt"]
+
+    cmd += [src_pdf, out_pdf]
+
+    # Don’t swallow stderr/stdout when debugging
+    debug = os.getenv("READ_FILE_OCR_DEBUG", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    subprocess.run(
+        cmd,
+        check=True,
+        stdout=None if debug else subprocess.PIPE,
+        stderr=None if debug else subprocess.PIPE,
+        text=True,
+    )
 
 
 def resolve_pdf_from_osti_record(
@@ -426,10 +516,104 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     return txt[:max_chars]
 
 
-def read_pdf(path: str | Path) -> str:
+def read_text_pdf(path: str | Path) -> str:
     loader = PyPDFLoader(path)
     pages = loader.load()
     return "\n".join(p.page_content for p in pages)
+
+
+def read_pdf(path: str | Path) -> str:
+    full_filename = Path(path)
+
+    try:
+        # 1) normal extraction
+        text = read_text_pdf(full_filename) or ""
+
+        # 2) decide if OCR fallback is needed
+        pages = _pdf_page_count(full_filename)
+        ocr_enabled = os.getenv("READ_FILE_OCR", "1").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        min_pages = int(os.getenv("READ_FILE_OCR_MIN_PAGES", "3"))
+        min_chars = int(os.getenv("READ_FILE_OCR_MIN_CHARS", "3000"))
+
+        if ocr_enabled and pages >= min_pages and len(text) < min_chars:
+            src = Path(full_filename)
+
+            mode_env = os.getenv("READ_FILE_OCR_MODE", "auto").lower()
+            force_if_still_low = os.getenv(
+                "READ_FILE_OCR_FORCE_IF_STILL_LOW", "1"
+            ).lower() in ("1", "true", "yes")
+
+            try:
+                # First pass (skip-text) unless user forces always-force
+                first_mode = "force" if mode_env == "force" else "skip"
+                ocr_pdf = str(
+                    src.with_suffix(src.suffix + f".ocr.{first_mode}.pdf")
+                )
+
+                if not os.path.exists(ocr_pdf) or os.path.getmtime(
+                    ocr_pdf
+                ) < os.path.getmtime(full_filename):
+                    print(
+                        f"[OCR]: mode={first_mode} ({len(text)} chars, {pages} pages) -> {ocr_pdf}"
+                    )
+                    _ocr_to_searchable_pdf(
+                        full_filename, ocr_pdf, mode=first_mode
+                    )
+                else:
+                    print(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
+
+                text2 = read_text_pdf(ocr_pdf) or ""
+                if len(text2) > len(text):
+                    text = text2
+
+                # Second pass: if still low and we weren’t already forcing, try force-ocr
+                if (
+                    force_if_still_low
+                    and mode_env != "force"
+                    and len(text) < min_chars
+                ):
+                    force_pdf = str(
+                        src.with_suffix(src.suffix + ".ocr.force.pdf")
+                    )
+                    if not os.path.exists(force_pdf) or os.path.getmtime(
+                        force_pdf
+                    ) < os.path.getmtime(full_filename):
+                        print(
+                            f"[OCR]: still low after skip-text; retrying with force-ocr -> {force_pdf}"
+                        )
+                        _ocr_to_searchable_pdf(
+                            full_filename, force_pdf, mode="force"
+                        )
+                    else:
+                        print(
+                            f"[OCR]: using cached force OCR PDF -> {force_pdf}"
+                        )
+
+                    text3 = read_text_pdf(force_pdf) or ""
+                    if len(text3) > len(text):
+                        text = text3
+
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                # Missing ocrmypdf or OCR failed: keep original extraction
+                print(f"[OCR Error]: {e}")
+            except Exception as e:
+                # Any other OCR-related failure: keep original extraction
+                print(f"[OCR Error]: {e}")
+
+        return text
+
+    except subprocess.CalledProcessError as e:
+        # OCR failed; return whatever we got from normal extraction
+        err = (e.stderr or "")[:500]
+        print(f"[OCR Error]: {err}")
+        return text if text else f"[Error]: OCR failed: {err}"
+    except Exception as e:
+        print(f"[Error]: {e}")
+        return f"[Error]: {e}"
 
 
 def read_text_file(path: str | Path) -> str:
@@ -494,3 +678,28 @@ def read_pptx(path: Path) -> str:
         return "\n".join(parts)
     else:
         return f"No PPTX reader so skipping {str(path)}"
+
+
+def read_text_from_file(path):
+    ext = path.suffix.lower()
+    try:
+        match ext:
+            case ".pdf":
+                full_text = read_pdf(path)
+            case ".odt" | ".odp":
+                full_text = read_odf(path)
+            case ".docx":
+                full_text = read_docx(path)
+            case ".pptx":
+                full_text = read_pptx(path)
+            case _:
+                if (
+                    ext in TEXT_EXTENSIONS
+                    or path.name.lower() in SPECIAL_TEXT_FILENAMES
+                ):
+                    full_text = read_text_file(path)
+                else:
+                    full_text = f"Unsupported file type: {path.name}"
+    except Exception as e:
+        full_text = f"Error loading {path.name}: {e}"
+    return full_text

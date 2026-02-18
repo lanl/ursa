@@ -50,7 +50,7 @@ def test_no_ocr_when_text_is_sufficient(tmp_path, monkeypatch):
     monkeypatch.setenv("READ_FILE_OCR_MIN_CHARS", "3000")
 
     # Pretend this PDF already has plenty of text
-    monkeypatch.setattr(rft, "read_pdf", lambda path: "X" * 5000)
+    monkeypatch.setattr(rft, "read_text_from_file", lambda path: "X" * 5000)
     monkeypatch.setattr(rft, "_pdf_page_count", lambda path: 10)
 
     called = {"ocr": 0}
