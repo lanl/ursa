@@ -276,7 +276,10 @@ class UrsaRepl(Cmd):
         if not base_url:
             base_url = "Default"
 
-        model_name = self.hitl.model.model_name
+        try:
+            model_name = self.hitl.model.model_name
+        except:
+            model_name = self.hitl.model.model
         self.llm_model_panel = Panel.fit(
             Text.from_markup(
                 f"[bold]LLM endpoint[/]: {base_url}\n"

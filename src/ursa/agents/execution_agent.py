@@ -24,7 +24,6 @@ Entry points:
 - ExecutionAgent._invoke(...) runs the compiled graph.
 - main() shows a minimal demo that writes and runs a script.
 """
-
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from copy import deepcopy
 from pathlib import Path
@@ -223,7 +222,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
-        new_state = state.copy()
+        new_state = deepcopy(state)
         summarized = False
         tokens_before_summarize = count_tokens_approximately(
             new_state["messages"][1:]
@@ -248,7 +247,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 print(
                     f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
                 )
-                for msg in conversation_to_keep:
+                conversation_to_keep_copy = conversation_to_keep.copy()
+                for msg in conversation_to_keep_copy:
                     if (
                         isinstance(msg, ToolMessage)
                         and msg.tool_call_id in tool_ids
