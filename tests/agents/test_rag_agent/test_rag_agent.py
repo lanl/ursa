@@ -24,7 +24,7 @@ async def test_rag_agent_retrieves_contextual_documents(
         return doc_text
 
     monkeypatch.setattr(
-        "ursa.agents.rag_agent.read_pdf",
+        "ursa.agents.rag_agent.read_text_from_file",
         fakePDFLoader,
     )
 
