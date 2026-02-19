@@ -88,8 +88,6 @@ dsi = [
     "ipykernel",
     "ipywidgets",
 ]
-mp = [
-]
 
 [build-system]
 requires = ["setuptools>=74.1,<80", "setuptools-git-versioning>=2.0,<3"]
