@@ -67,9 +67,22 @@ Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
 [project.optional-dependencies]
-fm = ["torch>=2.9.0"] # Ursa's MCP FM interface
+fm = [
+    "torch>=2.9.0",
+] # Ursa's MCP FM interface
 lammps = [
     "atomman>=1.5.2",
+]
+office_readers = [
+    "python-docx>=1.2",
+    "python-pptx>=1.0.2",
+]
+opt = [
+    "ortools>=9.14,<9.15",
+]
+otel = [
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-sdk>=1.38.0",
 ]
 
 [build-system]
@@ -117,11 +130,4 @@ docs = [
     "mkdocs-autorefs>=1.4.3",
     "mkdocs-material>=9.6.21",
     "mkdocstrings-python>=1.18.2",
-]
-opt = [
-    "ortools>=9.14,<9.15",
-]
-otel = [
-    "opentelemetry-exporter-otlp>=1.39.0",
-    "opentelemetry-sdk>=1.38.0",
 ]

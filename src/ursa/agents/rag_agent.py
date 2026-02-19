@@ -2,19 +2,31 @@ import os
 import re
 import statistics
 from functools import cached_property
+from pathlib import Path
 from threading import Lock
 from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings, init_embeddings
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
+from ursa.util.parse import (
+    OFFICE_EXTENSIONS,
+    SPECIAL_TEXT_FILENAMES,
+    TEXT_EXTENSIONS,
+    read_text_from_file,
+)
+
+# Set a minimum number of characters in a file to
+#     to ingest it. Avoids files with minimal content
+#     that would be unlikely to give meaningful
+#     information to perform RAG on.
+MIN_CHARS = 30
 
 
 class RAGMetadata(TypedDict):
@@ -33,6 +45,10 @@ class RAGState(TypedDict, total=False):
 
 def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
+
+
+def _is_meaningful(text: str) -> bool:
+    return len(text) >= MIN_CHARS
 
 
 class RAGAgent(BaseAgent[RAGState]):
@@ -124,38 +140,54 @@ class RAGAgent(BaseAgent[RAGState]):
 
     def _read_docs_node(self, state: RAGState) -> RAGState:
         print("[RAG Agent] Reading Documents....")
-        papers = []
         new_state = state.copy()
 
-        pdf_files = [
-            f
-            for f in os.listdir(self.database_path)
-            if f.lower().endswith(".pdf")
+        custom_extensions = [
+            item.strip()
+            for item in os.environ.get("URSA_TEXT_EXTENSIONS", "").split(",")
+        ]
+        custom_readable_files = [
+            item.strip()
+            for item in os.environ.get("URSA_SPECIAL_TEXT_FILENAMES", "").split(
+                ","
+            )
         ]
 
-        doc_ids = [
-            pdf_filename.rsplit(".pdf", 1)[0] for pdf_filename in pdf_files
-        ]
-        pdf_files = [
-            pdf_filename
-            for pdf_filename, id in zip(pdf_files, doc_ids)
-            if not self._paper_exists_in_vectorstore(id)
-        ]
+        base_dir = Path(self.database_path)
+        ingestible_paths: list[Path] = []
 
-        for pdf_filename in tqdm(pdf_files, desc="RAG parsing text"):
-            full_text = ""
+        for p in base_dir.rglob("*"):
+            if not p.is_file():
+                continue
 
-            try:
-                loader = PyPDFLoader(
-                    os.path.join(self.database_path, pdf_filename)
-                )
-                pages = loader.load()
-                full_text = "\n".join([p.page_content for p in pages])
+            ext = p.suffix.lower()
 
-            except Exception as e:
-                full_text = f"Error loading paper: {e}"
+            if (
+                ext == ".pdf"
+                or ext in TEXT_EXTENSIONS
+                or ext in custom_extensions
+                or p.name.lower() in SPECIAL_TEXT_FILENAMES
+                or p.name.lower() in custom_readable_files
+                or ext in OFFICE_EXTENSIONS
+            ):
+                ingestible_paths.append(p)
 
+        candidates: list[tuple[Path, str]] = []
+        for p in ingestible_paths:
+            doc_id = str(p)
+            if not self._paper_exists_in_vectorstore(doc_id):
+                candidates.append((p, doc_id))
+
+        papers: list[str] = []
+        doc_ids: list[str] = []
+        for path, doc_id in tqdm(candidates, desc="RAG parsing text"):
+            full_text = read_text_from_file(path)
+            # skip files with very few characters to
+            #    avoid parsing/rag ingestion problems
+            if not _is_meaningful(full_text):
+                continue
             papers.append(full_text)
+            doc_ids.append(doc_id)
 
         new_state["doc_texts"] = papers
         new_state["doc_ids"] = doc_ids
@@ -174,6 +206,7 @@ class RAGAgent(BaseAgent[RAGState]):
             raise RuntimeError("Unexpected error: doc_texts not in state!")
 
         batch_docs, batch_ids = [], []
+
         for paper, id in tqdm(
             zip(state["doc_texts"], state["doc_ids"]),
             total=len(state["doc_texts"]),
