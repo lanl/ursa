@@ -28,6 +28,7 @@ dependencies = [
     "pymupdf>=1.26.0,<2.0",
     "pypdf>=5.9.0,<6.0",
     "rich>=13.9.4,<14.0",
+    "mp-api>=0.45.8,<0.45.13",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
     "trafilatura>=1.6.1,<1.7",
@@ -88,7 +89,6 @@ dsi = [
     "ipywidgets",
 ]
 mp = [
-    "mp-api>=0.45.8,<0.45.13",
 ]
 
 [build-system]
