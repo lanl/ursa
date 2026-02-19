@@ -1,9 +1,9 @@
+from pathlib import Path
+from typing import Annotated
+
+import requests
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-
-from pathlib import Path
-import requests
-from typing import Annotated
 
 from ursa.agents.base import AgentContext
 from ursa.util.parse import read_text_from_file
@@ -32,8 +32,11 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
 
 
 @tool
-def download_file_tool(url: Annotated[str, "web link for the file"], output_path: Annotated[str, "local path to save the file"]=".") -> str:
-    """ Download a file from a URL and save it locally.
+def download_file_tool(
+    url: Annotated[str, "web link for the file"],
+    output_path: Annotated[str, "local path to save the file"] = ".",
+) -> str:
+    """Download a file from a URL and save it locally.
 
     Arg:
         url (str): a string containing the URL of the file to download.
@@ -41,7 +44,6 @@ def download_file_tool(url: Annotated[str, "web link for the file"], output_path
     Returns:
         Confirmation message with the saved file path.
     """
-
 
     try:
         # Download
