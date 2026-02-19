@@ -45,6 +45,7 @@ Documentation for each URSA agent:
 - [Planning Agent](docs/planning_agent.md)
 - [Execution Agent](docs/execution_agent.md)
 - [ArXiv Agent](docs/arxiv_agent.md)
+- [DSI Agent](docs/dsi_agent.md)
 - [Web Search Agent](docs/web_search_agent.md)
 - [Hypothesizer Agent](docs/hypothesizer_agent.md)
 

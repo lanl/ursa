@@ -28,14 +28,10 @@ dependencies = [
     "pymupdf>=1.26.0,<2.0",
     "pypdf>=5.9.0,<6.0",
     "rich>=13.9.4,<14.0",
-    "mp-api>=0.45.8,<0.45.13",
-    "dsi-workflow @ git+https://github.com/lanl/dsi.git",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
     "trafilatura>=1.6.1,<1.7",
     "selectolax>=0.4.0,<0.5",
-    # "langchain-google-genai>=2.1.9,<3.0",
-    # "langchain-anthropic>=0.3.19,<0.4",
     "langchain>=1.0.3",
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.4.1",
@@ -68,9 +64,31 @@ Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
 [project.optional-dependencies]
-fm = ["torch>=2.9.0"] # Ursa's MCP FM interface
+fm = [
+    "torch>=2.9.0",
+] # Ursa's MCP FM interface
 lammps = [
     "atomman>=1.5.2",
+]
+office_readers = [
+    "python-docx>=1.2",
+    "python-pptx>=1.0.2",
+]
+opt = [
+    "ortools>=9.14,<9.15",
+]
+otel = [
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-sdk>=1.38.0",
+]
+dsi = [
+    "dsi-workflow>=1.1.4",
+    "jupyterlab",
+    "ipykernel",
+    "ipywidgets",
+]
+mp = [
+    "mp-api>=0.45.8,<0.45.13",
 ]
 
 [build-system]
@@ -118,11 +136,4 @@ docs = [
     "mkdocs-autorefs>=1.4.3",
     "mkdocs-material>=9.6.21",
     "mkdocstrings-python>=1.18.2",
-]
-opt = [
-    "ortools>=9.14,<9.15",
-]
-otel = [
-    "opentelemetry-exporter-otlp>=1.39.0",
-    "opentelemetry-sdk>=1.38.0",
 ]

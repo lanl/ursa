@@ -111,6 +111,7 @@ def _stub_hitl_dependencies(monkeypatch):
     [
         "chat",
         "arxiv",
+        "dsi",
         "execute",
         "hypothesize",
         "plan",

@@ -1,61 +1,47 @@
-import json
-import sys
+import io
 import os
 import random
-from time import time as now
-from typing import Annotated, Any, Dict, Mapping, TypedDict
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from time import time as now
+from typing import Annotated, Any, Mapping, TypedDict
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown as RichMarkdown
-
-from langchain_core.tools import tool
-from langchain_core.tools import Tool
+from dsi.dsi import DSI
 from langchain.chat_models import BaseChatModel
-from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
-from contextlib import redirect_stdout, redirect_stderr
-
-from ursa.tools.search_tools import (
-    run_arxiv_search,
-    run_osti_search,
-    run_web_search,
-)
-
-from ursa.tools.read_file_tool import (
-    read_file,
-)
-
-from ursa.tools.run_command_tool import (
-    run_command,
-)
-
-from ursa.tools.write_code_tool import (
-    write_code,
-    edit_code,
-)
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from rich.console import Console
+from rich.markdown import Markdown as RichMarkdown
 
 from ursa.tools.dsi_search_tools import (
     load_dsi_tool,
     query_dsi_tool,
 )
+from ursa.tools.read_file_tool import (
+    read_file,
+)
+from ursa.tools.run_command_tool import (
+    run_command,
+)
+from ursa.tools.search_tools import (
+    run_arxiv_search,
+    run_osti_search,
+    run_web_search,
+)
+from ursa.tools.write_code_tool import (
+    edit_code,
+    write_code,
+)
 
 from .base import BaseAgent
 
-from dsi.dsi import DSI
-
-
-
-
+_NULL = io.StringIO()  # Hides DSI outout
 
 
 ########################################################################
 #### Utility functions
-
 
 
 def load_db_description(db_path: str) -> str:
@@ -63,22 +49,21 @@ def load_db_description(db_path: str) -> str:
 
     Arg:
         db_path (str): the absolute path of the DSI database
-        
+
     Returns:
         str: message indicating success or failure
     """
 
     try:
         # The description file is expected to be in the same directory as the database, with the same name but ending in '_description.yaml'
-        db_description_path = db_path.rsplit(".", 1)[0] + '_description.yaml'
-        
+        db_description_path = db_path.rsplit(".", 1)[0] + "_description.yaml"
+
         with open(db_description_path, "r") as f:
             db_desc = f.read()
 
         return str(db_desc)
-    except:
+    except Exception:
         return ""
-
 
 
 def check_db_valid(db_path: str) -> bool:
@@ -86,7 +71,7 @@ def check_db_valid(db_path: str) -> bool:
 
     Arg:
         db_path (str): the absolute path of the DSI database
-        
+
     Returns:
         bool: True if the database is valid, False otherwise
     """
@@ -94,76 +79,75 @@ def check_db_valid(db_path: str) -> bool:
         return False
     else:
         try:
-            with open(os.devnull, "w") as fnull:
-                with redirect_stdout(fnull), redirect_stderr(fnull):
-                    temp_store = DSI(db_path, check_same_thread=False)
-                    temp_tables = temp_store.list(True) # force things to fail if the table is empty
-                    temp_store.close()
-                    
-        except Exception as e:
+            with redirect_stdout(_NULL), redirect_stderr(_NULL):
+                temp_store = DSI(db_path, check_same_thread=False)
+                temp_store.list(
+                    True
+                )  # force things to fail if the table is empty
+                temp_store.close()
+
+        except Exception:
             return False
 
     return True
-
 
 
 def get_db_info(db_path: str) -> tuple[list, dict, str]:
     """Load the database information (tables and schema) from a DSI database.
 
     Arg:
-        db_path (str): the absolute path of the DSI database    
-        
+        db_path (str): the absolute path of the DSI database
+
     Returns:
         list: the list of tables in the database
         dict: the schema of the database
         str: the description of the database (if available, otherwise empty string)
     """
-    
+
     tables = []
     schema = {}
     desc = ""
-    
-    if check_db_valid(db_path) == False:
-        return tables, schema, desc
-    
-    try:
-        with open(os.devnull, "w") as fnull:
-            with redirect_stdout(fnull), redirect_stderr(fnull):
-                _dsi_store = DSI(db_path, check_same_thread=False)
-                tables = _dsi_store.list(True)
-                schema = _dsi_store.schema()
-                desc = load_db_description(db_path)
-                _dsi_store.close()
-             
-            return tables, schema, desc
 
-    except Exception as e:
+    if check_db_valid(db_path) is False:
         return tables, schema, desc
-    
-    
-    
+
+    try:
+        # with open(os.devnull, "w") as fnull:
+        #     with redirect_stdout(fnull), redirect_stderr(fnull):
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            _dsi_store = DSI(db_path, check_same_thread=False)
+            tables = _dsi_store.list(True)
+            schema = _dsi_store.schema()
+            desc = load_db_description(db_path)
+            _dsi_store.close()
+
+        return tables, schema, desc
+
+    except Exception:
+        return tables, schema, desc
+
+
 def get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
     """Get the absolute path of a DSI database given its path.
 
     Arg:
         db_path (str): the path of the DSI database (can be relative or absolute)
         run_path (str): the path of the codebase to resolve relative paths against
-        
+
     Returns:
         str: the absolute path of the DSI database
         str: the absolute path of the folder containing the DSI database
     """
-    
+
     p = Path(db_path)
     if not p.is_absolute():
-        master_database_path = str( (Path(run_path) / db_path).expanduser() )
-        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + '/'
+        master_database_path = str((Path(run_path) / db_path).expanduser())
+        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + "/"
     else:
         master_database_path = db_path
-        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + '/'
-        
-    return master_database_path, master_db_folder
+        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + "/"
 
+    return master_database_path, master_db_folder
 
 
 ########################################################################
@@ -173,52 +157,48 @@ def get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
 class DSIState(TypedDict):
     messages: Annotated[list, add_messages]
     response: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     thread_id: str
-
 
 
 def should_call_tools(state: DSIState) -> str:
     """Decide whether to call tools or continue.
-    
+
     Arg:
-        state (State): the current state of the graph   
-        
+        state (State): the current state of the graph
+
     Returns:
         str: "call_tools" or "continue"
     """
-    
+
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "call_tools"
-    
+
     return "continue"
-
-
-
 
 
 class DSIAgent(BaseAgent[DSIState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        database_path:str="", 
-        output_mode:str="agent",
+        database_path: str = "",
+        output_mode: str = "agent",
         run_path: str = "",
         **kwargs,
     ):
         super().__init__(llm, **kwargs)
-        
+
         self.db_schema = ""
         self.db_description = ""
-        
+
         self.master_db_folder = ""
         self.master_database_path = ""
         self.current_db_abs_path = ""
 
         self.msg = {}
         self.output_mode = output_mode
-        
+
         # Try to load the master database if a path is provided, otherwise wait for the user to load one
         if run_path == "":
             self.run_path = os.getcwd()
@@ -238,7 +218,7 @@ class DSIAgent(BaseAgent[DSIState]):
             edit_code,
         ]
 
-        self.prompt = f"""
+        self.prompt = """
         You are a data-analysis agent who can write python code, SQL queries, and generate plots to answer user questions based on the data available in a DSI object.
         Use the load_dsi_tool tool to load DSI files that have a .db extension
         Use query_dsi_tool to run SQL queries on it
@@ -267,37 +247,35 @@ class DSIAgent(BaseAgent[DSIState]):
         self.tool_node = ToolNode(self.tools)
         self._build_graph()
 
-
-
-
     def load_master_db(self, master_database: str) -> None:
         """Load the  master dataset from the given path.
-        
+
         Arg:
             master_database (str): the path to the DSI object
         """
-        
-        if master_database == "":        
+
+        if master_database == "":
             print("No DSI database provided. Please load one")
             return
 
-        _master_database_path, _master_db_folder = get_db_abs_path(master_database, self.run_path)
+        _master_database_path, _master_db_folder = get_db_abs_path(
+            master_database, self.run_path
+        )
         absolute_db_path = _master_database_path
-        
+
         if check_db_valid(absolute_db_path):
-            self.db_tables, self.db_schema, self.db_description = get_db_info(absolute_db_path)
-            
+            self.db_tables, self.db_schema, self.db_description = get_db_info(
+                absolute_db_path
+            )
+
             # set the values now that we know things are correct
-            self.current_db_abs_path =  absolute_db_path
+            self.current_db_abs_path = absolute_db_path
             self.master_database_path = absolute_db_path
             self.master_db_folder = _master_db_folder
 
-        else:        
+        else:
             print("No valid DSI database provided. Please load one")
-            #sys.exit(1)
-
-
-
+            # sys.exit(1)
 
     # __call__ from my agent
     def _response_node(self, state):
@@ -306,16 +284,12 @@ class DSIAgent(BaseAgent[DSIState]):
         conversation = [SystemMessage(content=self.prompt)] + messages
         response = self.llm.invoke(conversation)
 
-
         return {
             "messages": messages + [response],
             "response": response.content,
-            "metadata": response.response_metadata
+            "metadata": response.response_metadata,
         }
-        
 
-
-    
     def _build_graph(self):
         self.graph = StateGraph(DSIState)
 
@@ -335,16 +309,15 @@ class DSIAgent(BaseAgent[DSIState]):
 
         self.action = self.graph.compile(checkpointer=self.checkpointer)
 
-
-
     # matches __call__
-    def _invoke(self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_):
+    def _invoke(
+        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
+    ):
         config = self.build_config(
             recursion_limit=recursion_limit, tags=["graph"]
         )
         return self.action.invoke(inputs, config)
-    
-    
+
     def craft_message(self, human_msg):
         """Craft the message with context if available."""
 
@@ -365,15 +338,23 @@ class DSIAgent(BaseAgent[DSIState]):
 
         # Build remaining dynamic system context parts
         system_parts = [base_system_context]
-        
+
         if self.current_db_abs_path != "":
-            system_parts.append("The current working database path (current_db_abs_path) is: " + self.current_db_abs_path)
-            
+            system_parts.append(
+                "The current working database path (current_db_abs_path) is: "
+                + self.current_db_abs_path
+            )
+
         if self.master_database_path != "":
-            system_parts.append("The master database path (master_database_path) is: " + self.master_database_path)
-            
+            system_parts.append(
+                "The master database path (master_database_path) is: "
+                + self.master_database_path
+            )
+
         if self.db_schema != "":
-            system_parts.append("The schema of the dataset loaded: " + self.db_schema)
+            system_parts.append(
+                "The schema of the dataset loaded: " + self.db_schema
+            )
 
         if self.db_description != "":
             system_parts.append("Dataset description: " + self.db_description)
@@ -385,17 +366,13 @@ class DSIAgent(BaseAgent[DSIState]):
         else:
             messages = [HumanMessage(content=human_msg)]
 
-
         # clear
         self.db_schema = ""
         self.db_description = ""
         self.master_database_path = ""
         self.current_db_abs_path = ""
-        
 
         return {"messages": messages}
-
-    
 
     def ask(self, user_query) -> None:
         """Ask a question to the DSI Explorer agent.
@@ -409,38 +386,39 @@ class DSIAgent(BaseAgent[DSIState]):
         msg = self.craft_message(user_query)
 
         result = self._invoke(
-            msg,
-            config={"configurable": {"thread_id": self.thread_id}}
+            msg, config={"configurable": {"thread_id": self.thread_id}}
         )
 
         # Get and display the cleaned output
-        response_text = result["response"] 
+        response_text = result["response"]
         cleaned_output = response_text.strip()
-        
-        elapsed = now() - start
-        total_tokens = str(result["metadata"].get("token_usage", {}).get("total_tokens", 0)).strip()
 
-        
-        
+        elapsed = now() - start
+        total_tokens = str(
+            result["metadata"].get("token_usage", {}).get("total_tokens", 0)
+        ).strip()
+
         if self.output_mode == "jupyter":
-            from IPython.display import display, Markdown
+            from IPython.display import Markdown, display
+
             display(Markdown(cleaned_output))
-            
-            print(f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n")
+
+            print(
+                f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n"
+            )
 
         elif self.output_mode == "console":
             console = Console()
             md = RichMarkdown(cleaned_output)
             console.print(md)
-            
-            print(f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n")
-            
+
+            print(
+                f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n"
+            )
+
         elif self.output_mode == "agent":
             # do not print the output, just return it as a string
             pass
-        
+
         else:
             print(cleaned_output)
-
-
-        

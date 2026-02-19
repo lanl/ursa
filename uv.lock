@@ -5622,6 +5622,19 @@ wheels = [
 ]
 
 [[package]]
+name = "python-docx"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lxml" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/f7/eddfe33871520adab45aaa1a71f0402a2252050c14c7e3009446c8f4701c/python_docx-1.2.0.tar.gz", hash = "sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce", size = 5723256, upload-time = "2025-06-16T20:46:27.921Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl", hash = "sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7", size = 252987, upload-time = "2025-06-16T20:46:22.506Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -5646,6 +5659,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f3/87/f44d7c9f274c7ee665a29b885ec97089ec5dc034c7f3fafa03da9e39a09e/python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13", size = 37158, upload-time = "2024-12-16T19:45:46.972Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/45/58/38b5afbc1a800eeea951b9285d3912613f2603bdf897a4ab0f4bd7f405fc/python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104", size = 24546, upload-time = "2024-12-16T19:45:44.423Z" },
+]
+
+[[package]]
+name = "python-pptx"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lxml" },
+    { name = "pillow" },
+    { name = "typing-extensions" },
+    { name = "xlsxwriter" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/a9/0c0db8d37b2b8a645666f7fd8accea4c6224e013c42b1d5c17c93590cd06/python_pptx-1.0.2.tar.gz", hash = "sha256:479a8af0eaf0f0d76b6f00b0887732874ad2e3188230315290cd1f9dd9cc7095", size = 10109297, upload-time = "2024-08-07T17:33:37.772Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/4f/00be2196329ebbff56ce564aa94efb0fbc828d00de250b1980de1a34ab49/python_pptx-1.0.2-py3-none-any.whl", hash = "sha256:160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba", size = 472788, upload-time = "2024-08-07T17:33:28.192Z" },
 ]
 
 [[package]]
@@ -7124,6 +7152,17 @@ fm = [
 lammps = [
     { name = "atomman" },
 ]
+office-readers = [
+    { name = "python-docx" },
+    { name = "python-pptx" },
+]
+opt = [
+    { name = "ortools" },
+]
+otel = [
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -7140,13 +7179,6 @@ docs = [
     { name = "mkdocs-autorefs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings-python" },
-]
-opt = [
-    { name = "ortools" },
-]
-otel = [
-    { name = "opentelemetry-exporter-otlp" },
-    { name = "opentelemetry-sdk" },
 ]
 
 [package.metadata]
@@ -7168,11 +7200,16 @@ requires-dist = [
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.20.0,<2.0" },
     { name = "mp-api", specifier = ">=0.45.8,<0.45.13" },
+    { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.39.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.38.0" },
+    { name = "ortools", marker = "extra == 'opt'", specifier = ">=9.14,<9.15" },
     { name = "pandas", specifier = ">=2.3.1,<3.0" },
     { name = "pillow", specifier = ">=11.3.0,<12.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0" },
     { name = "pymupdf", specifier = ">=1.26.0,<2.0" },
     { name = "pypdf", specifier = ">=5.9.0,<6.0" },
+    { name = "python-docx", marker = "extra == 'office-readers'", specifier = ">=1.2" },
+    { name = "python-pptx", marker = "extra == 'office-readers'", specifier = ">=1.0.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "randomname", specifier = ">=0.2.1,<0.3" },
     { name = "rich", specifier = ">=13.9.4,<14.0" },
@@ -7181,7 +7218,7 @@ requires-dist = [
     { name = "trafilatura", specifier = ">=1.6.1,<1.7" },
     { name = "typer", specifier = ">=0.16.1" },
 ]
-provides-extras = ["fm", "lammps"]
+provides-extras = ["fm", "lammps", "office-readers", "opt", "otel"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -7198,11 +7235,6 @@ docs = [
     { name = "mkdocs-autorefs", specifier = ">=1.4.3" },
     { name = "mkdocs-material", specifier = ">=9.6.21" },
     { name = "mkdocstrings-python", specifier = ">=1.18.2" },
-]
-opt = [{ name = "ortools", specifier = ">=9.14,<9.15" }]
-otel = [
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.39.0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.38.0" },
 ]
 
 [[package]]
@@ -7539,6 +7571,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/79/d9/7cfd5a312760ac4dd8bf0184a6ee9e43c33e47f3dadc303032ce012b8fa3/wrapt-1.17.3-cp314-cp314t-win_amd64.whl", hash = "sha256:73d496de46cd2cdbdbcce4ae4bcdb4afb6a11234a1df9c085249d55166b95116", size = 41334, upload-time = "2025-08-12T05:53:14.178Z" },
     { url = "https://files.pythonhosted.org/packages/46/78/10ad9781128ed2f99dbc474f43283b13fea8ba58723e98844367531c18e9/wrapt-1.17.3-cp314-cp314t-win_arm64.whl", hash = "sha256:f38e60678850c42461d4202739f9bf1e3a737c7ad283638251e79cc49effb6b6", size = 38471, upload-time = "2025-08-12T05:52:57.784Z" },
     { url = "https://files.pythonhosted.org/packages/1f/f6/a933bd70f98e9cf3e08167fc5cd7aaaca49147e48411c0bd5ae701bb2194/wrapt-1.17.3-py3-none-any.whl", hash = "sha256:7171ae35d2c33d326ac19dd8facb1e82e5fd04ef8c6c0e394d7af55a55051c22", size = 23591, upload-time = "2025-08-12T05:53:20.674Z" },
+]
+
+[[package]]
+name = "xlsxwriter"
+version = "3.2.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/2c/c06ef49dc36e7954e55b802a8b231770d286a9758b3d936bd1e04ce5ba88/xlsxwriter-3.2.9.tar.gz", hash = "sha256:254b1c37a368c444eac6e2f867405cc9e461b0ed97a3233b2ac1e574efb4140c", size = 215940, upload-time = "2025-09-16T00:16:21.63Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/0c/3662f4a66880196a590b202f0db82d919dd2f89e99a27fadef91c4a33d41/xlsxwriter-3.2.9-py3-none-any.whl", hash = "sha256:9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3", size = 175315, upload-time = "2025-09-16T00:16:20.108Z" },
 ]
 
 [[package]]

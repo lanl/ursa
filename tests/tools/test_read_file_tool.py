@@ -4,6 +4,7 @@ from langchain.chat_models import BaseChatModel
 
 from tests.tools.utils import make_runtime
 from ursa.tools.read_file_tool import read_file
+from ursa.util import parse
 
 
 def test_read_file_reads_text_from_workspace(
@@ -37,11 +38,9 @@ def test_read_file_uses_pdf_reader(
         raise AssertionError("read_text_file should not be called for PDFs")
 
     monkeypatch.setattr(
-        "ursa.tools.read_file_tool.read_pdf_text", fake_pdf_reader
+        "ursa.tools.read_file_tool.read_text_from_file", fake_pdf_reader
     )
-    monkeypatch.setattr(
-        "ursa.tools.read_file_tool.read_text_file", fail_text_reader
-    )
+    monkeypatch.setattr(parse, "read_text_file", fail_text_reader)
 
     runtime = make_runtime(
         tmp_path,
