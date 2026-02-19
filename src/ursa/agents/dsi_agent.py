@@ -6,7 +6,7 @@ import random
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
 from time import time as now
-from typing import Annotated, Any, Dict, Mapping, TypedDict
+from typing import Annotated, Any, Mapping, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
