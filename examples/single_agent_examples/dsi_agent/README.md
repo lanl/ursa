@@ -15,7 +15,7 @@ uv pip install -U -r examples/single_agent_examples/dsi_agent/requirements.txt
 
 2. register the environment with jupyter notebook:
 ```bash
-uv run python -m ipykernel install --user --name venv_ursa --display-name "venv_ursa" # register the environment with Jupyter notebook 
+uv run python -m ipykernel install --user --name ursa --display-name "venv_ursa" # register the environment with Jupyter notebook 
 ```
 
 3. run:
