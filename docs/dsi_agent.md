@@ -21,7 +21,7 @@ print(result)
 
 ## Parameters
 
-When initializing `ArxivAgent`, you can customize its behavior with these parameters:
+When initializing `DSIAgent`, you can customize its behavior with these parameters:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
