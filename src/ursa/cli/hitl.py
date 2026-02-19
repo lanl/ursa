@@ -147,6 +147,7 @@ class HITL:
         self.agents: dict[str, AgentHITL] = {}
         self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
+        self.agents["dsi"] = AgentHITL(agent_class=agents.DSIAgent)
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
             config={"agent_memory": self.memory},
