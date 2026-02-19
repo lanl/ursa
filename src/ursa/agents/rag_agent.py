@@ -142,6 +142,17 @@ class RAGAgent(BaseAgent[RAGState]):
         print("[RAG Agent] Reading Documents....")
         new_state = state.copy()
 
+        custom_extensions = [
+            item.strip()
+            for item in os.environ.get("URSA_TEXT_EXTENSIONS", "").split(",")
+        ]
+        custom_readable_files = [
+            item.strip()
+            for item in os.environ.get("URSA_SPECIAL_TEXT_FILENAMES", "").split(
+                ","
+            )
+        ]
+
         base_dir = Path(self.database_path)
         ingestible_paths: list[Path] = []
 
@@ -150,12 +161,13 @@ class RAGAgent(BaseAgent[RAGState]):
                 continue
 
             ext = p.suffix.lower()
-            is_special_text = p.name.lower() in SPECIAL_TEXT_FILENAMES
 
             if (
                 ext == ".pdf"
                 or ext in TEXT_EXTENSIONS
-                or is_special_text
+                or ext in custom_extensions
+                or p.name.lower() in SPECIAL_TEXT_FILENAMES
+                or p.name.lower() in custom_readable_files
                 or ext in OFFICE_EXTENSIONS
             ):
                 ingestible_paths.append(p)

@@ -687,6 +687,14 @@ def read_pptx(path: Path) -> str:
 
 
 def read_text_from_file(path):
+    custom_extensions = [
+        item.strip()
+        for item in os.environ.get("URSA_TEXT_EXTENSIONS", "").split(",")
+    ]
+    custom_readable_files = [
+        item.strip()
+        for item in os.environ.get("URSA_SPECIAL_TEXT_FILENAMES", "").split(",")
+    ]
     ext = path.suffix.lower()
     try:
         match ext:
@@ -702,6 +710,8 @@ def read_text_from_file(path):
                 if (
                     ext in TEXT_EXTENSIONS
                     or path.name.lower() in SPECIAL_TEXT_FILENAMES
+                    or ext in custom_extensions
+                    or path.name.lower() in custom_readable_files
                 ):
                     full_text = read_text_file(path)
                 else:
