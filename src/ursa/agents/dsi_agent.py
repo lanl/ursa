@@ -1,20 +1,18 @@
 from contextlib import redirect_stdout, redirect_stderr
 import io
+import os
+from pathlib import Path
+import random
+from rich.console import Console
+from rich.markdown import Markdown as RichMarkdown
+from time import time as now
+from typing import Annotated, Any, Dict, Mapping, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-
-import os
-from pathlib import Path
-from rich.console import Console
-from rich.markdown import Markdown as RichMarkdown
-import random
-from time import time as now
-from typing import Annotated, Any, Dict, Mapping, TypedDict
-
 
 
 from ursa.tools.search_tools import (
@@ -115,7 +113,7 @@ def get_db_info(db_path: str) -> tuple[list, dict, str]:
     schema = {}
     desc = ""
     
-    if check_db_valid(db_path) == False:
+    if check_db_valid(db_path) is False:
         return tables, schema, desc
     
     try:
@@ -166,7 +164,7 @@ def get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
 class DSIState(TypedDict):
     messages: Annotated[list, add_messages]
     response: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     thread_id: str
 
 
@@ -231,7 +229,7 @@ class DSIAgent(BaseAgent[DSIState]):
             edit_code,
         ]
 
-        self.prompt = f"""
+        self.prompt = """
         You are a data-analysis agent who can write python code, SQL queries, and generate plots to answer user questions based on the data available in a DSI object.
         Use the load_dsi_tool tool to load DSI files that have a .db extension
         Use query_dsi_tool to run SQL queries on it

@@ -1,8 +1,8 @@
+from contextlib import redirect_stdout, redirect_stderr
 import io
 import os
 from pathlib import Path
 from langchain_core.tools import tool
-from contextlib import redirect_stdout, redirect_stderr
 
 from dsi.dsi import DSI
 
@@ -49,7 +49,7 @@ def _check_db_valid(db_path: str) -> bool:
         try:
             with redirect_stdout(_NULL), redirect_stderr(_NULL):
                 temp_store = DSI(db_path, check_same_thread=False)
-                temp_tables = temp_store.list(True) # force things to fail if the table is empty
+                temp_store.list(True) # force things to fail if the table is empty
                 temp_store.close()
                     
         except Exception:
