@@ -1,23 +1,21 @@
+from contextlib import redirect_stdout, redirect_stderr
 import io
+
+from langchain.chat_models import BaseChatModel
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+
 import os
+from pathlib import Path
+from rich.console import Console
+from rich.markdown import Markdown as RichMarkdown
 import random
 from time import time as now
 from typing import Annotated, Any, Dict, Mapping, TypedDict
-from pathlib import Path
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown as RichMarkdown
 
-from langchain_core.tools import tool
-from langchain_core.tools import Tool
-from langchain.chat_models import BaseChatModel
-from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from langgraph.prebuilt import ToolNode
-from langgraph.graph import END, START, StateGraph
-from contextlib import redirect_stdout, redirect_stderr
 
 from ursa.tools.search_tools import (
     run_arxiv_search,
@@ -71,7 +69,7 @@ def load_db_description(db_path: str) -> str:
             db_desc = f.read()
 
         return str(db_desc)
-    except:
+    except Exception:
         return ""
 
 
@@ -91,10 +89,10 @@ def check_db_valid(db_path: str) -> bool:
         try:
             with redirect_stdout(_NULL), redirect_stderr(_NULL):
                 temp_store = DSI(db_path, check_same_thread=False)
-                temp_tables = temp_store.list(True) # force things to fail if the table is empty
+                temp_store.list(True) # force things to fail if the table is empty
                 temp_store.close()
                     
-        except Exception as e:
+        except Exception:
             return False
 
     return True
@@ -132,7 +130,7 @@ def get_db_info(db_path: str) -> tuple[list, dict, str]:
             
         return tables, schema, desc
 
-    except Exception as e:
+    except Exception:
         return tables, schema, desc
     
     

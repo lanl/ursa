@@ -1,9 +1,9 @@
-import sqlite3
-import os
-from ursa.agents import DSIAgent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
+import os
 from pathlib import Path
+import sqlite3
+from ursa.agents import DSIAgent
 
 # Get the data
 current_file = Path(__file__).resolve()

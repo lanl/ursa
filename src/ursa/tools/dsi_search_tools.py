@@ -29,7 +29,7 @@ def _load_db_description(db_path: str) -> str:
             db_desc = f.read()
 
         return str(db_desc)
-    except:
+    except Exception:
         return ""
 
 
@@ -52,7 +52,7 @@ def _check_db_valid(db_path: str) -> bool:
                 temp_tables = temp_store.list(True) # force things to fail if the table is empty
                 temp_store.close()
                     
-        except Exception as e:
+        except Exception:
             return False
 
     return True
@@ -75,7 +75,7 @@ def _get_db_info(db_path: str) -> tuple[list, dict, str]:
     schema = {}
     desc = ""
     
-    if _check_db_valid(db_path) == False:
+    if _check_db_valid(db_path) is False:
         return tables, schema, desc
     
     try:
@@ -88,7 +88,7 @@ def _get_db_info(db_path: str) -> tuple[list, dict, str]:
             
         return tables, schema, desc
 
-    except Exception as e:
+    except Exception:
         return tables, schema, desc
     
     
@@ -155,7 +155,7 @@ def load_dsi_tool(path: str, run_path: str = "", master_db_folder: str = "") -> 
         _, _db_schema, _db_description = _get_db_info(data_path)
         _current_db_abs_path = data_path
 
-        if master_database_previously_set == False:
+        if master_database_previously_set is False:
             return {
                 "the current working database path (current_db_abs_path) is": _current_db_abs_path,
                 "the master database path (master_database_path) is": master_database_path,
@@ -172,7 +172,7 @@ def load_dsi_tool(path: str, run_path: str = "", master_db_folder: str = "") -> 
         
         
     except Exception as e:
-        return "Failed to load database information"
+        return f"Failed to load database information: {e}"
     
 
 
@@ -200,7 +200,7 @@ def query_dsi_tool(query_str: str, db_path: str) ->dict:
             return {}
         return df.to_dict(orient="records")
     
-    except Exception as e:   
+    except Exception:   
         return {}
     
     finally:
