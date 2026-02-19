@@ -63,5 +63,3 @@ def download_file_tool(
 
     except Exception as e:
         return f"Error downloading file: {str(e)}"
-
-        return f"[Error]: {e}"
