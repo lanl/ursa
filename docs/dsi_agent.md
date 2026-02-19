@@ -19,6 +19,8 @@ ai.ask("Tell me about the datasets you have.")
 print(result)
 ```
 
+See more examples in the [DSI examples folder](../examples/single_agent_examples/dsi_agent/README.md)
+
 ## Parameters
 
 When initializing `DSIAgent`, you can customize its behavior with these parameters:

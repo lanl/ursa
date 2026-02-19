@@ -1,5 +1,10 @@
 # DSI-Explorer Agent example
-The dsi_agent example allows data from the [https://github.com/lanl/dsi]( Data Science Infrastructure Project) (DSI) toi be queried using AI.
+The dsi_agent example allows data from the [Data Science Infrastructure Project (DSI)](https://github.com/lanl/dsi) to be queried using LLMs.
+
+A simple example can be run as follows:
+```bash
+python examples/single_agent_examples/dsi_agent/agent_test.py
+```
 
 To use the jupyter-notebook, do the following: 
 
