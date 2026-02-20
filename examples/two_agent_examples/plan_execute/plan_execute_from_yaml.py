@@ -1286,7 +1286,7 @@ async def main(
 
         # ---- One-time project logo kickoff (per workspace) -----------------
         meta = load_run_meta(workspace)
-        logo_cfg = getattr(cfg, "logo", {}) or {}
+        logo_cfg = getattr(config, "logo", {}) or {}
         logo_enabled = bool(logo_cfg.get("enabled", True))
 
         if logo_enabled and not meta.get("logo_created"):
@@ -1365,7 +1365,7 @@ async def main(
             workspace=workspace,
             model_choice=model_name,
             models_cfg=models_cfg,
-            mcp_servers=getattr(cfg, "mcp_servers", None),
+            mcp_servers=getattr(config, "mcp_servers", None),
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
