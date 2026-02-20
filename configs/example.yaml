@@ -39,7 +39,10 @@ mcp_servers:
       - --config
       - config.yaml
     env:
-      OPENAI_API_KEY: SUPER_SECRET_API_KEY
+      # Ursa will interpolate env variables into ${VAR}
+      # fallbacks can be specified as ${VAR:Default}
+      OPENAI_API_KEY: ${SUPER_SECRET_API_KEY}
+      ANOTHER_VAR: ${ANOTHER_VAR:4}
       # More environmental variables to set for the mcp server
   ursa-http:
     # streamable-http servers are configured when started, not here
