@@ -6,7 +6,6 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "ArxivAgent": (".acquisition_agents", "ArxivAgent"),
     "OSTIAgent": (".acquisition_agents", "OSTIAgent"),
     "WebSearchAgent": (".acquisition_agents", "WebSearchAgent"),
-    "ArxivAgentLegacy": (".arxiv_agent", "ArxivAgentLegacy"),
     "BaseAgent": (".base", "BaseAgent"),
     "BaseChatModel": (".base", "BaseChatModel"),
     "ChatAgent": (".chat_agent", "ChatAgent"),
@@ -18,7 +17,11 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "PlanningAgent": (".planning_agent", "PlanningAgent"),
     "RAGAgent": (".rag_agent", "RAGAgent"),
     "RecallAgent": (".recall_agent", "RecallAgent"),
-    "WebSearchAgentLegacy": (".websearch_agent", "WebSearchAgentLegacy"),
+}
+
+_retired_attrs: dict[str, str] = {
+    "ArxivAgentLegacy": "Use ArxivAgent from ursa.agents instead.",
+    "WebSearchAgentLegacy": "Use WebSearchAgent from ursa.agents instead.",
 }
 
 __all__ = list(_lazy_attrs.keys())
@@ -30,6 +33,11 @@ def __getattr__(name: str) -> Any:
     This avoids importing all agent modules at package import time,
     so a failure in one agent does not prevent using others.
     """
+    if name in _retired_attrs:
+        raise AttributeError(
+            f"{name} has been retired. {_retired_attrs[name]}"
+        ) from None
+
     try:
         module_name, attr_name = _lazy_attrs[name]
     except KeyError:

@@ -7,18 +7,15 @@ Key features:
 - Workspace management with optional symlinking for external sources.
 - Safety-checked shell execution via run_command with output size budgeting.
 - Code authoring and edits through write_code and edit_code with rich previews.
-- Web search capability through DuckDuckGoSearchResults.
+- Web/literature search tools through acquisition helpers.
 - Summarization of the session and optional memory logging.
 - Configurable graph with nodes for agent, action, and summarize.
 
 Implementation notes:
 - LLM prompts are sourced from prompt_library.execution_prompts.
-- Outputs from subprocess are trimmed under MAX_TOOL_MSG_CHARS to fit tool messages.
+- Outputs from subprocess are trimmed to the tool-character budget.
 - The agent uses ToolNode and LangGraph StateGraph to loop until no tool calls remain.
 - Safety gates block unsafe shell commands and surface the rationale to the user.
-
-Environment:
-- MAX_TOOL_MSG_CHARS caps combined stdout/stderr in tool responses.
 
 Entry points:
 - ExecutionAgent._invoke(...) runs the compiled graph.

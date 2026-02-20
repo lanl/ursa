@@ -1,4 +1,6 @@
 # planning_executor.py
+from typing import Any, Mapping
+
 from rich import get_console
 from rich.panel import Panel
 
@@ -75,16 +77,23 @@ code_schema_prompt = """
 
 class SimulationUseWorkflow(BaseWorkflow):
     def __init__(
-        self, planner, executor, workspace, tool_description, **kwargs
+        self,
+        planner,
+        executor,
+        workspace,
+        tool_description,
+        tool_schema=code_schema_prompt,
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.planner = planner
         self.executor = executor
         self.workspace = workspace
-        self.tool_schema = code_schema_prompt
+        self.tool_schema = tool_schema
         self.tool_description = tool_description
 
-    def _invoke(self, task: str, **kw):
+    def _invoke(self, inputs: Mapping[str, Any], **kw):
+        task = str(inputs["task"])
         with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
             spinner="point",

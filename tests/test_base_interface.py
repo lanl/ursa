@@ -36,7 +36,6 @@ MODEL_QUERY = {
         "ursa.agents.acquisition_agents.ArxivAgent",
         "ursa.agents.acquisition_agents.WebSearchAgent",
         "ursa.agents.acquisition_agents.OSTIAgent",
-        "ursa.agents.arxiv_agent.ArxivAgentLegacy",
         "ursa.agents.chat_agent.ChatAgent",
         "ursa.agents.code_review_agent.CodeReviewAgent",
         "ursa.agents.execution_agent.ExecutionAgent",
@@ -45,7 +44,6 @@ MODEL_QUERY = {
         "ursa.agents.planning_agent.PlanningAgent",
         "ursa.agents.rag_agent.RAGAgent",
         "ursa.agents.recall_agent.RecallAgent",
-        "ursa.agents.websearch_agent.WebSearchAgentLegacy",
     ],
     ids=lambda agent_import: agent_import.rsplit(".", 1)[-1],
 )

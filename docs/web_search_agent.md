@@ -1,84 +1,45 @@
 # WebSearchAgent Documentation
 
-`WebSearchAgent` is a powerful tool for conducting internet-based research on any topic. It leverages language models and web search capabilities to gather, process, and summarize information from online sources.
+`WebSearchAgent` (current implementation) is an acquisition agent that uses `ddgs` search, downloads/web-scrapes sources, and returns a synthesized summary in context.
 
 ## Basic Usage
 
 ```python
+from langchain.chat_models import init_chat_model
 from ursa.agents import WebSearchAgent
-from langchain_openai import ChatOpenAI
 
-# Initialize with default model (gpt-5-mini)
-websearcher = WebSearchAgent()
+llm = init_chat_model("openai:gpt-5.2")
+websearcher = WebSearchAgent(llm=llm, max_results=3)
 
-# Or initialize with a custom model
-model = ChatOpenAI(model="gpt-5-mini", max_completion_tokens=10000)
-websearcher = WebSearchAgent(llm=model)
-
-# Run a web search query
-result = websearcher.invoke("Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?")
-
-# Access the web search results
-sources = result["urls_visited"]
-
-print("Web Search Summary:")
+result = websearcher.invoke({
+    "query": "Detroit Tigers top prospects 2025 birth year",
+    "context": "Who are the top prospects and what year were they born?",
+})
 print(result["final_summary"])
-print("Sources:", sources)
 ```
 
 ## Parameters
 
-### Initialization
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | init_chat_model("openai:gpt-5-mini") | The language model to use for web search |
-| `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
-
-### Run Method
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `prompt` | str | Required | The web search question or topic |
-| `recursion_limit` | int | 100 | Maximum recursion depth for the web search process |
+- `llm`: required chat model
+- `max_results`: max search hits to materialize
+- `summarize`: summarize fetched content (`True` by default)
+- `download`: if `False`, uses cached files from `database_path`
+- `database_path`, `summaries_path`, `vectorstore_path`: storage folders under workspace
 
 ## Features
 
-- **Automated Web Search**: Uses DuckDuckGo to find relevant information
-- **Content Processing**: Extracts and summarizes content from web pages
-- **Iterative Web Search**: Continues researching until sufficient information is gathered
-- **Source Tracking**: Records all URLs visited during research
-- **Internet Connectivity Check**: Verifies internet access before attempting research
+- DuckDuckGo discovery via `ddgs`
+- HTML/PDF materialization to local cache
+- boilerplate-stripped text extraction
+- per-source summaries + final aggregate summary
 
 ## Output
 
-The agent returns a dictionary containing:
-
-- `messages`: A list of message objects, with the final message containing the comprehensive web search summary
-- `urls_visited`: A list of all sources consulted during the web search process
-
-## Advanced Usage
-
-```python
-from langchain.chat_model import init_chat_model
-from ursa.agents import WebSearchAgent
-
-# Initialize with custom parameters
-websearcher = WebSearchAgent(
-    llm=init_chat_model("openai:gpt-5-mini"),
-    url="https://www.example.com"  # Custom URL for internet connectivity check
-)
-
-# Run with higher recursion limit for complex topics
-result = websearcher.invoke(
-    "What are the latest developments in quantum computing? Summarize in markdown format.",
-    recursion_limit=200
-)
-```
+- `final_summary`: synthesized answer
+- `items`: fetched source items (metadata/content)
+- `summaries`: per-item summaries
 
 ## Notes
 
-- The agent requires internet connectivity to function properly
-- Rate limiting is implemented to avoid overwhelming search services
-- For networks with SSL inspection, you may need to set the `CERT_FILE` environment variable
-- The websearch process includes multiple steps: search, content processing, review, and final summarization
+- This documentation covers the current exported `ursa.agents.WebSearchAgent`.
+- Legacy `WebSearchAgentLegacy` has been retired. Use `ursa.agents.WebSearchAgent`.

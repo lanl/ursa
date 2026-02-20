@@ -116,9 +116,9 @@ class RAGAgent(BaseAgent[RAGState]):
             with open(self.manifest_path, "r") as f:
                 return any(line.strip() == doc_id for line in f)
 
-    def _mark_paper_ingested(self, arxiv_id: str) -> None:
+    def _mark_paper_ingested(self, doc_id: str) -> None:
         with open(self.manifest_path, "a") as f:
-            f.write(f"{arxiv_id}\n")
+            f.write(f"{doc_id}\n")
 
     def _ensure_doc_in_vectorstore(self, paper_text: str, doc_id: str) -> None:
         splitter = RecursiveCharacterTextSplitter(
@@ -224,8 +224,8 @@ class RAGAgent(BaseAgent[RAGState]):
             print("[RAG Agent] Ingesting Documents Into RAG Database....")
             with self._vs_lock:
                 self.vectorstore.add_documents(batch_docs, ids=batch_ids)
-                for id in batch_ids:
-                    self._mark_paper_ingested(id)
+                for doc_id in state["doc_ids"]:
+                    self._mark_paper_ingested(doc_id)
 
         return state
 

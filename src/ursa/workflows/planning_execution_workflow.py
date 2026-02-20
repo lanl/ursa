@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from typing import Any, Mapping
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
@@ -33,7 +34,8 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self.planner.checkpointer = checkpointer
         self.executor.checkpointer = checkpointer
 
-    def _invoke(self, task: str, **kw):
+    def _invoke(self, inputs: Mapping[str, Any], **kw):
+        task = str(inputs["task"])
         with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
             spinner="point",

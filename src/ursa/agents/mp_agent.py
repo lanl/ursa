@@ -160,9 +160,15 @@ You are a materials-science assistant. Given the following metadata about a mate
 
 
 if __name__ == "__main__":
-    agent = MaterialsProjectAgent()
+    from langchain.chat_models import init_chat_model
+
+    agent = MaterialsProjectAgent(llm=init_chat_model("openai:gpt-5.2"))
     resp = agent.invoke(
-        mp_query="LiFePO4",
+        query={
+            "elements": ["Li", "Fe", "P", "O"],
+            "band_gap_min": 0.0,
+            "band_gap_max": 6.0,
+        },
         context="What is its band gap and stability, and any synthesis challenges?",
     )
     print(resp)

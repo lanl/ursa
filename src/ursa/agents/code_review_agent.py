@@ -155,7 +155,7 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
                 }
 
             print(f"{GREEN}[PASSED] the safety check: {RESET}" + query)
-        elif state["messages"][-1].tool_calls[0]["name"] == "write_code":
+        elif state["messages"][-1].tool_calls[0]["name"] == "write_file":
             fn = (
                 state["messages"][-1]
                 .tool_calls[0]["args"]
@@ -222,8 +222,9 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
             "iteration": 0,
             "workspace": workspace,
         }
-        return self.action.invoke(
-            initial_state, {"configurable": {"thread_id": self.thread_id}}
+        return self.invoke(
+            initial_state,
+            config={"configurable": {"thread_id": self.thread_id}},
         )
 
 
