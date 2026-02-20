@@ -1365,7 +1365,7 @@ async def main(
             workspace=workspace,
             model_choice=model_name,
             models_cfg=models_cfg,
-            mcp_servers=cfg.get("mcp_servers"),
+            mcp_servers=getattr(cfg, "mcp_servers", None),
         )
         planner, planner_checkpointer, pdb_path = planner_tuple
         executor, _, edb_path = executor_tuple
