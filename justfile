@@ -61,6 +61,15 @@ clean: clean-workspaces
 test-cli:
     uv run ursa run
 
+demo-healthcheck:
+    bash -lc 'uv run python scripts/demo_healthcheck.py --corpus-path "${CMM_CORPUS_PATH:-/Users/wash198/Documents/Projects/Science_Projects/MPII_CMM/Corpus}" --vectorstore-path "${CMM_VECTORSTORE_PATH:-cmm_vectorstore}"'
+
+demo-smoke:
+    bash -lc 'uv run python scripts/run_cmm_demo.py --scenario "${CMM_DEMO_SCENARIO:-quick_gallium}" --corpus-path "${CMM_CORPUS_PATH:-/Users/wash198/Documents/Projects/Science_Projects/MPII_CMM/Corpus}" --vectorstore-path "${CMM_VECTORSTORE_PATH:-cmm_vectorstore}" --output-dir "${CMM_OUTPUT_DIR:-cmm_demo_outputs}"'
+
+demo-prep: demo-healthcheck demo-smoke
+    @echo "CMM demo prep completed."
+
 docker-build:
     docker buildx \
         build \

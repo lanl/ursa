@@ -35,6 +35,7 @@ nav:
      - Human in the Loop: humanInTheLoop_example.md
      - Neutron Star: combining_arxiv_and_execution_neutronStar.md
      - Critical Minerals Workflow: critical_minerals_workflow.md
+     - CMM Demo Runbook: cmm_demo_runbook.md
   - API Reference: 
     - agents: api_reference/agents.md
     - prompt_library: api_reference/prompt_library.md

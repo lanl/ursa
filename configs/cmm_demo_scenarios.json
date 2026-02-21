@@ -1,0 +1,122 @@
+{
+  "quick_gallium": {
+    "task": "Assess 2026 supply risk and mitigation options for gallium in U.S. clean energy manufacturing.",
+    "rag_context": "Focus on U.S. exposure, 2024-2026 policy signals, and substitution options.",
+    "execution_instruction": "Produce a source-grounded decision brief with assumptions, uncertainty notes, and actionable mitigation steps.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "GA",
+      "demand": {
+        "US": 140,
+        "EU": 90
+      },
+      "suppliers": [
+        {
+          "name": "domestic_refining",
+          "capacity": 120,
+          "unit_cost": 14.0,
+          "risk_score": 0.2
+        },
+        {
+          "name": "ally_import",
+          "capacity": 160,
+          "unit_cost": 16.0,
+          "risk_score": 0.1
+        }
+      ],
+      "shipping_cost": {
+        "domestic_refining": {
+          "US": 1.0,
+          "EU": 2.0
+        },
+        "ally_import": {
+          "US": 1.8,
+          "EU": 1.2
+        }
+      },
+      "risk_weight": 3.0,
+      "unmet_demand_penalty": 10000,
+      "max_supplier_share": 0.8
+    }
+  },
+  "graphite_battery": {
+    "task": "Evaluate natural vs synthetic graphite supply risks for North American EV battery anode production through 2027.",
+    "rag_context": "Prioritize domestic processing bottlenecks, allied sourcing options, and tariff-related constraints.",
+    "execution_instruction": "Return a concise executive memo plus technical appendix-style bullets for procurement planning.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "GR",
+      "demand": {
+        "NA": 220,
+        "EU": 140
+      },
+      "suppliers": [
+        {
+          "name": "domestic_synthetic",
+          "capacity": 150,
+          "unit_cost": 11.5,
+          "risk_score": 0.18
+        },
+        {
+          "name": "ally_natural",
+          "capacity": 210,
+          "unit_cost": 9.8,
+          "risk_score": 0.12
+        }
+      ],
+      "shipping_cost": {
+        "domestic_synthetic": {
+          "NA": 0.9,
+          "EU": 2.1
+        },
+        "ally_natural": {
+          "NA": 1.4,
+          "EU": 1.3
+        }
+      },
+      "risk_weight": 2.7,
+      "unmet_demand_penalty": 12000,
+      "max_supplier_share": 0.75
+    }
+  },
+  "multi_mineral_stress": {
+    "task": "Stress-test rare-earth and cobalt supply posture under simultaneous policy and logistics shocks for U.S. defense manufacturing.",
+    "rag_context": "Emphasize 2024-2026 disruptions, substitution constraints, and resilience investment priorities.",
+    "execution_instruction": "Provide a red-team style risk narrative and rank-order mitigations by expected impact and implementation complexity.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "CO",
+      "demand": {
+        "US": 180,
+        "ALLY": 110
+      },
+      "suppliers": [
+        {
+          "name": "domestic_mine",
+          "capacity": 130,
+          "unit_cost": 13.4,
+          "risk_score": 0.22
+        },
+        {
+          "name": "allied_refinery",
+          "capacity": 190,
+          "unit_cost": 14.1,
+          "risk_score": 0.14
+        }
+      ],
+      "shipping_cost": {
+        "domestic_mine": {
+          "US": 0.8,
+          "ALLY": 1.9
+        },
+        "allied_refinery": {
+          "US": 1.5,
+          "ALLY": 1.0
+        }
+      },
+      "risk_weight": 3.4,
+      "unmet_demand_penalty": 15000,
+      "max_supplier_share": 0.7
+    }
+  }
+}

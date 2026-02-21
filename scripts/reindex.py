@@ -113,8 +113,11 @@ def main() -> int:
         embedding_model=embedding,
         collection_name=args.collection_name,
     )
+    manifest_path = vectorstore_path / "_ingested_ids.txt"
     if args.reset:
         vectorstore.delete_collection()
+        if manifest_path.exists():
+            manifest_path.unlink()
 
     chunker = CMMChunker(
         max_tokens=max(64, args.chunk_size // 2),
@@ -134,6 +137,7 @@ def main() -> int:
     subdomain_counts: Counter[str] = Counter()
     docs_indexed = 0
     chunks_indexed = 0
+    ingested_doc_ids: set[str] = set()
 
     for path in tqdm(files, desc="Reindex corpus"):
         text = read_text_from_file(path)
@@ -151,9 +155,23 @@ def main() -> int:
         vectorstore.add_documents(docs)
         docs_indexed += 1
         chunks_indexed += len(docs)
+        ingested_doc_ids.add(str(path))
         for doc in docs:
             commodity_counts.update(doc.metadata.get("commodity_tags", []))
             subdomain_counts.update(doc.metadata.get("subdomain_tags", []))
+
+    existing_ids: set[str] = set()
+    if manifest_path.exists():
+        existing_ids = {
+            line.strip()
+            for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+    merged_ids = sorted(existing_ids.union(ingested_doc_ids))
+    manifest_path.write_text(
+        "\n".join(merged_ids) + ("\n" if merged_ids else ""),
+        encoding="utf-8",
+    )
 
     print(f"Docs indexed: {docs_indexed}")
     print(f"Chunks indexed: {chunks_indexed}")
@@ -170,4 +188,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

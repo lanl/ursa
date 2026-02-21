@@ -31,6 +31,7 @@ arxiv_generated_summaries
 arxiv_papers
 *.sqfs
 ursa_workspace/
+cmm_demo_workspace/
+cmm_demo_outputs/
 .vscode/settings.json
 scratch/
-
