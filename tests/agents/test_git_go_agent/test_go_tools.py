@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ursa.agents.base import AgentContext
-from ursa.tools.git_tools import (
+from ursa.tools.go_tools import (
     go_build,
     go_test,
     go_vet,
@@ -59,7 +59,7 @@ class TestGoTools:
         """Test successful go build execution."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="",
@@ -79,7 +79,7 @@ class TestGoTools:
         """Test go test with verbose flag."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="ok\n",
@@ -98,7 +98,7 @@ class TestGoTools:
         """Test go test without verbose flag."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="",
@@ -116,7 +116,7 @@ class TestGoTools:
         """Test successful go vet execution."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="",
@@ -135,7 +135,7 @@ class TestGoTools:
         """Test successful go mod tidy execution."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="",
@@ -155,7 +155,7 @@ class TestGoTools:
         """Test go build timeout handling."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(
                 ["go", "build", "./..."], 300
             )
@@ -170,7 +170,7 @@ class TestGoTools:
         """Test go test timeout handling."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(
                 ["go", "test", "./..."], 600
             )
@@ -184,7 +184,7 @@ class TestGoTools:
         """Test golangci_lint when linter is not installed."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
             
             result = golangci_lint.func(mock_runtime, repo_path=str(go_repo.name))
@@ -200,7 +200,7 @@ class TestGoTools:
         
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             # First call for version check, second for actual linting
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="golangci-lint version 1.0.0\n", stderr=""),
@@ -219,7 +219,7 @@ class TestGoTools:
         """Test golangci_lint runs without config file."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             # First call for version check, second for actual linting
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="golangci-lint version 1.0.0\n", stderr=""),
@@ -241,7 +241,7 @@ class TestGoToolsErrorHandling:
         """Test go build general exception handling."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.side_effect = Exception("Some error")
             
             result = go_build.func(mock_runtime, repo_path=str(go_repo.name))
@@ -252,7 +252,7 @@ class TestGoToolsErrorHandling:
         """Test go test general exception handling."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.side_effect = Exception("Some error")
             
             result = go_test.func(mock_runtime, repo_path=str(go_repo.name))
@@ -263,7 +263,7 @@ class TestGoToolsErrorHandling:
         """Test golangci_lint version check failure."""
         mock_runtime.context.workspace = go_repo.parent
         
-        with patch("ursa.tools.git_tools.subprocess.run") as mock_run:
+        with patch("ursa.tools.go_tools.subprocess.run") as mock_run:
             mock_run.side_effect = Exception("Version check failed")
             
             result = golangci_lint.func(mock_runtime, repo_path=str(go_repo.name))

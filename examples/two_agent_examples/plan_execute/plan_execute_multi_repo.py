@@ -17,7 +17,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from ursa.agents import GitGoAgent, WebSearchAgent
+from ursa.agents import WebSearchAgent, make_git_agent
 from ursa.prompt_library.planning_prompts import reflection_prompt
 
 
@@ -215,6 +215,7 @@ def _resolve_repos(raw_repos: list[dict], config_dir: Path) -> list[dict]:
             "checkout": bool(raw.get("checkout", False)),
             "checks": raw.get("checks") or [],
             "description": raw.get("description") or "",
+            "language": raw.get("language", "generic"),
         })
     return repos
 
@@ -541,7 +542,7 @@ def _executor_prompt(
         + "\n\n"
         f"Previous step summary:\n{prev}\n\n"
         "Use git tools with repo_path='repos/{repo_name}'.\n"
-        "Run gofmt on any modified .go files.\n"
+        "Use language-specific tools to validate your changes.\n"
         "Report the changes you made and the git status/diff summary."
     ).replace("{repo_name}", repo["name"])
 
@@ -588,7 +589,7 @@ async def _run_repo_steps(
     resume_dir: Path | None,
     resume_files: dict[str, Path],
 ) -> dict:
-    agent = GitGoAgent(llm=llm, workspace=workspace)
+    agent = make_git_agent(llm=llm, language=repo.get("language", "generic"), workspace=workspace)
     progress_path = _progress_path(
         workspace, repo["name"], resume_dir, resume_files
     )

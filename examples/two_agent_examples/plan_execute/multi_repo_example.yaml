@@ -25,6 +25,7 @@ repos:
     url: https://github.com/openchami/boot-service.git
     branch: main
     checkout: true
+    language: go  # optional: "go", "python", "generic" (default)
     description: "OpenCHAMI Boot Service repository"
     checks:
       - go test ./...

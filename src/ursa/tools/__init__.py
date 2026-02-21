@@ -10,4 +10,11 @@ from .git_tools import git_log as git_log
 from .git_tools import git_ls_files as git_ls_files
 from .git_tools import git_status as git_status
 from .git_tools import git_switch as git_switch
-from .git_tools import gofmt_files as gofmt_files
+from .git_tools import GIT_TOOLS as GIT_TOOLS
+from .go_tools import gofmt_files as gofmt_files
+from .go_tools import go_build as go_build
+from .go_tools import go_test as go_test
+from .go_tools import go_vet as go_vet
+from .go_tools import go_mod_tidy as go_mod_tidy
+from .go_tools import golangci_lint as golangci_lint
+from .go_tools import GO_TOOLS as GO_TOOLS
