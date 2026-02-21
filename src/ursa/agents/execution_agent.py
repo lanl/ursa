@@ -57,7 +57,13 @@ from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     recap_prompt,
 )
-from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools import (
+    edit_code,
+    read_file,
+    run_cmm_supply_chain_optimization,
+    run_command,
+    write_code,
+)
 from ursa.tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
@@ -201,6 +207,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             write_code,
             edit_code,
             read_file,
+            run_cmm_supply_chain_optimization,
             run_web_search,
             run_osti_search,
             run_arxiv_search,

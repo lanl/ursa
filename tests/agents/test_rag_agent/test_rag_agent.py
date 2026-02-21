@@ -58,3 +58,36 @@ async def test_rag_agent_retrieves_contextual_documents(
 
     manifest_path = vectors_dir / "_ingested_ids.txt"
     assert manifest_path.exists()
+
+
+async def test_rag_agent_extension_filtering(chat_model, embedding_model, tmpdir):
+    workspace = Path(tmpdir)
+    database_dir = workspace / "database"
+    summaries_dir = workspace / "summaries"
+    vectors_dir = workspace / "vectors"
+    for path in (database_dir, summaries_dir, vectors_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    (database_dir / "report.txt").write_text(
+        "Critical mineral supply chain report content."
+    )
+    (database_dir / "scratch.py").write_text(
+        "print('dev script that should be excluded')"
+    )
+
+    agent = RAGAgent(
+        llm=chat_model,
+        embedding=embedding_model,
+        workspace=tmpdir,
+        database_path="database",
+        summaries_path="summaries",
+        vectorstore_path="vectors",
+        include_extensions={".txt"},
+        max_docs_per_ingest=10,
+        min_chars=5,
+    )
+
+    state = agent._read_docs_node({"context": "critical minerals"})
+    doc_ids = state.get("doc_ids") or []
+    assert any(doc_id.endswith("report.txt") for doc_id in doc_ids)
+    assert not any(doc_id.endswith("scratch.py") for doc_id in doc_ids)
