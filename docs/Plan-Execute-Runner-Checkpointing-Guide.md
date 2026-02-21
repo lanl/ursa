@@ -15,6 +15,23 @@ python examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py \
   --config examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml
 ```
 
+### Multi-repo runner (parallel execution)
+
+Use the multi-repo runner when you want a single planner to fan out to parallel execution agents across multiple repositories.
+
+```bash
+python examples/two_agent_examples/plan_execute/plan_execute_multi_repo.py \
+  --config examples/two_agent_examples/plan_execute/multi_repo_example.yaml
+```
+
+Notes:
+- Repos are specified in `repos:` with `name`, `path`, and optional `url`, `branch`, and `checkout`.
+- The runner creates `workspace/repos/<name>` symlinks for safe repo-relative tooling.
+- Progress and summaries are written to the workspace (`plan.json`, `progress/`, `step_outputs/`, `run_summary.json`).
+- Use `execution.status_interval_sec` to control how often a live status snapshot prints (set `0` to disable).
+- Use `--resume` to pick up from existing `workspace/progress/*.json` files.
+- Use `--resume-from` to point at a specific progress file (repeatable) or a directory of progress files.
+
 Resume from a specific checkpoint:
 This example assumes the randomly generated workspace name is `FOOBAR`.  Change it to the one generated when you ran it yourself.  It
 also assumes a checkpoint number you want to resume.

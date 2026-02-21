@@ -1,0 +1,87 @@
+project: multi_repo_example
+
+models:
+  choices:
+    - openai:gpt-5
+    - openai:gpt-5-mini
+  default: openai:gpt-5-mini
+
+planner:
+  reflection_steps: 1
+  research:
+    # Optional web research to seed planning context
+    queries:
+      - "recent issues for repo_a"
+
+execution:
+  max_parallel: 2
+  recursion_limit: 2000
+  resume: false
+  status_interval_sec: 5
+
+repos:
+  - name: boot-service
+    path: ../boot-service
+    url: https://github.com/openchami/boot-service.git
+    branch: main
+    checkout: true
+    description: "OpenCHAMI Boot Service repository"
+    checks:
+      - go test ./...
+
+  - name: metadata-service
+    path: ../metadata-service
+    url: https://github.com/openchami/metadata-service.git
+    branch: main
+    checkout: true
+    description: "OpenCHAMI Metadata Service repository"
+    checks:
+      - go test ./...
+
+  - name: smd
+    path: ../smd
+    url: https://github.com/openchami/smd.git
+    branch: main
+    checkout: true
+    description: "OpenCHAMI Legacy SMD repository"
+    checks:
+      - go test ./...
+
+  - name: tokensmith
+    path: ../tokensmith
+    url: https://github.com/openchami/tokensmith.git
+    branch: main
+    checkout: true
+    description: "OpenCHAMI Tokensmith repository"
+    checks:
+      - go test ./...
+
+  - name: fabrica
+    path: ../fabrica
+    url: https://github.com/openchami/fabrica.git
+    branch: main
+    checkout: true
+    description: "Fabrica microservice code generation repository"
+    checks:
+      - go test ./...
+
+  
+
+problem: |
+  * TITLE: Implement consistent authorization across services
+
+  Both boot-service and metadata-service rely on JWTs for authentication via a middleware from the tokensmith repository.
+  However, the authorization logic, based around Casbin from the tokensmith repository is not well documented or complete.
+
+  You need to:
+  1. Review the existing authorization implementation in both services and the tokensmith repository.
+  2. Identify inconsistencies and gaps in the current authorization logic.
+  3. Implement a consistent authorization mechanism across both services leveraging the tokensmith middleware and Casbin.
+  4. Ensure that the new implementation is well documented and includes tests to validate the authorization logic.
+  5. Provide a summary of the changes made and examples based around HPC system management scenarios.
+
+  Update each repository with a set of well-documented commits that each represent a logical step in the implementation process. Ensure that the commit messages are clear and descriptive of the changes made.
+  Do not attempt to push any changes to remote repositories. Focus on local development and testing to ensure the implementation is robust and meets the requirements outlined in the problem statement.
+  All tests must pass successfully before finalizing the implementation.
+  Use the make targets provided in each repository to run tests and ensure that your changes do not break existing functionality.
+  Changes to fabrica should not be necessary.  If you find that changes to fabrica are required, please document the reasoning and ensure that any changes are minimal and well justified.

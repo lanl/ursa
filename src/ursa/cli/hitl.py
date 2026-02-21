@@ -214,9 +214,7 @@ class HITL:
         mcp = FastMCP(
             "URSA",
             version=ursa_version,
-            on_duplicate_tools="error",
-            on_duplicate_prompts="error",
-            on_duplicate_resources="error",
+            on_duplicate="error",
             **kwargs,
         )
 
