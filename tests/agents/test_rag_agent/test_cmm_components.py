@@ -2,13 +2,17 @@ from langchain_core.documents import Document
 
 from ursa.agents.cmm_chunker import CMMChunker
 from ursa.agents.cmm_embeddings import parse_embedding_model_spec
-from ursa.agents.cmm_query_classifier import CMMQueryClassifier
+from ursa.agents.cmm_query_classifier import CMMQueryClassifier, QueryProfile
 from ursa.agents.cmm_taxonomy import (
     detect_commodity_tags,
     detect_subdomain_tags,
     extract_temporal_indicators,
 )
-from ursa.agents.cmm_vectorstore import ChromaBM25VectorStore
+from ursa.agents.cmm_vectorstore import (
+    ChromaBM25VectorStore,
+    CMMVectorStoreBase,
+)
+from ursa.agents.rag_agent import RAGAgent
 
 
 def test_parse_embedding_model_spec_variants():
@@ -97,3 +101,62 @@ def test_hybrid_rrf_fusion_prefers_cross_signal_docs():
     ordered_ids = [doc.metadata["chunk_id"] for doc, _ in results]
     assert ordered_ids[0] == "B"
     assert set(ordered_ids) == {"A", "B", "C"}
+
+
+class _StubVectorStore(CMMVectorStoreBase):
+    def __init__(self):
+        self.calls = []
+
+    def add_documents(self, documents: list[Document]) -> None:
+        del documents
+
+    def hybrid_search(self, query: str, k: int, alpha: float, filters: dict | None):
+        del query, k, alpha
+        self.calls.append(filters)
+        if filters:
+            return []
+        return [
+            (Document(page_content="fallback-hit", metadata={"chunk_id": "doc-1"}), 0.9)
+        ]
+
+    def delete_collection(self) -> None:
+        return None
+
+    def count(self) -> int:
+        return 0
+
+
+class _StubClassifier:
+    def classify(self, query: str) -> QueryProfile:
+        del query
+        return QueryProfile(
+            query_type="general",
+            commodity_hints=["LREE"],
+            subdomain_hints=[],
+            temporal_hints=[],
+            retrieval_k=20,
+            return_k=5,
+            alpha=0.7,
+            filters={"commodity_tags": ["LREE"]},
+        )
+
+
+def test_rag_retrieval_falls_back_when_filters_return_empty():
+    agent = RAGAgent.__new__(RAGAgent)
+    agent.legacy_mode = False
+    agent.vectorstore = _StubVectorStore()
+    agent.classifier = _StubClassifier()
+    agent._adaptive_retrieval_k = True
+    agent._adaptive_return_k = True
+    agent.retrieval_k = 20
+    agent.return_k = 5
+    agent.hybrid_alpha = 0.7
+    agent.use_reranker = False
+    agent.vectorstore_backend = "chroma"
+
+    results, params = RAGAgent._retrieve(agent, "lanthanum yttrium ndfeb")
+
+    assert len(results) == 1
+    assert params["filter_fallback_used"] is True
+    assert agent.vectorstore.calls[0] == {"commodity_tags": ["LREE"]}
+    assert agent.vectorstore.calls[1] is None

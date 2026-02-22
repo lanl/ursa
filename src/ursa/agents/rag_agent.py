@@ -46,6 +46,7 @@ class RAGMetadata(TypedDict):
     query_type: str
     retrieval_k: int
     backend: str
+    filter_fallback_used: bool
 
 
 class RAGState(TypedDict, total=False):
@@ -381,6 +382,7 @@ class RAGAgent(BaseAgent[RAGState]):
                 "return_k": self.return_k,
                 "alpha": self.hybrid_alpha,
                 "backend": "legacy-chroma",
+                "filter_fallback_used": False,
             }
             return retrieved, params
 
@@ -402,6 +404,20 @@ class RAGAgent(BaseAgent[RAGState]):
             alpha=self.hybrid_alpha if self.hybrid_alpha is not None else alpha,
             filters=profile.filters,
         )
+        filter_fallback_used = False
+        if not dense_sparse and profile.filters:
+            # Retry without metadata filters when strict tagging yields no hits.
+            dense_sparse = self.vectorstore.hybrid_search(
+                query=query,
+                k=effective_retrieval_k,
+                alpha=(
+                    self.hybrid_alpha
+                    if self.hybrid_alpha is not None
+                    else alpha
+                ),
+                filters=None,
+            )
+            filter_fallback_used = bool(dense_sparse)
         top_docs = dense_sparse[:effective_return_k]
 
         if self.use_reranker:
@@ -417,6 +433,7 @@ class RAGAgent(BaseAgent[RAGState]):
             "return_k": effective_return_k,
             "alpha": self.hybrid_alpha if self.hybrid_alpha is not None else alpha,
             "backend": self.vectorstore_backend,
+            "filter_fallback_used": filter_fallback_used,
         }
         return top_docs, params
 
@@ -497,6 +514,7 @@ Cite source IDs when relevant: {source_ids}
                 "query_type": params["query_type"],
                 "retrieval_k": params["retrieval_k"],
                 "backend": params["backend"],
+                "filter_fallback_used": params["filter_fallback_used"],
             },
         }
 

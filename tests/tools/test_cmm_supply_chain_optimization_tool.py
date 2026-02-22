@@ -65,3 +65,84 @@ def test_cmm_optimization_reports_infeasible_with_unmet_demand():
     assert result["feasible"] is False
     assert result["status"] == "infeasible_unmet_demand"
     assert sum(result["unmet_demand"].values()) > 0
+
+
+def test_cmm_optimization_enforces_composition_targets_when_possible():
+    payload = {
+        "commodity": "ND2FE14B_LA5_Y5",
+        "demand": {"US": 100},
+        "suppliers": [
+            {
+                "name": "la_rich",
+                "capacity": 100,
+                "unit_cost": 1.0,
+                "risk_score": 0.1,
+                "composition_profile": {"LA": 0.10, "Y": 0.00},
+            },
+            {
+                "name": "y_rich",
+                "capacity": 100,
+                "unit_cost": 5.0,
+                "risk_score": 0.1,
+                "composition_profile": {"LA": 0.00, "Y": 0.10},
+            },
+        ],
+        "shipping_cost": {
+            "la_rich": {"US": 0.0},
+            "y_rich": {"US": 0.0},
+        },
+        "risk_weight": 0.0,
+        "max_supplier_share": 1.0,
+        "composition_targets": {"LA": 0.05, "Y": 0.05},
+        "composition_tolerance": 0.001,
+    }
+
+    result = solve_cmm_supply_chain_optimization(payload)
+
+    assert result["feasible"] is True
+    assert result["status"] == "optimal_greedy"
+    composition = result["composition"]
+    assert composition is not None
+    assert composition["feasible"] is True
+    assert abs(composition["actual"]["LA"] - 0.05) <= 0.001
+    assert abs(composition["actual"]["Y"] - 0.05) <= 0.0011
+
+
+def test_cmm_optimization_reports_infeasible_composition_constraints():
+    payload = {
+        "commodity": "ND2FE14B_LA5_Y5",
+        "demand": {"US": 100},
+        "suppliers": [
+            {
+                "name": "supplier_a",
+                "capacity": 100,
+                "unit_cost": 1.0,
+                "risk_score": 0.1,
+                "composition_profile": {"LA": 0.02, "Y": 0.01},
+            },
+            {
+                "name": "supplier_b",
+                "capacity": 100,
+                "unit_cost": 1.1,
+                "risk_score": 0.1,
+                "composition_profile": {"LA": 0.03, "Y": 0.02},
+            },
+        ],
+        "shipping_cost": {
+            "supplier_a": {"US": 0.0},
+            "supplier_b": {"US": 0.0},
+        },
+        "risk_weight": 0.0,
+        "max_supplier_share": 1.0,
+        "composition_targets": {"LA": 0.05, "Y": 0.05},
+        "composition_tolerance": 0.001,
+    }
+
+    result = solve_cmm_supply_chain_optimization(payload)
+
+    assert result["status"] == "infeasible_composition_constraints"
+    assert result["feasible"] is False
+    composition = result["composition"]
+    assert composition is not None
+    assert composition["feasible"] is False
+    assert abs(composition["residuals"]["LA"]) > 0.001
