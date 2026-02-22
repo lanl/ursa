@@ -52,6 +52,7 @@ Documentation for combining agents:
 - [ArXiv -> Execution for Materials](docs/combining_arxiv_and_execution.md)
 - [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md)
 - [Critical Minerals Workflow Architecture](docs/critical_minerals_workflow.md)
+- [CMM Setup and Usage Guide for Domain Scientists](docs/domain_scientist_setup_and_usage.md)
 
 ## Critical Minerals Demo (RAG + Optimization)
 
