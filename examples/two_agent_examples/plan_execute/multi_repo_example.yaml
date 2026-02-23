@@ -7,82 +7,136 @@ models:
   default: openai:gpt-5-mini
 
 planner:
-  reflection_steps: 1
+  reflection_steps: 4
   research:
-    # Optional web research to seed planning context
-    queries:
-      - "recent issues for repo_a"
+    # GitHub issues/PRs are fetched automatically from repo URLs (requires gh CLI).
+    # github:
+    #   enabled: true        # default: true -- set false to skip
+    #   max_issues: 10       # recent issues per repo (default 10)
+    #   max_prs: 10          # recent PRs per repo (default 10)
+    #
+    # Optional additional web search queries to seed planning context:
+    # queries:
+    #   - "recent issues for repo_a"
 
 execution:
-  max_parallel: 2
+  max_parallel: 5
   recursion_limit: 2000
   resume: false
   status_interval_sec: 5
+  max_check_retries: 2  # retries per step when checks fail (0 = no retries)
+  step_timeout_sec: 0   # max seconds per agent step; 0 = no limit
 
 repos:
   - name: boot-service
-    path: ../boot-service
     url: https://github.com/openchami/boot-service.git
     branch: main
     checkout: true
-    language: go  # optional: "go", "python", "generic" (default)
-    description: "OpenCHAMI Boot Service repository"
+    language: go
+    description: "Fabrica-generated Go microservice for HPC node boot management (boot configs, boot scripts, boot parameters)"
     checks:
       - go test ./...
 
   - name: metadata-service
-    path: ../metadata-service
     url: https://github.com/openchami/metadata-service.git
     branch: main
     checkout: true
-    description: "OpenCHAMI Metadata Service repository"
+    language: go
+    description: "Fabrica-generated Go microservice for HPC node metadata (node metadata records, group metadata)"
     checks:
       - go test ./...
 
   - name: smd
-    path: ../smd
     url: https://github.com/openchami/smd.git
     branch: main
     checkout: true
-    description: "OpenCHAMI Legacy SMD repository"
+    language: go
+    description: "Legacy HPC state management service; must remain backwards compatible"
     checks:
       - go test ./...
 
   - name: tokensmith
-    path: ../tokensmith
     url: https://github.com/openchami/tokensmith.git
     branch: main
     checkout: true
-    description: "OpenCHAMI Tokensmith repository"
+    language: go
+    description: "Shared Go library for JWT authentication and Casbin-based authorization middleware"
     checks:
       - go test ./...
 
   - name: fabrica
-    path: ../fabrica
     url: https://github.com/openchami/fabrica.git
     branch: main
     checkout: true
-    description: "Fabrica microservice code generation repository"
+    language: go
+    description: "Code generation tool that produces HTTP server scaffolding for OpenCHAMI services; read-only reference"
     checks:
       - go test ./...
 
   
 
 problem: |
-  * TITLE: Implement consistent authorization across services
+  TITLE: Implement consistent Casbin-based authorization across OpenCHAMI services
 
-  Both boot-service and metadata-service rely on JWTs for authentication via a middleware from the tokensmith repository.
-  However, the authorization logic, based around Casbin from the tokensmith repository is not well documented or complete.
+  CONTEXT:
+  boot-service and metadata-service are fabrica-generated Go microservices.
+  Fabrica generates the HTTP server scaffolding and route registration;
+  hand-written middleware and business logic live alongside generated code
+  in each service. Both services use tokensmith's JWT middleware for
+  authentication. tokensmith can issue JWTs today, but the long-term plan
+  is to use an external IdP (HashiCorp Vault, Keycloak); tokensmith should
+  remain the shared library for JWT validation and Casbin-based
+  authorization, with JWT issuing preserved as a fallback.
 
-  You need to:
-  1. Review the existing authorization implementation in both services and the tokensmith repository.
-  2. Identify inconsistencies and gaps in the current authorization logic.
-  3. Implement a consistent authorization mechanism across both services leveraging the tokensmith middleware and Casbin.
-  4. Ensure that the new implementation is well documented and includes tests to validate the authorization logic.
-  5. Provide a summary of the changes made and examples based around HPC system management scenarios.
+  Casbin-based authorization exists in tokensmith (see GitHub issue #5 and
+  PR #6) but is incomplete and undocumented. Neither boot-service nor
+  metadata-service currently enforce authorization beyond authentication.
 
-  Update each repository with a set of well-documented commits that each represent a logical step in the implementation process. Ensure that the commit messages are clear and descriptive of the changes made.
-  Do not attempt to push any changes to remote repositories. Focus on local development and testing to ensure the implementation is robust and meets the requirements outlined in the problem statement.
-  All tests must pass successfully before finalizing the implementation.
-  Use the make targets provided in each repository to run tests and ensure that your changes do not break existing functionality.
-  Changes to fabrica should not be necessary.  If you find that changes to fabrica are required, please document the reasoning and ensure that any changes are minimal and well justified.
+  smd is a legacy service that must remain fully backwards compatible. It
+  should be updated to optionally leverage tokensmith for authorization
+  checks when enabled via a feature flag, but default behavior must be
+  unchanged (authorization disabled by default).
+
+  AUTHORIZATION MODEL:
+  Define and implement RBAC with at minimum these roles:
+    - admin: full CRUD on all resources across all services
+    - operator: read and write boot configs, metadata, and SMD state; no delete
+    - viewer: read-only access to all resources
+    - service: service-to-service calls (e.g. boot-service reading metadata)
+
+  Protected resources by service:
+    - boot-service: boot configurations, boot scripts, boot parameters
+    - metadata-service: node metadata records, group metadata
+    - smd: hardware state, component data (only when feature flag is enabled)
+
+  TASKS:
+  1. Review and complete the Casbin integration in tokensmith. Ensure the
+     middleware exposes a reusable authorization function that services can
+     call with (subject, resource, action) and get an allow/deny decision.
+     Build on the existing work from issue #5 and PR #6. Add comprehensive
+     tests and documentation.
+  2. Review how boot-service and metadata-service currently consume
+     tokensmith middleware. Identify what changes are needed to add
+     authorization.
+  3. Integrate tokensmith authorization middleware into boot-service,
+     enforcing the RBAC model above on all routes.
+  4. Integrate tokensmith authorization middleware into metadata-service,
+     enforcing the same RBAC model.
+  5. Add optional authorization to smd behind a feature flag (e.g.
+     environment variable or config option). When disabled (the default),
+     smd behaves exactly as it does today. When enabled, smd uses
+     tokensmith middleware to enforce the RBAC model on its endpoints.
+     Ensure full backwards compatibility.
+  6. Add integration tests demonstrating HPC scenarios: a node
+     administrator boots a compute node, a monitoring service queries
+     metadata read-only, an operator updates boot parameters, an
+     unauthorized user is denied access.
+
+  CONSTRAINTS:
+  - Do not modify fabrica unless absolutely necessary. If changes to
+    fabrica are required, document the reasoning and keep them minimal.
+  - smd default behavior must be unchanged; authorization is opt-in only.
+  - All existing tests must continue to pass.
+  - Use make targets where available to run tests.
+  - Commit each logical step separately with clear, descriptive messages.
+  - Do not push to remote repositories.
