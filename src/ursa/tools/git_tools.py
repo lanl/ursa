@@ -45,7 +45,7 @@ def _run_git(repo: Path, args: Iterable[str]) -> str:
             timeout=GIT_TIMEOUT,
             check=False,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _format_result("", f"Error running git: {exc}")
 
     return _format_result(result.stdout, result.stderr)
@@ -69,9 +69,40 @@ def git_status(
     runtime: ToolRuntime[AgentContext],
     repo_path: AsciiStr | None = None,
 ) -> str:
-    """Return git status for a repository inside the workspace."""
+    """Return git status for a repository inside the workspace.
+
+    Args:
+        repo_path: Path to repository relative to workspace. If None, uses workspace root.
+                   Recommended to always specify a repo_path to avoid large untracked file lists.
+    """
     repo = _repo_path(repo_path, runtime)
-    return _run_git(repo, ["status", "-sb"])
+
+    # Warn if using workspace root without explicit repo_path
+    workspace = Path(runtime.context.workspace).absolute()
+    if repo_path is None and repo == workspace:
+        return (
+            "WARNING: git_status called on workspace root without specifying repo_path. "
+            "This may show many untracked files. "
+            "Please specify a specific repository path (e.g., repo_path='my-project'). "
+            "Use list_directory to see available repositories in the workspace first."
+        )
+
+    result = _run_git(repo, ["status", "-sb"])
+
+    # Limit output size for very large untracked file lists
+    if len(result) > 10000:
+        lines = result.split("\n")
+        if len(lines) > 100:
+            return (
+                f"Git status output too large ({len(lines)} lines). "
+                f"Showing first 50 and last 50 lines:\n"
+                f"{''.join(lines[:50])}\n"
+                f"... ({len(lines) - 100} lines omitted) ...\n"
+                f"{''.join(lines[-50:])}\n"
+                f"Consider using git_status on a specific subdirectory."
+            )
+
+    return result
 
 
 @tool
