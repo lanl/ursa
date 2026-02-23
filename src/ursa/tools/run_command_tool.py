@@ -82,6 +82,7 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
             timeout=60000,
             capture_output=True,
             cwd=workspace_dir,
+            check=False,
         )
         stdout, stderr = result.stdout, result.stderr
     except KeyboardInterrupt:

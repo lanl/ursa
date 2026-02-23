@@ -104,7 +104,7 @@ async def test_add_to_fastmcp(xor_tool: "TorchModuleTool"):
     assert len(tools) == 1
 
     # Check metadata
-    tool.fn_metadata.arg_model is not None
+    assert tool.fn_metadata.arg_model is not None
     input_args = tool.fn_metadata.arg_model.model_fields
 
     # Check arg_model matches

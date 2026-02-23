@@ -21,7 +21,9 @@ def compose_git_prompt(*language_sections: str) -> str:
     Each language_section is appended as a paragraph after the base prompt.
     """
     parts = [git_base_prompt.strip()]
-    for section in language_sections:
-        if section and section.strip():
-            parts.append(section.strip())
+    parts.extend(
+        section.strip()
+        for section in language_sections
+        if section and section.strip()
+    )
     return "\n\n".join(parts)

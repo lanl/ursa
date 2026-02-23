@@ -2,7 +2,7 @@ import difflib
 import json
 import os
 import subprocess
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 
 import tiktoken
 from langchain.chat_models import BaseChatModel
@@ -30,8 +30,8 @@ except Exception:
 class LammpsState(TypedDict, total=False):
     simulation_task: str
     elements: list[str]
-    template: Optional[str]
-    chosen_potential: Optional[Any]
+    template: str | None
+    chosen_potential: Any | None
 
     matches: list[Any]
     idx: int
@@ -40,7 +40,7 @@ class LammpsState(TypedDict, total=False):
     summaries_combined: str
 
     input_script: str
-    run_returncode: Optional[int]
+    run_returncode: int | None
     run_stdout: str
     run_stderr: str
     run_history: list[dict[str, Any]]
@@ -54,13 +54,13 @@ class LammpsAgent(BaseAgent[LammpsState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        potential_files: Optional[list[str]] = None,
-        pair_style: Optional[str] = None,
-        pair_coeff: Optional[str] = None,
+        potential_files: list[str] | None = None,
+        pair_style: str | None = None,
+        pair_coeff: str | None = None,
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,
-        data_file: str = None,
+        data_file: str | None = None,
         data_max_lines: int = 50,
         ngpus: int = -1,
         mpi_procs: int = 8,
@@ -522,8 +522,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
                     "on",
                 ],
                 cwd=self.workspace,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=False,
             )
@@ -539,8 +538,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
                     "in.lammps",
                 ],
                 cwd=self.workspace,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=False,
             )
@@ -606,14 +604,13 @@ class LammpsAgent(BaseAgent[LammpsState]):
                 }
             ]
 
-        parts = []
-        for h in hist:
-            parts.append(
-                "=== Attempt {attempt} | returncode={returncode} ===\n"
-                "--- input_script ---\n{input_script}\n"
-                "--- stdout ---\n{stdout}\n"
-                "--- stderr ---\n{stderr}\n".format(**h)
-            )
+        parts = [
+            "=== Attempt {attempt} | returncode={returncode} ===\n"
+            "--- input_script ---\n{input_script}\n"
+            "--- stdout ---\n{stdout}\n"
+            "--- stderr ---\n{stderr}\n".format(**h)
+            for h in hist
+        ]
         err_blob = "\n".join(parts)
 
         data_content = ""
@@ -686,12 +683,14 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         self.graph.add_conditional_edges(
             "_entry_router",
-            lambda state: "user_potential"
-            if self.use_user_potential
-            else (
-                "user_choice"
-                if state.get("chosen_potential")
-                else "agent_choice"
+            lambda state: (
+                "user_potential"
+                if self.use_user_potential
+                else (
+                    "user_choice"
+                    if state.get("chosen_potential")
+                    else "agent_choice"
+                )
             ),
             {
                 "user_potential": "_create_user_potential_wrapper",

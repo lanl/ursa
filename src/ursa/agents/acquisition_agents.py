@@ -8,7 +8,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -241,7 +241,7 @@ class BaseAcquisitionAgent(BaseAgent):
     def _filter_hit(self, hit: dict[str, Any]) -> bool:
         return True
 
-    def _postprocess_text(self, text: str, local_path: Optional[str]) -> str:
+    def _postprocess_text(self, text: str, local_path: str | None) -> str:
         # Default: optionally add image descriptions for PDFs
         if (
             self.process_images
@@ -356,7 +356,7 @@ class BaseAcquisitionAgent(BaseAgent):
         if "items" not in state or not state["items"]:
             return {**state, "summaries": None}
 
-        summaries: list[Optional[str]] = [None] * len(state["items"])
+        summaries: list[str | None] = [None] * len(state["items"])
 
         def process(i: int, item: ItemMetadata):
             item_id = item.get("id", f"item_{i}")
@@ -499,11 +499,9 @@ class WebSearchAgent(BaseAcquisitionAgent):
     def _search(self, query: str) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         with DDGS() as ddgs:
-            for r in ddgs.text(
-                query, max_results=self.max_results, backend="auto"
-            ):
-                # r keys typically: title, href, body
-                results.append(r)
+            results = list(
+                ddgs.text(query, max_results=self.max_results, backend="auto")
+            )
         return results
 
     def _materialize(self, hit: dict[str, Any]) -> ItemMetadata:

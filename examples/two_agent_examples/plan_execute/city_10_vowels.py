@@ -58,7 +58,7 @@ def main():
         return final_results
 
     except Exception as e:
-        print(f"Error in example: {str(e)}")
+        print(f"Error in example: {e!s}")
         import traceback
 
         traceback.print_exc()

@@ -18,7 +18,7 @@ This file exposes a single LangChain tool: `feasibility_check_auto`.
 
 import math
 import random
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
 import sympy as sp
 from langchain_core.tools import tool
@@ -148,9 +148,7 @@ def _flatten_conjunction(expr: sp.Expr) -> tuple[list[sp.Expr], bool]:
     return [expr], True
 
 
-def _linear_relational(
-    expr: sp.Expr, symbols: list[sp.Symbol]
-) -> Optional[bool]:
+def _linear_relational(expr: sp.Expr, symbols: list[sp.Symbol]) -> bool | None:
     """Check whether a relational constraint is linear in the given symbols.
 
     Args:
@@ -231,7 +229,7 @@ def _classify(
     }
 
 
-def _is_int_like(x: Optional[float], tol: float = 1e-9) -> bool:
+def _is_int_like(x: float | None, tol: float = 1e-9) -> bool:
     """Check if a value is (approximately) an integer.
 
     Args:
@@ -297,7 +295,7 @@ def _all_int_coeffs(
 # =========================
 
 
-def _rand_unif(lo: Optional[float], hi: Optional[float], R: float) -> float:
+def _rand_unif(lo: float | None, hi: float | None, R: float) -> float:
     """Sample a uniform random real value within [lo, hi], with fallback radius.
 
     Args:
@@ -315,7 +313,7 @@ def _rand_unif(lo: Optional[float], hi: Optional[float], R: float) -> float:
     return random.uniform(lo, hi)
 
 
-def _rand_int(lo: Optional[float], hi: Optional[float], R: int) -> int:
+def _rand_int(lo: float | None, hi: float | None, R: int) -> int:
     """Sample a uniform random integer within [lo, hi], with fallback radius.
 
     Args:
@@ -326,8 +324,8 @@ def _rand_int(lo: Optional[float], hi: Optional[float], R: int) -> int:
     Returns:
         An integer sampled uniformly within the determined interval.
     """
-    lo = -R if lo is None or math.isinf(lo) else int(math.floor(lo))
-    hi = R if hi is None or math.isinf(hi) else int(math.ceil(hi))
+    lo = -R if lo is None or math.isinf(lo) else math.floor(lo)
+    hi = R if hi is None or math.isinf(hi) else math.ceil(hi)
     if lo > hi:
         lo, hi = hi, lo
     return random.randint(lo, hi)
@@ -406,13 +404,13 @@ def _heuristic_feasible(
     symbols: list[sp.Symbol],
     variable_name: list[str],
     variable_type: list[str],
-    variable_bounds: list[list[Optional[float]]],
+    variable_bounds: list[list[float | None]],
     samples: int = 2000,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     tol: float = 1e-8,
     unbounded_radius_real: float = 1e3,
     unbounded_radius_int: int = 10**6,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Try to find a satisfying assignment via randomized sampling.
 
     Args:
@@ -477,7 +475,7 @@ def _solve_with_pysmt(
     symbols: list[sp.Symbol],
     variable_name: list[str],
     variable_type: list[str],
-    variable_bounds: list[list[Optional[float]]],
+    variable_bounds: list[list[float | None]],
     solver_name: str = "cvc5",
 ) -> str:
     """Solve via PySMT (SMT backends like cvc5/msat/yices/z3).
@@ -581,8 +579,7 @@ def _solve_with_pysmt(
                     PS_Real(float(hi)) if t_l != "integer" else PS_Int(int(hi)),
                 )
             )
-    for c in sympy_cons:
-        ps_all.append(conv(c))
+    ps_all.extend(conv(c) for c in sympy_cons)
 
     with PS_Solver(name=solver_name) as s:
         if ps_all:
@@ -599,7 +596,7 @@ def _solve_with_cpsat_integer_boolean(
     symbols: list[sp.Symbol],
     variable_name: list[str],
     variable_type: list[str],
-    variable_bounds: list[list[Optional[float]]],
+    variable_bounds: list[list[float | None]],
 ) -> str:
     """Solve linear integer/boolean feasibility via OR-Tools CP-SAT.
 
@@ -642,9 +639,8 @@ def _solve_with_cpsat_integer_boolean(
             if not _all_int_coeffs(coeffs, const):
                 return "Detected non-integer coefficients/constant; routing to MILP/LP."
             expr = sum(
-                int(round(coeffs.get(n, 0))) * name_to_var[n]
-                for n in variable_name
-            ) + int(round(const))
+                round(coeffs.get(n, 0)) * name_to_var[n] for n in variable_name
+            ) + round(const)
             if isinstance(c, sp.Eq):
                 m.Add(expr == 0)
             elif isinstance(c, sp.Le):
@@ -658,7 +654,7 @@ def _solve_with_cpsat_integer_boolean(
         elif c is sp.true:
             pass
         elif c is sp.false:
-            m.Add(0 == 1)
+            m.Add(False)  # Add unsatisfiable constraint
         else:
             return "Non-relational/non-linear constraint; CP-SAT handles linear conjunctions only."
 
@@ -675,7 +671,7 @@ def _solve_with_cbc_milp(
     symbols: list[sp.Symbol],
     variable_name: list[str],
     variable_type: list[str],
-    variable_bounds: list[list[Optional[float]]],
+    variable_bounds: list[list[float | None]],
 ) -> str:
     """Solve linear MILP/LP feasibility via OR-Tools CBC (pywraplp).
 
@@ -754,7 +750,7 @@ def _solve_with_cbc_milp(
         }
         for n, var in var_objs.items():
             val = var.solution_value()
-            model[n] = int(round(val)) if n in int_like else float(val)
+            model[n] = round(val) if n in int_like else float(val)
         return f"[backend=cbc] Feasible. Example solution: {model}"
     if status == _lp.Solver.INFEASIBLE:
         return "[backend=cbc] Infeasible."
@@ -765,7 +761,7 @@ def _solve_with_highs_lp(
     conjuncts: list[sp.Expr],
     symbols: list[sp.Symbol],
     variable_name: list[str],
-    variable_bounds: list[list[Optional[float]]],
+    variable_bounds: list[list[float | None]],
 ) -> str:
     """Solve pure continuous LP feasibility via SciPy HiGHS.
 
@@ -854,7 +850,7 @@ def feasibility_check_auto(
     variable_name: Annotated[list[str], "['x0','x1',...]"],
     variable_type: Annotated[list[str], "['real'|'integer'|'boolean', ...]"],
     variable_bounds: Annotated[
-        list[list[Optional[float]]],
+        list[list[float | None]],
         "[(low, high), ...] (use None for unbounded)",
     ],
     prefer_smt_solver: Annotated[
@@ -867,7 +863,7 @@ def feasibility_check_auto(
         bool, "Try heuristic before exact routing"
     ] = True,
     heuristic_samples: Annotated[int, "Samples for heuristic search"] = 2000,
-    heuristic_seed: Annotated[Optional[int], "Seed for reproducibility"] = None,
+    heuristic_seed: Annotated[int | None, "Seed for reproducibility"] = None,
     heuristic_unbounded_radius_real: Annotated[
         float, "Sampling range for unbounded real vars"
     ] = 1e3,

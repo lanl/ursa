@@ -1,6 +1,6 @@
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
@@ -31,9 +31,7 @@ def _repo_path(
     try:
         candidate.relative_to(base)
     except ValueError as exc:
-        raise ValueError(
-            "repo_path must resolve inside the workspace"
-        ) from exc
+        raise ValueError("repo_path must resolve inside the workspace") from exc
 
     return candidate
 
@@ -45,6 +43,7 @@ def _run_git(repo: Path, args: Iterable[str]) -> str:
             text=True,
             capture_output=True,
             timeout=GIT_TIMEOUT,
+            check=False,
         )
     except Exception as exc:
         return _format_result("", f"Error running git: {exc}")
@@ -58,13 +57,10 @@ def _check_ref_format(repo: Path, branch: str) -> str | None:
         text=True,
         capture_output=True,
         timeout=GIT_TIMEOUT,
+        check=False,
     )
     if result.returncode != 0:
-        return (
-            result.stderr
-            or result.stdout
-            or "Invalid branch name for git"
-        )
+        return result.stderr or result.stdout or "Invalid branch name for git"
     return None
 
 

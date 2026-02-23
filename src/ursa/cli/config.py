@@ -143,10 +143,12 @@ def dict_diff(
             nested = dict_diff(ref_value, value)
             if nested:
                 diff[key] = nested
-        elif isinstance(value, list) and isinstance(ref_value, list):
-            if value != ref_value:
-                diff[key] = value
-        elif isinstance(value, tuple) and isinstance(ref_value, tuple):
+        elif (
+            isinstance(value, list)
+            and isinstance(ref_value, list)
+            or isinstance(value, tuple)
+            and isinstance(ref_value, tuple)
+        ):
             if value != ref_value:
                 diff[key] = value
         elif ref_value is missing or value != ref_value:

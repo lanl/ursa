@@ -19,12 +19,12 @@ def _validate_file_path(
     filename: str, workspace_dir: Path, repo_path: Path | None = None
 ) -> tuple[Path, str | None]:
     """Validate that a filename is within workspace and optionally within a repo.
-    
+
     Args:
         filename: The requested filename to write to
         workspace_dir: The workspace directory (all files must be under this)
         repo_path: Optional repo directory (if provided, file must be under this)
-    
+
     Returns:
         Tuple of (resolved_path, error_message). If error_message is not None,
         the resolution failed.
@@ -34,9 +34,9 @@ def _validate_file_path(
         file_path = Path(filename)
     else:
         file_path = workspace_dir / filename
-    
+
     file_path = file_path.resolve()
-    
+
     # Validate it's within the workspace
     try:
         file_path.relative_to(workspace_dir.resolve())
@@ -45,13 +45,15 @@ def _validate_file_path(
             f"File path '{filename}' resolves outside workspace directory. "
             "Files must be written within the workspace."
         )
-    
+
     # If repo_path is specified, validate it's within the repo
     if repo_path is not None:
         # Resolve repo_path relative to workspace if it's not absolute
-        repo_resolved = repo_path if repo_path.is_absolute() else workspace_dir / repo_path
+        repo_resolved = (
+            repo_path if repo_path.is_absolute() else workspace_dir / repo_path
+        )
         repo_resolved = repo_resolved.resolve()
-        
+
         try:
             file_path.relative_to(repo_resolved)
         except ValueError:
@@ -59,7 +61,7 @@ def _validate_file_path(
                 f"File path '{filename}' resolves outside repository directory. "
                 "Files must be written within the repository."
             )
-    
+
     return file_path, None
 
 
@@ -91,10 +93,12 @@ def write_code(
         if not repo.is_absolute():
             repo = workspace_dir / repo
         repo = repo.resolve()
-    
+
     code_file, error = _validate_file_path(filename, workspace_dir, repo)
     if error:
-        console.print(f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]")
+        console.print(
+            f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
+        )
         return f"Failed to write {filename}: {error}"
 
     # Show syntax-highlighted preview before writing to file
@@ -174,10 +178,12 @@ def edit_code(
         if not repo.is_absolute():
             repo = workspace_dir / repo
         repo = repo.resolve()
-    
+
     code_file, error = _validate_file_path(filename, workspace_dir, repo)
     if error:
-        console.print(f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]")
+        console.print(
+            f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
+        )
         return f"Failed to edit {filename}: {error}"
 
     try:

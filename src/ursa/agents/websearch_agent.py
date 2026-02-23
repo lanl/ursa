@@ -162,12 +162,11 @@ def process_content(
     Carefully summarize the content in full detail, given the following context:
     {context}
     """
-    summarized_information = StrOutputParser().invoke(
+    return StrOutputParser().invoke(
         state["model"].invoke(
             content_prompt, {"configurable": {"thread_id": state["thread_id"]}}
         )
     )
-    return summarized_information
 
 
 search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)

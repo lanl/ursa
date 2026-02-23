@@ -1,10 +1,10 @@
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from ursa.agents import GitGoAgent, GitAgent, make_git_agent
+from ursa.agents import GitAgent, GitGoAgent, make_git_agent
 
 
 class ToolReadyFakeChatModel(GenericFakeChatModel):
@@ -81,7 +81,9 @@ def test_make_git_agent_go_matches_git_go_agent(tmpdir):
     workspace = Path(str(tmpdir))
 
     go_agent = GitGoAgent(llm=chat_model, workspace=workspace)
-    factory_agent = make_git_agent(llm=chat_model, language="go", workspace=workspace)
+    factory_agent = make_git_agent(
+        llm=chat_model, language="go", workspace=workspace
+    )
 
     assert set(go_agent.tools.keys()) == set(factory_agent.tools.keys())
     assert go_agent.safe_codes == factory_agent.safe_codes
@@ -92,7 +94,9 @@ def test_make_git_agent_generic(tmpdir):
     chat_model = ToolReadyFakeChatModel(messages=_message_stream("ok"))
     workspace = Path(str(tmpdir))
 
-    agent = make_git_agent(llm=chat_model, language="generic", workspace=workspace)
+    agent = make_git_agent(
+        llm=chat_model, language="generic", workspace=workspace
+    )
 
     tool_names = set(agent.tools.keys())
     assert "git_status" in tool_names

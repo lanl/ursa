@@ -281,7 +281,7 @@ def run_all(
                     f"    ! error on run {getattr(r, 'run_id', None) or r.path}: {e}"
                 )
 
-        print("")  # blank line between threads
+        print()  # blank line between threads
 
     print("All charts generated.")
     return 0
@@ -340,7 +340,7 @@ def _aggregate_super_across_dirs(
 
     for d in thread_dirs:
         sessions = scan_directory_for_threads(d)
-        for _tid, runs in (sessions or {}).items():
+        for runs in (sessions or {}).values():
             # time breakdown per thread
             t_total, parts, _ = extract_thread_time_breakdown(
                 runs, group_llm=group_llm
@@ -356,11 +356,11 @@ def _aggregate_super_across_dirs(
 
             # tokens per thread
             t_totals, t_samples, t_ctx = extract_thread_token_stats(runs)
-            for k in token_totals_all.keys():
+            for k in token_totals_all:
                 token_totals_all[k] += int(t_totals.get(k, 0) or 0)
 
             # MERGE samples category-by-category
-            for k in token_samples_all.keys():
+            for k in token_samples_all:
                 token_samples_all[k].extend(list(t_samples.get(k, []) or []))
 
             # widen context window
@@ -479,7 +479,7 @@ def run_all_recursive_with_super(
     sum_win_sec = 0.0
     for d in thread_dirs:
         sessions = scan_directory_for_threads(d)
-        for _tid, runs in (sessions or {}).items():
+        for runs in (sessions or {}).values():
             llm_s, win_s = compute_thread_time_bases(runs)
             sum_llm_sec += float(llm_s or 0.0)
             sum_win_sec += float(win_s or 0.0)

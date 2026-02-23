@@ -69,7 +69,7 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
     def plan_review(self, state: CodeReviewState) -> CodeReviewState:
         new_state = state.copy()
 
-        assert "workspace" in new_state.keys(), "No workspace set for review!"
+        assert "workspace" in new_state, "No workspace set for review!"
 
         plan_review_prompt = get_plan_review_prompt(
             project_prompt=state["project_prompt"],
@@ -212,7 +212,7 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
         code_files = [
             x
             for x in os.listdir(workspace)
-            if any([ext in x for ext in code_extensions])
+            if any(ext in x for ext in code_extensions)
         ]
         initial_state = {
             "messages": [],
@@ -262,8 +262,7 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]):
 
     print("[READING]: ", full_filename)
     with open(full_filename, "r") as file:
-        file_contents = file.read()
-    return file_contents
+        return file.read()
 
 
 @tool
@@ -304,7 +303,7 @@ def write_file(
         return f"File {filename} written successfully."
 
     except Exception as e:
-        print(f"Error generating code: {str(e)}")
+        print(f"Error generating code: {e!s}")
         # Return minimal code that prints the error
         return f"Failed to write {filename} successfully."
 

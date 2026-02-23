@@ -18,17 +18,13 @@ integration capabilities while only needing to implement the core _invoke method
 import re
 import sqlite3
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
     Generic,
-    Iterator,
-    Mapping,
-    Optional,
-    Sequence,
     TypeVar,
     final,
 )
@@ -97,7 +93,7 @@ def _to_snake(s: str) -> str:
     return s.lower()
 
 
-class BaseAgent(Generic[TState], ABC):
+class BaseAgent(ABC, Generic[TState]):
     """Abstract base class for all agent implementations in the Ursa framework.
 
     BaseAgent provides a standardized foundation for building LLM-powered agents with
@@ -157,13 +153,13 @@ class BaseAgent(Generic[TState], ABC):
     def __init__(
         self,
         llm: BaseChatModel,
-        workspace: Optional[Path] = None,
-        checkpointer: Optional[BaseCheckpointSaver] = None,
+        workspace: Path | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
         otel_metrics: bool = False,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -201,8 +197,8 @@ class BaseAgent(Generic[TState], ABC):
     def add_node(
         self,
         f: Callable[..., Mapping[str, Any]],
-        node_name: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        node_name: str | None = None,
+        agent_name: str | None = None,
         **kwargs,
     ) -> StateGraph:
         """Add a node to the state graph with token usage tracking.
@@ -299,16 +295,16 @@ class BaseAgent(Generic[TState], ABC):
     def _invoke_engine(
         self,
         invoke_method,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        otel_endpoint: Optional[str] = None,
-        otel_headers: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        otel_endpoint: str | None = None,
+        otel_headers: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
@@ -338,7 +334,7 @@ class BaseAgent(Generic[TState], ABC):
             # Handle the case where inputs are provided as a positional argument
             else:
                 # Ensure no ambiguous keyword arguments are present
-                for k in kwargs.keys():
+                for k in kwargs:
                     if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
                         raise TypeError(
                             f"Unexpected keyword argument '{k}'. "
@@ -375,16 +371,16 @@ class BaseAgent(Generic[TState], ABC):
     @final
     def invoke(
         self,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         /,
         *,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Executes the agent with the provided inputs and configuration.
@@ -432,16 +428,16 @@ class BaseAgent(Generic[TState], ABC):
     @final
     def ainvoke(
         self,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         /,
         *,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Asynchrnously executes the agent with the provided inputs and configuration.
@@ -747,15 +743,15 @@ class BaseAgent(Generic[TState], ABC):
         tags = [self.name, "graph", name, *extra_tags]
 
         # Return the complete configuration dictionary
-        return dict(
-            run_name="node",  # keep "node:" prefixing in the timer
-            tags=tags,
-            metadata={
+        return {
+            "run_name": "node",  # keep "node:" prefixing in the timer
+            "tags": tags,
+            "metadata": {
                 "langgraph_node": name,
                 "ursa_ns": ns,
                 "ursa_agent": self.name,
             },
-        )
+        }
 
     def ns(self, runnable_or_fn, name: str, *extra_tags: str):
         """Return a runnable with node configuration applied.

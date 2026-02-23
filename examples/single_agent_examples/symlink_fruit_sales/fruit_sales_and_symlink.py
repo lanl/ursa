@@ -126,7 +126,7 @@ def main(model_name: str):
         return last_step_summary, workspace
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e!s}")
         import traceback
 
         traceback.print_exc()

@@ -10,7 +10,9 @@ from ursa.util.types import AsciiStr
 # Differentiated timeouts by operation type
 GO_FORMAT_TIMEOUT = 30  # seconds - gofmt is usually fast
 GO_ANALYSIS_TIMEOUT = 60  # seconds - go vet, go mod tidy
-GO_BUILD_TIMEOUT = 300  # seconds (5 min) - builds can take time for large projects
+GO_BUILD_TIMEOUT = (
+    300  # seconds (5 min) - builds can take time for large projects
+)
 GO_TEST_TIMEOUT = 600  # seconds (10 min) - test suites can be slow
 LINT_TIMEOUT = 180  # seconds (3 min) - linting is moderate speed
 
@@ -34,6 +36,7 @@ def gofmt_files(
             capture_output=True,
             timeout=GO_FORMAT_TIMEOUT,
             cwd=repo,
+            check=False,
         )
     except Exception as exc:
         return _format_result("", f"Error running gofmt: {exc}")
@@ -54,11 +57,13 @@ def go_build(
             capture_output=True,
             timeout=GO_BUILD_TIMEOUT,
             cwd=repo,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return _format_result(
-            "", f"go build timed out after {GO_BUILD_TIMEOUT}s (5 minutes). "
-            "Large builds may need to be run in smaller chunks."
+            "",
+            f"go build timed out after {GO_BUILD_TIMEOUT}s (5 minutes). "
+            "Large builds may need to be run in smaller chunks.",
         )
     except Exception as exc:
         return _format_result("", f"Error running go build: {exc}")
@@ -84,11 +89,13 @@ def go_test(
             capture_output=True,
             timeout=GO_TEST_TIMEOUT,
             cwd=repo,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return _format_result(
-            "", f"go test timed out after {GO_TEST_TIMEOUT}s (10 minutes). "
-            "Large test suites may need to run selectively."
+            "",
+            f"go test timed out after {GO_TEST_TIMEOUT}s (10 minutes). "
+            "Large test suites may need to run selectively.",
         )
     except Exception as exc:
         return _format_result("", f"Error running go test: {exc}")
@@ -109,6 +116,7 @@ def go_vet(
             capture_output=True,
             timeout=GO_ANALYSIS_TIMEOUT,
             cwd=repo,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return _format_result(
@@ -133,6 +141,7 @@ def go_mod_tidy(
             capture_output=True,
             timeout=GO_ANALYSIS_TIMEOUT,
             cwd=repo,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return _format_result(
@@ -164,11 +173,13 @@ def golangci_lint(
             text=True,
             capture_output=True,
             timeout=GIT_TIMEOUT,
+            check=False,
         )
     except FileNotFoundError:
         return _format_result(
-            "", "Error: golangci-lint is not installed. "
-            "Install it with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+            "",
+            "Error: golangci-lint is not installed. "
+            "Install it with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
         )
     except Exception as exc:
         return _format_result("", f"Error checking golangci-lint: {exc}")
@@ -186,6 +197,7 @@ def golangci_lint(
             capture_output=True,
             timeout=LINT_TIMEOUT,
             cwd=repo,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return _format_result(

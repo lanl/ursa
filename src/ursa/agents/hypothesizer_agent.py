@@ -281,12 +281,11 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
     def print_visited_sites(
         self, state: HypothesizerState
     ) -> HypothesizerState:
-        new_state = state.copy()
+        return state.copy()
         # all_sites = list(new_state["visited_sites"])
         # print("[DEBUG] Visited Sites:")
         # for s in all_sites:
         #     print("  ", s)
-        return new_state
 
     async def summarize_process_as_latex(
         self, state: HypothesizerState

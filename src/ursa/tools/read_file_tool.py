@@ -23,5 +23,4 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
 
     print("[READING]:", full_filename)
     # Move all the reading to a function in the parse util
-    text = read_text_from_file(full_filename)
-    return text
+    return read_text_from_file(full_filename)

@@ -6,12 +6,12 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from ursa.agents.execution_agent import ExecutionAgent
-from ursa.prompt_library.git_prompts import compose_git_prompt, git_base_prompt
-from ursa.tools.git_tools import GIT_TOOLS
-from ursa.tools.go_tools import GO_TOOLS
+from ursa.prompt_library.git_prompts import compose_git_prompt
 
 # Lazy import to avoid circular deps at module level
 from ursa.prompt_library.go_prompts import go_language_prompt
+from ursa.tools.git_tools import GIT_TOOLS
+from ursa.tools.go_tools import GO_TOOLS
 
 LANGUAGE_REGISTRY: dict[str, dict] = {
     "generic": {
@@ -55,14 +55,12 @@ class GitAgent(ExecutionAgent):
 
         self.executor_prompt = compose_git_prompt(language_prompt or "")
 
-        self.remove_tool(
-            [
-                "run_command",
-                "run_web_search",
-                "run_osti_search",
-                "run_arxiv_search",
-            ]
-        )
+        self.remove_tool([
+            "run_command",
+            "run_web_search",
+            "run_osti_search",
+            "run_arxiv_search",
+        ])
 
 
 def make_git_agent(

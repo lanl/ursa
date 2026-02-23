@@ -46,12 +46,10 @@ def main():
         )
 
         # Solve the problem
-        final_results = workflow.invoke(problem)
-
-        return final_results
+        return workflow.invoke(problem)
 
     except Exception as e:
-        print(f"Error in example: {str(e)}")
+        print(f"Error in example: {e!s}")
         import traceback
 
         traceback.print_exc()

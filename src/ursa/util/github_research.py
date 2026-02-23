@@ -13,7 +13,6 @@ import shutil
 import subprocess
 from typing import Any
 
-
 _GH_URL_RE = re.compile(
     r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/.]+?)(?:\.git)?$"
 )
@@ -41,6 +40,7 @@ def _gh_api(endpoint: str, timeout: int = 30) -> Any:
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip())
@@ -51,7 +51,9 @@ def _format_issue(item: dict) -> str:
     number = item.get("number", "?")
     title = item.get("title", "")
     state = item.get("state", "")
-    labels = ", ".join(l.get("name", "") for l in (item.get("labels") or []))
+    labels = ", ".join(
+        label.get("name", "") for label in (item.get("labels") or [])
+    )
     created = (item.get("created_at") or "")[:10]
     body = (item.get("body") or "")[:300]
     parts = [f"  #{number} [{state}] {title}"]
@@ -101,14 +103,15 @@ def fetch_repo_context(
             f"&per_page={max_issues}&sort=updated&direction=desc"
         )
         # gh api may return PRs mixed with issues; filter them out
-        pure_issues = [i for i in issues if "pull_request" not in i][:max_issues]
+        pure_issues = [i for i in issues if "pull_request" not in i][
+            :max_issues
+        ]
         if pure_issues:
             sections.append(f"### Recent issues ({len(pure_issues)})")
-            for issue in pure_issues:
-                sections.append(_format_issue(issue))
+            sections.extend(_format_issue(issue) for issue in pure_issues)
         else:
             sections.append("### Recent issues: none")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         sections.append(f"### Issues: could not fetch ({exc})")
 
     # Recent PRs
@@ -119,11 +122,10 @@ def fetch_repo_context(
         )
         if prs:
             sections.append(f"### Recent pull requests ({len(prs[:max_prs])})")
-            for pr in prs[:max_prs]:
-                sections.append(_format_pr(pr))
+            sections.extend(_format_pr(pr) for pr in prs[:max_prs])
         else:
             sections.append("### Recent pull requests: none")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         sections.append(f"### PRs: could not fetch ({exc})")
 
     return "\n".join(sections)
@@ -165,7 +167,7 @@ def gather_github_context(
                 owner, name, max_issues=max_issues, max_prs=max_prs
             )
             blocks.append(block)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             # Network issue, auth issue, etc. -- skip silently
             continue
 

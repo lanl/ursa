@@ -6,7 +6,6 @@ import random
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
 
 from openai import OpenAI  # pip install openai
 from rich.console import Console
@@ -393,7 +392,7 @@ STICKER_PROPS = [
 def _clamp01(x: float) -> float:
     try:
         return max(0.0, min(1.0, float(x)))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return DEFAULT_APERTURE
 
 
@@ -452,7 +451,7 @@ def _size_for(aspect: str, mode: str) -> str:
     return "1024x1024"
 
 
-def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
+def _normalize_size(size: str | None, aspect: str, mode: str) -> str:
     """
     If size is None or invalid, pick a sensible API-supported default based on aspect/mode.
     """
@@ -469,7 +468,7 @@ def _pick_logo_constraints(aperture: float) -> str:
     """
     a = _clamp01(aperture)
     # 0.0 -> 5 constraints, 1.0 -> 2 constraints
-    k = int(round(5 - 3 * a))
+    k = round(5 - 3 * a)
     k = max(2, min(5, k))
     chosen = random.sample(LOGO_CONSTRAINTS, k=k)
     # Occasionally include cliché avoidance when aperture is open (pushes novelty)
@@ -543,7 +542,7 @@ def _build_scene_prompt(
     style_slug: str,
     workspace: str,
     gist: str,
-    palette: Optional[str],
+    palette: str | None,
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
 ) -> str:
@@ -588,7 +587,7 @@ def _build_scene_prompt(
 
 def _render_prompt_panel(
     *,
-    console: Optional[Console],
+    console: Console | None,
     style_slug: str,
     workspace: str,
     prompt: str,
@@ -748,9 +747,9 @@ def generate_logo_sync(
     aspect: str = "square",
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
-    console: Optional[Console] = None,
+    console: Console | None = None,
     image_model_provider: str = "openai",
-    image_provider_kwargs: Optional[dict] = None,
+    image_provider_kwargs: dict | None = None,
 ) -> Path:
     """
     Generate images.
@@ -771,7 +770,7 @@ def generate_logo_sync(
     if image_provider_kwargs:
         # Only pass through safe/known kwargs
         for k in ("api_key", "base_url", "organization"):
-            if k in image_provider_kwargs and image_provider_kwargs[k]:
+            if image_provider_kwargs.get(k):
                 client_kwargs[k] = image_provider_kwargs[k]
     client = OpenAI(**client_kwargs)
 
@@ -826,17 +825,17 @@ def generate_logo_sync(
             if path.exists() and not overwrite:
                 continue
 
-            kwargs = dict(
-                model=model,
-                prompt=prompt,
-                size=final_size,
-                n=1,
-                quality=quality,
-                background=final_background,
-            )
+            kwargs = {
+                "model": model,
+                "prompt": prompt,
+                "size": final_size,
+                "n": 1,
+                "quality": quality,
+                "background": final_background,
+            }
             try:
                 resp = client.images.generate(**kwargs)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Some models ignore/forbid background=; retry without it
                 kwargs.pop("background", None)
                 resp = client.images.generate(**kwargs)
@@ -907,17 +906,17 @@ def generate_logo_sync(
         if path.exists() and not overwrite:
             continue
 
-        kwargs = dict(
-            model=model,
-            prompt=prompt_i,
-            size=final_size,
-            n=1,
-            quality=quality,
-            background=final_background,
-        )
+        kwargs = {
+            "model": model,
+            "prompt": prompt_i,
+            "size": final_size,
+            "n": 1,
+            "quality": quality,
+            "background": final_background,
+        }
         try:
             resp = client.images.generate(**kwargs)
-        except Exception:
+        except Exception:  # noqa: BLE001
             kwargs.pop("background", None)
             resp = client.images.generate(**kwargs)
 
@@ -947,10 +946,10 @@ def kickoff_logo(
     aspect: str = "square",
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
-    console: Optional[Console] = None,
-    image_model: Optional[str] = None,
+    console: Console | None = None,
+    image_model: str | None = None,
     image_model_provider: str = "openai",
-    image_provider_kwargs: Optional[dict] = None,
+    image_provider_kwargs: dict | None = None,
 ):
     _final_model = image_model or model
 
@@ -985,7 +984,7 @@ def kickoff_logo(
             try:
                 p = f.result()
                 on_done and on_done(p)
-            except BaseException as e:
+            except BaseException as e:  # noqa: BLE001
                 on_error and on_error(e)
 
         fut.add_done_callback(_cb)

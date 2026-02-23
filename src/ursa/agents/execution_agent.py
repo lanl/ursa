@@ -32,7 +32,6 @@ from typing import (
     Annotated,
     Any,
     Literal,
-    Optional,
     TypedDict,
 )
 
@@ -191,12 +190,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Optional[Any | AgentMemory] = None,
+        agent_memory: Any | AgentMemory | None = None,
         log_state: bool = False,
-        extra_tools: Optional[list[BaseTool] | None] = None,
+        extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        safe_codes: Optional[list[str]] = None,
+        safe_codes: list[str] | None = None,
         **kwargs,
     ):
         default_tools = [
@@ -240,8 +239,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             tool_ids = []
             for msg in conversation_to_summarize:
                 if hasattr(msg, "tool_calls"):
-                    for call in msg.tool_calls:
-                        tool_ids.append(call["id"])
+                    tool_ids.extend(call["id"] for call in msg.tool_calls)
                 if isinstance(msg, ToolMessage):
                     tool_ids.remove(msg.tool_call_id)
             if tool_ids:
@@ -265,7 +263,19 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 print(
                     f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
                 )
-                pass
+                # Filter out AIMessages with dangling tool calls to avoid LLM errors
+                filtered_conversation = []
+                for msg in conversation_to_summarize:
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        # Check if any of this message's tool calls are dangling
+                        has_dangling = any(
+                            call["id"] in tool_ids for call in msg.tool_calls
+                        )
+                        if not has_dangling:
+                            filtered_conversation.append(msg)
+                    else:
+                        filtered_conversation.append(msg)
+                conversation_to_summarize = filtered_conversation
 
             summarize_prompt = f"""
             Your only tasks is to provide a detailed, comprehensive summary of the following
@@ -370,7 +380,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 messages, self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             response = AIMessage(content=f"Response error {e}")
             msg = new_state["messages"][-1].text
             print("Error: ", e, " ", msg)
@@ -418,7 +428,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             response_content = f"Response error {e}"
             response = AIMessage(content=response_content)
             print("Error: ", e, " ", new_state["messages"][-1].text)
@@ -439,19 +449,17 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             # Collect human/system/tool message content; for AI tool calls, store args.
             for msg in new_state["messages"]:
                 msg_content = msg.text
-                if not isinstance(msg, AIMessage):
-                    memories.append(msg_content)
-                elif not msg.tool_calls:
+                if not isinstance(msg, AIMessage) or not msg.tool_calls:
                     memories.append(msg_content)
                 else:
                     tool_strings = []
                     for tool in msg.tool_calls:
                         tool_strings.append("Tool Name: " + tool["name"])
-                        for arg_name in tool["args"]:
-                            tool_strings.append(
-                                f"Arg: {str(arg_name)}\nValue: "
-                                f"{str(tool['args'][arg_name])}"
-                            )
+                        tool_strings.extend(
+                            f"Arg: {arg_name!s}\nValue: "
+                            f"{tool['args'][arg_name]!s}"
+                            for arg_name in tool["args"]
+                        )
                     memories.append("\n".join(tool_strings))
             memories.append(response_content)
             self.agent_memory.add_memories(memories)

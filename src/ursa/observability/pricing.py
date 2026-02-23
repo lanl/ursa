@@ -5,7 +5,7 @@ import os
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_UP, Decimal, getcontext
 from importlib import resources
-from typing import Any, Optional
+from typing import Any
 
 getcontext().prec = 28  # robust money math
 
@@ -18,11 +18,11 @@ class ModelPricing:
     # Prices are USD per 1,000 tokens
     input_per_1k: Decimal
     output_per_1k: Decimal
-    reasoning_per_1k: Optional[Decimal] = (
+    reasoning_per_1k: Decimal | None = (
         None  # None --> charge 0 for reasoning tokens
     )
     cached_input_multiplier: Decimal = Decimal(
-        "1"
+        1
     )  # e.g., 0.25 if your provider discounts cached prompt tokens
 
     def price_tokens(self, usage: dict[str, Any]) -> dict[str, Decimal]:
@@ -30,11 +30,11 @@ class ModelPricing:
 
         def _to_dec(x) -> Decimal:
             if x is None:
-                return Decimal("0")
+                return Decimal(0)
             try:
                 return Decimal(str(x))
             except Exception:
-                return Decimal("0")
+                return Decimal(0)
 
         in_t = _to_dec(usage.get("input_tokens", usage.get("prompt_tokens", 0)))
         out_t = _to_dec(
@@ -44,7 +44,7 @@ class ModelPricing:
         cached_t = _to_dec(usage.get("cached_tokens", 0))
         reasoning_t = _to_dec(usage.get("reasoning_tokens", 0))
 
-        eff_in = (in_t - cached_t) if in_t > cached_t else Decimal("0")
+        eff_in = (in_t - cached_t) if in_t > cached_t else Decimal(0)
         cached_eff_in = cached_t
 
         input_cost = (eff_in / Decimal(1000)) * self.input_per_1k
@@ -54,7 +54,7 @@ class ModelPricing:
             * self.cached_input_multiplier
         )
         output_cost = (out_t / Decimal(1000)) * self.output_per_1k
-        reasoning_cost = Decimal("0")
+        reasoning_cost = Decimal(0)
         if self.reasoning_per_1k is not None and reasoning_t > 0:
             reasoning_cost = (
                 reasoning_t / Decimal(1000)
@@ -75,11 +75,11 @@ class ModelPricing:
 # ---------- Registry & resolution ----------
 
 
-def _dec(x: str | float | int) -> Decimal:
+def _dec(x: str | float) -> Decimal:
     try:
         return Decimal(str(x))
     except Exception:
-        return Decimal("0")
+        return Decimal(0)
 
 
 # DEFAULTS: keep $0.00 so you don’t accidentally attribute costs.
@@ -110,7 +110,7 @@ def resolve_model_name(event: dict[str, Any]) -> str:
 
 def find_pricing(
     model: str, registry: dict[str, ModelPricing]
-) -> Optional[ModelPricing]:
+) -> ModelPricing | None:
     if model in registry:
         return registry[model]
     # simple wildcard support like "local/*"
@@ -131,8 +131,8 @@ def default_registry_path() -> str:
 
 
 def load_registry(
-    path: Optional[str] = None,
-    overrides: Optional[dict[str, Any]] = None,
+    path: str | None = None,
+    overrides: dict[str, Any] | None = None,
     use_default_if_missing: bool = True,
 ) -> dict[str, ModelPricing]:
     """
@@ -216,7 +216,7 @@ def price_event(
     event: dict[str, Any],
     registry: dict[str, ModelPricing],
     overwrite: bool = False,
-) -> tuple[dict[str, Any], Optional[Decimal], str]:
+) -> tuple[dict[str, Any], Decimal | None, str]:
     """
     Returns (event, total_cost_decimal_or_None, cost_source)
       cost_source ∈ {"provider", "computed", "no_usage", "no_pricing"}
@@ -258,7 +258,7 @@ def price_event(
 
 def price_payload(
     payload: dict[str, Any],
-    registry: Optional[dict[str, ModelPricing]] = None,
+    registry: dict[str, ModelPricing] | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """
@@ -267,7 +267,7 @@ def price_payload(
     """
     reg = registry or load_registry()
     llm_events = payload.get("llm_events") or []
-    total = Decimal("0")
+    total = Decimal(0)
     by_model: dict[str, Decimal] = {}
     sources = {"provider": 0, "computed": 0, "no_usage": 0, "no_pricing": 0}
 
@@ -277,7 +277,7 @@ def price_payload(
         model = resolve_model_name(ev2)
         if cost_dec is not None:
             total += cost_dec
-            by_model[model] = by_model.get(model, Decimal("0")) + cost_dec
+            by_model[model] = by_model.get(model, Decimal(0)) + cost_dec
 
     payload.setdefault("costs", {})
     payload["costs"]["total_usd"] = _round_money(total)
@@ -297,8 +297,8 @@ def price_payload(
 
 def price_file(
     in_path: str,
-    out_path: Optional[str] = None,
-    registry_path: Optional[str] = None,
+    out_path: str | None = None,
+    registry_path: str | None = None,
     overwrite: bool = False,
 ) -> str:
     """
@@ -313,7 +313,7 @@ def price_file(
     payload = price_payload(payload, registry=reg, overwrite=overwrite)
 
     if not out_path:
-        base, ext = os.path.splitext(in_path)
+        base, _ext = os.path.splitext(in_path)
         out_path = f"{base}.priced.json"
 
     with open(out_path, "w", encoding="utf-8") as f:

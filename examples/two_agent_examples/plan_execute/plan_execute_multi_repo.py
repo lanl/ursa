@@ -7,9 +7,9 @@ import shlex
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace as NS
-from typing import Any, Iterable
 
 import randomname
 import yaml
@@ -17,7 +17,6 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from rich import box, get_console
-from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -108,7 +107,7 @@ def _resolve_workspace(user_workspace: str | None, project: str) -> Path:
                 "birds",
                 "fish",
                 "fruit",
-                "seasonings"
+                "seasonings",
             ),
         )
         workspace = Path(f"{project}_{suffix}")
@@ -287,6 +286,7 @@ def _run_command(
             capture_output=True,
             timeout=timeout,
             cwd=cwd,
+            check=False,
         )
     except Exception as exc:
         return 1, "", f"Error: {exc}"
@@ -320,9 +320,14 @@ def _ensure_checkout(repo: dict) -> None:
         return
 
     # Check current branch -- skip checkout if already on the right one
-    code, current, _ = _run_command(
-        ["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"]
-    )
+    code, current, _ = _run_command([
+        "git",
+        "-C",
+        str(path),
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+    ])
     current = current.strip()
     if code == 0 and current == branch:
         console.print(
@@ -331,9 +336,13 @@ def _ensure_checkout(repo: dict) -> None:
         return
 
     # Attempt checkout
-    code, stdout, stderr = _run_command(
-        ["git", "-C", str(path), "checkout", branch]
-    )
+    code, stdout, stderr = _run_command([
+        "git",
+        "-C",
+        str(path),
+        "checkout",
+        branch,
+    ])
     if code == 0:
         return
 
@@ -367,9 +376,7 @@ def _ensure_repo_symlink(workspace: Path, repo: dict) -> Path:
     if target.exists() or target.is_symlink():
         if target.is_symlink() and target.resolve() == source.resolve():
             return target
-        raise RuntimeError(
-            f"Repo link target already exists: {target}"
-        )
+        raise RuntimeError(f"Repo link target already exists: {target}")
 
     target.symlink_to(source, target_is_directory=True)
     return target
@@ -388,11 +395,11 @@ def _format_repo_list(repos: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _planner_prompt(problem: str, repos: list[dict], research: str | None) -> str:
+def _planner_prompt(
+    problem: str, repos: list[dict], research: str | None
+) -> str:
     repo_block = _format_repo_list(repos)
-    research_block = (
-        f"\n\nResearch notes:\n{research}\n" if research else ""
-    )
+    research_block = f"\n\nResearch notes:\n{research}\n" if research else ""
     repo_names = ", ".join([repo["name"] for repo in repos])
     return (
         "You are planning changes across multiple git repositories.\n"
@@ -440,9 +447,7 @@ async def _gather_research(
                 repos, max_issues=max_issues, max_prs=max_prs
             )
             if gh_context:
-                sections.append(
-                    "# GitHub Repository Context\n\n" + gh_context
-                )
+                sections.append("# GitHub Repository Context\n\n" + gh_context)
                 console.print(
                     "[green]Fetched GitHub issues/PRs for repos with GitHub URLs.[/green]"
                 )
@@ -471,9 +476,10 @@ async def _gather_research(
         if agent:
             for query in queries:
                 context = f"{problem}\n\nResearch focus: {query}"
-                result = await agent.ainvoke(
-                    {"query": query, "context": context}
-                )
+                result = await agent.ainvoke({
+                    "query": query,
+                    "context": context,
+                })
                 summary = result.get("final_summary") or ""
                 sections.append(f"Query: {query}\n{summary}")
 
@@ -493,12 +499,10 @@ async def _plan(
     plan = structured_llm.invoke(messages)
 
     for _ in range(max(0, reflection_steps)):
-        review = llm.invoke(
-            [
-                SystemMessage(content=reflection_prompt),
-                HumanMessage(content=plan.model_dump_json()),
-            ]
-        )
+        review = llm.invoke([
+            SystemMessage(content=reflection_prompt),
+            HumanMessage(content=plan.model_dump_json()),
+        ])
         review_text = (review.text or "").strip()
         if "[APPROVED]" in review_text:
             break
@@ -551,7 +555,10 @@ def _render_repo_plan(plan: RepoPlan) -> None:
     repo_counts: dict[str, int] = {}
     for step in plan.steps:
         repo_counts[step.repo] = repo_counts.get(step.repo, 0) + 1
-    summary_parts = [f"[bold]{name}[/bold]: {count}" for name, count in sorted(repo_counts.items())]
+    summary_parts = [
+        f"[bold]{name}[/bold]: {count}"
+        for name, count in sorted(repo_counts.items())
+    ]
     console.print(
         Panel(
             "  ".join(summary_parts),
@@ -630,10 +637,14 @@ def _validate_plan_repos(plan: RepoPlan, repos: list[dict]) -> None:
     if broken_edges:
         broken_set = set(broken_edges)
         for step in plan.steps:
-            removed = [d for d in step.depends_on_repos if (step.repo, d) in broken_set]
+            removed = [
+                d for d in step.depends_on_repos if (step.repo, d) in broken_set
+            ]
             if removed:
                 step.depends_on_repos = [
-                    d for d in step.depends_on_repos if (step.repo, d) not in broken_set
+                    d
+                    for d in step.depends_on_repos
+                    if (step.repo, d) not in broken_set
                 ]
         edge_strs = [f"{a} -> {b}" for a, b in broken_edges]
         console.print(
@@ -689,9 +700,7 @@ def _parse_resume_overrides(
 
         if path.is_dir():
             if resume_dir and resume_dir != path:
-                raise ValueError(
-                    "Only one resume directory may be provided."
-                )
+                raise ValueError("Only one resume directory may be provided.")
             resume_dir = path
             continue
 
@@ -769,16 +778,28 @@ _STATE_STYLES = {
 def _build_progress_table(
     snapshot: dict[str, dict], max_parallel: int
 ) -> Table:
-    counts: dict[str, int] = {"queued": 0, "blocked": 0, "running": 0, "done": 0, "failed": 0}
+    counts: dict[str, int] = {
+        "queued": 0,
+        "blocked": 0,
+        "running": 0,
+        "done": 0,
+        "failed": 0,
+    }
     grand_total_tokens = 0
     for info in snapshot.values():
         state = info.get("state", "queued")
         counts[state] = counts.get(state, 0) + 1
-        grand_total_tokens += info.get("total_tokens", 0) + info.get("_live_total", 0)
+        grand_total_tokens += info.get("total_tokens", 0) + info.get(
+            "_live_total", 0
+        )
 
     title = (
         f"[bold]active [cyan]{counts['running']}/{max_parallel}[/cyan]  "
-        + (f"blocked [yellow]{counts['blocked']}[/yellow]  " if counts["blocked"] else "")
+        + (
+            f"blocked [yellow]{counts['blocked']}[/yellow]  "
+            if counts["blocked"]
+            else ""
+        )
         + f"queued [dim]{counts['queued']}[/dim]  "
         f"done [green]{counts['done']}[/green]  "
         f"failed [red]{counts['failed']}[/red]  "
@@ -890,12 +911,8 @@ def _executor_prompt(
         f"Overall goal:\n{problem}\n\n"
         f"Step {step_index + 1} of {total_steps}: {step.name}\n"
         f"Description: {step.description}\n\n"
-        f"Expected outputs:\n- "
-        + "\n- ".join(step.expected_outputs)
-        + "\n\n"
-        f"Success criteria:\n- "
-        + "\n- ".join(step.success_criteria)
-        + "\n\n"
+        f"Expected outputs:\n- " + "\n- ".join(step.expected_outputs) + "\n\n"
+        "Success criteria:\n- " + "\n- ".join(step.success_criteria) + "\n\n"
         f"Previous step summary:\n{prev}\n"
         f"{checks_block}\n"
         "Use git tools with repo_path='repos/{repo_name}'.\n"
@@ -954,12 +971,16 @@ def _checks_passed(check_results: list[dict]) -> bool:
     return all(c.get("exit_code", 1) == 0 for c in check_results)
 
 
-def _format_check_failures(check_results: list[dict], max_output: int = 2000) -> str:
+def _format_check_failures(
+    check_results: list[dict], max_output: int = 2000
+) -> str:
     """Format failed check output for inclusion in a retry prompt."""
     lines = []
     for cr in check_results:
         if cr.get("exit_code", 1) != 0:
-            lines.append(f"FAILED: {cr['command']} (exit code {cr['exit_code']})")
+            lines.append(
+                f"FAILED: {cr['command']} (exit code {cr['exit_code']})"
+            )
             out = (cr.get("stdout") or "").strip()
             err = (cr.get("stderr") or "").strip()
             combined = f"{out}\n{err}".strip()
@@ -980,9 +1001,15 @@ async def _accumulate_tokens(
     step_tokens = _extract_agent_tokens(agent)
     async with lock:
         info = progress_state[repo_name]
-        info["input_tokens"] = info.get("input_tokens", 0) + step_tokens["input_tokens"]
-        info["output_tokens"] = info.get("output_tokens", 0) + step_tokens["output_tokens"]
-        info["total_tokens"] = info.get("total_tokens", 0) + step_tokens["total_tokens"]
+        info["input_tokens"] = (
+            info.get("input_tokens", 0) + step_tokens["input_tokens"]
+        )
+        info["output_tokens"] = (
+            info.get("output_tokens", 0) + step_tokens["output_tokens"]
+        )
+        info["total_tokens"] = (
+            info.get("total_tokens", 0) + step_tokens["total_tokens"]
+        )
         # Clear live counters — the real totals are now in the main fields
         info.pop("_live_input", None)
         info.pop("_live_output", None)
@@ -1029,10 +1056,7 @@ async def _ainvoke_with_heartbeat(
             tok_str = ""
             if progress_state and repo_name in progress_state:
                 info = progress_state[repo_name]
-                total = (
-                    info.get("total_tokens", 0)
-                    + info.get("_live_total", 0)
-                )
+                total = info.get("total_tokens", 0) + info.get("_live_total", 0)
                 if total:
                     tok_str = f" [{_fmt_tokens(total)} tokens]"
             console.log(
@@ -1044,7 +1068,9 @@ async def _ainvoke_with_heartbeat(
     hb_task = asyncio.create_task(_heartbeat(stop))
 
     try:
-        coro = agent.ainvoke(prompt, config={"recursion_limit": recursion_limit})
+        coro = agent.ainvoke(
+            prompt, config={"recursion_limit": recursion_limit}
+        )
         if timeout_sec > 0:
             result = await asyncio.wait_for(coro, timeout=timeout_sec)
         else:
@@ -1076,8 +1102,11 @@ async def _wait_for_repos(
     """Block until all repos in *deps* have finished their steps."""
     # Filter out self-dependencies — a repo's own steps are already sequential
     pending = [
-        d for d in deps
-        if d != repo_name and d in repo_done_events and not repo_done_events[d].is_set()
+        d
+        for d in deps
+        if d != repo_name
+        and d in repo_done_events
+        and not repo_done_events[d].is_set()
     ]
     if not pending:
         return
@@ -1115,7 +1144,9 @@ async def _run_repo_steps(
     repo_done_events: dict[str, asyncio.Event] | None = None,
     step_timeout_sec: int = 0,
 ) -> dict:
-    agent = make_git_agent(llm=llm, language=repo.get("language", "generic"), workspace=workspace)
+    agent = make_git_agent(
+        llm=llm, language=repo.get("language", "generic"), workspace=workspace
+    )
     progress_path = _progress_path(
         workspace, repo["name"], resume_dir, resume_files
     )
@@ -1204,7 +1235,8 @@ async def _run_repo_steps(
 
             for cr in check_results:
                 status = (
-                    "[green]pass[/green]" if cr["exit_code"] == 0
+                    "[green]pass[/green]"
+                    if cr["exit_code"] == 0
                     else "[red]FAIL[/red]"
                 )
                 console.log(
@@ -1222,9 +1254,13 @@ async def _run_repo_steps(
                 )
                 async with progress_lock:
                     info = progress_state[repo["name"]]
-                    info["current"] = f"{step.name} (fix {attempt}/{max_check_retries})"
+                    info["current"] = (
+                        f"{step.name} (fix {attempt}/{max_check_retries})"
+                    )
                     info["updated"] = time.time()
-                await _emit_progress(progress_state, progress_lock, max_parallel)
+                await _emit_progress(
+                    progress_state, progress_lock, max_parallel
+                )
 
                 fix = _fix_prompt(
                     repo=repo,
@@ -1253,7 +1289,8 @@ async def _run_repo_steps(
                 passed = _checks_passed(check_results)
                 for cr in check_results:
                     status = (
-                        "[green]pass[/green]" if cr["exit_code"] == 0
+                        "[green]pass[/green]"
+                        if cr["exit_code"] == 0
                         else "[red]FAIL[/red]"
                     )
                     console.log(
@@ -1281,7 +1318,11 @@ async def _run_repo_steps(
                 "last_summary": summary,
             },
         )
-        step_tok_str = _fmt_tokens(step_tokens["total_tokens"]) if step_tokens["total_tokens"] else ""
+        step_tok_str = (
+            _fmt_tokens(step_tokens["total_tokens"])
+            if step_tokens["total_tokens"]
+            else ""
+        )
         console.log(
             f"[bold]{repo['name']}[/bold] step {idx + 1}/{len(steps)} "
             f"[green]complete[/green]: {step.name}"
@@ -1306,14 +1347,17 @@ async def _run_repo_steps(
         all_check_results = await _run_checks(repo, workspace)
         for cr in all_check_results:
             status = (
-                "[green]pass[/green]" if cr["exit_code"] == 0
+                "[green]pass[/green]"
+                if cr["exit_code"] == 0
                 else "[red]FAIL[/red]"
             )
             console.log(
                 f"[bold]{repo['name']}[/bold] final check {status}: {cr['command']}"
             )
     else:
-        console.log(f"[bold]{repo['name']}[/bold] [dim]no checks configured[/dim]")
+        console.log(
+            f"[bold]{repo['name']}[/bold] [dim]no checks configured[/dim]"
+        )
 
     async with progress_lock:
         info = progress_state[repo["name"]]
@@ -1361,8 +1405,9 @@ async def _run_parallel(
     dep_pairs: list[str] = []
     for name, steps in repo_steps.items():
         for step in steps:
-            for dep in step.depends_on_repos:
-                dep_pairs.append(f"{name} -> {dep}")
+            dep_pairs.extend(
+                f"{name} -> {dep}" for dep in step.depends_on_repos
+            )
     if dep_pairs:
         console.print(
             Panel(
@@ -1417,7 +1462,9 @@ async def _run_parallel(
                 # Signal done even on failure so dependents don't deadlock
                 if repo_name in repo_done_events:
                     repo_done_events[repo_name].set()
-                await _emit_progress(progress_state, progress_lock, max_parallel)
+                await _emit_progress(
+                    progress_state, progress_lock, max_parallel
+                )
                 raise
 
     await _emit_progress(progress_state, progress_lock, max_parallel)
@@ -1467,12 +1514,16 @@ def main():
     project = getattr(cfg, "project", "multi_repo_run")
     problem = getattr(cfg, "problem", "").strip()
     if not problem:
-        console.print("[bold red]Config must include a non-empty 'problem' field.[/bold red]")
+        console.print(
+            "[bold red]Config must include a non-empty 'problem' field.[/bold red]"
+        )
         sys.exit(2)
 
     raw_repos = getattr(cfg, "repos", None)
     if not raw_repos:
-        console.print("[bold red]Config must include a 'repos' list.[/bold red]")
+        console.print(
+            "[bold red]Config must include a 'repos' list.[/bold red]"
+        )
         sys.exit(2)
 
     workspace = _resolve_workspace(args.workspace, project)
@@ -1500,10 +1551,9 @@ def main():
             _ensure_repo_symlink(workspace, repo)
 
     models_cfg = getattr(cfg, "models", {}) or {}
-    default_model = (
-        (models_cfg.get("default") or None)
-        or (models_cfg.get("choices") or ["openai:gpt-5-mini"])[0]
-    )
+    default_model = (models_cfg.get("default") or None) or (
+        models_cfg.get("choices") or ["openai:gpt-5-mini"]
+    )[0]
     planner_model = models_cfg.get("planner") or default_model
     executor_model = models_cfg.get("executor") or default_model
     console.print(
@@ -1523,7 +1573,9 @@ def main():
             agent_name="planner",
         )
         _validate_model(planner_llm, planner_model, "planner")
-        console.log(f"[green]✓[/green] planner model [cyan]{planner_model}[/cyan]")
+        console.log(
+            f"[green]✓[/green] planner model [cyan]{planner_model}[/cyan]"
+        )
 
         if executor_model != planner_model:
             executor_test_llm = setup_llm(
@@ -1532,9 +1584,11 @@ def main():
                 agent_name="executor",
             )
             _validate_model(executor_test_llm, executor_model, "executor")
-            console.log(f"[green]✓[/green] executor model [cyan]{executor_model}[/cyan]")
+            console.log(
+                f"[green]✓[/green] executor model [cyan]{executor_model}[/cyan]"
+            )
         else:
-            console.log(f"[green]✓[/green] executor model (same as planner)")
+            console.log("[green]✓[/green] executor model (same as planner)")
 
     planner_cfg = getattr(cfg, "planner", {}) or {}
     reflection_steps = int(planner_cfg.get("reflection_steps", 0))
@@ -1549,9 +1603,7 @@ def main():
     )
 
     # -- Research phase --
-    with console.status(
-        "[bold green]Gathering research...", spinner="point"
-    ):
+    with console.status("[bold green]Gathering research...", spinner="point"):
         research = asyncio.run(
             _gather_research(
                 llm=planner_llm,
@@ -1631,7 +1683,7 @@ def main():
     if resume:
         console.print(
             Panel(
-                f"[bold yellow]Resuming[/bold yellow] from saved progress"
+                "[bold yellow]Resuming[/bold yellow] from saved progress"
                 + (f" (dir: {resume_dir})" if resume_dir else ""),
                 border_style="yellow",
                 expand=False,
@@ -1687,11 +1739,17 @@ def main():
         grand_total += r_total
         check_ok = all(c.get("exit_code", 1) == 0 for c in checks)
         check_text = (
-            f"[green]passed[/green]" if check_ok and checks
-            else f"[red]failures[/red]" if checks
+            "[green]passed[/green]"
+            if check_ok and checks
+            else "[red]failures[/red]"
+            if checks
             else "[dim]none[/dim]"
         )
-        tok_text = f"tokens: {_fmt_tokens(r_in)} in / {_fmt_tokens(r_out)} out" if r_total else "tokens: [dim]0[/dim]"
+        tok_text = (
+            f"tokens: {_fmt_tokens(r_in)} in / {_fmt_tokens(r_out)} out"
+            if r_total
+            else "tokens: [dim]0[/dim]"
+        )
         result_lines.append(
             f"  [bold]{name}[/bold]: {steps} steps, checks: {check_text}, {tok_text}"
         )
