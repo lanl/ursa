@@ -184,6 +184,38 @@ def _resolve_model_choice(model_choice: str, models_cfg: dict):
     return model_provider, pure_model, provider_extra
 
 
+def _validate_model(llm, model_name: str, role: str) -> None:
+    """Send a minimal chat completion to verify the model is reachable and
+    supports the chat completions endpoint.  Raises ``RuntimeError`` with a
+    clear message on failure so the user can fix their config before burning
+    tokens on a full run.
+    """
+    from langchain_core.messages import HumanMessage as _HM
+
+    try:
+        llm.invoke([_HM(content="ping")])
+    except Exception as exc:
+        msg = str(exc)
+        # Surface the most common issues clearly
+        if "not a chat model" in msg.lower() or "404" in msg:
+            raise RuntimeError(
+                f"Model '{model_name}' (role: {role}) is not available as a "
+                f"chat model.  Check that the model ID is correct and that it "
+                f"supports the v1/chat/completions endpoint.\n"
+                f"  Original error: {msg}"
+            ) from exc
+        if "401" in msg or "auth" in msg.lower():
+            raise RuntimeError(
+                f"Authentication failed for model '{model_name}' (role: {role}).  "
+                f"Check your API key.\n  Original error: {msg}"
+            ) from exc
+        # Re-raise anything else as-is
+        raise RuntimeError(
+            f"Failed to reach model '{model_name}' (role: {role}).\n"
+            f"  Original error: {msg}"
+        ) from exc
+
+
 def setup_llm(
     model_choice: str,
     models_cfg: dict | None = None,
@@ -1483,6 +1515,27 @@ def main():
         )
     )
 
+    # -- Validate models before starting real work --
+    with console.status("[bold green]Validating models...", spinner="point"):
+        planner_llm = setup_llm(
+            model_choice=planner_model,
+            models_cfg=models_cfg,
+            agent_name="planner",
+        )
+        _validate_model(planner_llm, planner_model, "planner")
+        console.log(f"[green]✓[/green] planner model [cyan]{planner_model}[/cyan]")
+
+        if executor_model != planner_model:
+            executor_test_llm = setup_llm(
+                model_choice=executor_model,
+                models_cfg=models_cfg,
+                agent_name="executor",
+            )
+            _validate_model(executor_test_llm, executor_model, "executor")
+            console.log(f"[green]✓[/green] executor model [cyan]{executor_model}[/cyan]")
+        else:
+            console.log(f"[green]✓[/green] executor model (same as planner)")
+
     planner_cfg = getattr(cfg, "planner", {}) or {}
     reflection_steps = int(planner_cfg.get("reflection_steps", 0))
     research_cfg = planner_cfg.get("research") or {}
@@ -1493,12 +1546,6 @@ def main():
             Text.from_markup(f"[bold cyan]Problem:[/bold cyan]\n{problem}"),
             border_style="cyan",
         )
-    )
-
-    planner_llm = setup_llm(
-        model_choice=planner_model,
-        models_cfg=models_cfg,
-        agent_name="planner",
     )
 
     # -- Research phase --
