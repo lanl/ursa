@@ -187,6 +187,21 @@ class CMMChunker:
             cur_tokens = 0
             for sentence in sentences:
                 s_tokens = len(sentence.split())
+                if s_tokens > self.max_tokens:
+                    if cur:
+                        out.append(" ".join(cur).strip())
+                        cur = []
+                        cur_tokens = 0
+                    long_words = sentence.split()
+                    step = max(1, self.max_tokens - self.overlap_tokens)
+                    start = 0
+                    while start < len(long_words):
+                        end = min(len(long_words), start + self.max_tokens)
+                        out.append(" ".join(long_words[start:end]).strip())
+                        if end >= len(long_words):
+                            break
+                        start += step
+                    continue
                 if cur and cur_tokens + s_tokens > self.max_tokens:
                     out.append(" ".join(cur).strip())
                     overlap = " ".join(cur).split()[-self.overlap_tokens :]

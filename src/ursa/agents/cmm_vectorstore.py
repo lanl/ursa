@@ -176,7 +176,24 @@ class ChromaBM25VectorStore(CMMVectorStoreBase):
                 Document(page_content=doc.page_content, metadata=metadata)
             )
             ids.append(str(chunk_id))
-        self._chroma.add_documents(chroma_docs, ids=ids)
+        try:
+            self._chroma.add_documents(chroma_docs, ids=ids)
+        except Exception as exc:
+            print(
+                "[ChromaBM25VectorStore] Batch insert failed; falling back to"
+                f" per-document insert. error={exc}"
+            )
+            skipped = 0
+            for doc, chunk_id in zip(chroma_docs, ids):
+                try:
+                    self._chroma.add_documents([doc], ids=[chunk_id])
+                except Exception:
+                    skipped += 1
+            if skipped:
+                print(
+                    "[ChromaBM25VectorStore] Skipped"
+                    f" {skipped} chunk(s) during fallback insert."
+                )
         self._rebuild_bm25_index()
 
     def _dense_search(self, query: str, k: int) -> list[tuple[Document, float]]:

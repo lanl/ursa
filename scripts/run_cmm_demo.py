@@ -83,7 +83,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run end-to-end CMM demo workflow and emit artifacts."
     )
-    parser.add_argument("--scenario", default="quick_gallium")
+    parser.add_argument("--scenario", default="ndfeb_la_y_5pct_baseline")
     parser.add_argument(
         "--scenarios-path",
         default="configs/cmm_demo_scenarios.json",

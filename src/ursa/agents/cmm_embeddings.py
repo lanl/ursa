@@ -4,6 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+import httpx
 from langchain.embeddings import Embeddings
 
 try:
@@ -69,18 +70,39 @@ class OpenAIEmbeddings(CMMEmbeddingsBase):
         kwargs = {"api_key": self.api_key}
         if self.base_url:
             kwargs["base_url"] = self.base_url
+        timeout_seconds = float(os.getenv("CMM_EMBEDDING_TIMEOUT_SECONDS", "90"))
+        kwargs["timeout"] = timeout_seconds
+        kwargs["http_client"] = httpx.Client(
+            timeout=httpx.Timeout(
+                timeout_seconds,
+                connect=timeout_seconds,
+                read=timeout_seconds,
+                write=timeout_seconds,
+            )
+        )
         self.client = OpenAI(**kwargs)
+        # Defensive bound for OpenAI-compatible gateways with stricter context
+        # limits on embedding endpoints.
+        self.max_input_chars = int(
+            os.getenv("CMM_EMBEDDING_MAX_INPUT_CHARS", "6000")
+        )
 
     @property
     def embedding_dim(self) -> int:
         return self.dimensions or _default_dim_for_model(self.model)
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        kwargs = {"model": self.model, "input": texts}
+        bounded = [self._bounded_text(text) for text in texts]
+        kwargs = {"model": self.model, "input": bounded}
         if self.dimensions is not None:
             kwargs["dimensions"] = self.dimensions
         response = self.client.embeddings.create(**kwargs)
         return [list(item.embedding) for item in response.data]
+
+    def _bounded_text(self, text: str) -> str:
+        if len(text) <= self.max_input_chars:
+            return text
+        return text[: self.max_input_chars]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []

@@ -144,7 +144,7 @@ uv run python scripts/demo_healthcheck.py \
 
 ```bash
 uv run python scripts/run_cmm_demo.py \
-  --scenario quick_gallium \
+  --scenario ndfeb_la_y_5pct_baseline \
   --corpus-path /Users/wash198/Documents/Projects/Science_Projects/MPII_CMM/Corpus \
   --vectorstore-path /Users/wash198/Library/CloudStorage/OneDrive-PNNL/Documents/Projects/Science_Projects/MPII_CMM/ursa/cmm_vectorstore \
   --output-dir /Users/wash198/Library/CloudStorage/OneDrive-PNNL/Documents/Projects/Science_Projects/MPII_CMM/ursa/cmm_demo_outputs
@@ -152,9 +152,9 @@ uv run python scripts/run_cmm_demo.py \
 
 Available scenarios:
 
-- `quick_gallium`
-- `graphite_battery`
-- `multi_mineral_stress`
+- `ndfeb_la_y_5pct_baseline`
+- `ndfeb_la_y_5pct_quality_tightening`
+- `ndfeb_la_y_5pct_supply_shock`
 
 Artifacts are written under:
 
@@ -180,7 +180,7 @@ Optional environment overrides:
 ```bash
 export CMM_CORPUS_PATH=/Users/wash198/Documents/Projects/Science_Projects/MPII_CMM/Corpus
 export CMM_VECTORSTORE_PATH=/Users/wash198/Library/CloudStorage/OneDrive-PNNL/Documents/Projects/Science_Projects/MPII_CMM/ursa/cmm_vectorstore
-export CMM_DEMO_SCENARIO=quick_gallium
+export CMM_DEMO_SCENARIO=ndfeb_la_y_5pct_baseline
 export CMM_OUTPUT_DIR=/Users/wash198/Library/CloudStorage/OneDrive-PNNL/Documents/Projects/Science_Projects/MPII_CMM/ursa/cmm_demo_outputs
 just demo-prep
 ```

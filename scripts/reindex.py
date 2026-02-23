@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -17,6 +18,23 @@ from ursa.util.parse import (
     TEXT_EXTENSIONS,
     read_text_from_file,
 )
+
+EXCLUDED_DIR_NAMES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".cache",
+    "node_modules",
+    "site-packages",
+}
 
 
 def _normalize_extension(value: str) -> str:
@@ -38,25 +56,31 @@ def _iter_ingestible_files(
     exclude_extensions: set[str],
 ) -> list[Path]:
     files: list[Path] = []
-    for path in corpus_path.rglob("*"):
-        if not path.is_file():
-            continue
-        ext = path.suffix.lower()
-        filename = path.name.lower()
-        ingestible = (
-            ext == ".pdf"
-            or ext in TEXT_EXTENSIONS
-            or filename in SPECIAL_TEXT_FILENAMES
-            or ext in OFFICE_EXTENSIONS
-        )
-        if not ingestible:
-            continue
-        if ext in exclude_extensions:
-            continue
-        if include_extensions is not None and ext not in include_extensions:
-            if filename not in SPECIAL_TEXT_FILENAMES:
+    for root, dirnames, filenames in os.walk(corpus_path):
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d.lower() not in EXCLUDED_DIR_NAMES
+        ]
+        root_path = Path(root)
+        for filename_raw in filenames:
+            filename = filename_raw.lower()
+            path = root_path / filename_raw
+            ext = path.suffix.lower()
+            ingestible = (
+                ext == ".pdf"
+                or ext in TEXT_EXTENSIONS
+                or filename in SPECIAL_TEXT_FILENAMES
+                or ext in OFFICE_EXTENSIONS
+            )
+            if not ingestible:
                 continue
-        files.append(path)
+            if ext in exclude_extensions:
+                continue
+            if include_extensions is not None and ext not in include_extensions:
+                if filename not in SPECIAL_TEXT_FILENAMES:
+                    continue
+            files.append(path)
     return files
 
 
@@ -72,6 +96,11 @@ def main() -> int:
         default="openai:text-embedding-3-large",
     )
     parser.add_argument("--embedding-dimensions", type=int, default=3072)
+    parser.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=20,
+    )
     parser.add_argument("--collection-name", default="cmm_chunks")
     parser.add_argument("--chunk-size", type=int, default=1000)
     parser.add_argument("--chunk-overlap", type=int, default=200)
@@ -89,6 +118,24 @@ def main() -> int:
         default=[],
     )
     parser.add_argument("--max-docs", type=int, default=0)
+    parser.add_argument(
+        "--max-chunks-per-doc",
+        type=int,
+        default=0,
+        help="Cap chunks ingested from each source document (0 = no cap).",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip source files already present in _ingested_ids.txt.",
+    )
+    parser.add_argument(
+        "--flush-docs",
+        type=int,
+        default=50,
+        help="Number of source documents to batch before vectorstore insert.",
+    )
     parser.add_argument("--reset", action="store_true")
     args = parser.parse_args()
 
@@ -106,6 +153,7 @@ def main() -> int:
     embedding = init_embeddings(
         args.embedding_model,
         dimensions=args.embedding_dimensions,
+        batch_size=max(1, args.embedding_batch_size),
     )
     vectorstore = init_vectorstore(
         backend=args.backend,
@@ -130,6 +178,14 @@ def main() -> int:
         include_extensions=include_extensions,
         exclude_extensions=exclude_extensions,
     )
+    existing_ids: set[str] = set()
+    if args.skip_existing and manifest_path.exists():
+        existing_ids = {
+            line.strip()
+            for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        files = [path for path in files if str(path) not in existing_ids]
     if args.max_docs > 0:
         files = files[: args.max_docs]
 
@@ -138,6 +194,17 @@ def main() -> int:
     docs_indexed = 0
     chunks_indexed = 0
     ingested_doc_ids: set[str] = set()
+    batched_docs = []
+    batched_source_ids: list[str] = []
+
+    def flush_batch() -> None:
+        nonlocal batched_docs
+        nonlocal batched_source_ids
+        if not batched_docs:
+            return
+        vectorstore.add_documents(batched_docs)
+        batched_docs = []
+        batched_source_ids = []
 
     for path in tqdm(files, desc="Reindex corpus"):
         text = read_text_from_file(path)
@@ -152,7 +219,12 @@ def main() -> int:
         )
         if not docs:
             continue
-        vectorstore.add_documents(docs)
+        if args.max_chunks_per_doc > 0:
+            docs = docs[: args.max_chunks_per_doc]
+        batched_docs.extend(docs)
+        batched_source_ids.append(str(path))
+        if len(batched_source_ids) >= max(1, args.flush_docs):
+            flush_batch()
         docs_indexed += 1
         chunks_indexed += len(docs)
         ingested_doc_ids.add(str(path))
@@ -160,7 +232,8 @@ def main() -> int:
             commodity_counts.update(doc.metadata.get("commodity_tags", []))
             subdomain_counts.update(doc.metadata.get("subdomain_tags", []))
 
-    existing_ids: set[str] = set()
+    flush_batch()
+
     if manifest_path.exists():
         existing_ids = {
             line.strip()
