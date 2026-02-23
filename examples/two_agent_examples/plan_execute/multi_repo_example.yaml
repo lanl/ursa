@@ -2,9 +2,12 @@ project: multi_repo_example
 
 models:
   choices:
-    - openai:gpt-5
-    - openai:gpt-5-mini
-  default: openai:gpt-5-mini
+    - openai:gpt-5.2
+    - openai:gpt-5.2-mini
+    - openai:gpt-5.2-codex
+  default: openai:gpt-5.2-mini
+  planner: openai:gpt-5.2        # model for planning; falls back to default
+  executor: openai:gpt-5.2-codex  # model for execution; falls back to default
 
 planner:
   reflection_steps: 4

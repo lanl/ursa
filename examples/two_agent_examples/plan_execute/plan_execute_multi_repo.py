@@ -380,6 +380,12 @@ def _planner_prompt(problem: str, repos: list[dict], research: str | None) -> st
         "  This means ALL steps in repo A must complete before this step starts.\n"
         "  Steps with no dependencies run in parallel. Only add dependencies\n"
         "  when there is a real build/import dependency, not just logical ordering.\n"
+        "  CRITICAL RULES for depends_on_repos:\n"
+        "  - NEVER create circular dependencies (A depends on B AND B depends on A).\n"
+        "    Dependencies must form a DAG (directed acyclic graph).\n"
+        "  - NEVER list a repo as depending on itself — steps within a repo are\n"
+        "    already sequential and self-deps will be stripped.\n"
+        "  - Dependencies flow one direction: libraries -> consumers, never back.\n"
     )
 
 
@@ -538,7 +544,7 @@ def _validate_plan_repos(plan: RepoPlan, repos: list[dict]) -> None:
         raise RuntimeError(
             "Plan referenced unknown repos: " + ", ".join(invalid)
         )
-    # Validate depends_on_repos references
+    # Validate and sanitize depends_on_repos
     plan_repos = {step.repo for step in plan.steps}
     for step in plan.steps:
         bad_deps = sorted(set(step.depends_on_repos) - plan_repos)
@@ -548,11 +554,67 @@ def _validate_plan_repos(plan: RepoPlan, repos: list[dict]) -> None:
                 f"repo '{step.repo}' depends on repos not in the plan: "
                 + ", ".join(bad_deps)
             )
+        # Strip self-dependencies — steps within a repo are already sequential
         if step.repo in step.depends_on_repos:
+            step.depends_on_repos = [
+                d for d in step.depends_on_repos if d != step.repo
+            ]
             console.print(
-                f"[bold yellow]Warning:[/bold yellow] step '{step.name}' in "
-                f"repo '{step.repo}' depends on itself (ignored)"
+                f"[dim]Stripped self-dependency from step '{step.name}' "
+                f"in repo '{step.repo}'[/dim]"
             )
+
+    # Build repo-level dependency graph and break any cycles.
+    # A repo A depends on repo B if ANY step in A lists B in depends_on_repos.
+    dep_graph: dict[str, set[str]] = {name: set() for name in plan_repos}
+    for step in plan.steps:
+        for dep in step.depends_on_repos:
+            if dep in plan_repos and dep != step.repo:
+                dep_graph[step.repo].add(dep)
+
+    # Detect and break cycles via DFS
+    UNVISITED, IN_PROGRESS, DONE = 0, 1, 2
+    state: dict[str, int] = {name: UNVISITED for name in dep_graph}
+    broken_edges: list[tuple[str, str]] = []
+
+    def _visit(node: str, stack: set[str]) -> None:
+        state[node] = IN_PROGRESS
+        stack.add(node)
+        for dep in list(dep_graph.get(node, set())):
+            if dep in stack:
+                # Back-edge found — break the cycle by removing this edge
+                dep_graph[node].discard(dep)
+                broken_edges.append((node, dep))
+            elif state[dep] == UNVISITED:
+                _visit(dep, stack)
+        stack.discard(node)
+        state[node] = DONE
+
+    for repo in list(dep_graph):
+        if state[repo] == UNVISITED:
+            _visit(repo, set())
+
+    # Remove broken edges from the actual step data
+    if broken_edges:
+        broken_set = set(broken_edges)
+        for step in plan.steps:
+            removed = [d for d in step.depends_on_repos if (step.repo, d) in broken_set]
+            if removed:
+                step.depends_on_repos = [
+                    d for d in step.depends_on_repos if (step.repo, d) not in broken_set
+                ]
+        edge_strs = [f"{a} -> {b}" for a, b in broken_edges]
+        console.print(
+            Panel(
+                "Circular repo dependencies detected and broken:\n"
+                + "\n".join(f"  {e}" for e in edge_strs)
+                + "\n\nThese dependency edges were removed to prevent deadlock. "
+                "Steps that lost dependencies will run without waiting.",
+                title="[bold yellow]Cycle detected[/bold yellow]",
+                border_style="yellow",
+                expand=False,
+            )
+        )
 
 
 def _progress_path(
@@ -980,7 +1042,11 @@ async def _wait_for_repos(
     max_parallel: int,
 ) -> None:
     """Block until all repos in *deps* have finished their steps."""
-    pending = [d for d in deps if d in repo_done_events and not repo_done_events[d].is_set()]
+    # Filter out self-dependencies — a repo's own steps are already sequential
+    pending = [
+        d for d in deps
+        if d != repo_name and d in repo_done_events and not repo_done_events[d].is_set()
+    ]
     if not pending:
         return
 
@@ -1239,7 +1305,7 @@ async def _run_parallel(
     problem: str,
     workspace: Path,
     models_cfg: dict,
-    model_choice: str,
+    executor_model: str,
     recursion_limit: int,
     max_parallel: int,
     resume: bool,
@@ -1286,7 +1352,7 @@ async def _run_parallel(
         async with sem:
             repo = repo_lookup[repo_name]
             llm = setup_llm(
-                model_choice=model_choice,
+                model_choice=executor_model,
                 models_cfg=models_cfg,
                 agent_name="executor",
             )
@@ -1402,13 +1468,16 @@ def main():
             _ensure_repo_symlink(workspace, repo)
 
     models_cfg = getattr(cfg, "models", {}) or {}
-    model_choice = (
+    default_model = (
         (models_cfg.get("default") or None)
         or (models_cfg.get("choices") or ["openai:gpt-5-mini"])[0]
     )
+    planner_model = models_cfg.get("planner") or default_model
+    executor_model = models_cfg.get("executor") or default_model
     console.print(
         Panel(
-            f"[bold]Model:[/bold] [cyan]{model_choice}[/cyan]",
+            f"[bold]Planner model:[/bold] [cyan]{planner_model}[/cyan]  "
+            f"[bold]Executor model:[/bold] [cyan]{executor_model}[/cyan]",
             border_style="cyan",
             expand=False,
         )
@@ -1427,7 +1496,7 @@ def main():
     )
 
     planner_llm = setup_llm(
-        model_choice=model_choice,
+        model_choice=planner_model,
         models_cfg=models_cfg,
         agent_name="planner",
     )
@@ -1537,7 +1606,7 @@ def main():
             problem=problem,
             workspace=workspace,
             models_cfg=models_cfg,
-            model_choice=model_choice,
+            executor_model=executor_model,
             recursion_limit=recursion_limit,
             max_parallel=max_parallel,
             resume=resume,
