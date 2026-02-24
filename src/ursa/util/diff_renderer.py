@@ -48,7 +48,7 @@ class DiffRenderer:
         # get syntax style
         try:
             self._lexer_name = Syntax.guess_lexer(filename, updated)
-        except Exception:
+        except Exception:  # noqa: BLE001
             self._lexer_name = "text"
 
     def __rich_console__(
@@ -85,7 +85,7 @@ class DiffRenderer:
                 code = raw[1:]
             else:
                 style = _STYLE["ctx"]
-                code = raw[1:] if raw.startswith(" ") else raw
+                code = raw.removeprefix(" ")
 
             # compute line numbers
             if raw.startswith("+"):

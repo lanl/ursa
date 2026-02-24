@@ -159,7 +159,7 @@ def validate(*, here: Path, outputs_dir: Path) -> ValidationResult:
     preflight_path = outputs_dir / "preflight.json"
     preflight = _read_json(preflight_path) if preflight_path.exists() else None
     plotting_enabled = bool(
-        (((preflight or {}).get("optional") or {}).get("plotting_enabled"))
+        ((preflight or {}).get("optional") or {}).get("plotting_enabled")
     )
     details["plotting_enabled"] = plotting_enabled
 
@@ -202,8 +202,7 @@ def validate(*, here: Path, outputs_dir: Path) -> ValidationResult:
             with csv_path.open("r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 header = list(reader.fieldnames or [])
-                for r in reader:
-                    rows.append(dict(r))
+                rows.extend(dict(r) for r in reader)
         except Exception as e:
             errors.append(
                 f"Failed to parse {csv_path.relative_to(here)}: {type(e).__name__}: {e}"
@@ -279,11 +278,11 @@ def validate(*, here: Path, outputs_dir: Path) -> ValidationResult:
         "Exact rerun command",
         "python mc_option_convergence.py",
     ]
-    for marker in required_markers:
-        if marker not in report_text:
-            errors.append(
-                f"{report_path.relative_to(here)} missing required text: {marker!r}"
-            )
+    errors.extend(
+        f"{report_path.relative_to(here)} missing required text: {marker!r}"
+        for marker in required_markers
+        if marker not in report_text
+    )
 
     if ("Black–Scholes" not in report_text) and (
         "Black-Scholes" not in report_text
@@ -330,15 +329,15 @@ def validate(*, here: Path, outputs_dir: Path) -> ValidationResult:
                 (outputs_dir / "agent_state.json").read_text(encoding="utf-8")
             )
             st_text = json.dumps(st)
-            for tool_name in (
-                "run_web_search",
-                "run_arxiv_search",
-                "run_osti_search",
-            ):
-                if tool_name in st_text:
-                    guardrail_findings.append(
-                        f"agent_state.json: found disallowed tool reference {tool_name}"
-                    )
+            guardrail_findings.extend(
+                f"agent_state.json: found disallowed tool reference {tool_name}"
+                for tool_name in (
+                    "run_web_search",
+                    "run_arxiv_search",
+                    "run_osti_search",
+                )
+                if tool_name in st_text
+            )
         except Exception:
             pass
 

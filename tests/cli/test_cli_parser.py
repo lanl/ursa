@@ -56,11 +56,7 @@ def test_print_config_yaml_round_trip(tmp_path):
 def test_config_env_cli_precedence(tmp_path, monkeypatch):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
-        "\n".join([
-            "workspace: config_workspace",
-            "llm_model:",
-            "  model: config-model",
-        ])
+        "workspace: config_workspace\nllm_model:\n  model: config-model"
     )
 
     env_workspace = tmp_path / "env-workspace"
@@ -125,15 +121,7 @@ def test_config_file_env_interpolation(tmp_path, monkeypatch):
 def test_config_file_with_extra_keys(tmp_path):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
-        "\n".join([
-            "llm_model:",
-            "  model: openai:gpt-5-small",
-            "  temperature: 0.4",
-            "  seed: 123",
-            "emb_model:",
-            "  model: openai:text-embedding-3-large",
-            "  cache_dir: /tmp/cache",
-        ])
+        "llm_model:\n  model: openai:gpt-5-small\n  temperature: 0.4\n  seed: 123\nemb_model:\n  model: openai:text-embedding-3-large\n  cache_dir: /tmp/cache"
     )
 
     parser = build_parser()
@@ -148,15 +136,7 @@ def test_config_file_with_extra_keys(tmp_path):
 def test_config_file_and_cli_are_merged(tmp_path):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
-        "\n".join([
-            "workspace: config_workspace",
-            "llm_model:",
-            "  model: openai:gpt-5-small",
-            "  temperature: 0.4",
-            "emb_model:",
-            "  model: openai:text-embedding-3-large",
-            "  cache_dir: /tmp/cache",
-        ])
+        "workspace: config_workspace\nllm_model:\n  model: openai:gpt-5-small\n  temperature: 0.4\nemb_model:\n  model: openai:text-embedding-3-large\n  cache_dir: /tmp/cache"
     )
 
     cli_workspace = tmp_path / "cli-workspace"
@@ -212,4 +192,4 @@ def test_api_key_env(monkeypatch, tmp_path):
     config = UrsaConfig.from_namespace(args)
     assert config.llm_model.api_key_env == "TEST_ENV_API_KEY"
     assert config.llm_model.kwargs["api_key"] == "super-secret-key"
-    assert "api_key_env" not in config.llm_model.kwargs.keys()
+    assert "api_key_env" not in config.llm_model.kwargs

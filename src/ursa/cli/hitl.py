@@ -5,7 +5,7 @@ import platform
 import threading
 from cmd import Cmd
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import aiosqlite
 from fastmcp import FastMCP
@@ -129,7 +129,7 @@ class HITL:
             if self.embedding
             else None
         )
-        if base_url := getattr(self.config.llm_model, "base_url"):
+        if base_url := self.config.llm_model.base_url:
             if model_base_url := get_base_url(self.model):
                 if base_url != model_base_url:
                     logging.error(
@@ -137,7 +137,7 @@ class HITL:
                     )
 
         if self.embedding:
-            if base_url := getattr(self.config.emb_model, "base_url"):
+            if base_url := self.config.emb_model.base_url:
                 if model_base_url := get_base_url(self.model):
                     if base_url != model_base_url:
                         logging.error(
@@ -214,9 +214,6 @@ class HITL:
         mcp = FastMCP(
             "URSA",
             version=ursa_version,
-            on_duplicate_tools="error",
-            on_duplicate_prompts="error",
-            on_duplicate_resources="error",
             **kwargs,
         )
 
@@ -308,7 +305,7 @@ class UrsaRepl(Cmd):
         # Dynamically add do_agent methods
         if name.startswith("do_"):
             agent_name = name.removeprefix("do_")
-            if agent_name in self.hitl.agents.keys():
+            if agent_name in self.hitl.agents:
 
                 def run_agent(prompt):
                     return self.run_agent(agent_name, prompt)
@@ -320,7 +317,7 @@ class UrsaRepl(Cmd):
 
     def get_names(self) -> list[str]:
         names = super().get_names()
-        for name in self.hitl.agents.keys():
+        for name in self.hitl.agents:
             names.append(f"do_{name}")
         return names
 
@@ -360,7 +357,6 @@ class UrsaRepl(Cmd):
 
     def emptyline(self):
         """Do nothing when an empty line is entered"""
-        pass
 
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
@@ -414,7 +410,7 @@ class UrsaRepl(Cmd):
                 self.console.print(name + ": {}")
 
 
-def get_provider_and_model(model_str: Optional[str]):
+def get_provider_and_model(model_str: str | None):
     if model_str is None:
         return "none", "none"
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
@@ -19,9 +21,23 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
     Returns:
         Extracted text content.
     """
-    full_filename = runtime.context.workspace.joinpath(filename)
+    workspace = Path(runtime.context.workspace).resolve()
+
+    # Build the full path
+    if Path(filename).is_absolute():
+        full_filename = Path(filename).resolve()
+    else:
+        full_filename = (workspace / filename).resolve()
+
+    # Validate it's within the workspace
+    try:
+        full_filename.relative_to(workspace)
+    except ValueError:
+        return (
+            f"Error: File path '{filename}' resolves outside workspace directory. "
+            f"Files must be read from within the workspace at {workspace}"
+        )
 
     print("[READING]:", full_filename)
     # Move all the reading to a function in the parse util
-    text = read_text_from_file(full_filename)
-    return text
+    return read_text_from_file(full_filename)

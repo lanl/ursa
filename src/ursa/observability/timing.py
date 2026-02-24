@@ -8,11 +8,12 @@ import os
 import re
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -69,7 +70,7 @@ def _to_snake(s: str) -> str:
     return s.lower()
 
 
-_SESSIONS: dict[str, "SessionRollup"] = {}
+_SESSIONS: dict[str, SessionRollup] = {}
 
 
 @dataclass
@@ -714,8 +715,9 @@ class PerLLMTimer(BaseCallbackHandler):
                     _extract_extras(out.get("llm_output_token_usage") or {})
                 )
             if src != "response_metadata.token_usage":
-                for d in sources_token_usage:
-                    extras_candidates.append(_extract_extras(d or {}))
+                extras_candidates.extend(
+                    _extract_extras(d or {}) for d in sources_token_usage
+                )
 
             if extras_candidates:
                 # choose the strongest signal present rather than summing duplicates
@@ -1099,21 +1101,17 @@ class Telemetry:
                     getattr(self.runnable, "_starts", {})
                 ),
                 "agg": _as_dict(getattr(self.runnable, "agg", {})),
-                "buckets": list(
-                    getattr(self.runnable.agg, "buckets", lambda: [])()
-                ),
+                "buckets": list(getattr(self.runnable.agg, "buckets", list)()),
             },
             "tool": {
                 "_starts": _stringify_keys(getattr(self.tool, "_starts", {})),
                 "agg": _as_dict(getattr(self.tool, "agg", {})),
-                "buckets": list(
-                    getattr(self.tool.agg, "buckets", lambda: [])()
-                ),
+                "buckets": list(getattr(self.tool.agg, "buckets", list)()),
             },
             "llm": {
                 "_starts": _stringify_keys(getattr(self.llm, "_starts", {})),
                 "agg": _as_dict(getattr(self.llm, "agg", {})),
-                "buckets": list(getattr(self.llm.agg, "buckets", lambda: [])()),
+                "buckets": list(getattr(self.llm.agg, "buckets", list)()),
             },
         }
 
@@ -1236,13 +1234,13 @@ class Telemetry:
         tracer = trace.get_tracer(agent)
 
         with tracer.start_as_current_span(run_id) as span:
-            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
+            _total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
             [span.set_attribute(i[0], i[1]) for i in parts_i]
 
             att = compute_attribution(payload)
             span.set_attributes(att)
 
-            totals_run, samples_run = extract_llm_token_stats(payload)
+            totals_run, _samples_run = extract_llm_token_stats(payload)
             span.set_attributes(totals_run)
 
         return endpoint

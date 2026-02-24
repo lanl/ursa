@@ -1,0 +1,4 @@
+from ursa.prompt_library.git_prompts import compose_git_prompt
+from ursa.prompt_library.go_prompts import go_language_prompt
+
+git_go_executor_prompt = compose_git_prompt(go_language_prompt)

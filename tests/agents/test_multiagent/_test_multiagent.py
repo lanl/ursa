@@ -16,7 +16,7 @@ def generate_data(data_path: Path):
     rng = np.random.default_rng(0)
     x = rng.uniform(0, 1, 100)
     y = rng.normal(2 * x + 1, 0.1)
-    pd.DataFrame(dict(x=x, y=y)).to_csv(data_path, index=False)
+    pd.DataFrame({"x": x, "y": y}).to_csv(data_path, index=False)
 
 
 # TODO: Need to make `uv run` a SAFE command.

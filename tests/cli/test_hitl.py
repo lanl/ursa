@@ -74,14 +74,14 @@ def test_example_config_smoke():
     ursa_config = UrsaConfig.from_file(DOC_EXAMPLE_CONFIG)
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
-    for name in hitl.agents.keys():
+    for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
 
 
 def test_has_all_agent_do_methods(ursa_config):
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
-    for name in hitl.agents.keys():
+    for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
 
 

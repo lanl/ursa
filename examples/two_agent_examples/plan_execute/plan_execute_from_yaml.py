@@ -330,10 +330,7 @@ def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
 
     except Exception:
         # Fallback if select is unavailable
-        try:
-            return input()
-        except KeyboardInterrupt:
-            raise
+        return input()
 
 
 def list_executor_checkpoints(workspace: str) -> list[Path]:
@@ -1042,7 +1039,7 @@ def main_plan_load_or_perform(
                 "\nRe-run this program with the SAME --workspace to resume the plan.\n"
             )
             print("Planning done, exiting")
-            exit()
+            sys.exit()
 
     # NOTE:
     # This is where we figure out where we are in the execution of the plan, what step
@@ -1133,7 +1130,7 @@ def get_or_create_subplan(
         print(
             "Re-run with the SAME --workspace to execute the first sub-step.\n"
         )
-        exit()
+        sys.exit()
 
     return {"plan_steps": sub_steps}, sub_sig, sub_tid, sub_output
 
@@ -1217,7 +1214,7 @@ def run_substeps(
                 total=total_sub,
                 workspace=workspace,
             )
-            exit()
+            sys.exit()
 
         prev_sub_summary = last_sub_summary
         sub_start_idx = next_sub_zero
@@ -1229,7 +1226,7 @@ def main(
     model_name: str,
     config: Any,
     planning_mode: str = "single",
-    user_specified_workspace: str = None,
+    user_specified_workspace: str | None = None,
     stepwise_exit: bool = False,
     resume_from: str | None = None,
     interactive_timeout: int = 60,
@@ -1264,7 +1261,7 @@ def main(
             sys.exit(1)
 
         # lock planning_mode per workspace
-        planning_mode, mode_locked = lock_or_warn_planning_mode(
+        planning_mode, _mode_locked = lock_or_warn_planning_mode(
             workspace, planning_mode
         )
         console.print(
@@ -1373,7 +1370,7 @@ def main(
         save_run_meta(workspace, thread_id=thread_id, model_name=model_name)
 
         # do the main planning step, or load it from checkpoint
-        plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
+        _plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
             planner,
             planner_checkpointer,
             pdb_path,
@@ -1677,7 +1674,7 @@ def main(
         return answer, workspace
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e!s}")
         import traceback
 
         traceback.print_exc()

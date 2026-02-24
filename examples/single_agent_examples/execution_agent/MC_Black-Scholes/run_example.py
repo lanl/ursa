@@ -137,10 +137,8 @@ def _verify_outputs(
     required = [outputs_dir / "results.csv", outputs_dir / "report.md"]
 
     plotting_enabled = bool(
-        (
-            ((preflight_details or {}).get("optional") or {}).get(
-                "plotting_enabled"
-            )
+        ((preflight_details or {}).get("optional") or {}).get(
+            "plotting_enabled"
         )
     )
 
@@ -357,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
 
             with ux.status("Writing agent debug artifacts..."):
                 state_dump = {
-                    "keys": sorted(list(result.keys())),
+                    "keys": sorted(result.keys()),
                     "code_files": result.get("code_files", []),
                     "messages": [
                         _serialize_message(m)

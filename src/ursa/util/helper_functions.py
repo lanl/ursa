@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable
@@ -17,7 +18,7 @@ def _parse_args(v: Any) -> dict[str, Any]:
     if isinstance(v, str):
         try:
             return json.loads(v)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return {"_raw": v}
     return {"_raw": v}
 
@@ -69,7 +70,7 @@ def _stringify_output(x: Any) -> str:
         return x
     try:
         return json.dumps(x, ensure_ascii=False)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return str(x)
 
 
@@ -132,7 +133,7 @@ def run_tool_calls(
             try:
                 result = _invoke_tool(registry[name], args)
                 content = _stringify_output(result)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 content = f"ERROR: {type(e).__name__}: {e}"
 
         out.append(

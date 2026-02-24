@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 
 from jsonargparse import ArgumentParser, set_parsing_settings
@@ -84,7 +85,7 @@ def main(args=None):
         import yaml
 
         print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))
-        exit(0)
+        sys.exit(0)
 
     match subcommand:
         case None:

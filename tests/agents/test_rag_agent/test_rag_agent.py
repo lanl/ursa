@@ -17,11 +17,10 @@ async def test_rag_agent_retrieves_contextual_documents(
     (database_dir / "mechanical_entanglement.pdf").write_bytes(b"%PDF-1.4\n")
 
     def fakePDFLoader(path_name):
-        doc_text = (
+        return (
             "Quantum entanglement between mechanical resonators enables "
             "ultra-sensitive force detection in cryogenic setups."
         )
-        return doc_text
 
     monkeypatch.setattr(
         "ursa.agents.rag_agent.read_text_from_file",

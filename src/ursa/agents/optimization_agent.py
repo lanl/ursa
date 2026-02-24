@@ -23,7 +23,7 @@ from ursa.prompt_library.optimization_prompts import (
     verifier_prompt,
 )
 from ursa.tools.feasibility_tools import feasibility_check_auto as fca
-from ursa.util.helperFunctions import extract_tool_calls, run_tool_calls
+from ursa.util.helper_functions import extract_tool_calls, run_tool_calls
 from ursa.util.optimization_schema import ProblemSpec, SolverSpec
 
 from .base import BaseAgent
@@ -308,7 +308,7 @@ def write_code(
         return f"File {filename} written successfully."
 
     except Exception as e:
-        print(f"Error generating code: {str(e)}")
+        print(f"Error generating code: {e!s}")
         # Return minimal code that prints the error
         return f"Failed to write {filename} successfully."
 

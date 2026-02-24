@@ -1,6 +1,6 @@
+from collections.abc import Iterator
 from math import sqrt
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from langchain.tools import ToolRuntime, tool

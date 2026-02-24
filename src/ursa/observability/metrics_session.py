@@ -29,14 +29,14 @@ def _dt(x: str) -> datetime:
 
 
 # Compact, predictable layout
-_LAYOUT = dict(
-    header_y=0.965,
-    subtitle_y=0.915,
-    legend_y=0.885,  # legend sits just under the subtitle
-    ax_rect=(0.10, 0.28, 0.86, 0.58),  # [left, bottom, width, height]
-    footer1_y=0.105,
-    footer2_y=0.070,
-)
+_LAYOUT = {
+    "header_y": 0.965,
+    "subtitle_y": 0.915,
+    "legend_y": 0.885,  # legend sits just under the subtitle
+    "ax_rect": (0.10, 0.28, 0.86, 0.58),  # [left, bottom, width, height]
+    "footer1_y": 0.105,
+    "footer2_y": 0.070,
+}
 
 ISO_RE = re.compile(r"Z$")
 
@@ -107,7 +107,7 @@ def scan_directory_for_threads(dir_path: str) -> dict[str, list[RunRecord]]:
         except Exception:
             continue
 
-    for tid, runs in sessions.items():
+    for runs in sessions.values():
         runs.sort(key=lambda r: r.started_at)
     return sessions
 
@@ -128,7 +128,7 @@ def list_threads_summary(
 
 def _abbrev_agent(agent: str) -> str:
     # Common cleanup: drop trailing 'Agent', trim to a tidy length
-    base = agent[:-5] if agent.endswith("Agent") else agent
+    base = agent.removesuffix("Agent")
     base = base.strip()
     return base if len(base) <= 10 else (base[:9] + "…")
 
@@ -355,8 +355,8 @@ def plot_thread_timeline_interactive(
     fig.update_yaxes(autorange="reversed")
     fig.update_layout(
         legend_title_text="Agent",
-        margin=dict(l=40, r=20, t=60, b=40),
-        hoverlabel=dict(namelength=-1),
+        margin={"l": 40, "r": 20, "t": 60, "b": 40},
+        hoverlabel={"namelength": -1},
     )
     # lock bounds to exact workflow window
     fig.update_xaxes(range=[df["start"].min(), df["end"].max()])
@@ -425,7 +425,7 @@ def extract_thread_token_stats(
         "cached_tokens": 0,
         "total_tokens": 0,
     }
-    samples = {k: [] for k in totals.keys()}
+    samples = {k: [] for k in totals}
 
     for r in runs:
         payload = load_metrics(r.path)
@@ -583,7 +583,7 @@ def aggregate_super_tokens_by_model(
 
     for d in thread_dirs:
         sessions = scan_directory_for_threads(d)
-        for _tid, runs in (sessions or {}).items():
+        for runs in (sessions or {}).values():
             for r in runs:
                 payload = load_metrics(r.path)
                 t_by_model, s_by_model = extract_run_tokens_by_model(payload)
@@ -704,7 +704,7 @@ def aggregate_super_token_stats_by_agent(
     sum_thread_secs = 0.0
     n_runs = 0
 
-    for _tid, runs in (sessions or {}).items():
+    for runs in (sessions or {}).values():
         if not runs:
             continue
         n_runs += len(runs)

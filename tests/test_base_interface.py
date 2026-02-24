@@ -70,7 +70,7 @@ def agent_instance(request, tmpdir: Path, chat_model, embedding_model):
     # Will display on failed tests
     try:
         agent.compiled_graph.get_graph().print_ascii()
-    except Exception as err:
+    except (AttributeError, ValueError) as err:
         print(f"Failed to create graph: {err}")
 
     return agent

@@ -13,13 +13,13 @@ import numpy as np
 from scipy.stats import gaussian_kde  # type: ignore
 
 # Layout spec for compact charts (fractions of figure size)
-_LAYOUT = dict(
-    header_y=1.1,  # big header (agent : thread_id)
-    subtitle_y=1.0,  # smaller subtitle (title/total)
-    ax_rect=(0.12, 0.310, 0.84, 0.58),  # [left, bottom, width, height]
-    footer1_y=0.105,  # run_id
-    footer2_y=0.050,  # started → ended
-)
+_LAYOUT = {
+    "header_y": 1.1,  # big header (agent : thread_id)
+    "subtitle_y": 1.0,  # smaller subtitle (title/total)
+    "ax_rect": (0.12, 0.310, 0.84, 0.58),  # [left, bottom, width, height]
+    "footer1_y": 0.105,  # run_id
+    "footer2_y": 0.050,  # started → ended
+}
 
 
 def compute_llm_wall_seconds(payload: dict) -> float:
@@ -446,7 +446,7 @@ def extract_llm_token_stats(
         "cached_tokens": 0,
         "total_tokens": 0,
     }
-    samples = {k: [] for k in totals.keys()}
+    samples = {k: [] for k in totals}
 
     for ev in events:
         m = (ev.get("metrics") or {}).get("usage_rollup") or {}
@@ -1083,11 +1083,10 @@ def plot_tokens_by_agent_stacked(
     width = 0.65
 
     # Build stacked series
-    series = []
-    for k in cats:
-        series.append([
-            int(totals_by_agent.get(a, {}).get(k, 0) or 0) for a in agents
-        ])
+    series = [
+        [int(totals_by_agent.get(a, {}).get(k, 0) or 0) for a in agents]
+        for k in cats
+    ]
 
     totals_per_agent = [sum(vals) for vals in zip(*series)]
     max_total = max(totals_per_agent) if totals_per_agent else 0

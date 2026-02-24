@@ -137,7 +137,6 @@ def run_osti_search(
             integer number of papers to return (defaults 3). Request fewer if searching for something
             very specific or a larger number if broadly searching for information. Do not exceeed 10.
     """
-    max_results
     try:
         agent = OSTIAgent(
             llm=runtime.context.llm,
