@@ -1,4 +1,5 @@
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from os import environ
@@ -103,6 +104,8 @@ class UrsaConfig(BaseModel):
         with open(path, "r") as fid:
             data = loader(fid)
 
+        data = deep_interp_env(data)
+
         return cls.model_validate(data)
 
     @field_serializer("workspace")
@@ -167,3 +170,44 @@ def deep_merge_dicts(
         else:
             merged[key] = value
     return merged
+
+
+ENV_SUB_REGEX = re.compile(r"\${(?P<env>\w+)(?::(?P<default>.+))?}")
+
+
+def deep_interp_env(x: dict[str, Any] | str | Any):
+    """Interpolate all environment variables in stored keys"""
+    if isinstance(x, dict):
+        return {k: deep_interp_env(v) for k, v in x.items()}
+    elif isinstance(x, str):
+        return interpolate_env(x)
+    else:
+        return x
+
+
+def interpolate_env(value: str) -> str:
+    """
+    Interpolate environment variables in a string
+
+    Supported patterns:
+        ${VAR}
+            Replaced with the value of VAR if set, otherwise an empty string.
+
+        ${VAR:DEFAULT}
+            Replaced with the value of VAR if set; otherwise replaced with
+            DEFAULT.
+
+    Args:
+        value: The input string containing zero or more environment
+            variable expressions.
+
+    Returns:
+        The input string with all supported environment variable
+        expressions expanded.
+    """
+
+    def interpolate_env(m: re.Match[str]) -> str:
+        groups = m.groupdict("")
+        return environ.get(groups["env"], default=groups["default"])
+
+    return ENV_SUB_REGEX.sub(interpolate_env, value)

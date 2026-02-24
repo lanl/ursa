@@ -91,6 +91,33 @@ def test_config_env_cli_precedence(tmp_path, monkeypatch):
     assert config_cli.emb_model.max_completion_tokens == 1024
 
 
+def test_config_file_env_interpolation(tmp_path, monkeypatch):
+    env_workspace = tmp_path / "env-workspace"
+    env_workspace.mkdir()
+    monkeypatch.setenv("URSA_CFG_WORKSPACE", str(env_workspace))
+    monkeypatch.setenv("URSA_CFG_LLM_MODEL", "openai:gpt-env")
+    monkeypatch.delenv("URSA_CFG_EMB_MODEL", raising=False)
+
+    cfg_path = tmp_path / "ursa-env.yml"
+    cfg_path.write_text(
+        "\n".join([
+            "workspace: ${URSA_CFG_WORKSPACE}",
+            "llm_model:",
+            "  model: ${URSA_CFG_LLM_MODEL}",
+            "emb_model:",
+            "  model: ${URSA_CFG_EMB_MODEL:openai:gpt-5}",
+        ])
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(["--config", str(cfg_path)])
+    config = resolve_config(args)
+
+    assert config.workspace == env_workspace
+    assert config.llm_model.model == "openai:gpt-env"
+    assert config.emb_model.model == "openai:gpt-5"
+
+
 def test_config_file_with_extra_keys(tmp_path):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
