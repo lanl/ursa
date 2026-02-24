@@ -1,11 +1,198 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+NonNegativeFloat = Annotated[float, Field(ge=0.0)]
+UnitFraction = Annotated[float, Field(ge=0.0, le=1.0)]
 
 _EPS = 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Pydantic input models
+# ---------------------------------------------------------------------------
+
+
+class SupplierInput(BaseModel):
+    """Validated input for a single supplier."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    capacity: NonNegativeFloat
+    unit_cost: NonNegativeFloat
+    risk_score: NonNegativeFloat = 0.0
+    composition_profile: dict[str, UnitFraction] | None = None
+
+    @field_validator("composition_profile", mode="before")
+    @classmethod
+    def _normalize_composition_keys(
+        cls, v: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if v is None:
+            return None
+        return {_normalize_component_name(k): val for k, val in v.items()}
+
+
+class OptimizationInput(BaseModel):
+    """Validated top-level optimization input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    commodity: str = "CMM"
+    demand: dict[str, float]
+    suppliers: list[SupplierInput]
+    shipping_cost: dict[str, dict[str, float]] | None = None
+    risk_weight: NonNegativeFloat = 0.0
+    unmet_demand_penalty: Annotated[float, Field(ge=1.0)] = 10000.0
+    max_supplier_share: UnitFraction = 1.0
+    composition_targets: dict[str, UnitFraction] | None = None
+    composition_tolerance: UnitFraction = 0.0
+
+    @field_validator("demand", mode="after")
+    @classmethod
+    def _demand_non_empty(cls, v: dict[str, float]) -> dict[str, float]:
+        if not v:
+            msg = "demand must be a non-empty mapping"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("suppliers", mode="after")
+    @classmethod
+    def _suppliers_non_empty(cls, v: list[SupplierInput]) -> list[SupplierInput]:
+        if not v:
+            msg = "suppliers must be a non-empty list"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("composition_targets", mode="before")
+    @classmethod
+    def _normalize_target_keys(
+        cls, v: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if v is None:
+            return None
+        return {_normalize_component_name(k): val for k, val in v.items()}
+
+    @model_validator(mode="after")
+    def _auto_name_suppliers(self) -> OptimizationInput:
+        for idx, supplier in enumerate(self.suppliers):
+            if supplier.name is None:
+                supplier.name = f"supplier_{idx + 1}"
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Pydantic output models
+# ---------------------------------------------------------------------------
+
+
+class AllocationItem(BaseModel):
+    """A single supplier-to-market allocation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    supplier: str
+    market: str
+    amount: float
+    unit_total_cost: float
+
+
+class ObjectiveBreakdown(BaseModel):
+    """Cost breakdown of the objective function."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    procurement: float
+    shipping: float
+    risk_penalty: float
+    unmet_penalty: float
+
+
+class CompositionResult(BaseModel):
+    """Composition constraint evaluation results."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    targets: dict[str, float]
+    actual: dict[str, float]
+    residuals: dict[str, float]
+    tolerance: float
+    feasible: bool
+
+
+class ConstraintResiduals(BaseModel):
+    """Residuals for all constraint groups."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    demand_balance: dict[str, float]
+    supplier_capacity: dict[str, float]
+    supplier_share_cap: dict[str, float]
+    composition: dict[str, float]
+
+
+class SensitivitySummary(BaseModel):
+    """Summary of binding constraints and bottlenecks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    active_capacity_constraints: list[str]
+    bottleneck_markets: list[str]
+    average_unit_cost: float
+    unmet_demand_total: float
+    composition_binding_components: list[str]
+    composition_feasible: bool
+
+
+class OptimizationOutput(BaseModel):
+    """Validated optimization result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    commodity: str
+    status: str
+    feasible: bool
+    objective_value: float
+    objective_breakdown: ObjectiveBreakdown
+    allocations: list[AllocationItem]
+    unmet_demand: dict[str, float]
+    constraint_residuals: ConstraintResiduals
+    composition: CompositionResult | None
+    sensitivity_summary: SensitivitySummary
+
+
+# ---------------------------------------------------------------------------
+# Validation error response
+# ---------------------------------------------------------------------------
+
+
+class ValidationErrorDetail(BaseModel):
+    """A single validation error."""
+
+    loc: list[str | int]
+    msg: str
+    type: str
+
+
+class OptimizationErrorResponse(BaseModel):
+    """Structured error response matching output schema conventions."""
+
+    commodity: str = "CMM"
+    status: str = "validation_error"
+    feasible: bool = False
+    errors: list[ValidationErrorDetail]
 
 
 @dataclass(frozen=True)
@@ -14,17 +201,6 @@ class _Supplier:
     capacity: float
     unit_cost: float
     risk_score: float
-
-
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
-
-
-def _to_fraction(value: Any, default: float = 0.0) -> float:
-    return max(0.0, min(1.0, _to_float(value, default)))
 
 
 def _normalize_component_name(name: Any) -> str:
@@ -280,7 +456,7 @@ def _rebalance_for_composition(
             return
 
 
-def _normalize_input(payload: dict[str, Any]) -> tuple[
+def _prepare_solver_input(inp: OptimizationInput) -> tuple[
     str,
     list[str],
     list[_Supplier],
@@ -293,83 +469,55 @@ def _normalize_input(payload: dict[str, Any]) -> tuple[
     float,
     dict[str, dict[str, float]],
 ]:
-    commodity = str(payload.get("commodity", "CMM"))
-
-    demand_raw = payload.get("demand", {})
-    if not isinstance(demand_raw, dict) or not demand_raw:
-        raise ValueError("optimization_input.demand must be a non-empty mapping")
-    markets = sorted(str(k) for k in demand_raw.keys())
-    demand = {str(k): _to_float(v, 0.0) for k, v in demand_raw.items()}
-
-    suppliers_raw = payload.get("suppliers", [])
-    if not isinstance(suppliers_raw, list) or not suppliers_raw:
-        raise ValueError("optimization_input.suppliers must be a non-empty list")
-
-    composition_targets_raw = payload.get("composition_targets", {})
-    composition_targets: dict[str, float] = {}
-    if isinstance(composition_targets_raw, dict):
-        for component, target in composition_targets_raw.items():
-            name = _normalize_component_name(component)
-            if not name:
-                continue
-            composition_targets[name] = _to_fraction(target, 0.0)
-    composition_tolerance = _to_fraction(
-        payload.get("composition_tolerance"),
-        0.0,
-    )
+    """Reshape a validated *OptimizationInput* into the tuple the solver expects."""
+    commodity = inp.commodity
+    markets = sorted(inp.demand.keys())
+    demand = dict(inp.demand)
 
     suppliers: list[_Supplier] = []
-    composition_profiles: dict[str, dict[str, float]] = {}
-    for idx, item in enumerate(suppliers_raw):
-        if not isinstance(item, dict):
-            raise ValueError("each supplier must be a mapping")
-        name = str(item.get("name") or f"supplier_{idx + 1}")
+    composition_profiles_raw: dict[str, dict[str, float]] = {}
+    for supplier_inp in inp.suppliers:
+        assert supplier_inp.name is not None  # guaranteed by model_validator
         suppliers.append(
             _Supplier(
-                name=name,
-                capacity=max(0.0, _to_float(item.get("capacity"), 0.0)),
-                unit_cost=max(0.0, _to_float(item.get("unit_cost"), 0.0)),
-                risk_score=max(0.0, _to_float(item.get("risk_score"), 0.0)),
+                name=supplier_inp.name,
+                capacity=supplier_inp.capacity,
+                unit_cost=supplier_inp.unit_cost,
+                risk_score=supplier_inp.risk_score,
             )
         )
-
-        raw_profile = item.get("composition_profile", {})
-        profile: dict[str, float] = {}
-        if isinstance(raw_profile, dict):
-            for component, fraction in raw_profile.items():
-                comp_name = _normalize_component_name(component)
-                if not comp_name:
-                    continue
-                profile[comp_name] = _to_fraction(fraction, 0.0)
-        composition_profiles[name] = profile
+        composition_profiles_raw[supplier_inp.name] = (
+            dict(supplier_inp.composition_profile)
+            if supplier_inp.composition_profile
+            else {}
+        )
 
     suppliers = sorted(suppliers, key=lambda supplier: supplier.name)
 
-    components = set(composition_targets.keys())
-    for profile in composition_profiles.values():
+    composition_targets: dict[str, float] = (
+        dict(inp.composition_targets) if inp.composition_targets else {}
+    )
+
+    components: set[str] = set(composition_targets.keys())
+    for profile in composition_profiles_raw.values():
         components.update(profile.keys())
 
     normalized_profiles: dict[str, dict[str, float]] = {}
     for supplier in suppliers:
-        profile = composition_profiles.get(supplier.name, {})
+        profile = composition_profiles_raw.get(supplier.name, {})
         normalized_profiles[supplier.name] = {
             component: profile.get(component, 0.0)
             for component in sorted(components)
         }
 
-    shipping_raw = payload.get("shipping_cost", {})
-    shipping_cost: dict[str, dict[str, float]] = {}
-    if isinstance(shipping_raw, dict):
-        for supplier_name, market_costs in shipping_raw.items():
-            if isinstance(market_costs, dict):
-                shipping_cost[str(supplier_name)] = {
-                    str(market): _to_float(cost, 0.0)
-                    for market, cost in market_costs.items()
-                }
-
-    risk_weight = max(0.0, _to_float(payload.get("risk_weight"), 0.0))
-    unmet_penalty = max(1.0, _to_float(payload.get("unmet_demand_penalty"), 10000.0))
-    max_supplier_share = _to_fraction(payload.get("max_supplier_share"), 1.0)
+    shipping_cost: dict[str, dict[str, float]] = (
+        {
+            supplier_name: dict(market_costs)
+            for supplier_name, market_costs in inp.shipping_cost.items()
+        }
+        if inp.shipping_cost
+        else {}
+    )
 
     return (
         commodity,
@@ -377,13 +525,32 @@ def _normalize_input(payload: dict[str, Any]) -> tuple[
         suppliers,
         demand,
         shipping_cost,
-        risk_weight,
-        unmet_penalty,
-        max_supplier_share,
+        inp.risk_weight,
+        inp.unmet_demand_penalty,
+        inp.max_supplier_share,
         composition_targets,
-        composition_tolerance,
+        inp.composition_tolerance,
         normalized_profiles,
     )
+
+
+def _validation_error_response(
+    payload: dict[str, Any],
+    exc: ValidationError,
+) -> dict[str, Any]:
+    """Convert a *ValidationError* into a dict matching the output schema conventions."""
+    commodity = str(payload.get("commodity", "CMM"))
+    return OptimizationErrorResponse(
+        commodity=commodity,
+        errors=[
+            ValidationErrorDetail(
+                loc=[str(x) for x in e["loc"]],
+                msg=e["msg"],
+                type=e["type"],
+            )
+            for e in exc.errors()
+        ],
+    ).model_dump()
 
 
 def _greedy_fallback(
@@ -438,42 +605,23 @@ def _greedy_fallback(
     return allocation, unmet, supplier_max, supplier_remaining
 
 
-def solve_cmm_supply_chain_optimization(
-    optimization_input: dict[str, Any],
+def _build_output(
+    *,
+    commodity: str,
+    allocation: dict[tuple[str, str], float],
+    unmet: dict[str, float],
+    suppliers: list[_Supplier],
+    markets: list[str],
+    demand: dict[str, float],
+    shipping_cost: dict[str, dict[str, float]],
+    risk_weight: float,
+    unmet_penalty: float,
+    supplier_max: dict[str, float],
+    composition_targets: dict[str, float],
+    composition_profiles: dict[str, dict[str, float]],
+    composition_tolerance: float,
 ) -> dict[str, Any]:
-    (
-        commodity,
-        markets,
-        suppliers,
-        demand,
-        shipping_cost,
-        risk_weight,
-        unmet_penalty,
-        max_supplier_share,
-        composition_targets,
-        composition_tolerance,
-        composition_profiles,
-    ) = _normalize_input(optimization_input)
-
-    allocation, unmet, supplier_max, supplier_remaining = _greedy_fallback(
-        markets=markets,
-        suppliers=suppliers,
-        demand=demand,
-        shipping_cost=shipping_cost,
-        risk_weight=risk_weight,
-        max_supplier_share=max_supplier_share,
-    )
-
-    _rebalance_for_composition(
-        allocation=allocation,
-        supplier_remaining=supplier_remaining,
-        suppliers=suppliers,
-        markets=markets,
-        composition_targets=composition_targets,
-        composition_profiles=composition_profiles,
-        composition_tolerance=composition_tolerance,
-    )
-
+    """Assemble the result dict and validate it through *OptimizationOutput*."""
     totals_by_supplier = _sum_allocated_by_supplier(allocation, suppliers)
     costs = _compute_costs(
         allocation=allocation,
@@ -571,44 +719,104 @@ def solve_cmm_supply_chain_optimization(
 
     composition_output = None
     if composition is not None:
-        composition_output = {
-            "targets": {
+        composition_output = CompositionResult(
+            targets={
                 component: round(float(target), 9)
                 for component, target in composition["targets"].items()
             },
-            "actual": {
+            actual={
                 component: round(float(actual), 9)
                 for component, actual in composition["actual"].items()
             },
-            "residuals": composition_residuals,
-            "tolerance": round(float(composition["tolerance"]), 9),
-            "feasible": composition_feasible,
-        }
+            residuals=composition_residuals,
+            tolerance=round(float(composition["tolerance"]), 9),
+            feasible=composition_feasible,
+        )
 
-    return {
-        "commodity": commodity,
-        "status": status,
-        "feasible": feasible,
-        "objective_value": round(objective_value, 6),
-        "objective_breakdown": {k: round(v, 6) for k, v in costs.items()},
-        "allocations": allocation_items,
-        "unmet_demand": {k: round(v, 6) for k, v in unmet.items()},
-        "constraint_residuals": {
-            "demand_balance": demand_residual,
-            "supplier_capacity": supplier_capacity_residual,
-            "supplier_share_cap": supplier_share_residual,
-            "composition": composition_residuals,
-        },
-        "composition": composition_output,
-        "sensitivity_summary": {
-            "active_capacity_constraints": active_capacity,
-            "bottleneck_markets": bottleneck_markets,
-            "average_unit_cost": round(avg_unit, 6),
-            "unmet_demand_total": round(unmet_total, 6),
-            "composition_binding_components": sorted(composition_binding),
-            "composition_feasible": composition_feasible,
-        },
-    }
+    return OptimizationOutput(
+        commodity=commodity,
+        status=status,
+        feasible=feasible,
+        objective_value=round(objective_value, 6),
+        objective_breakdown=ObjectiveBreakdown(
+            **{k: round(v, 6) for k, v in costs.items()},
+        ),
+        allocations=[AllocationItem(**item) for item in allocation_items],
+        unmet_demand={k: round(v, 6) for k, v in unmet.items()},
+        constraint_residuals=ConstraintResiduals(
+            demand_balance=demand_residual,
+            supplier_capacity=supplier_capacity_residual,
+            supplier_share_cap=supplier_share_residual,
+            composition=composition_residuals,
+        ),
+        composition=composition_output,
+        sensitivity_summary=SensitivitySummary(
+            active_capacity_constraints=active_capacity,
+            bottleneck_markets=bottleneck_markets,
+            average_unit_cost=round(avg_unit, 6),
+            unmet_demand_total=round(unmet_total, 6),
+            composition_binding_components=sorted(composition_binding),
+            composition_feasible=composition_feasible,
+        ),
+    ).model_dump()
+
+
+def solve_cmm_supply_chain_optimization(
+    optimization_input: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        inp = OptimizationInput.model_validate(optimization_input)
+    except ValidationError as exc:
+        return _validation_error_response(optimization_input, exc)
+
+    (
+        commodity,
+        markets,
+        suppliers,
+        demand,
+        shipping_cost,
+        risk_weight,
+        unmet_penalty,
+        max_supplier_share,
+        composition_targets,
+        composition_tolerance,
+        composition_profiles,
+    ) = _prepare_solver_input(inp)
+
+    allocation, unmet, supplier_max, supplier_remaining = _greedy_fallback(
+        markets=markets,
+        suppliers=suppliers,
+        demand=demand,
+        shipping_cost=shipping_cost,
+        risk_weight=risk_weight,
+        max_supplier_share=max_supplier_share,
+    )
+
+    _rebalance_for_composition(
+        allocation=allocation,
+        supplier_remaining=supplier_remaining,
+        suppliers=suppliers,
+        markets=markets,
+        composition_targets=composition_targets,
+        composition_profiles=composition_profiles,
+        composition_tolerance=composition_tolerance,
+    )
+
+    return _build_output(
+        commodity=commodity,
+        allocation=allocation,
+        unmet=unmet,
+        suppliers=suppliers,
+        markets=markets,
+        demand=demand,
+        shipping_cost=shipping_cost,
+        risk_weight=risk_weight,
+        unmet_penalty=unmet_penalty,
+        supplier_max=supplier_max,
+        composition_targets=composition_targets,
+        composition_profiles=composition_profiles,
+        composition_tolerance=composition_tolerance,
+    )
 
 
 @tool
