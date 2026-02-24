@@ -11,6 +11,7 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "BaseChatModel": (".base", "BaseChatModel"),
     "ChatAgent": (".chat_agent", "ChatAgent"),
     "CodeReviewAgent": (".code_review_agent", "CodeReviewAgent"),
+    "DSIAgent": (".dsi_agent", "DSIAgent"),
     "ExecutionAgent": (".execution_agent", "ExecutionAgent"),
     "HypothesizerAgent": (".hypothesizer_agent", "HypothesizerAgent"),
     "LammpsAgent": (".lammps_agent", "LammpsAgent"),
@@ -47,3 +48,4 @@ def __getattr__(name: str) -> Any:
 def __dir__() -> list[str]:
     # Include lazy attributes in dir(package)
     return sorted(list(globals().keys()) + list(__all__))
+

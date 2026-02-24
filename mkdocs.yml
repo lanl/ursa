@@ -26,6 +26,7 @@ nav:
       - chatOllama: chatollama_setup.md
   - Agents:
       - arXiv Agent: arxiv_agent.md
+      - DSIAgent: dsi_agent.md
       - Execution Agent: execution_agent.md
       - Hypothesizer Agent: hypothesizer_agent.md
       - Planning Agent: planning_agent.md
