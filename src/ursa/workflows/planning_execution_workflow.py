@@ -1,7 +1,4 @@
-import sqlite3
-from pathlib import Path
-
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import InMemorySaver
 from rich import get_console
 from rich.panel import Panel
 
@@ -24,14 +21,16 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self.executor = executor
         self.workspace = workspace
 
+        # DOES NOT CURRENTLY WORK IN WEB INTERFACE WITH SQL checkpointing
+        #     MOVING TO IN MEMORY CHECKPOINTING FOR NOW
         # Setup checkpointing
-        db_path = Path(workspace) / "checkpoint.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
+        # db_path = Path(workspace) / "checkpoint.db"
+        # db_path.parent.mkdir(parents=True, exist_ok=True)
+        # conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        # checkpointer = SqliteSaver(conn)
 
-        self.planner.checkpointer = checkpointer
-        self.executor.checkpointer = checkpointer
+        self.planner.checkpointer = InMemorySaver()
+        self.executor.checkpointer = InMemorySaver()
 
     def _invoke(self, task: str, **kw):
         with console.status(
