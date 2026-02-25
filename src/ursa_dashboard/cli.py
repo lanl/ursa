@@ -1,8 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
+import threading
+import time
+import webbrowser
+
+
+def open_browser(host: str, port: int):
+    """Attempt to open the browser for the ursa dashboard"""
+    time.sleep(1)
+    try:
+        webbrowser.open(f"http://{host}:{port}")
+    except Exception:
+        logging.warning(
+            f"Failed to open browser. Run `open http://{host}:{port}` to connect"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Launch the dashboard in a browser
+    browser_thread = threading.Thread(
+        target=lambda: open_browser(args.host, args.port)
+    )
+    browser_thread.start()
 
     uvicorn.run(
         "ursa_dashboard.app:create_app",
