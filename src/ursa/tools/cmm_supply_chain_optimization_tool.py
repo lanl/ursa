@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -12,6 +13,10 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from ursa.tools._lp_solver import LPResult, scipy_available, solve_lp
+
+_log = logging.getLogger(__name__)
 
 NonNegativeFloat = Annotated[float, Field(ge=0.0)]
 UnitFraction = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -38,7 +43,8 @@ class SupplierInput(BaseModel):
     @field_validator("composition_profile", mode="before")
     @classmethod
     def _normalize_composition_keys(
-        cls, v: dict[str, Any] | None,
+        cls,
+        v: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         if v is None:
             return None
@@ -59,6 +65,7 @@ class OptimizationInput(BaseModel):
     max_supplier_share: UnitFraction = 1.0
     composition_targets: dict[str, UnitFraction] | None = None
     composition_tolerance: UnitFraction = 0.0
+    solver_backend: str | None = None
 
     @field_validator("demand", mode="after")
     @classmethod
@@ -70,7 +77,9 @@ class OptimizationInput(BaseModel):
 
     @field_validator("suppliers", mode="after")
     @classmethod
-    def _suppliers_non_empty(cls, v: list[SupplierInput]) -> list[SupplierInput]:
+    def _suppliers_non_empty(
+        cls, v: list[SupplierInput]
+    ) -> list[SupplierInput]:
         if not v:
             msg = "suppliers must be a non-empty list"
             raise ValueError(msg)
@@ -79,7 +88,8 @@ class OptimizationInput(BaseModel):
     @field_validator("composition_targets", mode="before")
     @classmethod
     def _normalize_target_keys(
-        cls, v: dict[str, Any] | None,
+        cls,
+        v: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         if v is None:
             return None
@@ -156,6 +166,17 @@ class SensitivitySummary(BaseModel):
     composition_feasible: bool
 
 
+class ShadowPrices(BaseModel):
+    """Dual values from LP solver indicating marginal costs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    demand_balance: dict[str, float]
+    supplier_capacity: dict[str, float]
+    supplier_share_cap: dict[str, float]
+    composition: dict[str, float]
+
+
 class OptimizationOutput(BaseModel):
     """Validated optimization result."""
 
@@ -171,6 +192,7 @@ class OptimizationOutput(BaseModel):
     constraint_residuals: ConstraintResiduals
     composition: CompositionResult | None
     sensitivity_summary: SensitivitySummary
+    shadow_prices: ShadowPrices | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +398,9 @@ def _rebalance_for_composition(
                 donor_candidates = sorted(
                     suppliers,
                     key=lambda supplier: (
-                        -composition_profiles[supplier.name].get(component, 0.0),
+                        -composition_profiles[supplier.name].get(
+                            component, 0.0
+                        ),
                         supplier.name,
                     ),
                 )
@@ -398,7 +422,9 @@ def _rebalance_for_composition(
                 receiver_candidates = sorted(
                     suppliers,
                     key=lambda supplier: (
-                        -composition_profiles[supplier.name].get(component, 0.0),
+                        -composition_profiles[supplier.name].get(
+                            component, 0.0
+                        ),
                         supplier.name,
                     ),
                 )
@@ -409,7 +435,9 @@ def _rebalance_for_composition(
                 if donor_amount <= _EPS:
                     continue
 
-                donor_profile = composition_profiles[donor_name].get(component, 0.0)
+                donor_profile = composition_profiles[donor_name].get(
+                    component, 0.0
+                )
                 for receiver in receiver_candidates:
                     receiver_name = receiver.name
                     if receiver_name == donor_name:
@@ -456,7 +484,9 @@ def _rebalance_for_composition(
             return
 
 
-def _prepare_solver_input(inp: OptimizationInput) -> tuple[
+def _prepare_solver_input(
+    inp: OptimizationInput,
+) -> tuple[
     str,
     list[str],
     list[_Supplier],
@@ -620,6 +650,8 @@ def _build_output(
     composition_targets: dict[str, float],
     composition_profiles: dict[str, dict[str, float]],
     composition_tolerance: float,
+    shadow_prices: dict[str, Any] | None = None,
+    status_override: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the result dict and validate it through *OptimizationOutput*."""
     totals_by_supplier = _sum_allocated_by_supplier(allocation, suppliers)
@@ -643,14 +675,12 @@ def _build_output(
             + shipping_cost.get(supplier_name, {}).get(market, 0.0)
             + risk_weight * supplier.risk_score
         )
-        allocation_items.append(
-            {
-                "supplier": supplier_name,
-                "market": market,
-                "amount": round(amount, 6),
-                "unit_total_cost": round(unit_total, 6),
-            }
-        )
+        allocation_items.append({
+            "supplier": supplier_name,
+            "market": market,
+            "amount": round(amount, 6),
+            "unit_total_cost": round(unit_total, 6),
+        })
 
     demand_residual: dict[str, float] = {}
     for market in markets:
@@ -659,7 +689,9 @@ def _build_output(
             for (supplier_name, mkt), amount in allocation.items()
             if mkt == market and supplier_name
         )
-        demand_residual[market] = round(allocated + unmet[market] - demand[market], 9)
+        demand_residual[market] = round(
+            allocated + unmet[market] - demand[market], 9
+        )
 
     supplier_capacity_residual: dict[str, float] = {}
     supplier_share_residual: dict[str, float] = {}
@@ -699,7 +731,9 @@ def _build_output(
         ]
 
     feasible = unmet_total <= _EPS and composition_feasible
-    if unmet_total > _EPS and not composition_feasible:
+    if status_override is not None:
+        status = status_override
+    elif unmet_total > _EPS and not composition_feasible:
         status = "infeasible_unmet_and_composition"
     elif unmet_total > _EPS:
         status = "infeasible_unmet_demand"
@@ -733,6 +767,24 @@ def _build_output(
             feasible=composition_feasible,
         )
 
+    shadow_prices_model = None
+    if shadow_prices is not None:
+        shadow_prices_model = ShadowPrices(
+            demand_balance=shadow_prices.get(
+                "demand_balance",
+                {},
+            ),
+            supplier_capacity=shadow_prices.get(
+                "supplier_capacity",
+                {},
+            ),
+            supplier_share_cap=shadow_prices.get(
+                "supplier_share_cap",
+                {},
+            ),
+            composition=shadow_prices.get("composition", {}),
+        )
+
     return OptimizationOutput(
         commodity=commodity,
         status=status,
@@ -758,6 +810,7 @@ def _build_output(
             composition_binding_components=sorted(composition_binding),
             composition_feasible=composition_feasible,
         ),
+        shadow_prices=shadow_prices_model,
     ).model_dump()
 
 
@@ -783,6 +836,96 @@ def solve_cmm_supply_chain_optimization(
         composition_profiles,
     ) = _prepare_solver_input(inp)
 
+    backend = inp.solver_backend
+    total_demand = sum(demand.values())
+
+    # --- Try LP solver when appropriate ---
+    if backend != "greedy":
+        lp_ok = scipy_available()
+        if not lp_ok and backend == "lp":
+            return OptimizationErrorResponse(
+                commodity=commodity,
+                errors=[
+                    ValidationErrorDetail(
+                        loc=["solver_backend"],
+                        msg=("LP backend requested but scipy is not installed"),
+                        type="import_error",
+                    ),
+                ],
+            ).model_dump()
+
+        if lp_ok:
+            lp_result: LPResult = solve_lp(
+                suppliers=suppliers,
+                markets=markets,
+                demand=demand,
+                shipping_cost=shipping_cost,
+                risk_weight=risk_weight,
+                unmet_penalty=unmet_penalty,
+                max_supplier_share=max_supplier_share,
+                composition_targets=(
+                    composition_targets if composition_targets else None
+                ),
+                composition_tolerance=composition_tolerance,
+                composition_profiles=(
+                    composition_profiles if composition_profiles else None
+                ),
+            )
+
+            if lp_result.success:
+                # Compute supplier_max for _build_output
+                share_cap = max_supplier_share * total_demand
+                lp_supplier_max = {
+                    sup.name: min(sup.capacity, share_cap) for sup in suppliers
+                }
+
+                lp_shadow = {
+                    "demand_balance": (lp_result.shadow_prices_demand),
+                    "supplier_capacity": (lp_result.shadow_prices_capacity),
+                    "supplier_share_cap": (lp_result.shadow_prices_share),
+                    "composition": (lp_result.shadow_prices_composition),
+                }
+
+                lp_status = "optimal_lp"
+                if sum(lp_result.unmet.values()) > _EPS:
+                    lp_status = "infeasible_unmet_demand"
+
+                return _build_output(
+                    commodity=commodity,
+                    allocation=lp_result.allocation,
+                    unmet=lp_result.unmet,
+                    suppliers=suppliers,
+                    markets=markets,
+                    demand=demand,
+                    shipping_cost=shipping_cost,
+                    risk_weight=risk_weight,
+                    unmet_penalty=unmet_penalty,
+                    supplier_max=lp_supplier_max,
+                    composition_targets=composition_targets,
+                    composition_profiles=composition_profiles,
+                    composition_tolerance=composition_tolerance,
+                    shadow_prices=lp_shadow,
+                    status_override=lp_status,
+                )
+
+            if backend == "lp":
+                return OptimizationErrorResponse(
+                    commodity=commodity,
+                    errors=[
+                        ValidationErrorDetail(
+                            loc=["solver_backend"],
+                            msg=(f"LP solver failed: {lp_result.status}"),
+                            type="solver_error",
+                        ),
+                    ],
+                ).model_dump()
+
+            _log.info(
+                "LP solver failed (%s), falling back to greedy",
+                lp_result.status,
+            )
+
+    # --- Greedy fallback ---
     allocation, unmet, supplier_max, supplier_remaining = _greedy_fallback(
         markets=markets,
         suppliers=suppliers,
