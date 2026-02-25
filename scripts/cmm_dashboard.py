@@ -198,13 +198,13 @@ def load_scenarios(path_str: str) -> dict[str, object]:
 
 @st.cache_data(show_spinner="Solving all scenarios...")
 def run_all_scenarios(
-    _scenarios_json: str,
+    scenarios_json: str,
 ) -> dict[str, dict[str, object]]:
     """Solve the optimisation for every scenario.
 
     Parameters
     ----------
-    _scenarios_json
+    scenarios_json
         JSON-serialised scenarios dict (used as cache key).
 
     Returns
@@ -212,7 +212,7 @@ def run_all_scenarios(
     dict
         ``{scenario_key: result_dict}``
     """
-    scenarios: dict[str, object] = json.loads(_scenarios_json)
+    scenarios: dict[str, object] = json.loads(scenarios_json)
     results: dict[str, dict[str, object]] = {}
     for key, cfg in scenarios.items():
         results[key] = solve_cmm_supply_chain_optimization(
