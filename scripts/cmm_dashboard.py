@@ -655,10 +655,13 @@ def build_risk_cost_scatter(
 def build_shadow_price_bars(
     result: dict[str, object],
     supplier_short: dict[str, str],
-) -> tuple[go.Figure, go.Figure] | None:
-    """Build demand + capacity shadow price bar charts.
+) -> tuple[go.Figure, go.Figure, go.Figure | None] | None:
+    """Build demand + capacity + composition shadow price bar charts.
 
     Returns ``None`` when no shadow prices are present.
+    Otherwise returns ``(demand_fig, capacity_fig, composition_fig)``,
+    where ``composition_fig`` may be ``None`` if no composition duals
+    exist.
     """
     sp = result.get("shadow_prices")
     if not sp:
@@ -686,27 +689,49 @@ def build_shadow_price_bars(
             **LAYOUT_DEFAULTS,
         )
 
-    # Capacity shadow prices
+    # Capacity + share shadow prices (stacked by type)
     cap_sp = sp.get("supplier_capacity", {})
     share_sp = sp.get("supplier_share_cap", {})
-    combined_cap: dict[str, float] = {}
-    for name in set(list(cap_sp.keys()) + list(share_sp.keys())):
-        combined_cap[supplier_short.get(name, name)] = cap_sp.get(
-            name, 0.0
-        ) + share_sp.get(name, 0.0)
+    all_names = sorted(set(list(cap_sp.keys()) + list(share_sp.keys())))
 
-    if combined_cap:
-        df_c = pd.DataFrame([
-            {"Supplier": k, "Shadow Price ($/t)": v}
-            for k, v in combined_cap.items()
-        ])
+    if all_names:
+        cap_rows: list[dict[str, object]] = []
+        for name in all_names:
+            short = supplier_short.get(name, name)
+            cap_val = cap_sp.get(name, 0.0)
+            share_val = share_sp.get(name, 0.0)
+            if abs(cap_val) > 1e-9:
+                cap_rows.append({
+                    "Supplier": short,
+                    "Constraint": "Capacity",
+                    "Shadow Price ($/t)": cap_val,
+                })
+            if abs(share_val) > 1e-9:
+                cap_rows.append({
+                    "Supplier": short,
+                    "Constraint": "Share Cap",
+                    "Shadow Price ($/t)": share_val,
+                })
+            if abs(cap_val) <= 1e-9 and abs(share_val) <= 1e-9:
+                cap_rows.append({
+                    "Supplier": short,
+                    "Constraint": "Capacity",
+                    "Shadow Price ($/t)": 0.0,
+                })
+
+        df_c = pd.DataFrame(cap_rows)
         fig_c = px.bar(
             df_c,
             x="Supplier",
             y="Shadow Price ($/t)",
-            title=("Capacity Shadow Prices (Marginal Value of +1t)"),
+            color="Constraint",
+            barmode="relative",
+            title="Capacity Shadow Prices (Marginal Value of +1t)",
             template="plotly_dark",
-            color_discrete_sequence=["#ef553b"],
+            color_discrete_map={
+                "Capacity": "#ef553b",
+                "Share Cap": "#ffa15a",
+            },
         )
         fig_c.update_layout(**LAYOUT_DEFAULTS)
     else:
@@ -716,17 +741,44 @@ def build_shadow_price_bars(
             **LAYOUT_DEFAULTS,
         )
 
-    return fig_d, fig_c
+    # Composition shadow prices (if present)
+    comp_sp = sp.get("composition", {})
+    fig_comp: go.Figure | None = None
+    if any(abs(v) > 1e-9 for v in comp_sp.values()):
+        df_comp = pd.DataFrame([
+            {"Component": k, "Shadow Price ($/unit)": v}
+            for k, v in comp_sp.items()
+            if abs(v) > 1e-9
+        ])
+        fig_comp = px.bar(
+            df_comp,
+            x="Component",
+            y="Shadow Price ($/unit)",
+            title="Composition Constraint Shadow Prices",
+            template="plotly_dark",
+            color_discrete_sequence=["#00d4aa"],
+        )
+        fig_comp.update_layout(**LAYOUT_DEFAULTS)
+
+    return fig_d, fig_c, fig_comp
 
 
 def build_multi_scenario_shadow_comparison(
     results: dict[str, dict[str, object]],
     scenario_labels: dict[str, str],
     supplier_short: dict[str, str],
-) -> go.Figure | None:
-    """Bar comparing capacity shadow prices across scenarios."""
-    rows: list[dict[str, object]] = []
+) -> dict[str, go.Figure]:
+    """Build shadow price comparison charts across scenarios.
+
+    Returns a dict with keys ``"demand"``, ``"supply"``, and
+    optionally ``"composition"``.  Returns empty dict when no
+    shadow prices are present in any result.
+    """
+    demand_rows: list[dict[str, object]] = []
+    supply_rows: list[dict[str, object]] = []
+    comp_rows: list[dict[str, object]] = []
     any_shadow = False
+
     for key in results:
         label = scenario_labels.get(key, key)
         r = results[key]
@@ -734,34 +786,127 @@ def build_multi_scenario_shadow_comparison(
         if not sp:
             continue
         any_shadow = True
+
+        # Demand shadow prices per market
+        for mkt, val in sp.get("demand_balance", {}).items():
+            demand_rows.append({
+                "Scenario": label,
+                "Market": mkt,
+                "Shadow Price ($/t)": val,
+            })
+
+        # Supply shadow prices (capacity + share) per supplier
         cap_sp = sp.get("supplier_capacity", {})
         share_sp = sp.get("supplier_share_cap", {})
-        all_names = set(list(cap_sp.keys()) + list(share_sp.keys()))
+        all_names = sorted(set(list(cap_sp.keys()) + list(share_sp.keys())))
         for name in all_names:
             combined = cap_sp.get(name, 0.0) + share_sp.get(name, 0.0)
-            rows.append({
+            supply_rows.append({
                 "Scenario": label,
                 "Supplier": supplier_short.get(name, name),
                 "Shadow Price ($/t)": abs(combined),
             })
 
-    if not any_shadow:
-        return None
+        # Composition shadow prices
+        for comp_name, val in sp.get("composition", {}).items():
+            if abs(val) > 1e-9:
+                comp_rows.append({
+                    "Scenario": label,
+                    "Component": comp_name,
+                    "Shadow Price ($/unit)": abs(val),
+                })
 
-    df = pd.DataFrame(rows)
-    fig = px.bar(
-        df,
-        x="Supplier",
-        y="Shadow Price ($/t)",
-        color="Scenario",
-        barmode="group",
-        title=(
-            "Capacity Shadow Prices Across Scenarios (|marginal value| of +1t)"
-        ),
-        template="plotly_dark",
-    )
-    fig.update_layout(**LAYOUT_DEFAULTS, height=450)
-    return fig
+    if not any_shadow:
+        return {}
+
+    figs: dict[str, go.Figure] = {}
+
+    # --- Demand shadow prices comparison ---
+    if demand_rows:
+        df_d = pd.DataFrame(demand_rows)
+        fig_d = px.bar(
+            df_d,
+            x="Market",
+            y="Shadow Price ($/t)",
+            color="Scenario",
+            barmode="group",
+            title=(
+                "Demand Shadow Prices Across Scenarios"
+                " (Marginal Cost per Market)"
+            ),
+            template="plotly_dark",
+        )
+        fig_d.update_layout(**LAYOUT_DEFAULTS, height=400)
+
+        # Use log scale if range exceeds 100x
+        vals = [
+            r["Shadow Price ($/t)"]
+            for r in demand_rows
+            if r["Shadow Price ($/t)"] > 0
+        ]
+        if vals and max(vals) / max(min(vals), 0.01) > 100:
+            fig_d.update_yaxes(type="log")
+
+        figs["demand"] = fig_d
+
+    # --- Supply constraint shadow prices comparison ---
+    if supply_rows:
+        df_s = pd.DataFrame(supply_rows)
+        fig_s = px.bar(
+            df_s,
+            x="Supplier",
+            y="Shadow Price ($/t)",
+            color="Scenario",
+            barmode="group",
+            title=(
+                "Supply Constraint Shadow Prices Across Scenarios"
+                " (|marginal value| of +1t capacity)"
+            ),
+            template="plotly_dark",
+        )
+        fig_s.update_layout(**LAYOUT_DEFAULTS, height=400)
+
+        # Use log scale if range exceeds 100x to prevent
+        # infeasible-scenario penalties from compressing
+        # feasible-scenario bars to invisibility.
+        vals = [
+            r["Shadow Price ($/t)"]
+            for r in supply_rows
+            if r["Shadow Price ($/t)"] > 0
+        ]
+        if vals and max(vals) / max(min(vals), 0.01) > 100:
+            fig_s.update_yaxes(type="log")
+
+        figs["supply"] = fig_s
+
+    # --- Composition constraint shadow prices comparison ---
+    if comp_rows:
+        df_c = pd.DataFrame(comp_rows)
+        fig_c = px.bar(
+            df_c,
+            x="Component",
+            y="Shadow Price ($/unit)",
+            color="Scenario",
+            barmode="group",
+            title=(
+                "Composition Constraint Shadow Prices"
+                " (Cost of Tightening Tolerance by 1 Unit)"
+            ),
+            template="plotly_dark",
+        )
+        fig_c.update_layout(**LAYOUT_DEFAULTS, height=400)
+
+        vals = [
+            r["Shadow Price ($/unit)"]
+            for r in comp_rows
+            if r["Shadow Price ($/unit)"] > 0
+        ]
+        if vals and max(vals) / max(min(vals), 0.01) > 100:
+            fig_c.update_yaxes(type="log")
+
+        figs["composition"] = fig_c
+
+    return figs
 
 
 # ---------------------------------------------------------------------------
@@ -931,16 +1076,22 @@ def main() -> None:
                 supplier_short,
             )
             if sp_figs is not None:
+                fig_d, fig_c, fig_comp = sp_figs
                 st.subheader("Shadow Prices (LP Duals)")
                 sp_left, sp_right = st.columns(2)
                 with sp_left:
                     st.plotly_chart(
-                        sp_figs[0],
+                        fig_d,
                         use_container_width=True,
                     )
                 with sp_right:
                     st.plotly_chart(
-                        sp_figs[1],
+                        fig_c,
+                        use_container_width=True,
+                    )
+                if fig_comp is not None:
+                    st.plotly_chart(
+                        fig_comp,
                         use_container_width=True,
                     )
                 st.caption(
@@ -949,7 +1100,12 @@ def main() -> None:
                     " additional tonne to each market."
                     " **Capacity shadow prices** show"
                     " the cost reduction from adding"
-                    " one tonne of supplier capacity."
+                    " one tonne of supplier capacity"
+                    " (split by capacity vs. share cap"
+                    " constraint). A supplier with zero"
+                    " capacity shadow price may be"
+                    " bottlenecked by **composition**"
+                    " constraints instead."
                 )
 
     # ===== Multi-scenario tab =====================================
@@ -1010,24 +1166,63 @@ def main() -> None:
             )
 
             # Row 3: Shadow price comparison
-            shadow_fig = build_multi_scenario_shadow_comparison(
+            shadow_figs = build_multi_scenario_shadow_comparison(
                 results,
                 scenario_labels,
                 supplier_short,
             )
-            if shadow_fig is not None:
+            if shadow_figs:
                 st.subheader("Shadow Price Comparison Across Scenarios")
-                st.plotly_chart(
-                    shadow_fig,
-                    use_container_width=True,
-                )
-                st.caption(
-                    "Compares the marginal value of"
-                    " additional capacity from each"
-                    " supplier across scenarios. Higher"
-                    " values indicate tighter capacity"
-                    " constraints."
-                )
+
+                # Demand shadow prices — best indicator of system tightening
+                if "demand" in shadow_figs:
+                    st.plotly_chart(
+                        shadow_figs["demand"],
+                        use_container_width=True,
+                    )
+                    st.caption(
+                        "**Demand shadow prices** are the"
+                        " most direct indicator of market"
+                        " tightness. Higher values mean it"
+                        " costs more to serve one additional"
+                        " tonne in that market. These should"
+                        " increase monotonically as supply"
+                        " tightens."
+                    )
+
+                # Supply constraint shadow prices
+                if "supply" in shadow_figs:
+                    st.plotly_chart(
+                        shadow_figs["supply"],
+                        use_container_width=True,
+                    )
+                    st.caption(
+                        "**Supply constraint shadow prices**"
+                        " show the value of adding one tonne"
+                        " of capacity from each supplier."
+                        " A supplier with a low value under"
+                        " tight supply may be bottlenecked"
+                        " by composition or share constraints"
+                        " rather than capacity."
+                        " Log scale is used when infeasible"
+                        " scenarios create large penalties."
+                    )
+
+                # Composition constraint shadow prices
+                if "composition" in shadow_figs:
+                    st.plotly_chart(
+                        shadow_figs["composition"],
+                        use_container_width=True,
+                    )
+                    st.caption(
+                        "**Composition constraint shadow"
+                        " prices** show the cost of"
+                        " tightening specification tolerances."
+                        " Large values indicate that blend"
+                        " quality requirements are the"
+                        " dominant bottleneck, not raw"
+                        " capacity."
+                    )
 
 
 if __name__ == "__main__":
