@@ -11,7 +11,7 @@ from .storage import read_json, utc_now, write_json
 
 
 class LLMSettings(BaseModel):
-    model: str = "openai:gpt-4o-mini"
+    model: str = "openai:gpt-5.2"
     base_url: str | None = None
 
     # Security: we intentionally do *not* store an API key in settings.json.
@@ -22,7 +22,7 @@ class LLMSettings(BaseModel):
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
     )
 
-    max_tokens: int = 2048
+    max_tokens: int = 25000
     temperature: float = 0.2
 
     @field_validator("api_key_env_var")
