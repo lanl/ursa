@@ -43,6 +43,8 @@ try:
 except Exception:
     OpenAI = None
 
+VISION_MODEL = os.environ.get("URSA_VISION_MODEL", "gpt-4o-mini")
+
 
 # ---------- Shared State / Types ----------
 
@@ -120,7 +122,7 @@ def describe_image(image: Image.Image) -> str:
 
     img_b64 = base64.b64encode(buf.getvalue()).decode()
     resp = client.chat.completions.create(
-        model="gpt-4-vision-preview",
+        model=VISION_MODEL,
         messages=[
             {
                 "role": "system",

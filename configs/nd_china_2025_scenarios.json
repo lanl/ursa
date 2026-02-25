@@ -1,0 +1,284 @@
+{
+  "nd_preshock_baseline": {
+    "task": "Assess NdPr oxide supply chain posture before China MOFCOM 2025 export controls take effect.",
+    "rag_context": "Focus on global NdPr oxide production capacity, existing trade flows, and baseline geopolitical risk for US/EU/JP/KR magnet manufacturing supply chains. Key suppliers: China consolidated (dominant), Lynas (Australia), MP Materials (USA), Neo Performance (EU), domestic recycled (USA).",
+    "execution_instruction": "Produce a baseline supply-chain assessment for NdPr oxide procurement showing allocation feasibility, cost structure, and supplier concentration risk before any export restrictions.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "NDPR_OXIDE",
+      "demand": {
+        "US_DEFENSE": 800,
+        "US_COMMERCIAL": 3700,
+        "EU_AUTOMOTIVE": 3000,
+        "EU_INDUSTRIAL": 3500,
+        "JP_AUTOMOTIVE": 2000,
+        "KR_ELECTRONICS": 1500
+      },
+      "suppliers": [
+        {
+          "name": "China_consolidated",
+          "capacity": 12000,
+          "unit_cost": 85.0,
+          "risk_score": 0.15
+        },
+        {
+          "name": "Lynas_Australia",
+          "capacity": 12000,
+          "unit_cost": 120.0,
+          "risk_score": 0.10
+        },
+        {
+          "name": "MP_Materials_USA",
+          "capacity": 1300,
+          "unit_cost": 110.0,
+          "risk_score": 0.05
+        },
+        {
+          "name": "Neo_Performance_EU",
+          "capacity": 2000,
+          "unit_cost": 120.0,
+          "risk_score": 0.20
+        },
+        {
+          "name": "Recycled_domestic_USA",
+          "capacity": 600,
+          "unit_cost": 70.0,
+          "risk_score": 0.08
+        }
+      ],
+      "shipping_cost": {
+        "China_consolidated": {
+          "US_DEFENSE": 0.725,
+          "US_COMMERCIAL": 0.725,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 0.4,
+          "KR_ELECTRONICS": 0.35
+        },
+        "Lynas_Australia": {
+          "US_DEFENSE": 1.2,
+          "US_COMMERCIAL": 1.2,
+          "EU_AUTOMOTIVE": 1.725,
+          "EU_INDUSTRIAL": 1.725,
+          "JP_AUTOMOTIVE": 0.9,
+          "KR_ELECTRONICS": 0.95
+        },
+        "MP_Materials_USA": {
+          "US_DEFENSE": 0.1,
+          "US_COMMERCIAL": 0.1,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 1.3,
+          "KR_ELECTRONICS": 1.3
+        },
+        "Neo_Performance_EU": {
+          "US_DEFENSE": 1.0,
+          "US_COMMERCIAL": 1.0,
+          "EU_AUTOMOTIVE": 0.1,
+          "EU_INDUSTRIAL": 0.1,
+          "JP_AUTOMOTIVE": 1.5,
+          "KR_ELECTRONICS": 1.5
+        },
+        "Recycled_domestic_USA": {
+          "US_DEFENSE": 0.1,
+          "US_COMMERCIAL": 0.1,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 1.3,
+          "KR_ELECTRONICS": 1.3
+        }
+      },
+      "risk_weight": 5.0,
+      "unmet_demand_penalty": 50000,
+      "max_supplier_share": 0.50
+    }
+  },
+  "nd_post_april_2025": {
+    "task": "Model NdPr oxide supply chain impact of China MOFCOM April 2025 initial HREE export controls (Notice 2025 No. 61).",
+    "rag_context": "April 2025: China implements initial rare earth export licensing under MOFCOM Notice 2025 No. 61. Chinese NdPr oxide export capacity drops from 12,000 to 7,000 t/yr as license approvals slow. Prices rise across all suppliers due to market tightening. Risk weight increases to reflect supply uncertainty.",
+    "execution_instruction": "Produce a post-April 2025 impact assessment showing how initial Chinese export controls redistribute NdPr oxide flows, increase costs, and create capacity pressure on alternative suppliers.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "NDPR_OXIDE",
+      "demand": {
+        "US_DEFENSE": 800,
+        "US_COMMERCIAL": 3700,
+        "EU_AUTOMOTIVE": 3000,
+        "EU_INDUSTRIAL": 3500,
+        "JP_AUTOMOTIVE": 2000,
+        "KR_ELECTRONICS": 1500
+      },
+      "suppliers": [
+        {
+          "name": "China_consolidated",
+          "capacity": 7000,
+          "unit_cost": 95.0,
+          "risk_score": 0.50
+        },
+        {
+          "name": "Lynas_Australia",
+          "capacity": 12000,
+          "unit_cost": 126.0,
+          "risk_score": 0.10
+        },
+        {
+          "name": "MP_Materials_USA",
+          "capacity": 1300,
+          "unit_cost": 115.0,
+          "risk_score": 0.05
+        },
+        {
+          "name": "Neo_Performance_EU",
+          "capacity": 2000,
+          "unit_cost": 126.0,
+          "risk_score": 0.20
+        },
+        {
+          "name": "Recycled_domestic_USA",
+          "capacity": 600,
+          "unit_cost": 75.0,
+          "risk_score": 0.08
+        }
+      ],
+      "shipping_cost": {
+        "China_consolidated": {
+          "US_DEFENSE": 0.725,
+          "US_COMMERCIAL": 0.725,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 0.4,
+          "KR_ELECTRONICS": 0.35
+        },
+        "Lynas_Australia": {
+          "US_DEFENSE": 1.2,
+          "US_COMMERCIAL": 1.2,
+          "EU_AUTOMOTIVE": 1.725,
+          "EU_INDUSTRIAL": 1.725,
+          "JP_AUTOMOTIVE": 0.9,
+          "KR_ELECTRONICS": 0.95
+        },
+        "MP_Materials_USA": {
+          "US_DEFENSE": 0.1,
+          "US_COMMERCIAL": 0.1,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 1.3,
+          "KR_ELECTRONICS": 1.3
+        },
+        "Neo_Performance_EU": {
+          "US_DEFENSE": 1.0,
+          "US_COMMERCIAL": 1.0,
+          "EU_AUTOMOTIVE": 0.1,
+          "EU_INDUSTRIAL": 0.1,
+          "JP_AUTOMOTIVE": 1.5,
+          "KR_ELECTRONICS": 1.5
+        },
+        "Recycled_domestic_USA": {
+          "US_DEFENSE": 0.1,
+          "US_COMMERCIAL": 0.1,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 1.3,
+          "KR_ELECTRONICS": 1.3
+        }
+      },
+      "risk_weight": 8.0,
+      "unmet_demand_penalty": 75000,
+      "max_supplier_share": 0.45
+    }
+  },
+  "nd_post_december_2025": {
+    "task": "Stress-test NdPr oxide supply chain under full China December 2025 extraterritorial export control regime.",
+    "rag_context": "December 2025: China implements full extraterritorial rare earth export rules. Chinese NdPr oxide export capacity drops to 3,000 t/yr. All supplier costs increase significantly. Total non-Chinese capacity (Lynas 12,000 + MP 1,300 + Neo 2,000 + Recycled 600 = 15,900) is insufficient to meet 14,500 t/yr demand, especially with the 40% max supplier share cap limiting Lynas to 5,800 t/yr.",
+    "execution_instruction": "Produce a crisis-scenario analysis showing demand shortfalls, market prioritization under scarcity, and shadow prices indicating the marginal value of additional capacity from each source.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "NDPR_OXIDE",
+      "demand": {
+        "US_DEFENSE": 850,
+        "US_COMMERCIAL": 3700,
+        "EU_AUTOMOTIVE": 3000,
+        "EU_INDUSTRIAL": 3500,
+        "JP_AUTOMOTIVE": 2000,
+        "KR_ELECTRONICS": 1500
+      },
+      "suppliers": [
+        {
+          "name": "China_consolidated",
+          "capacity": 3000,
+          "unit_cost": 115.0,
+          "risk_score": 0.95
+        },
+        {
+          "name": "Lynas_Australia",
+          "capacity": 12000,
+          "unit_cost": 145.0,
+          "risk_score": 0.10
+        },
+        {
+          "name": "MP_Materials_USA",
+          "capacity": 1300,
+          "unit_cost": 135.0,
+          "risk_score": 0.05
+        },
+        {
+          "name": "Neo_Performance_EU",
+          "capacity": 2000,
+          "unit_cost": 140.0,
+          "risk_score": 0.20
+        },
+        {
+          "name": "Recycled_domestic_USA",
+          "capacity": 600,
+          "unit_cost": 85.0,
+          "risk_score": 0.08
+        }
+      ],
+      "shipping_cost": {
+        "China_consolidated": {
+          "US_DEFENSE": 0.725,
+          "US_COMMERCIAL": 0.725,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 0.4,
+          "KR_ELECTRONICS": 0.35
+        },
+        "Lynas_Australia": {
+          "US_DEFENSE": 1.2,
+          "US_COMMERCIAL": 1.2,
+          "EU_AUTOMOTIVE": 1.725,
+          "EU_INDUSTRIAL": 1.725,
+          "JP_AUTOMOTIVE": 0.9,
+          "KR_ELECTRONICS": 0.95
+        },
+        "MP_Materials_USA": {
+          "US_DEFENSE": 0.1,
+          "US_COMMERCIAL": 0.1,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 1.3,
+          "KR_ELECTRONICS": 1.3
+        },
+        "Neo_Performance_EU": {
+          "US_DEFENSE": 1.0,
+          "US_COMMERCIAL": 1.0,
+          "EU_AUTOMOTIVE": 0.1,
+          "EU_INDUSTRIAL": 0.1,
+          "JP_AUTOMOTIVE": 1.5,
+          "KR_ELECTRONICS": 1.5
+        },
+        "Recycled_domestic_USA": {
+          "US_DEFENSE": 0.1,
+          "US_COMMERCIAL": 0.1,
+          "EU_AUTOMOTIVE": 1.0,
+          "EU_INDUSTRIAL": 1.0,
+          "JP_AUTOMOTIVE": 1.3,
+          "KR_ELECTRONICS": 1.3
+        }
+      },
+      "risk_weight": 12.0,
+      "unmet_demand_penalty": 100000,
+      "max_supplier_share": 0.40
+    }
+  }
+}

@@ -4,7 +4,7 @@ from langchain.chat_models import init_chat_model
 from rich import print as rprint
 from rich.panel import Panel
 
-from ursa.agents import ArxivAgent, ArxivAgentLegacy, OSTIAgent, WebSearchAgent
+from ursa.agents import ArxivAgent, OSTIAgent, WebSearchAgent
 
 
 def print_summary(summary: str, title: str):
@@ -39,20 +39,6 @@ async def main():
         "context": "What are the key findings?",
     })
     print_summary(summary, title="OSTI Agent Summary")
-
-    # ArXiv agent (legacy version)
-    arxiv_agent_legacy = ArxivAgentLegacy(
-        llm=init_chat_model("openai:gpt-5-mini"),
-        max_results=3,
-        database_path="arxiv_papers",
-        summaries_path="arxiv_generated_summaries",
-        enable_metrics=True,
-    )
-    summary = await arxiv_agent_legacy.ainvoke({
-        "query": "graph neural networks for PDEs",
-        "context": "Summarize methods & benchmarks and potential for shock hydrodynamics",
-    })
-    print_summary(summary, title="Arxiv Agent (Legacy) Summary")
 
     # ArXiv agent
     arxiv_agent = ArxivAgent(

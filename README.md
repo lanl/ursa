@@ -51,6 +51,40 @@ Documentation for each URSA agent:
 Documentation for combining agents:
 - [ArXiv -> Execution for Materials](docs/combining_arxiv_and_execution.md)
 - [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md)
+- [Critical Minerals Workflow Architecture](docs/critical_minerals_workflow.md)
+- [CMM Setup and Usage Guide for Domain Scientists](docs/domain_scientist_setup_and_usage.md)
+
+## Critical Minerals Demo (RAG + Optimization)
+
+URSA includes a CMM demo path with adaptive RAG retrieval and deterministic
+tool-calling optimization.
+
+1. Copy env defaults:
+```bash
+cp .env.example .env
+```
+2. Configure at minimum:
+```bash
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+CMM_VECTORSTORE_BACKEND=chroma
+CMM_EMBEDDING_MODEL=openai:text-embedding-3-large
+CMM_EMBEDDING_DIMENSIONS=3072
+CMM_USE_RERANKER=false
+CMM_RERANKER_PROVIDER=none
+```
+3. Reindex local corpus:
+```bash
+uv run python scripts/reindex.py \
+  --corpus-path /Users/wash198/Documents/Projects/Science_Projects/MPII_CMM/Corpus \
+  --vectorstore-path cmm_vectorstore \
+  --backend chroma \
+  --embedding-model openai:text-embedding-3-large \
+  --embedding-dimensions 3072 \
+  --reset
+```
+4. Run workflow with `local_corpus_path`, `rag_context`, and optional
+`optimization_input`.
 
 
 ## Command Line Usage

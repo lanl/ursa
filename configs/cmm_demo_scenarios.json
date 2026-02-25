@@ -1,0 +1,215 @@
+{
+  "ndfeb_la_y_5pct_baseline": {
+    "task": "Assess Nd2Fe14B magnet supply and sourcing resilience when the alloy specification is fixed at 5% lanthanum and 5% yttrium impurity substitution in the rare-earth fraction.",
+    "rag_context": "Focus on metallurgical performance implications, coercivity/remanence tradeoffs, processing constraints, and procurement implications of 5% La + 5% Y impurity levels in Nd2Fe14B.",
+    "execution_instruction": "Produce a source-grounded decision brief for a U.S. magnet manufacturing audience, including assumptions, uncertainty notes, and near-term sourcing recommendations under the 5% La and 5% Y impurity target.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "ND2FE14B_LA5_Y5",
+      "demand": {
+        "US_DEFENSE": 120,
+        "US_EV": 180,
+        "EU_OEM": 100
+      },
+      "suppliers": [
+        {
+          "name": "domestic_recycled_blend",
+          "capacity": 140,
+          "unit_cost": 92.0,
+          "risk_score": 0.2,
+          "composition_profile": {
+            "LA": 0.072,
+            "Y": 0.028
+          }
+        },
+        {
+          "name": "allied_separated_oxide",
+          "capacity": 190,
+          "unit_cost": 98.0,
+          "risk_score": 0.13,
+          "composition_profile": {
+            "LA": 0.041,
+            "Y": 0.059
+          }
+        },
+        {
+          "name": "integrated_allied_metal",
+          "capacity": 230,
+          "unit_cost": 106.0,
+          "risk_score": 0.09,
+          "composition_profile": {
+            "LA": 0.05,
+            "Y": 0.05
+          }
+        }
+      ],
+      "shipping_cost": {
+        "domestic_recycled_blend": {
+          "US_DEFENSE": 1.2,
+          "US_EV": 1.1,
+          "EU_OEM": 2.8
+        },
+        "allied_separated_oxide": {
+          "US_DEFENSE": 2.1,
+          "US_EV": 2.2,
+          "EU_OEM": 1.6
+        },
+        "integrated_allied_metal": {
+          "US_DEFENSE": 2.8,
+          "US_EV": 2.7,
+          "EU_OEM": 1.5
+        }
+      },
+      "risk_weight": 3.2,
+      "unmet_demand_penalty": 18000,
+      "max_supplier_share": 0.72,
+      "composition_targets": {
+        "LA": 0.05,
+        "Y": 0.05
+      },
+      "composition_tolerance": 0.005
+    }
+  },
+  "ndfeb_la_y_5pct_quality_tightening": {
+    "task": "Evaluate procurement and production risk if Nd2Fe14B with 5% La and 5% Y impurities must meet tighter quality assurance windows for critical motor applications.",
+    "rag_context": "Focus on NdFeB quality control evidence for La/Y-substituted magnets, including coercivity and remanence variability, grain boundary diffusion processing, process capability (Cp/Cpk), lot acceptance testing, and supplier QA qualification under a fixed 5% La + 5% Y composition target.",
+    "execution_instruction": "Return an executive memo plus technical appendix bullets focused on quality assurance risk controls, supplier qualification sequencing, and contingency actions.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "ND2FE14B_LA5_Y5_QA",
+      "demand": {
+        "US_DEFENSE": 130,
+        "US_EV": 170,
+        "EU_OEM": 95
+      },
+      "suppliers": [
+        {
+          "name": "domestic_recycled_blend",
+          "capacity": 120,
+          "unit_cost": 95.0,
+          "risk_score": 0.22,
+          "composition_profile": {
+            "LA": 0.068,
+            "Y": 0.032
+          }
+        },
+        {
+          "name": "allied_separated_oxide",
+          "capacity": 175,
+          "unit_cost": 100.0,
+          "risk_score": 0.14,
+          "composition_profile": {
+            "LA": 0.043,
+            "Y": 0.057
+          }
+        },
+        {
+          "name": "integrated_allied_metal",
+          "capacity": 210,
+          "unit_cost": 109.0,
+          "risk_score": 0.1,
+          "composition_profile": {
+            "LA": 0.05,
+            "Y": 0.05
+          }
+        }
+      ],
+      "shipping_cost": {
+        "domestic_recycled_blend": {
+          "US_DEFENSE": 1.1,
+          "US_EV": 1.0,
+          "EU_OEM": 2.9
+        },
+        "allied_separated_oxide": {
+          "US_DEFENSE": 2.0,
+          "US_EV": 2.1,
+          "EU_OEM": 1.7
+        },
+        "integrated_allied_metal": {
+          "US_DEFENSE": 2.7,
+          "US_EV": 2.6,
+          "EU_OEM": 1.6
+        }
+      },
+      "risk_weight": 3.7,
+      "unmet_demand_penalty": 22000,
+      "max_supplier_share": 0.65,
+      "composition_targets": {
+        "LA": 0.05,
+        "Y": 0.05
+      },
+      "composition_tolerance": 0.003
+    }
+  },
+  "ndfeb_la_y_5pct_supply_shock": {
+    "task": "Stress-test Nd2Fe14B supply posture under a logistics and refining disruption while holding composition at 5% La and 5% Y impurities.",
+    "rag_context": "Emphasize disruption pathways, substitution limits under fixed impurity composition, and practical mitigation levers for near-term delivery reliability.",
+    "execution_instruction": "Provide a red-team style risk narrative and rank-order mitigations by expected impact and implementation complexity for the 5% La/5% Y Nd2Fe14B specification.",
+    "source_queries": {},
+    "optimization_input": {
+      "commodity": "ND2FE14B_LA5_Y5_SHOCK",
+      "demand": {
+        "US_DEFENSE": 145,
+        "US_EV": 210,
+        "EU_OEM": 110
+      },
+      "suppliers": [
+        {
+          "name": "domestic_recycled_blend",
+          "capacity": 125,
+          "unit_cost": 96.0,
+          "risk_score": 0.24,
+          "composition_profile": {
+            "LA": 0.082,
+            "Y": 0.018
+          }
+        },
+        {
+          "name": "allied_separated_oxide",
+          "capacity": 145,
+          "unit_cost": 103.0,
+          "risk_score": 0.2,
+          "composition_profile": {
+            "LA": 0.037,
+            "Y": 0.063
+          }
+        },
+        {
+          "name": "integrated_allied_metal",
+          "capacity": 185,
+          "unit_cost": 112.0,
+          "risk_score": 0.16,
+          "composition_profile": {
+            "LA": 0.049,
+            "Y": 0.051
+          }
+        }
+      ],
+      "shipping_cost": {
+        "domestic_recycled_blend": {
+          "US_DEFENSE": 1.4,
+          "US_EV": 1.3,
+          "EU_OEM": 3.2
+        },
+        "allied_separated_oxide": {
+          "US_DEFENSE": 3.0,
+          "US_EV": 3.1,
+          "EU_OEM": 2.2
+        },
+        "integrated_allied_metal": {
+          "US_DEFENSE": 3.4,
+          "US_EV": 3.3,
+          "EU_OEM": 2.0
+        }
+      },
+      "risk_weight": 4.2,
+      "unmet_demand_penalty": 26000,
+      "max_supplier_share": 0.62,
+      "composition_targets": {
+        "LA": 0.05,
+        "Y": 0.05
+      },
+      "composition_tolerance": 0.004
+    }
+  }
+}
