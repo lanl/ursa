@@ -9,7 +9,8 @@ from .events import Event
 
 
 class EventSink(Protocol):
-    def emit(self, event: Event) -> None: ...
+    def emit(self, event: Event) -> None:
+        pass
 
 
 @dataclass(frozen=True)
