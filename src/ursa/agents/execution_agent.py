@@ -246,8 +246,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 for msg_ind, msg in enumerate(new_state["messages"]):
                     if hasattr(msg, "tool_calls"):
                         if any([tc["id"] == tool_id for tc in msg.tool_calls]):
-                            # Mutates new_state so break afterward to reset loop.
-                            # Not as efficient as could be but should be correct
+                            # Inserts tool response one after the dangling tool call
+                            #    Mutates new_state so break afterward to reset loop.
+                            #    Not as efficient as could be but should be correct
                             new_state["messages"].insert(
                                 msg_ind + 1,
                                 ToolMessage(
