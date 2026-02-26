@@ -21,8 +21,9 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self.executor = executor
         self.workspace = workspace
 
-        # DOES NOT CURRENTLY WORK IN WEB INTERFACE WITH SQL checkpointing
-        #     MOVING TO IN MEMORY CHECKPOINTING FOR NOW
+        # FIXME: DOES NOT CURRENTLY WORK IN WEB INTERFACE WITH  
+        # SQL checkpointing
+        # MOVING TO IN MEMORY CHECKPOINTING FOR NOW
         # Setup checkpointing
         # db_path = Path(workspace) / "checkpoint.db"
         # db_path.parent.mkdir(parents=True, exist_ok=True)
