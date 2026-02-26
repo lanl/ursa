@@ -21,7 +21,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self.executor = executor
         self.workspace = workspace
 
-        # FIXME: DOES NOT CURRENTLY WORK IN WEB INTERFACE WITH  
+        # FIXME: DOES NOT CURRENTLY WORK IN WEB INTERFACE WITH
         # SQL checkpointing
         # MOVING TO IN MEMORY CHECKPOINTING FOR NOW
         # Setup checkpointing
