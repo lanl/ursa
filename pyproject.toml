@@ -59,7 +59,7 @@ classifiers = [
 
 [project.scripts]
 ursa = "ursa.cli:main"
-ursa_dashboard = "ursa_dashboard.main:app"
+ursa-dashboard = "ursa_dashboard.main:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
