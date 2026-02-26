@@ -243,13 +243,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 f"were dangling:\n{tool_ids}\nReplies of missing response applied."
             )
             for tool_id in tool_ids:
-                for iii, msg in enumerate(new_state["messages"]):
+                for msg_ind, msg in enumerate(new_state["messages"]):
                     if hasattr(msg, "tool_calls"):
                         if any([tc["id"] == tool_id for tc in msg.tool_calls]):
                             # Mutates new_state so break afterward to reset loop.
                             # Not as efficient as could be but should be correct
                             new_state["messages"].insert(
-                                iii + 1,
+                                msg_ind + 1,
                                 ToolMessage(
                                     content=dangling_response,
                                     tool_call_id=tool_id,
