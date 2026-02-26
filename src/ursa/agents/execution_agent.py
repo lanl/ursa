@@ -221,9 +221,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
 
-    def _patch_dangling(self, state: ExecutionState) -> ExecutionState:
+    def _patch_dangling(
+        self, state: ExecutionState, summarized: bool
+    ) -> ExecutionState:
         new_state = deepcopy(state)
-        summarized = False
         dangling_response = (
             "Response Not Found from tool. "
             "May have timed out or been forgotten due to summarization."
@@ -321,22 +322,31 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 summary,
             ]
             summarized_messages.extend(conversation_to_keep)
-            tokens_after_summarize = count_tokens_approximately(
-                summarized_messages
-            )
-            console.print(
-                Panel(
-                    (
-                        f"Summarized Conversation History:\n"
-                        f"Summary:\n{summary.text}\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
-                    ),
-                    title="[bold yellow1 on black]Summarize Past Context",
-                    border_style="yellow1",
-                    style="bold yellow1 on black",
+            verbose = False
+            # Keeping this here for future capability add
+            #    removing this from printing generally,
+            #    but we may want to bring this back with some
+            #    verbosity option in the future.
+            #
+            # Right now setting verbose to False so this is
+            #     always skipped but here to revisit.
+            if verbose:
+                tokens_after_summarize = count_tokens_approximately(
+                    summarized_messages
                 )
-            )
+                console.print(
+                    Panel(
+                        (
+                            f"Summarized Conversation History:\n"
+                            f"Summary:\n{summary.text}\n"
+                            f"Approximate tokens before: {tokens_before_summarize}\n"
+                            f"Approximate tokens after: {tokens_after_summarize}\n"
+                        ),
+                        title="[bold yellow1 on black]Summarize Past Context",
+                        border_style="yellow1",
+                        style="bold yellow1 on black",
+                    )
+                )
             new_state["messages"] = summarized_messages
             summarized = True
         return new_state, summarized
@@ -395,7 +405,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
-        new_state, full_overwrite = self._patch_dangling(new_state)
+        new_state, full_overwrite = self._patch_dangling(
+            new_state, full_overwrite
+        )
 
         # 3) Ensure the executor prompt is the first SystemMessage.
         messages = deepcopy(new_state["messages"])
@@ -452,7 +464,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state["messages"] = new_state["messages"] + [recap_message]
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
-        new_state, full_overwrite = self._patch_dangling(new_state)
+        new_state, full_overwrite = self._patch_dangling(
+            new_state, full_overwrite
+        )
         try:
             response = self.llm.invoke(
                 input=new_state["messages"],
