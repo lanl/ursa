@@ -128,7 +128,7 @@ ursa-dashboard
 
 or with 
 ```
-ursa_dashboard --host 127.0.0.1 --port 8080
+ursa-dashboard --host 127.0.0.1 --port 8080
 ```
 
 This requires installing with the optional `[dashboard]` dependencies.
