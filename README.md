@@ -119,6 +119,20 @@ You can get a list of available command line options via
 ursa --help
 ```
 
+### Web Dashboard
+
+The URSA web interface can be launched with:
+```
+ursa-dashboard
+```
+
+or with 
+```
+ursa-dashboard --host 127.0.0.1 --port 8080
+```
+
+This requires installing with the optional `[dashboard]` dependencies.
+
 ### Configuring URSA
 
 See the example [configuration file](./configs/example.yaml) and [documentation](./configs/README.md) for more details.

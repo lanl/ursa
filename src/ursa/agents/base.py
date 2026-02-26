@@ -15,6 +15,7 @@ Agents built on this base class benefit from consistent behavior, observability,
 integration capabilities while only needing to implement the core _invoke method.
 """
 
+import asyncio
 import re
 import sqlite3
 from abc import ABC, abstractmethod
@@ -591,11 +592,74 @@ class BaseAgent(Generic[TState], ABC):
         """Hook for subclasses to wrap or modify the compiled graph."""
         return graph_app
 
+    def _tool_is_async_only(self, tool: Any) -> bool:
+        """Return True for tools that can only be invoked asynchronously.
+
+        MCP tools are commonly exposed as StructuredTool instances with a
+        coroutine implementation but no synchronous function implementation.
+        Those raise errors like:
+
+            "StructuredTool does not support sync invocation."
+
+        when called via `.invoke()`.
+        """
+
+        func = getattr(tool, "func", None)
+        coroutine = getattr(tool, "coroutine", None)
+        return func is None and coroutine is not None
+
+    def _has_async_only_tools(self) -> bool:
+        tools_obj = getattr(self, "tools", None)
+        if not tools_obj:
+            return False
+
+        try:
+            tool_iter = (
+                tools_obj.values() if isinstance(tools_obj, dict) else tools_obj
+            )
+        except Exception:
+            return False
+
+        return any(self._tool_is_async_only(t) for t in tool_iter)
+
     def _invoke(self, input, **config):
         config = self.build_config(**config)
-        return self.compiled_graph.invoke(
-            input, config=config, context=self.context
-        )
+
+        # If we have async-only tools (e.g. MCP StructuredTools), we must run the
+        # graph via `ainvoke` so ToolNode dispatches tools asynchronously.
+        if self._has_async_only_tools():
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(
+                    self.compiled_graph.ainvoke(
+                        input, config=config, context=self.context
+                    )
+                )
+
+            raise RuntimeError(
+                "This agent has async-only tools, but `.invoke()` was called "
+                "from an async context (a running event loop was detected). "
+                "Use `await agent.ainvoke(...)` instead."
+            )
+
+        try:
+            return self.compiled_graph.invoke(
+                input, config=config, context=self.context
+            )
+        except Exception as e:
+            # Fallback: if a tool raises the canonical sync-invoke error, retry
+            # with ainvoke for backwards compatibility.
+            if "does not support sync invocation" in str(e):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return asyncio.run(
+                        self.compiled_graph.ainvoke(
+                            input, config=config, context=self.context
+                        )
+                    )
+            raise
 
     async def _ainvoke(self, input, **config):
         config = self.build_config(**config)
