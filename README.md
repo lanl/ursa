@@ -123,7 +123,7 @@ ursa --help
 
 The URSA web interface can be launched with:
 ```
-ursa_dashboard
+ursa-dashboard
 ```
 
 or with 
