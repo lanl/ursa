@@ -517,15 +517,15 @@ class RunManager:
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("PYTHONIOENCODING", "utf-8")
 
-        force_ansi = str(
-            os.environ.get("URSA_DASHBOARD_FORCE_ANSI", "")
+        force_no_ansi = str(
+            os.environ.get("URSA_DASHBOARD_NO_ANSI", "")
         ).strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
-        if force_ansi:
+        if not force_no_ansi:
             env.setdefault("COLORTERM", "truecolor")
             env.setdefault("FORCE_COLOR", "1")
             env.setdefault("CLICOLOR", "1")
