@@ -3151,7 +3151,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     def _find_logo_path() -> Path | None:
         repo_root = Path(__file__).resolve().parent
         candidates = [
-            repo_root / "logo.png",
+            repo_root / "logo/logo.png",
         ]
         for p in candidates:
             try:
