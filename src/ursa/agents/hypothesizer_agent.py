@@ -47,7 +47,7 @@ class HypothesizerState(TypedDict, total=False):
 class HypothesizerAgent(BaseAgent[HypothesizerState]):
     state_type = HypothesizerState
 
-    def __init__(self, llm: BaseChatModel, max_iterations: int = 3, **kwargs):
+    def __init__(self, llm: BaseChatModel, max_iterations: int = 2, **kwargs):
         super().__init__(llm, **kwargs)
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
@@ -89,12 +89,12 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
 
         return visited_sites
 
-    async def agent1_generate_solution(
+    def agent1_generate_solution(
         self, state: HypothesizerState
     ) -> HypothesizerState:
         """Agent 1: Hypothesizer."""
         print(
-            f"[iteration {state['current_iteration']}] Entering agent1_generate_solution. Iteration: {state['current_iteration']}"
+            f"[iteration {state['current_iteration'] + 1}] Entering agent1_generate_solution. Iteration: {state['current_iteration'] + 1}"
         )
 
         current_iter = state["current_iteration"]
@@ -117,7 +117,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         else:
             user_content += "Research this problem and generate a solution."
 
-        search_query = await self.strllm.ainvoke(
+        search_query = self.strllm.invoke(
             f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
         )
         if '"' in search_query:
@@ -135,12 +135,12 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             SystemMessage(content=self.hypothesizer_prompt),
             HumanMessage(content=user_content),
         ]
-        solution = await self.strllm.ainvoke(messages)
+        solution = self.strllm.invoke(messages)
 
         # Print the entire solution in green
         print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
         print(
-            f"[iteration {state['current_iteration']}] Exiting agent1_generate_solution."
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent1_generate_solution."
         )
         return {
             "agent1_solution": [solution],
@@ -148,12 +148,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "visited_sites": visited_sites,
         }
 
-    async def agent2_critique(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
+    def agent2_critique(self, state: HypothesizerState) -> HypothesizerState:
         """Agent 2: Critic."""
         print(
-            f"[iteration {state['current_iteration']}] Entering agent2_critique."
+            f"[iteration {state['current_iteration'] + 1}] Entering agent2_critique."
         )
 
         solution = state["agent1_solution"][-1]
@@ -173,24 +171,24 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             SystemMessage(content=self.critic_prompt),
             HumanMessage(content=user_content),
         ]
-        critique = await self.strllm.ainvoke(messages)
+        critique = self.strllm.invoke(messages)
 
         # Print the entire critique in blue
         print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
         print(
-            f"[iteration {state['current_iteration']}] Exiting agent2_critique."
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent2_critique."
         )
         return {
             "agent2_critiques": [critique],
             "visited_sites": visited_sites,
         }
 
-    async def agent3_competitor_perspective(
+    def agent3_competitor_perspective(
         self, state: HypothesizerState
     ) -> HypothesizerState:
         """Agent 3: Competitor/Stakeholder Simulator."""
         print(
-            f"[iteration {state['current_iteration']}] Entering agent3_competitor_perspective."
+            f"[iteration {state['current_iteration'] + 1}] Entering agent3_competitor_perspective."
         )
 
         solution = state["agent1_solution"][-1]
@@ -215,14 +213,14 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             SystemMessage(content=self.competitor_prompt),
             HumanMessage(content=user_content),
         ]
-        perspective = await self.strllm.ainvoke(messages)
+        perspective = self.strllm.invoke(messages)
 
         # Print the entire perspective in red
         print(
             f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
         )
         print(
-            f"[iteration {state['current_iteration']}] Exiting agent3_competitor_perspective."
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent3_competitor_perspective."
         )
         return {
             "agent3_perspectives": [perspective],
@@ -233,14 +231,9 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         self, state: HypothesizerState
     ) -> HypothesizerState:
         current_iteration = state["current_iteration"] + 1
-        print(
-            f"[iteration {state['current_iteration']}] Iteration incremented to {current_iteration}"
-        )
         return {"current_iteration": current_iteration}
 
-    async def generate_solution(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
+    def generate_solution(self, state: HypothesizerState) -> HypothesizerState:
         """Generate the overall, refined solution based on all iterations."""
         print(
             f"[iteration {state['current_iteration']}] Entering generate_solution."
@@ -266,7 +259,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         print(
             f"[iteration {state['current_iteration']}] Generating overall solution with LLM..."
         )
-        solution = await self.strllm.ainvoke(prompt)
+        solution = self.strllm.invoke(prompt)
         print(
             f"[iteration {state['current_iteration']}] Overall solution obtained. Preview:",
             solution[:200],
@@ -288,7 +281,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         #     print("  ", s)
         return new_state
 
-    async def summarize_process_as_latex(
+    def summarize_process_as_latex(
         self, state: HypothesizerState
     ) -> HypothesizerState:
         """
@@ -386,7 +379,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         websites_latex = ""
 
         # Ask the LLM to produce *only* LaTeX content
-        latex_response = await self.strllm.ainvoke(prompt)
+        latex_response = self.strllm.invoke(prompt)
 
         latex_doc = latex_response
 
@@ -522,7 +515,7 @@ if __name__ == "__main__":
         "question": question,
         "question_search_query": "",
         "current_iteration": 0,
-        "max_iterations": 3,
+        "max_iterations": 1,
         "agent1_solution": [],
         "agent2_critiques": [],
         "agent3_perspectives": [],

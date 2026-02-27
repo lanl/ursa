@@ -232,6 +232,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         tool_ids = []
         for msg in new_state["messages"]:
+            if count_tokens_approximately([msg]) > 100000 and isinstance(
+                msg, ToolMessage
+            ):
+                trunc_message = "Message too long - truncated."
+                msg.content = trunc_message
+                summarized = True
             if hasattr(msg, "tool_calls"):
                 for call in msg.tool_calls:
                     tool_ids.append(call["id"])

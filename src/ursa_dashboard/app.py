@@ -3149,12 +3149,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 """
 
     def _find_logo_path() -> Path | None:
-        repo_root_installed = Path(__file__).resolve().parent.parent
-        repo_root_editable = Path(__file__).resolve().parent.parent.parent
+        repo_root = Path(__file__).resolve().parent
         candidates = [
-            repo_root_installed / "logos/logo.png",
-            repo_root_editable / "logos/logo.png",
-            rm.workspace_root / "ursa_logo.png",
+            repo_root / "logo.png",
         ]
         for p in candidates:
             try:
