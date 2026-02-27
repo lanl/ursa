@@ -47,7 +47,7 @@ class HypothesizerState(TypedDict, total=False):
 class HypothesizerAgent(BaseAgent[HypothesizerState]):
     state_type = HypothesizerState
 
-    def __init__(self, llm: BaseChatModel, max_iterations: int = 3, **kwargs):
+    def __init__(self, llm: BaseChatModel, max_iterations: int = 2, **kwargs):
         super().__init__(llm, **kwargs)
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
@@ -94,7 +94,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
     ) -> HypothesizerState:
         """Agent 1: Hypothesizer."""
         print(
-            f"[iteration {state['current_iteration']}] Entering agent1_generate_solution. Iteration: {state['current_iteration']}"
+            f"[iteration {state['current_iteration'] + 1}] Entering agent1_generate_solution. Iteration: {state['current_iteration'] + 1}"
         )
 
         current_iter = state["current_iteration"]
@@ -140,7 +140,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # Print the entire solution in green
         print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
         print(
-            f"[iteration {state['current_iteration']}] Exiting agent1_generate_solution."
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent1_generate_solution."
         )
         return {
             "agent1_solution": [solution],
@@ -151,7 +151,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
     def agent2_critique(self, state: HypothesizerState) -> HypothesizerState:
         """Agent 2: Critic."""
         print(
-            f"[iteration {state['current_iteration']}] Entering agent2_critique."
+            f"[iteration {state['current_iteration'] + 1}] Entering agent2_critique."
         )
 
         solution = state["agent1_solution"][-1]
@@ -176,7 +176,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # Print the entire critique in blue
         print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
         print(
-            f"[iteration {state['current_iteration']}] Exiting agent2_critique."
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent2_critique."
         )
         return {
             "agent2_critiques": [critique],
@@ -188,7 +188,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
     ) -> HypothesizerState:
         """Agent 3: Competitor/Stakeholder Simulator."""
         print(
-            f"[iteration {state['current_iteration']}] Entering agent3_competitor_perspective."
+            f"[iteration {state['current_iteration'] + 1}] Entering agent3_competitor_perspective."
         )
 
         solution = state["agent1_solution"][-1]
@@ -220,7 +220,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
         )
         print(
-            f"[iteration {state['current_iteration']}] Exiting agent3_competitor_perspective."
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent3_competitor_perspective."
         )
         return {
             "agent3_perspectives": [perspective],
@@ -231,9 +231,6 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         self, state: HypothesizerState
     ) -> HypothesizerState:
         current_iteration = state["current_iteration"] + 1
-        print(
-            f"[iteration {state['current_iteration']}] Iteration incremented to {current_iteration}"
-        )
         return {"current_iteration": current_iteration}
 
     def generate_solution(self, state: HypothesizerState) -> HypothesizerState:
@@ -518,7 +515,7 @@ if __name__ == "__main__":
         "question": question,
         "question_search_query": "",
         "current_iteration": 0,
-        "max_iterations": 3,
+        "max_iterations": 1,
         "agent1_solution": [],
         "agent2_critiques": [],
         "agent3_perspectives": [],
