@@ -115,6 +115,7 @@ pycodestyle.max-doc-length = 80
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
+ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
