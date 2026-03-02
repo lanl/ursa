@@ -1,19 +1,14 @@
 import argparse
 
 # needed for checkpoint / restart
-import hashlib
-import importlib
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
 
-import randomname
 import yaml
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -26,6 +21,13 @@ from rich.text import Text
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util.logo_generator import kickoff_logo
+from ursa.util.plan_execute_utils import (
+    hash_plan,
+    setup_llm,
+    setup_workspace,
+    snapshot_sqlite_db,
+    timed_input_with_countdown,
+)
 from ursa.util.plan_renderer import render_plan_steps_rich
 
 console = get_console()  # always returns the same instance
@@ -142,13 +144,6 @@ def _progress_file(workspace: str) -> Path:
     return Path(workspace) / "executor_progress.json"
 
 
-def _hash_plan(plan_steps) -> str:
-    # hash the structure so we can detect if the plan changed between runs
-    return hashlib.sha256(
-        json.dumps(plan_steps, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-
-
 def load_exec_progress(workspace: str) -> dict:
     p = _progress_file(workspace)
     if p.exists():
@@ -171,35 +166,6 @@ def save_exec_progress(
     if last_summary is not None:
         payload["last_summary"] = last_summary
     p.write_text(json.dumps(payload, indent=2))
-
-
-# --- snapshot a consistent copy of a SQLite db (works even in WAL mode) ---
-def snapshot_sqlite_db(src_path: Path, dst_path: Path) -> None:
-    """
-    Make a consistent copy of the SQLite database at src_path into dst_path,
-    using the sqlite3 backup API. Safe with WAL; no need to copy -wal/-shm.
-    """
-    import sqlite3
-
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    src_uri = f"file:{Path(src_path).resolve().as_posix()}?mode=ro"
-    src = dst = None
-    try:
-        src = sqlite3.connect(src_uri, uri=True)
-        dst = sqlite3.connect(str(dst_path))
-        with dst:
-            src.backup(dst)
-    finally:
-        try:
-            if dst:
-                dst.close()
-        except Exception:
-            pass
-        try:
-            if src:
-                src.close()
-        except Exception:
-            pass
 
 
 def step_to_text(step) -> str:
@@ -276,64 +242,6 @@ def _ckpt_sort_key(p: Path):
         return (1, float("inf"), float("inf"), name)  # live default next
     # anything else sinks to the bottom (shouldn't appear in our glob)
     return (2, float("inf"), float("inf"), name)
-
-
-# --- timed input with countdown (POSIX-friendly; auto-fallback if non-interactive) ---
-def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
-    """
-    Read a line with a per-second countdown. Returns:
-      - the user's input (str) if provided,
-      - None if timeout expires,
-      - None if non-interactive or timeout<=0.
-    No bracketed prefixes are printed (clean output for all prompts).
-    """
-    import sys
-    import time
-
-    # Non-interactive or disabled timeout → default immediately (no noisy prefix)
-    try:
-        is_tty = sys.stdin.isatty()
-    except Exception:
-        is_tty = False
-
-    if not is_tty:
-        print("(non-interactive) selecting default . . .")
-        return None
-    if timeout <= 0:
-        print("(timeout disabled) selecting default . . .")
-        return None
-
-    # Show prompt and run a 1s polling loop
-    deadline = time.time() + timeout
-    print(prompt, end="", flush=True)
-
-    try:
-        import select
-
-        while True:
-            remaining = int(max(0, deadline - time.time()))
-            if remaining in {30, 10, 5, 4, 3, 2, 1}:
-                # print a short tick line, then reprint the prompt
-                print(
-                    f"\n{remaining} seconds left . . .  (Ctrl-C to abort)",
-                    flush=True,
-                )
-                print(prompt, end="", flush=True)
-            if remaining <= 0:
-                print()  # newline after prompt
-                return None
-
-            rlist, _, _ = select.select([sys.stdin], [], [], 1.0)
-            if rlist:
-                line = sys.stdin.readline()
-                return None if line is None else line.strip()
-
-    except Exception:
-        # Fallback if select is unavailable
-        try:
-            return input()
-        except KeyboardInterrupt:
-            raise
 
 
 def list_executor_checkpoints(workspace: str) -> list[Path]:
@@ -607,46 +515,6 @@ def _print_next_step(prefix: str, next_zero: int, total: int, workspace: str):
 #########################################################################
 # END: Assorted other helpers
 #########################################################################
-_SECRET_KEY_SUBSTRS = (
-    "api_key",
-    "apikey",
-    "access_token",
-    "refresh_token",
-    "secret",
-    "password",
-    "bearer",
-)
-
-
-def _looks_like_secret_key(name: str) -> bool:
-    n = name.lower()
-    return any(s in n for s in _SECRET_KEY_SUBSTRS)
-
-
-def _mask_secret(value: str, keep_start: int = 6, keep_end: int = 4) -> str:
-    """
-    Mask a secret-like string, keeping only the beginning and end.
-    Example: sk-proj-abc123456789xyz -> sk-proj-…9xyz
-    """
-    if not isinstance(value, str):
-        return value
-    if len(value) <= keep_start + keep_end + 3:
-        return "…"  # too short to safely show anything
-    return f"{value[:keep_start]}...{value[-keep_end:]}"
-
-
-def _sanitize_for_logging(obj):
-    if isinstance(obj, dict):
-        out = {}
-        for k, v in obj.items():
-            if _looks_like_secret_key(str(k)):
-                out[k] = _mask_secret(v) if isinstance(v, str) else "..."
-            else:
-                out[k] = _sanitize_for_logging(v)
-        return out
-    if isinstance(obj, list):
-        return [_sanitize_for_logging(v) for v in obj]
-    return obj
 
 
 def setup_agents(
@@ -704,273 +572,6 @@ def setup_agents(
         (planner, planner_checkpointer, pdb_path),
         (executor, executor_checkpointer, edb_path),
     )
-
-
-def _deep_merge_dicts(base: dict, override: dict) -> dict:
-    """
-    Recursively merge override into base and return a new dict.
-    - dict + dict => deep merge
-    - otherwise => override wins
-    """
-    base = dict(base or {})
-    override = dict(override or {})
-    out = dict(base)
-    for k, v in override.items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _deep_merge_dicts(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
-def _resolve_llm_kwargs_for_agent(
-    models_cfg: dict | None, agent_name: str | None
-) -> dict:
-    """
-    Given the YAML `models:` dict, compute merged kwargs for init_chat_model(...)
-    for a specific agent ('planner' or 'executor').
-
-    Merge order (later wins):
-      1) {} (empty)
-      2) models.defaults.params (optional)
-      3) models.profiles[defaults.profile] (optional)
-      4) models.agents[agent_name].profile (optional; merges that profile on top)
-      5) models.agents[agent_name].params (optional)
-    """
-    models_cfg = models_cfg or {}
-    profiles = models_cfg.get("profiles") or {}
-    defaults = models_cfg.get("defaults") or {}
-    agents = models_cfg.get("agents") or {}
-
-    # Start with global defaults
-    merged = {}
-    merged = _deep_merge_dicts(merged, defaults.get("params") or {})
-
-    # Apply default profile
-    default_profile_name = defaults.get("profile")
-    if default_profile_name and default_profile_name in profiles:
-        merged = _deep_merge_dicts(merged, profiles[default_profile_name] or {})
-
-    # Apply agent-specific profile + params
-    if agent_name and isinstance(agents, dict) and agent_name in agents:
-        a = agents.get(agent_name) or {}
-        agent_profile_name = a.get("profile")
-        if agent_profile_name and agent_profile_name in profiles:
-            merged = _deep_merge_dicts(
-                merged, profiles[agent_profile_name] or {}
-            )
-        merged = _deep_merge_dicts(merged, a.get("params") or {})
-
-    return merged
-
-
-def _print_llm_init_banner(
-    agent_name: str | None,
-    provider: str,
-    model_name: str,
-    provider_extra: dict,
-    llm_kwargs: dict,
-    model_obj=None,
-) -> None:
-    who = agent_name or "llm"
-
-    safe_provider_extra = _sanitize_for_logging(provider_extra or {})
-    safe_llm_kwargs = _sanitize_for_logging(llm_kwargs or {})
-
-    console.print(
-        Panel.fit(
-            Text.from_markup(
-                f"[bold cyan]LLM init ({who})[/]\n"
-                f"[bold]provider[/]: {provider}\n"
-                f"[bold]model[/]: {model_name}\n\n"
-                f"[bold]provider kwargs[/]: {json.dumps(safe_provider_extra, indent=2)}\n\n"
-                f"[bold]llm kwargs (merged)[/]: {json.dumps(safe_llm_kwargs, indent=2)}"
-            ),
-            border_style="cyan",
-        )
-    )
-
-    # Best-effort readback from the LangChain model object
-    if model_obj is None:
-        return
-
-    readback = {}
-    for attr in (
-        "model_name",
-        "model",
-        "reasoning",
-        "temperature",
-        "max_completion_tokens",
-        "max_tokens",
-    ):
-        if hasattr(model_obj, attr):
-            try:
-                readback[attr] = getattr(model_obj, attr)
-            except Exception:
-                pass
-
-    for attr in ("model_kwargs", "kwargs"):
-        if hasattr(model_obj, attr):
-            try:
-                readback[attr] = getattr(model_obj, attr)
-            except Exception:
-                pass
-
-    if readback:
-        console.print(
-            Panel.fit(
-                Text.from_markup(
-                    "[bold green]LLM readback (best-effort from LangChain object)[/]\n"
-                    + json.dumps(_sanitize_for_logging(readback), indent=2)
-                ),
-                border_style="green",
-            )
-        )
-
-    effort = None
-    try:
-        effort = (llm_kwargs or {}).get("reasoning", {}).get("effort")
-    except Exception:
-        effort = None
-
-    if effort:
-        console.print(
-            Panel.fit(
-                Text.from_markup(
-                    f"[bold yellow]Reasoning effort requested[/]: {effort}\n"
-                    "Note: This confirms what we sent to init_chat_model; actual enforcement is provider-side."
-                ),
-                border_style="yellow",
-            )
-        )
-
-
-def _resolve_model_choice(model_choice: str, models_cfg: dict):
-    """
-    Accepts strings like 'openai:gpt-5.2' or 'my_endpoint:openai/gpt-oss-120b'.
-    Looks up per-provider settings from cfg.models.providers.
-
-    Returns: (model_provider, pure_model, provider_extra_kwargs_for_init)
-    """
-    if ":" in model_choice:
-        alias, pure_model = model_choice.split(":", 1)
-    else:
-        alias, pure_model = "openai", model_choice  # back-compat default
-
-    providers = (models_cfg or {}).get("providers", {})
-    prov = providers.get(alias, {})
-
-    # Which LangChain integration to use (e.g. "openai", "mistral", etc.)
-    model_provider = prov.get("model_provider", alias)
-
-    # auth: prefer env var; optionally load via function if configured
-    api_key = None
-    if prov.get("api_key_env"):
-        api_key = os.getenv(prov["api_key_env"])
-    if not api_key and prov.get("token_loader"):
-        mod, fn = prov["token_loader"].rsplit(".", 1)
-        api_key = getattr(importlib.import_module(mod), fn)()
-
-    provider_extra = {}
-    if prov.get("base_url"):
-        provider_extra["base_url"] = prov["base_url"]
-    if api_key:
-        provider_extra["api_key"] = api_key
-
-    return model_provider, pure_model, provider_extra
-
-
-def setup_llm(
-    model_choice: str,
-    models_cfg: dict | None = None,
-    agent_name: str | None = None,
-):
-    """
-    Build a LangChain chat model via init_chat_model(...), optionally applying
-    YAML-driven params:
-      models.profiles
-      models.defaults
-      models.agents.<agent_name>
-
-    Back-compat: if those blocks don't exist, you get your previous behavior.
-    """
-    models_cfg = models_cfg or {}
-
-    provider, pure_model, provider_extra = _resolve_model_choice(
-        model_choice, models_cfg
-    )
-
-    # Your existing hardcoded defaults (keep these so older YAML behaves the same)
-    base_llm_kwargs = {
-        "max_completion_tokens": 10000,
-        "max_retries": 2,
-    }
-
-    # YAML-driven kwargs (safe if absent)
-    yaml_llm_kwargs = _resolve_llm_kwargs_for_agent(models_cfg, agent_name)
-
-    # Merge: base defaults < YAML overrides
-    llm_kwargs = _deep_merge_dicts(base_llm_kwargs, yaml_llm_kwargs)
-
-    # Initialize
-    model = init_chat_model(
-        model=pure_model,
-        model_provider=provider,
-        **llm_kwargs,
-        **(provider_extra or {}),
-    )
-
-    # Print confirmation early
-    _print_llm_init_banner(
-        agent_name=agent_name,
-        provider=provider,
-        model_name=pure_model,
-        provider_extra=provider_extra,
-        llm_kwargs=llm_kwargs,
-        model_obj=model,
-    )
-
-    return model
-
-
-def setup_workspace(
-    user_specified_workspace: str | None,
-    project: str = "run",
-    model_name: str = "openai:gpt-5-mini",
-) -> str:
-    if user_specified_workspace is None:
-        print("No workspace specified, creating one for this project!")
-        print(
-            "Make sure to pass this string to restart using --workspace <this workspace string>"
-        )
-        # https://pypi.org/project/randomname/
-        workspace = f"{project}_{randomname.get_name(adj=('colors', 'emotions', 'character', 'speed', 'size', 'weather', 'appearance', 'sound', 'age', 'taste'), noun=('cats', 'dogs', 'apex_predators', 'birds', 'fish', 'fruit'))}"
-    else:
-        workspace = user_specified_workspace
-        print(f"User specified workspace: {workspace}")
-
-    Path(workspace).mkdir(parents=True, exist_ok=True)
-
-    # Choose a fun emoji based on the model family (swap / extend as you add more)
-    if model_name.startswith("openai"):
-        model_emoji = "🤖"  # OpenAI
-    elif "llama" in model_name.lower():
-        model_emoji = "🦙"  # Llama
-    else:
-        model_emoji = "🧠"  # Fallback / generic LLM
-
-    # Print the panel with model info
-    console.print(
-        Panel.fit(
-            f":rocket:  [bold bright_blue]{workspace}[/bold bright_blue]  :rocket:\n"
-            f"{model_emoji}  [bold cyan]{model_name}[/bold cyan]",
-            title="[bold green]ACTIVE WORKSPACE[/bold green]",
-            border_style="bright_magenta",
-            padding=(1, 4),
-        )
-    )
-
-    return workspace
 
 
 def main_plan_load_or_perform(
@@ -1042,14 +643,14 @@ def main_plan_load_or_perform(
                 "\nRe-run this program with the SAME --workspace to resume the plan.\n"
             )
             print("Planning done, exiting")
-            exit()
+            sys.exit()
 
     # NOTE:
     # This is where we figure out where we are in the execution of the plan, what step
     # we are on
     # unify the plan dict for both fresh and resumed paths
     plan_steps = plan_dict.get("plan_steps") or []
-    plan_sig = _hash_plan(plan_steps)
+    plan_sig = hash_plan(plan_steps)
     save_run_meta(
         workspace, plan_sig=plan_sig, plan_steps_count=len(plan_steps)
     )
@@ -1070,7 +671,7 @@ def get_or_create_subplan(
 ):
     if not hierarchical:
         # Single mode: 1-item synthetic sub-plan
-        return {"plan_steps": [main_step]}, _hash_plan([main_step]), None, None
+        return {"plan_steps": [main_step]}, hash_plan([main_step]), None, None
 
     sub_tid = f"{thread_id}::detail::{m_idx}"
     sub_values, _, dbg = load_latest_planner_state_from_sqlite(
@@ -1080,7 +681,7 @@ def get_or_create_subplan(
 
     if sub_values:
         sub_steps = sub_values.get("plan_steps") or []
-        return sub_values, _hash_plan(sub_steps), sub_tid, None
+        return sub_values, hash_plan(sub_steps), sub_tid, None
 
     # Need to plan sub-steps
     detail_planner_prompt = "Flesh out this main step into concrete sub-steps to fully accomplish it."
@@ -1115,7 +716,7 @@ def get_or_create_subplan(
     ]
 
     sub_steps = sub_output.get("plan_steps") or []
-    sub_sig = _hash_plan(sub_steps)
+    sub_sig = hash_plan(sub_steps)
 
     # persist initial sub-progress (index=0)
     save_hier_sub_progress(
@@ -1133,7 +734,7 @@ def get_or_create_subplan(
         print(
             "Re-run with the SAME --workspace to execute the first sub-step.\n"
         )
-        exit()
+        sys.exit()
 
     return {"plan_steps": sub_steps}, sub_sig, sub_tid, sub_output
 
@@ -1217,7 +818,7 @@ def run_substeps(
                 total=total_sub,
                 workspace=workspace,
             )
-            exit()
+            sys.exit()
 
         prev_sub_summary = last_sub_summary
         sub_start_idx = next_sub_zero
@@ -1229,7 +830,7 @@ def main(
     model_name: str,
     config: Any,
     planning_mode: str = "single",
-    user_specified_workspace: str = None,
+    user_specified_workspace: str | None = None,
     stepwise_exit: bool = False,
     resume_from: str | None = None,
     interactive_timeout: int = 60,
@@ -1264,7 +865,7 @@ def main(
             sys.exit(1)
 
         # lock planning_mode per workspace
-        planning_mode, mode_locked = lock_or_warn_planning_mode(
+        planning_mode, _mode_locked = lock_or_warn_planning_mode(
             workspace, planning_mode
         )
         console.print(
@@ -1373,7 +974,7 @@ def main(
         save_run_meta(workspace, thread_id=thread_id, model_name=model_name)
 
         # do the main planning step, or load it from checkpoint
-        plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
+        _plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
             planner,
             planner_checkpointer,
             pdb_path,
@@ -1677,7 +1278,7 @@ def main(
         return answer, workspace
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e!s}")
         import traceback
 
         traceback.print_exc()
