@@ -7,8 +7,10 @@ import sys
 import time
 from pathlib import Path
 
+import aiosqlite
 import randomname
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field
 from rich import box, get_console
 from rich.panel import Panel
@@ -17,7 +19,6 @@ from rich.text import Text
 
 from ursa.agents import WebSearchAgent, make_git_agent
 from ursa.prompt_library.planning_prompts import reflection_prompt
-from ursa.util import Checkpointer
 from ursa.util.github_research import gather_github_context
 from ursa.util.plan_execute_utils import (
     hash_plan,
@@ -558,10 +559,13 @@ def _progress_path(
     return progress_dir / f"{repo_name}.json"
 
 
-def _repo_checkpointer(workspace: Path, repo_name: str):
+async def _repo_checkpointer(workspace: Path, repo_name: str):
     ckpt_dir = workspace / "checkpoints" / repo_name
-    checkpointer = Checkpointer.from_path(ckpt_dir, db_name="executor.db")
-    return checkpointer, ckpt_dir / "executor.db"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    db_path = ckpt_dir / "executor.db"
+    conn = await aiosqlite.connect(str(db_path))
+    checkpointer = AsyncSqliteSaver(conn)
+    return checkpointer, conn, db_path
 
 
 def _load_progress(path: Path) -> dict:
@@ -575,6 +579,51 @@ def _load_progress(path: Path) -> dict:
 
 def _save_progress(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
+
+
+def _namespace_to_dict(value):
+    if isinstance(value, dict):
+        return {k: _namespace_to_dict(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_namespace_to_dict(v) for v in value]
+    if isinstance(value, tuple):
+        return [_namespace_to_dict(v) for v in value]
+    if hasattr(value, "__dict__"):
+        return {
+            k: _namespace_to_dict(v)
+            for k, v in vars(value).items()
+            if not k.startswith("_")
+        }
+    return value
+
+
+def _repo_token_snapshot(info: dict) -> dict[str, int]:
+    return {
+        "input_tokens": int(info.get("input_tokens", 0)),
+        "output_tokens": int(info.get("output_tokens", 0)),
+        "total_tokens": int(info.get("total_tokens", 0)),
+    }
+
+
+def _step_token_record(
+    *, step_index: int, step_name: str, status: str, tokens: dict[str, int]
+) -> dict:
+    return {
+        "step_index": step_index,
+        "step_name": step_name,
+        "status": status,
+        "input_tokens": int(tokens.get("input_tokens", 0)),
+        "output_tokens": int(tokens.get("output_tokens", 0)),
+        "total_tokens": int(tokens.get("total_tokens", 0)),
+    }
+
+
+def _format_step_token_usage(tokens: dict[str, int]) -> str:
+    return (
+        f"Step token usage: {_fmt_tokens(tokens.get('input_tokens', 0))} in / "
+        f"{_fmt_tokens(tokens.get('output_tokens', 0))} out "
+        f"({_fmt_tokens(tokens.get('total_tokens', 0))} total)"
+    )
 
 
 def _parse_resume_overrides(
@@ -656,6 +705,11 @@ def _init_progress(repo_steps: dict[str, list[RepoStep]]) -> dict[str, dict]:
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
+            "_seen_input_tokens": 0,
+            "_seen_output_tokens": 0,
+            "_seen_total_tokens": 0,
+            "last_step_tokens": None,
+            "step_token_deltas": [],
             "started": now,
             "step_started": None,
             "updated": now,
@@ -676,6 +730,12 @@ def _extract_agent_tokens(agent) -> dict[str, int]:
     except Exception:
         pass
     return totals
+
+
+def _token_delta(current: int, seen: int) -> int:
+    if current >= seen:
+        return current - seen
+    return current
 
 
 def _fmt_tokens(n: int) -> str:
@@ -785,16 +845,24 @@ def _build_progress_table(
 
         step_text = current
         if error:
-            step_text = f"[red]{error[:60]}[/red]"
+            step_text = error[:60]
+
+        elapsed_render = (
+            Text.from_markup(elapsed_text) if elapsed_text else Text("")
+        )
+        token_render = Text.from_markup(token_text) if token_text else Text("")
+        step_render = (
+            Text(str(step_text), style="red") if error else Text(str(step_text))
+        )
 
         table.add_row(
             Text(icon, style=style),
-            name,
+            Text(str(name)),
             Text(state, style=style),
-            progress_bar,
-            elapsed_text,
-            token_text,
-            step_text,
+            Text(progress_bar),
+            elapsed_render,
+            token_render,
+            step_render,
         )
 
     return table
@@ -926,9 +994,23 @@ async def _accumulate_tokens(
     Clears any live-preview counters set by the heartbeat so they aren't
     double-counted in the progress table.
     """
-    step_tokens = _extract_agent_tokens(agent)
+    cumulative = _extract_agent_tokens(agent)
     async with lock:
         info = progress_state[repo_name]
+        seen_in = int(info.get("_seen_input_tokens", 0))
+        seen_out = int(info.get("_seen_output_tokens", 0))
+        seen_total = int(info.get("_seen_total_tokens", 0))
+
+        step_tokens = {
+            "input_tokens": _token_delta(cumulative["input_tokens"], seen_in),
+            "output_tokens": _token_delta(
+                cumulative["output_tokens"], seen_out
+            ),
+            "total_tokens": _token_delta(
+                cumulative["total_tokens"], seen_total
+            ),
+        }
+
         info["input_tokens"] = (
             info.get("input_tokens", 0) + step_tokens["input_tokens"]
         )
@@ -938,6 +1020,9 @@ async def _accumulate_tokens(
         info["total_tokens"] = (
             info.get("total_tokens", 0) + step_tokens["total_tokens"]
         )
+        info["_seen_input_tokens"] = cumulative["input_tokens"]
+        info["_seen_output_tokens"] = cumulative["output_tokens"]
+        info["_seen_total_tokens"] = cumulative["total_tokens"]
         # Clear live counters — the real totals are now in the main fields
         info.pop("_live_input", None)
         info.pop("_live_output", None)
@@ -973,14 +1058,23 @@ async def _ainvoke_with_heartbeat(
             elapsed += heartbeat_sec
             # Read live token snapshot and update progress for display
             if progress_state is not None and progress_lock is not None:
-                live_tokens = _extract_agent_tokens(agent)
+                cumulative = _extract_agent_tokens(agent)
                 async with progress_lock:
                     info = progress_state.get(repo_name, {})
+                    seen_in = int(info.get("_seen_input_tokens", 0))
+                    seen_out = int(info.get("_seen_output_tokens", 0))
+                    seen_total = int(info.get("_seen_total_tokens", 0))
                     # Store live step tokens separately so _accumulate_tokens
                     # can do the final authoritative add without double-counting
-                    info["_live_input"] = live_tokens["input_tokens"]
-                    info["_live_output"] = live_tokens["output_tokens"]
-                    info["_live_total"] = live_tokens["total_tokens"]
+                    info["_live_input"] = _token_delta(
+                        cumulative["input_tokens"], seen_in
+                    )
+                    info["_live_output"] = _token_delta(
+                        cumulative["output_tokens"], seen_out
+                    )
+                    info["_live_total"] = _token_delta(
+                        cumulative["total_tokens"], seen_total
+                    )
             tok_str = ""
             if progress_state and repo_name in progress_state:
                 info = progress_state[repo_name]
@@ -1027,7 +1121,11 @@ async def _wait_for_repos(
     progress_lock: asyncio.Lock,
     max_parallel: int,
 ) -> None:
-    """Block until all repos in *deps* have finished their steps."""
+    """Block until dependency repos reach a terminal state.
+
+    If any dependency is terminal but not "done" (e.g. paused/failed),
+    raise so callers fail gracefully instead of waiting forever.
+    """
     # Filter out self-dependencies — a repo's own steps are already sequential
     pending = [
         d
@@ -1047,6 +1145,23 @@ async def _wait_for_repos(
     await _emit_progress(progress_state, progress_lock, max_parallel)
 
     await asyncio.gather(*(repo_done_events[d].wait() for d in pending))
+
+    async with progress_lock:
+        blocked = {
+            dep: progress_state.get(dep, {}).get("state", "unknown")
+            for dep in deps
+            if dep != repo_name
+            and dep in repo_done_events
+            and progress_state.get(dep, {}).get("state") != "done"
+        }
+
+    if blocked:
+        blockers = ", ".join(
+            f"{name} ({state})" for name, state in sorted(blocked.items())
+        )
+        raise RuntimeError(
+            f"Dependency repo(s) not completed successfully: {blockers}"
+        )
 
     async with progress_lock:
         info = progress_state[repo_name]
@@ -1090,9 +1205,13 @@ async def _run_repo_steps(
     resume_progress = _load_progress(progress_path) if resume else {}
     start_index = int(resume_progress.get("next_index", 0)) if resume else 0
     has_checks = bool(repo.get("checks"))
+    step_token_deltas = list(resume_progress.get("step_token_deltas") or [])
+    last_step_tokens = resume_progress.get("last_step_tokens")
 
     if resume and resume_progress.get("plan_hash") != plan_hash:
         start_index = 0
+        step_token_deltas = []
+        last_step_tokens = None
 
     last_summary = resume_progress.get("last_summary") if resume else None
     step_outputs_dir = workspace / "step_outputs" / repo["name"]
@@ -1106,6 +1225,8 @@ async def _run_repo_steps(
             "step": start_index,
             "total": len(steps),
             "current": None,
+            "last_step_tokens": last_step_tokens,
+            "step_token_deltas": step_token_deltas,
             "started": now,
             "step_started": None,
             "updated": now,
@@ -1159,26 +1280,44 @@ async def _run_repo_steps(
                 progress_lock=progress_lock,
             )
         except asyncio.TimeoutError:
-            await _accumulate_tokens(
+            timeout_tokens = await _accumulate_tokens(
                 agent, progress_state, repo["name"], progress_lock
             )
             timeout_msg = (
                 f"Timed out after {_fmt_elapsed(step_timeout_sec)}: {step.name}"
             )
+            step_record = _step_token_record(
+                step_index=idx + 1,
+                step_name=step.name,
+                status="timed_out",
+                tokens=timeout_tokens,
+            )
+            step_token_deltas.append(step_record)
+            last_step_tokens = step_record
             (step_outputs_dir / f"step_{idx + 1}.md").write_text(
-                timeout_msg, encoding="utf-8"
+                f"{timeout_msg}\n\n{_format_step_token_usage(timeout_tokens)}",
+                encoding="utf-8",
             )
             if timeout_mode == "skip":
                 console.log(
                     f"[bold yellow]{repo['name']}[/bold yellow] step {idx + 1} "
                     f"timed out; skipping and continuing"
                 )
+                async with progress_lock:
+                    info = progress_state[repo["name"]]
+                    info["last_step_tokens"] = last_step_tokens
+                    info["step_token_deltas"] = step_token_deltas
+                    repo_tokens = _repo_token_snapshot(info)
                 _save_progress(
                     progress_path,
                     {
                         "next_index": idx + 1,
                         "plan_hash": plan_hash,
                         "last_summary": timeout_msg,
+                        "state": "running",
+                        "tokens": repo_tokens,
+                        "last_step_tokens": last_step_tokens,
+                        "step_token_deltas": step_token_deltas,
                     },
                 )
                 continue
@@ -1187,12 +1326,21 @@ async def _run_repo_steps(
                     f"[bold red]{repo['name']}[/bold red] step {idx + 1} "
                     "timed out; failing repo"
                 )
+                async with progress_lock:
+                    info = progress_state[repo["name"]]
+                    info["last_step_tokens"] = last_step_tokens
+                    info["step_token_deltas"] = step_token_deltas
+                    repo_tokens = _repo_token_snapshot(info)
                 _save_progress(
                     progress_path,
                     {
                         "next_index": idx,
                         "plan_hash": plan_hash,
                         "last_summary": timeout_msg,
+                        "state": "failed",
+                        "tokens": repo_tokens,
+                        "last_step_tokens": last_step_tokens,
+                        "step_token_deltas": step_token_deltas,
                     },
                 )
                 raise
@@ -1203,13 +1351,11 @@ async def _run_repo_steps(
                     "state": "paused",
                     "current": step.name,
                     "error": timeout_msg,
+                    "last_step_tokens": last_step_tokens,
+                    "step_token_deltas": step_token_deltas,
                     "updated": time.time(),
                 })
-                repo_tokens = {
-                    "input_tokens": info.get("input_tokens", 0),
-                    "output_tokens": info.get("output_tokens", 0),
-                    "total_tokens": info.get("total_tokens", 0),
-                }
+                repo_tokens = _repo_token_snapshot(info)
             await _emit_progress(progress_state, progress_lock, max_parallel)
             _save_progress(
                 progress_path,
@@ -1217,18 +1363,27 @@ async def _run_repo_steps(
                     "next_index": idx,
                     "plan_hash": plan_hash,
                     "last_summary": timeout_msg,
+                    "state": "paused",
+                    "tokens": repo_tokens,
+                    "last_step_tokens": last_step_tokens,
+                    "step_token_deltas": step_token_deltas,
                 },
             )
+            if repo_done_events and repo["name"] in repo_done_events:
+                repo_done_events[repo["name"]].set()
             return {
                 "repo": repo["name"],
                 "steps": idx,
                 "checks": all_check_results,
                 "tokens": repo_tokens,
+                "last_step_tokens": last_step_tokens,
+                "step_token_deltas": step_token_deltas,
                 "state": "paused",
             }
         step_tokens = await _accumulate_tokens(
             agent, progress_state, repo["name"], progress_lock
         )
+        step_total_tokens = dict(step_tokens)
 
         summary = result["messages"][-1].text
         last_summary = summary
@@ -1284,9 +1439,14 @@ async def _run_repo_steps(
                     progress_state=progress_state,
                     progress_lock=progress_lock,
                 )
-                await _accumulate_tokens(
+                fix_tokens = await _accumulate_tokens(
                     agent, progress_state, repo["name"], progress_lock
                 )
+                step_total_tokens["input_tokens"] += fix_tokens["input_tokens"]
+                step_total_tokens["output_tokens"] += fix_tokens[
+                    "output_tokens"
+                ]
+                step_total_tokens["total_tokens"] += fix_tokens["total_tokens"]
                 summary = result["messages"][-1].text
                 last_summary = summary
 
@@ -1312,20 +1472,39 @@ async def _run_repo_steps(
                     f"continuing to next step"
                 )
 
-        (step_outputs_dir / f"step_{idx + 1}.md").write_text(
-            summary, encoding="utf-8"
+        step_record = _step_token_record(
+            step_index=idx + 1,
+            step_name=step.name,
+            status="completed",
+            tokens=step_total_tokens,
         )
+        step_token_deltas.append(step_record)
+        last_step_tokens = step_record
+
+        (step_outputs_dir / f"step_{idx + 1}.md").write_text(
+            summary + "\n\n" + _format_step_token_usage(step_total_tokens),
+            encoding="utf-8",
+        )
+        async with progress_lock:
+            info = progress_state[repo["name"]]
+            info["last_step_tokens"] = last_step_tokens
+            info["step_token_deltas"] = step_token_deltas
+            repo_tokens = _repo_token_snapshot(info)
         _save_progress(
             progress_path,
             {
                 "next_index": idx + 1,
                 "plan_hash": plan_hash,
                 "last_summary": summary,
+                "state": "running",
+                "tokens": repo_tokens,
+                "last_step_tokens": last_step_tokens,
+                "step_token_deltas": step_token_deltas,
             },
         )
         step_tok_str = (
-            _fmt_tokens(step_tokens["total_tokens"])
-            if step_tokens["total_tokens"]
+            _fmt_tokens(step_total_tokens["total_tokens"])
+            if step_total_tokens["total_tokens"]
             else ""
         )
         console.log(
@@ -1366,17 +1545,28 @@ async def _run_repo_steps(
 
     async with progress_lock:
         info = progress_state[repo["name"]]
-        repo_tokens = {
-            "input_tokens": info.get("input_tokens", 0),
-            "output_tokens": info.get("output_tokens", 0),
-            "total_tokens": info.get("total_tokens", 0),
-        }
+        repo_tokens = _repo_token_snapshot(info)
+
+    _save_progress(
+        progress_path,
+        {
+            "next_index": len(steps),
+            "plan_hash": plan_hash,
+            "last_summary": last_summary,
+            "state": "done",
+            "tokens": repo_tokens,
+            "last_step_tokens": last_step_tokens,
+            "step_token_deltas": step_token_deltas,
+        },
+    )
 
     return {
         "repo": repo["name"],
         "steps": len(steps),
         "checks": all_check_results,
         "tokens": repo_tokens,
+        "last_step_tokens": last_step_tokens,
+        "step_token_deltas": step_token_deltas,
         "state": "done",
     }
 
@@ -1430,8 +1620,23 @@ async def _run_parallel(
         if status_interval_sec <= 0:
             return
         while not stop_event.is_set():
-            await asyncio.sleep(status_interval_sec)
-            await _emit_progress(progress_state, progress_lock, max_parallel)
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=status_interval_sec
+                )
+                break
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await _emit_progress(
+                    progress_state, progress_lock, max_parallel
+                )
+            except Exception as exc:
+                console.log(
+                    "[bold yellow]status reporter encountered render error; "
+                    f"continuing shutdown safely:[/bold yellow] {exc}"
+                )
+                return
 
     async def run_one(repo_name: str, steps: list[RepoStep]) -> dict:
         async with sem:
@@ -1442,7 +1647,9 @@ async def _run_parallel(
                 agent_name="executor",
             )
             plan_hash = hash_plan(steps)
-            checkpointer, ckpt_path = _repo_checkpointer(workspace, repo_name)
+            checkpointer, ckpt_conn, ckpt_path = await _repo_checkpointer(
+                workspace, repo_name
+            )
             thread_id = f"{repo_name}-{plan_hash[:8]}"
             console.log(f"[dim]{repo_name}[/dim] checkpoint db: {ckpt_path}")
             try:
@@ -1466,6 +1673,21 @@ async def _run_parallel(
                     checkpointer=checkpointer,
                     thread_id=thread_id,
                 )
+            except asyncio.CancelledError:
+                async with progress_lock:
+                    info = progress_state[repo_name]
+                    if info.get("state") in {"running", "blocked"}:
+                        info.update({
+                            "state": "failed",
+                            "error": "Cancelled due to run interruption",
+                            "updated": time.time(),
+                        })
+                if repo_name in repo_done_events:
+                    repo_done_events[repo_name].set()
+                await _emit_progress(
+                    progress_state, progress_lock, max_parallel
+                )
+                raise
             except Exception as exc:
                 async with progress_lock:
                     info = progress_state[repo_name]
@@ -1474,12 +1696,17 @@ async def _run_parallel(
                         "error": str(exc),
                         "updated": time.time(),
                     })
-                if repo_name in repo_done_events and skip_failed_repos:
+                if repo_name in repo_done_events:
                     repo_done_events[repo_name].set()
                 await _emit_progress(
                     progress_state, progress_lock, max_parallel
                 )
                 if skip_failed_repos:
+                    repo_tokens = _repo_token_snapshot(info)
+                    last_step_tokens = info.get("last_step_tokens")
+                    step_token_deltas = list(
+                        info.get("step_token_deltas") or []
+                    )
                     console.log(
                         f"[bold yellow]{repo_name}[/bold yellow] failed; "
                         f"continuing due to skip_failed_repos (checkpoint: {ckpt_path})"
@@ -1488,21 +1715,98 @@ async def _run_parallel(
                         "repo": repo_name,
                         "steps": 0,
                         "checks": [],
-                        "tokens": {},
+                        "tokens": repo_tokens,
+                        "last_step_tokens": last_step_tokens,
+                        "step_token_deltas": step_token_deltas,
                         "state": "failed",
                         "error": str(exc),
                     }
                 raise
+            finally:
+                try:
+                    await ckpt_conn.close()
+                    console.log(f"[dim]{repo_name}[/dim] checkpoint db closed")
+                except Exception as close_exc:
+                    console.log(
+                        f"[bold yellow]{repo_name}[/bold yellow] could not close "
+                        f"checkpoint db: {close_exc}"
+                    )
 
     await _emit_progress(progress_state, progress_lock, max_parallel)
     stop_event = asyncio.Event()
     reporter = asyncio.create_task(status_loop(stop_event))
     try:
-        tasks = [run_one(name, steps) for name, steps in repo_steps.items()]
-        return await asyncio.gather(*tasks)
+        repo_names = list(repo_steps)
+        tasks = [
+            asyncio.create_task(run_one(name, repo_steps[name]))
+            for name in repo_names
+        ]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        console.log(
+            f"[dim]runner gather complete: {len(raw_results)} repo result(s)[/dim]"
+        )
+
+        results: list[dict] = []
+        for repo_name, raw in zip(repo_names, raw_results):
+            if isinstance(raw, dict):
+                results.append(raw)
+                continue
+
+            if isinstance(raw, asyncio.CancelledError):
+                error = "Cancelled due to run interruption"
+            elif isinstance(raw, BaseException):
+                error = str(raw) or raw.__class__.__name__
+            else:
+                error = "Unknown failure"
+
+            async with progress_lock:
+                info = progress_state[repo_name]
+                if info.get("state") not in {"done", "paused", "failed"}:
+                    info.update({
+                        "state": "failed",
+                        "error": error,
+                        "updated": time.time(),
+                    })
+                repo_tokens = _repo_token_snapshot(info)
+                last_step_tokens = info.get("last_step_tokens")
+                step_token_deltas = list(info.get("step_token_deltas") or [])
+
+            if repo_name in repo_done_events:
+                repo_done_events[repo_name].set()
+
+            results.append({
+                "repo": repo_name,
+                "steps": 0,
+                "checks": [],
+                "tokens": repo_tokens,
+                "last_step_tokens": last_step_tokens,
+                "step_token_deltas": step_token_deltas,
+                "state": "failed",
+                "error": error,
+            })
+
+        await _emit_progress(progress_state, progress_lock, max_parallel)
+        console.log("[dim]runner returning structured results[/dim]")
+        return results
     finally:
+        console.log("[dim]runner stopping status reporter[/dim]")
         stop_event.set()
-        await reporter
+        reporter.cancel()
+        try:
+            await asyncio.wait_for(reporter, timeout=3)
+        except asyncio.TimeoutError:
+            console.log(
+                "[bold yellow]status reporter did not stop within 3s; "
+                "continuing shutdown[/bold yellow]"
+            )
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            console.log(
+                "[bold yellow]status reporter exited with error during "
+                f"shutdown:[/bold yellow] {exc}"
+            )
+        console.log("[dim]runner status reporter stopped[/dim]")
 
 
 def main():
@@ -1553,6 +1857,7 @@ def main():
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
+    initial_yaml_config = _namespace_to_dict(cfg)
     config_dir = Path(args.config).parent.resolve()
 
     project = getattr(cfg, "project", "multi_repo_run")
@@ -1755,6 +2060,34 @@ def main():
         )
     )
     timeout_str = f"{step_timeout_sec}s" if step_timeout_sec else "none"
+
+    run_context = {
+        "config_path": str(Path(args.config).resolve()),
+        "initial_yaml_config": initial_yaml_config,
+        "effective_runtime": {
+            "workspace": str(workspace),
+            "planner_model": planner_model,
+            "executor_model": executor_model,
+            "max_parallel": max_parallel,
+            "recursion_limit": recursion_limit,
+            "resume": resume,
+            "status_interval_sec": status_interval_sec,
+            "max_check_retries": max_check_retries,
+            "step_timeout_sec": step_timeout_sec,
+            "timeout_mode": timeout_mode,
+            "skip_failed_repos": skip_failed_repos,
+        },
+        "cli_args": {
+            "resume": args.resume,
+            "resume_from": args.resume_from,
+            "interactive_timeout": args.interactive_timeout,
+            "timeout_mode": args.timeout_mode,
+            "skip_failed_repos": args.skip_failed_repos,
+        },
+    }
+    run_context_path = workspace / "run_context.json"
+    run_context_path.write_text(json.dumps(run_context, indent=2))
+
     console.print(
         f"[bold]Parallel workers:[/bold] {max_parallel}  "
         f"[bold]Status interval:[/bold] {status_interval_sec}s  "
@@ -1765,6 +2098,7 @@ def main():
         f"[bold]Repos:[/bold] {len(repo_steps)}"
     )
 
+    console.log("[dim]main starting parallel execution[/dim]")
     results = asyncio.run(
         _run_parallel(
             repo_steps=repo_steps,
@@ -1785,9 +2119,12 @@ def main():
             skip_failed_repos=skip_failed_repos,
         )
     )
+    console.log("[dim]main parallel execution returned[/dim]")
 
     summary_path = workspace / "run_summary.json"
+    console.log(f"[dim]main writing summary to {summary_path}[/dim]")
     summary_path.write_text(json.dumps(results, indent=2))
+    console.log("[dim]main summary write complete[/dim]")
 
     # -- Final summary --
     console.rule("[bold cyan]Run complete")
@@ -1838,7 +2175,10 @@ def main():
     console.print(
         Panel(
             "\n".join(result_lines)
-            + f"\n\n[dim]Summary written to {summary_path}[/dim]",
+            + (
+                f"\n\n[dim]Summary written to {summary_path}[/dim]"
+                f"\n[dim]Run context written to {run_context_path}[/dim]"
+            ),
             title="[bold green]RESULTS[/bold green]",
             border_style="bright_magenta",
             padding=(1, 2),
@@ -1847,4 +2187,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        console.print(
+            "[bold yellow]Interrupted by user (Ctrl+C). "
+            "Exiting gracefully.[/bold yellow]"
+        )
+        raise SystemExit(130)
