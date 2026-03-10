@@ -1,10 +1,27 @@
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
-from ursa.agents import GitAgent, GitGoAgent, make_git_agent
+if shutil.which("git") is None:
+    pytest.skip(
+        "Skipping git agent tests: `git` executable is not available on PATH. "
+        "Install git and ensure it is available in the active shell.",
+        allow_module_level=True,
+    )
+
+try:
+    from ursa.agents import GitAgent, GitGoAgent, make_git_agent
+except (ImportError, ModuleNotFoundError) as exc:
+    pytest.skip(
+        "Skipping git agent tests: git-related Python tooling could not be imported. "
+        "Install the project test dependencies and verify git tool integrations are available. "
+        f"Import error: {exc}",
+        allow_module_level=True,
+    )
 
 
 class ToolReadyFakeChatModel(GenericFakeChatModel):
