@@ -5,7 +5,6 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from rich import get_console
 from rich.panel import Panel
-from rich.syntax import Syntax
 
 from ursa.agents.base import AgentContext
 from ursa.util.diff_renderer import DiffRenderer
@@ -32,39 +31,14 @@ def write_code(
     """
     # Determine the full path to the target file
     workspace_dir = runtime.context.workspace
-    console.print("[cyan]Writing file:[/]", filename)
-
-    # Show syntax-highlighted preview before writing to file
-    try:
-        lexer_name = Syntax.guess_lexer(filename, code)
-    except Exception:
-        lexer_name = "text"
-
-    console.print(
-        Panel(
-            Syntax(code, lexer_name, line_numbers=True),
-            title="File Preview",
-            border_style="cyan",
-        )
-    )
 
     # Write cleaned code to disk
     code_file = workspace_dir.joinpath(filename)
     try:
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(code)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write file:[/]",
-            exc,
-        )
+    except OSError:
         return f"Failed to write {filename}."
-
-    console.print(
-        f"[bold bright_white on green] :heavy_check_mark: [/] "
-        f"[green]File written:[/] {code_file}"
-    )
 
     # Record the edit operation
     if (store := runtime.store) is not None:
@@ -135,7 +109,7 @@ def edit_code(
     try:
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(updated)
-    except Exception as exc:
+    except OSError as exc:
         console.print(
             "[bold bright_white on red] :heavy_multiplication_x: [/] "
             "[red]Failed to write file:[/]",

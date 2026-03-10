@@ -20,8 +20,5 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
         Extracted text content.
     """
     full_filename = runtime.context.workspace.joinpath(filename)
-
-    print("[READING]:", full_filename)
-    # Move all the reading to a function in the parse util
     text = read_text_from_file(full_filename)
     return text

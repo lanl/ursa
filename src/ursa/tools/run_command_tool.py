@@ -4,7 +4,6 @@ from typing import TypedDict
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from rich import get_console
 
 from ursa.agents.base import AgentContext
 from ursa.prompt_library.execution_prompts import (
@@ -12,7 +11,7 @@ from ursa.prompt_library.execution_prompts import (
 )
 from ursa.util.types import AsciiStr
 
-console = get_console()
+RUN_COMMAND_SAFETY_NAMESPACE = ("workspace", "command_safety")
 
 
 class SafetyAssessment(TypedDict):
@@ -33,6 +32,10 @@ def clean_env(workspace: Path):
 
     env["UV_PROJECT"] = str(workspace.resolve())
     return env
+
+
+def run_command_safety_key(tool_call_id: str | None, query: str) -> str:
+    return tool_call_id or f"query:{query}"
 
 
 @tool
@@ -72,22 +75,22 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     safety_result = llm.with_structured_output(SafetyAssessment).invoke(
         get_safety_prompt(query, safe_codes, edited_files)
     )
+    if runtime.store is not None:
+        runtime.store.put(
+            RUN_COMMAND_SAFETY_NAMESPACE,
+            run_command_safety_key(runtime.tool_call_id, query),
+            {
+                "query": query,
+                "is_safe": safety_result["is_safe"],
+                "reason": safety_result["reason"],
+            },
+        )
 
     if not safety_result["is_safe"]:
-        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result['reason']}"
-        console.print(
-            "[bold red][WARNING][/bold red] Command deemed unsafe:",
-            query,
+        return (
+            f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\n"
+            f"For reason: {safety_result['reason']}"
         )
-        # Also surface the model's rationale for transparency.
-        console.print("[bold red][WARNING][/bold red] REASON:", tool_response)
-        return tool_response
-    else:
-        console.print(
-            f"[green]Command passed safety check:[/green] {query}\nFor reason: {safety_result['reason']}"
-        )
-
-    print("RUNNING: ", query)
 
     try:
         result = subprocess.run(
@@ -98,19 +101,16 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
             capture_output=True,
             env=clean_env(workspace_dir),
             cwd=workspace_dir,
+            check=False,
         )
         stdout, stderr = result.stdout, result.stderr
     except KeyboardInterrupt:
-        print("Keyboard Interrupt of command: ", query)
         stdout, stderr = "", "KeyboardInterrupt:"
 
     # Fit BOTH streams under a single overall cap
     stdout_fit, stderr_fit = _fit_streams_to_budget(
         stdout or "", stderr or "", runtime.context.tool_character_limit
     )
-
-    print("STDOUT: ", stdout_fit)
-    print("STDERR: ", stderr_fit)
 
     return f"STDOUT:\n{stdout_fit}\nSTDERR:\n{stderr_fit}"
 
