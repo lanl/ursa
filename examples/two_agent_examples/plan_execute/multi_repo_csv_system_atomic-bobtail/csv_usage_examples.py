@@ -1,34 +1,33 @@
-# Examples of usage for CSV utility functions in utils_lib
+import argparse
 
-# Example 1: Reading a CSV file
-# Assume we have a CSV file 'data.csv' with the following content:
-# name,age,city
-# Alice,30,New York
-# Bob,25,Los Angeles
-# Charlie,35,Chicago
+import csv_utils
 
-# Read the CSV file:
-# data = read_csv('data.csv')
-# print(data)  # Output: [{'name': 'Alice', 'age': '30', 'city': 'New York'}, {'name': 'Bob', 'age': '25', 'city': 'Los Angeles'}, {'name': 'Charlie', 'age': '35', 'city': 'Chicago'}]
 
-# Example 2: Writing to a CSV file
-# data_to_write = [{'name': 'David', 'age': '28', 'city': 'San Francisco'}]
-# write_csv('output.csv', data_to_write)
+def main():
+    parser = argparse.ArgumentParser(description="CSV Command Line Interface")
+    parser.add_argument(
+        "command", choices=["filter", "merge"], help="Command to execute"
+    )
+    parser.add_argument("--input", nargs="+", help="Input CSV file(s)")
+    parser.add_argument("--output", help="Output CSV file")
+    parser.add_argument(
+        "--filter", help="Filter function (Python code as a string)"
+    )
 
-# Example 3: Filtering CSV data
-# Assume the data variable contains the data read from 'data.csv'
-# Filter function to select only people aged 30 or more:
-# filtered_data = filter_csv(data, lambda x: int(x['age']) >= 30)
-# print(filtered_data)  # Output: [{'name': 'Alice', 'age': '30', 'city': 'New York'}, {'name': 'Charlie', 'age': '35', 'city': 'Chicago'}]
+    args = parser.parse_args()
 
-# Example 4: Merging CSV files
-# file1.csv content:
-# name,age,city
-# Alice,30,New York
-# file2.csv content:
-# name,age,city
-# Bob,25,Los Angeles
-#
-# Merge 'file1.csv' and 'file2.csv' into 'merged.csv'
-# merge_csv(['file1.csv', 'file2.csv'], 'merged.csv')
-# Merged data will be written into 'merged.csv'
+    if args.command == "filter" and args.input and args.output:
+        data = csv_utils.read_csv(args.input[0])
+        # Example filter function from string (this will need eval or ast.literal_eval)
+        filter_func = eval("lambda row: " + args.filter)
+        filtered_data = csv_utils.filter_csv(data, filter_func)
+        csv_utils.write_csv(args.output, filtered_data)
+        print(f"Filtered data written to {args.output}")
+
+    elif args.command == "merge" and args.input and args.output:
+        csv_utils.merge_csv(args.input, args.output)
+        print(f"Merged data written to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
