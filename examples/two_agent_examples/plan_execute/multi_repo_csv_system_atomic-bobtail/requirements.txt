@@ -1,0 +1,15 @@
+# Required dependencies for CSV processing in utils_lib
+
+# The following libraries are required for the CSV utility functions:
+
+# 1. csv (built-in)
+#    - This is a built-in Python module used for reading and writing CSV files.
+
+# 2. pandas
+#    - An external library providing high-performance data manipulation and analysis tools.
+#    - It simplifies handling CSV files, especially for large datasets or complex operations.
+
+
+# To install the necessary external dependencies, use the following command:
+# pip install pandas
+
