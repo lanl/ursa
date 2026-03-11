@@ -17,8 +17,13 @@ import feedparser
 import pymupdf
 import requests
 from langchain.chat_models import BaseChatModel
+from langchain_core.callbacks.manager import (
+    adispatch_custom_event,
+    dispatch_custom_event,
+)
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from PIL import Image
 
 from ursa.agents.base import BaseAgent
@@ -62,6 +67,57 @@ class AcquisitionState(TypedDict, total=False):
     items: list[ItemMetadata]
     summaries: list[str]
     final_summary: str
+
+
+async def _aemit_progress(
+    message: str,
+    *,
+    config: RunnableConfig | None = None,
+    stage: str,
+    **extra,
+) -> None:
+    if config is None:
+        return
+    await adispatch_custom_event(
+        "ursa_agent_progress",
+        {
+            "agent": "acquisition",
+            "stage": stage,
+            "message": message,
+            **extra,
+        },
+        config=config,
+    )
+
+
+def _emit_progress(
+    message: str,
+    *,
+    config: RunnableConfig | None = None,
+    stage: str,
+    **extra,
+) -> None:
+    if config is None:
+        return
+    dispatch_custom_event(
+        "ursa_agent_progress",
+        {
+            "agent": "acquisition",
+            "stage": stage,
+            "message": message,
+            **extra,
+        },
+        config=config,
+    )
+
+
+def _item_event_payload(item: ItemMetadata) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in ("id", "title", "url", "local_path"):
+        value = item.get(key)
+        if value:
+            payload[key] = value
+    return payload
 
 
 # ---------- Small Utilities reused across agents ----------
@@ -257,9 +313,31 @@ class BaseAcquisitionAgent(BaseAgent):
         return text
 
     # ---- shared nodes ----
-    def _fetch_items(self, query: str) -> list[ItemMetadata]:
+    def _fetch_items(
+        self,
+        query: str,
+        *,
+        config: RunnableConfig | None = None,
+    ) -> list[ItemMetadata]:
         hits = self._search(query)[: self.max_results] if self.download else []
         items: list[ItemMetadata] = []
+
+        if hits:
+            _emit_progress(
+                f"Found {len(hits)} source(s)",
+                config=config,
+                stage="search_results",
+                query=query,
+                result_count=len(hits),
+                sources=[
+                    hit.get("href")
+                    or hit.get("url")
+                    or hit.get("landing_page")
+                    or hit.get("title")
+                    or hit.get("id")
+                    for hit in hits
+                ],
+            )
 
         # If not downloading/scraping, try to load whatever is cached in database_path.
         if not self.download:
@@ -293,20 +371,45 @@ class BaseAcquisitionAgent(BaseAgent):
         with ThreadPoolExecutor(
             max_workers=min(self.num_threads, max(1, len(hits)))
         ) as ex:
-            futures = [
-                ex.submit(self._materialize, h)
-                for h in hits
-                if self._filter_hit(h)
-            ]
-            for fut in as_completed(futures):
+            future_to_hit = {
+                ex.submit(self._materialize, hit): hit
+                for hit in hits
+                if self._filter_hit(hit)
+            }
+            total = len(future_to_hit)
+            completed = 0
+            for fut in as_completed(future_to_hit):
+                completed += 1
+                hit = future_to_hit[fut]
                 try:
                     item = fut.result()
                     items.append(item)
+                    _emit_progress(
+                        f"Collected {completed}/{total}",
+                        config=config,
+                        stage="materialize_done",
+                        completed=completed,
+                        total=total,
+                        status="ok",
+                        **_item_event_payload(item),
+                    )
                 except Exception as e:
                     items.append({
                         "id": _hash(str(time.time())),
                         "full_text": f"[Error: {e}]",
                     })
+                    _emit_progress(
+                        f"Failed to collect {completed}/{total}",
+                        config=config,
+                        stage="materialize_done",
+                        completed=completed,
+                        total=total,
+                        status="error",
+                        title=hit.get("title") or hit.get("id"),
+                        source=hit.get("href")
+                        or hit.get("url")
+                        or hit.get("landing_page"),
+                    )
         return items
 
     def _normalize_inputs(self, inputs) -> AcquisitionState:
@@ -326,7 +429,11 @@ class BaseAcquisitionAgent(BaseAgent):
         # URSA or if the final_summary is an empty string itself.
         return ""
 
-    async def _search_query(self, state: AcquisitionState) -> AcquisitionState:
+    async def _search_query(
+        self,
+        state: AcquisitionState,
+        config: RunnableConfig | None = None,
+    ) -> AcquisitionState:
         """Generate a search query from the input search task (context)"""
         existing = state.get("query")
         if existing:
@@ -337,13 +444,27 @@ class BaseAcquisitionAgent(BaseAgent):
             f"The user stated {context}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
         )
         state["query"] = query.content or context
+        await _aemit_progress(
+            "Acquisition query ready",
+            config=config,
+            stage="search_query",
+            query=state["query"],
+        )
         return state
 
-    def _fetch_node(self, state: AcquisitionState) -> AcquisitionState:
-        items = self._fetch_items(state["query"])
+    def _fetch_node(
+        self,
+        state: AcquisitionState,
+        config: RunnableConfig | None = None,
+    ) -> AcquisitionState:
+        items = self._fetch_items(state["query"], config=config)
         return {**state, "items": items}
 
-    def _summarize_node(self, state: AcquisitionState) -> AcquisitionState:
+    def _summarize_node(
+        self,
+        state: AcquisitionState,
+        config: RunnableConfig | None = None,
+    ) -> AcquisitionState:
         prompt = ChatPromptTemplate.from_template("""
         You are an assistant responsible for summarizing retrieved content in the context of this task: {context}
 
@@ -356,6 +477,12 @@ class BaseAcquisitionAgent(BaseAgent):
         if "items" not in state or not state["items"]:
             return {**state, "summaries": None}
 
+        _emit_progress(
+            f"Summarizing {len(state['items'])} source(s)",
+            config=config,
+            stage="summarize_start",
+            item_count=len(state["items"]),
+        )
         summaries: list[Optional[str]] = [None] * len(state["items"])
 
         def process(i: int, item: ItemMetadata):
@@ -384,10 +511,30 @@ class BaseAcquisitionAgent(BaseAgent):
             for fut in as_completed(futures):
                 i, s = fut.result()
                 summaries[i] = s
+                item = state["items"][i]
+                _emit_progress(
+                    f"Summarized {i + 1}/{len(state['items'])}",
+                    config=config,
+                    stage="summarize_done",
+                    completed=i + 1,
+                    total=len(state["items"]),
+                    title=item.get("title") or item.get("id"),
+                    summary=s,
+                )
 
         return {**state, "summaries": summaries}  # type: ignore
 
-    def _rag_node(self, state: AcquisitionState) -> AcquisitionState:
+    def _rag_node(
+        self,
+        state: AcquisitionState,
+        config: RunnableConfig | None = None,
+    ) -> AcquisitionState:
+        _emit_progress(
+            f"Querying RAG over {len(state.get('items', []))} document(s)",
+            config=config,
+            stage="rag_start",
+            item_count=len(state.get("items", [])),
+        )
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
@@ -399,12 +546,28 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state["final_summary"] = rag_agent.invoke(context=state["context"])[
             "summary"
         ]
+        _emit_progress(
+            "RAG summary ready",
+            config=config,
+            stage="rag_done",
+            summary=new_state["final_summary"],
+        )
         return new_state
 
-    def _aggregate_node(self, state: AcquisitionState) -> AcquisitionState:
+    def _aggregate_node(
+        self,
+        state: AcquisitionState,
+        config: RunnableConfig | None = None,
+    ) -> AcquisitionState:
         if not state.get("summaries") or not state.get("items"):
             return {**state, "final_summary": None}
 
+        _emit_progress(
+            f"Combining {len(state['items'])} summaries",
+            config=config,
+            stage="aggregate_start",
+            item_count=len(state["items"]),
+        )
         blocks: list[str] = []
         for idx, (item, summ) in enumerate(
             zip(state["items"], state["summaries"])
@@ -442,6 +605,13 @@ class BaseAcquisitionAgent(BaseAgent):
         ) as f:
             f.write(final_summary)
 
+        _emit_progress(
+            "Final synthesis ready",
+            config=config,
+            stage="aggregate_done",
+            item_count=len(state["items"]),
+            summary=final_summary,
+        )
         return {**state, "final_summary": final_summary}
 
     def _build_graph(self):

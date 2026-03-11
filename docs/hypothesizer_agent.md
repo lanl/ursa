@@ -11,13 +11,15 @@ from ursa.agents import HypothesizerAgent
 agent = HypothesizerAgent()
 
 # Run the agent with a question
-solution = agent.invoke(
-    prompt="Find a city with at least 10 vowels in its name.",
-    max_iter=3
+result = agent.invoke(
+    {
+        "question": "Find a city with at least 10 vowels in its name.",
+        "current_iteration": 0,
+        "max_iterations": 3,
+    },
+    config={"recursion_limit": 99999},
 )
-
-# Print the final solution
-print(solution)
+solution = result["solution"]
 ```
 
 ## Parameters
@@ -77,11 +79,14 @@ agent = HypothesizerAgent(llm=init_chat_model("openai:gpt-5-mini"))
 
 # Run with 5 iterations
 result = agent.invoke(
-    prompt="What strategies could a small local bookstore use to compete with large online retailers?",
-    max_iter=5
+    {
+        "question": "What strategies could a small local bookstore use to compete with large online retailers?",
+        "current_iteration": 0,
+        "max_iterations": 5,
+    },
+    config={"recursion_limit": 99999},
 )
-
-print(result)
+final_solution = result["solution"]
 ```
 
 ## Notes

@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import pytest
+from ddgs.exceptions import DDGSException
 
 from ursa.agents.hypothesizer_agent import HypothesizerAgent
 
@@ -12,15 +13,40 @@ class DummySearchTool:
         self.queries: list[tuple[str, str]] = []
 
     def text(
-        self, query: str, backend: str = "duckduckgo"
+        self,
+        query: str,
+        backend: str = "duckduckgo",
+        max_results: int | None = None,
     ) -> list[dict[str, str]]:
         self.queries.append((query, backend))
         idx = len(self.queries)
         return [
             {
-                "link": f"https://example.com/result-{idx}",
+                "href": f"https://example.com/result-{idx}",
                 "title": f"Result {idx}",
                 "snippet": f"Snippet for query {idx}",
+            }
+        ]
+
+
+class FallbackSearchTool:
+    def __init__(self) -> None:
+        self.queries: list[tuple[str, str]] = []
+
+    def text(
+        self,
+        query: str,
+        backend: str = "duckduckgo",
+        max_results: int | None = None,
+    ) -> list[dict[str, str]]:
+        self.queries.append((query, backend))
+        if "evidence" in query or "alternatives" in query:
+            raise DDGSException("No results found.")
+        return [
+            {
+                "href": f"https://example.com/{len(self.queries)}",
+                "title": "Recovered result",
+                "snippet": f"Recovered via {query}",
             }
         ]
 
@@ -75,3 +101,43 @@ async def test_hypothesizer_agent_ainvoke(
 
     generated_logs = list(agent.workspace.glob("iteration_details_*.txt"))
     assert generated_logs, "Expected iteration history files to be written"
+
+
+@pytest.mark.asyncio
+async def test_hypothesizer_search_falls_back_when_ddgs_returns_no_results(
+    chat_model,
+    monkeypatch: pytest.MonkeyPatch,
+    tmpdir,
+) -> None:
+    dummy_search = FallbackSearchTool()
+    monkeypatch.setattr(
+        "ursa.agents.hypothesizer_agent.DDGS",
+        lambda: dummy_search,
+    )
+
+    agent = HypothesizerAgent(llm=chat_model, workspace=tmpdir)
+    initial_state = {
+        "question": "How can we improve jet design verification?",
+        "question_search_query": "jet design verification",
+        "current_iteration": 0,
+        "max_iterations": 1,
+        "agent1_solution": ["Initial answer"],
+        "agent2_critiques": [],
+        "agent3_perspectives": [],
+        "solution": "",
+        "summary_report": "",
+        "visited_sites": set(),
+    }
+
+    critique = await agent.agent2_critique(initial_state)
+
+    assert critique["agent2_critiques"]
+    assert critique["visited_sites"]
+    assert (
+        "jet design verification evidence",
+        "duckduckgo,google",
+    ) in dummy_search.queries
+    assert (
+        "jet design verification performance",
+        "duckduckgo,google",
+    ) in dummy_search.queries

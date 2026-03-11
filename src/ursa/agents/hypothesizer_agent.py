@@ -1,17 +1,27 @@
 import ast
-from datetime import datetime
+import asyncio
+from datetime import UTC, datetime
 from operator import add, or_
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
+from urllib.parse import urlparse
 
 from langchain.chat_models import BaseChatModel
+from langchain_core.callbacks.manager import (
+    adispatch_custom_event,
+    dispatch_custom_event,
+)
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 
 try:
     from ddgs import DDGS  # pip install duckduckgo-search
-except Exception:
+    from ddgs.exceptions import DDGSException, TimeoutException
+except ImportError:
     DDGS = None
+    DDGSException = RuntimeError
+    TimeoutException = TimeoutError
 
 
 from ursa.prompt_library.hypothesizer_prompts import (
@@ -22,12 +32,6 @@ from ursa.prompt_library.hypothesizer_prompts import (
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from .base import BaseAgent
-
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
 
 
 # Define our state schema
@@ -44,15 +48,64 @@ class HypothesizerState(TypedDict, total=False):
     visited_sites: Annotated[set[str], or_]
 
 
+async def _aemit_progress(
+    message: str,
+    *,
+    config: RunnableConfig | None = None,
+    stage: str,
+    **extra,
+) -> None:
+    if config is None:
+        return
+    await adispatch_custom_event(
+        "ursa_agent_progress",
+        {
+            "agent": "hypothesizer",
+            "stage": stage,
+            "message": message,
+            **extra,
+        },
+        config=config,
+    )
+
+
+def _emit_progress(
+    message: str,
+    *,
+    config: RunnableConfig | None = None,
+    stage: str,
+    **extra,
+) -> None:
+    if config is None:
+        return
+    dispatch_custom_event(
+        "ursa_agent_progress",
+        {
+            "agent": "hypothesizer",
+            "stage": stage,
+            "message": message,
+            **extra,
+        },
+        config=config,
+    )
+
+
 class HypothesizerAgent(BaseAgent[HypothesizerState]):
     state_type = HypothesizerState
+    search_backends = (
+        "duckduckgo,google",
+        "duckduckgo",
+        "google",
+        "auto",
+    )
+    search_max_results = 8
 
     def __init__(self, llm: BaseChatModel, max_iterations: int = 3, **kwargs):
         super().__init__(llm, **kwargs)
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
         self.competitor_prompt = competitor_prompt
-        self.search_tool = DDGS()
+        self.search_tool = DDGS() if DDGS is not None else None
         self.strllm = self.llm | StrOutputParser()
         self.max_iterations = max_iterations
 
@@ -70,33 +123,141 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "solution", "Hypothesizer failed to return a solution"
         )
 
+    def _normalize_search_query(self, query: str | None) -> str:
+        return " ".join(str(query or "").replace("\n", " ").split()).strip(
+            " \"'"
+        )
+
+    def _search_queries(
+        self,
+        *,
+        primary: str | None,
+        fallbacks: list[str | None] | None = None,
+    ) -> list[str]:
+        seen: set[str] = set()
+        queries: list[str] = []
+        for candidate in [primary, *(fallbacks or [])]:
+            normalized = self._normalize_search_query(candidate)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                queries.append(normalized)
+        return queries
+
+    def _normalize_search_results(self, results: Any) -> list[dict[str, Any]]:
+        if results is None:
+            return []
+        if isinstance(results, dict):
+            raw_results = [results]
+        elif isinstance(results, list):
+            raw_results = results
+        else:
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            link = (
+                entry.get("link")
+                or entry.get("href")
+                or entry.get("url")
+                or entry.get("source")
+            )
+            if link and "link" not in entry:
+                entry["link"] = link
+            normalized.append(entry)
+        return normalized
+
+    async def _search_text(
+        self,
+        *,
+        primary: str | None,
+        fallbacks: list[str | None] | None = None,
+        display_query: str | None = None,
+        config: RunnableConfig | None = None,
+        stage: str,
+    ) -> list[dict[str, Any]]:
+        if self.search_tool is None:
+            return []
+
+        queries = self._search_queries(primary=primary, fallbacks=fallbacks)
+        requests = [
+            (query, backend)
+            for query in queries
+            for backend in self.search_backends
+        ]
+        tasks = [
+            asyncio.create_task(
+                asyncio.to_thread(
+                    self.search_tool.text,
+                    query,
+                    backend=backend,
+                    max_results=self.search_max_results,
+                )
+            )
+            for query, backend in requests
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for (query, backend), result in zip(requests, results, strict=True):
+            if isinstance(result, (DDGSException, TimeoutException)):
+                continue
+            if isinstance(result, Exception):
+                raise result
+
+            normalized = self._normalize_search_results(result)
+            if normalized:
+                await _aemit_progress(
+                    "Visited sites",
+                    config=config,
+                    stage="visited_sites",
+                    query=display_query or "",
+                    result_count=len(normalized),
+                    sites=sorted(self.parse_visited_sites(normalized)),
+                )
+                return normalized
+
+        return []
+
     def parse_visited_sites(self, raw_search_results) -> set[str]:
         visited_sites = set()
         try:
             if isinstance(raw_search_results, str):
                 results_list = ast.literal_eval(raw_search_results)
             else:
-                results_list = raw_search_results
+                results_list = self._normalize_search_results(
+                    raw_search_results
+                )
             # Each item typically might have "link", "title", "snippet"
             for item in results_list:
-                link = item.get("link")
+                link = (
+                    item.get("link")
+                    or item.get("href")
+                    or item.get("url")
+                    or item.get("source")
+                )
                 if link:
                     visited_sites.add(link)
         except (ValueError, SyntaxError, TypeError):
-            # If it's not valid Python syntax or something else goes wrong
-            print("[DEBUG] Could not parse search results as Python list.")
-            print("[DEBUG] raw_search_results:", raw_search_results)
+            return visited_sites
 
         return visited_sites
 
     async def agent1_generate_solution(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """Agent 1: Hypothesizer."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering agent1_generate_solution. Iteration: {state['current_iteration']}"
+        iteration = state["current_iteration"] + 1
+        await _aemit_progress(
+            f"Hypothesis pass {iteration}/{state['max_iterations']}",
+            config=config,
+            stage="generate",
+            iteration=iteration,
+            max_iterations=state["max_iterations"],
         )
-
         current_iter = state["current_iteration"]
         user_content = f"Question: {state['question']}\n"
 
@@ -122,8 +283,12 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         )
         if '"' in search_query:
             search_query = search_query.split('"')[1]
-        raw_search_results = self.search_tool.text(
-            search_query or state["question"]
+        raw_search_results = await self._search_text(
+            primary=search_query,
+            fallbacks=[state["question"]],
+            display_query=search_query,
+            config=config,
+            stage="initial_research",
         )
         user_content += f"\nSearch results: {raw_search_results}"
 
@@ -136,11 +301,11 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             HumanMessage(content=user_content),
         ]
         solution = await self.strllm.ainvoke(messages)
-
-        # Print the entire solution in green
-        print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting agent1_generate_solution."
+        await _aemit_progress(
+            "Drafted hypothesis",
+            config=config,
+            stage="generate_result",
+            preview=solution,
         )
         return {
             "agent1_solution": [solution],
@@ -149,13 +314,17 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         }
 
     async def agent2_critique(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """Agent 2: Critic."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering agent2_critique."
+        await _aemit_progress(
+            "Critiquing hypothesis",
+            config=config,
+            stage="critique",
+            iteration=state["current_iteration"] + 1,
         )
-
         solution = state["agent1_solution"][-1]
         user_content = (
             f"Question: {state['question']}\n"
@@ -163,9 +332,17 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "Provide a detailed critique of this solution. Identify potential flaws, assumptions, and areas for improvement."
         )
 
-        fact_check_query = f"fact check {state['question_search_query']} solution effectiveness"
-
-        fact_check_results = self.search_tool.text(fact_check_query)
+        fact_check_results = await self._search_text(
+            primary=f"{state['question_search_query']} evidence",
+            fallbacks=[
+                f"{state['question_search_query']} performance",
+                state["question_search_query"],
+                state["question"],
+            ],
+            display_query=state["question_search_query"],
+            config=config,
+            stage="fact_check",
+        )
         visited_sites = self.parse_visited_sites(fact_check_results)
         user_content += f"\nFact check results: {fact_check_results}"
 
@@ -174,11 +351,11 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             HumanMessage(content=user_content),
         ]
         critique = await self.strllm.ainvoke(messages)
-
-        # Print the entire critique in blue
-        print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting agent2_critique."
+        await _aemit_progress(
+            "Critique ready",
+            config=config,
+            stage="critique_result",
+            preview=critique,
         )
         return {
             "agent2_critiques": [critique],
@@ -186,13 +363,17 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         }
 
     async def agent3_competitor_perspective(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """Agent 3: Competitor/Stakeholder Simulator."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering agent3_competitor_perspective."
+        await _aemit_progress(
+            "Checking competitor and stakeholder perspective",
+            config=config,
+            stage="competitor",
+            iteration=state["current_iteration"] + 1,
         )
-
         solution = state["agent1_solution"][-1]
         critique = state["agent2_critiques"][-1]
 
@@ -203,11 +384,17 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "Simulate how a competitor, government agency, or other stakeholder might respond to this solution."
         )
 
-        competitor_search_query = (
-            f"competitor responses to {state['question_search_query']}"
+        competitor_info = await self._search_text(
+            primary=f"{state['question_search_query']} alternatives",
+            fallbacks=[
+                f"{state['question_search_query']} competitors",
+                f"{state['question_search_query']} industry",
+                state["question"],
+            ],
+            display_query=state["question_search_query"],
+            config=config,
+            stage="competitor_research",
         )
-
-        competitor_info = self.search_tool.text(competitor_search_query)
         visited_sites = self.parse_visited_sites(competitor_info)
         user_content += f"\nCompetitor information: {competitor_info}"
 
@@ -216,13 +403,11 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             HumanMessage(content=user_content),
         ]
         perspective = await self.strllm.ainvoke(messages)
-
-        # Print the entire perspective in red
-        print(
-            f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
-        )
-        print(
-            f"[iteration {state['current_iteration']}] Exiting agent3_competitor_perspective."
+        await _aemit_progress(
+            "Stakeholder perspective ready",
+            config=config,
+            stage="competitor_result",
+            preview=perspective,
         )
         return {
             "agent3_perspectives": [perspective],
@@ -233,17 +418,19 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         self, state: HypothesizerState
     ) -> HypothesizerState:
         current_iteration = state["current_iteration"] + 1
-        print(
-            f"[iteration {state['current_iteration']}] Iteration incremented to {current_iteration}"
-        )
         return {"current_iteration": current_iteration}
 
     async def generate_solution(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """Generate the overall, refined solution based on all iterations."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering generate_solution."
+        await _aemit_progress(
+            "Synthesizing final hypothesis",
+            config=config,
+            stage="finalize",
+            iteration=state["current_iteration"],
         )
         prompt = f"Original question: {state['question']}\n\n"
         prompt += "Evolution of solutions:\n"
@@ -262,41 +449,49 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             prompt += f"Competitor perspective: {perspective_text}\n"
 
         prompt += "\nBased on this iterative process, provide the overall, refined solution."
-
-        print(
-            f"[iteration {state['current_iteration']}] Generating overall solution with LLM..."
-        )
         solution = await self.strllm.ainvoke(prompt)
-        print(
-            f"[iteration {state['current_iteration']}] Overall solution obtained. Preview:",
-            solution[:200],
-            "...",
-        )
-
-        print(
-            f"[iteration {state['current_iteration']}] Exiting generate_solution."
+        await _aemit_progress(
+            "Final hypothesis ready",
+            config=config,
+            stage="finalize_result",
+            preview=solution,
         )
         return {"solution": solution}
 
     def print_visited_sites(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         new_state = state.copy()
-        # all_sites = list(new_state["visited_sites"])
-        # print("[DEBUG] Visited Sites:")
-        # for s in all_sites:
-        #     print("  ", s)
+        sites = sorted({
+            (urlparse(site).netloc or urlparse(f"https://{site}").netloc)
+            for site in new_state.get("visited_sites", set())
+            if site
+        })
+        _emit_progress(
+            "Visited sites",
+            config=config,
+            stage="visited_sites",
+            sites=sites,
+        )
         return new_state
 
     async def summarize_process_as_latex(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """
         Summarize how the solution changed over time, referencing
         each iteration's critique and competitor perspective,
         then produce a final LaTeX document.
         """
-        print("Entering summarize_process_as_latex.")
+        await _aemit_progress(
+            "Writing LaTeX report",
+            config=config,
+            stage="summarize",
+        )
         # Build a single string describing the entire iterative process
         iteration_details = ""
         for i, (sol, crit, comp) in enumerate(
@@ -317,15 +512,16 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # -----------------------------
         # Write iteration_details to disk as .txt
         # -----------------------------
-        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp_str = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
         txt_filename = Path(
             self.workspace,
             f"iteration_details_{timestamp_str}_chat_history.txt",
         )
-        with open(txt_filename, "w", encoding="utf-8") as f:
-            f.write(iteration_details)
-
-        print(f"Wrote iteration details to {txt_filename}.")
+        await asyncio.to_thread(
+            txt_filename.write_text,
+            iteration_details,
+            encoding="utf-8",
+        )
 
         # Prompt the LLM to produce a LaTeX doc
         # We'll just pass it as a single string to the LLM;
@@ -411,13 +607,12 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
                 )
 
         final_latex = inject_into_latex(latex_doc, websites_latex)
-
-        print(
-            f"[iteration {state['current_iteration']}] Received LaTeX from LLM. Preview:"
-        )
-        print(latex_response[:300], "...")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting summarize_process_as_latex."
+        await _aemit_progress(
+            "Report ready",
+            config=config,
+            stage="summarize_result",
+            preview=latex_response,
+            output_path=str(txt_filename),
         )
         return {"summary_report": final_latex}
 
@@ -457,14 +652,8 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
 
 def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
     if state["current_iteration"] >= state["max_iterations"]:
-        print(
-            f"[iteration {state['current_iteration']}] Reached max_iterations; finishing."
-        )
         return "finish"
     else:
-        print(
-            f"[iteration {state['current_iteration']}] Still under max_iterations; continuing."
-        )
         return "continue"
 
 
