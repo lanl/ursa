@@ -5,10 +5,8 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
-from types import SimpleNamespace as NS
 from typing import Any
 
-import yaml
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -22,7 +20,11 @@ from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util.logo_generator import kickoff_logo
 from ursa.util.plan_execute_utils import (
+    generate_workspace_name,
     hash_plan,
+    load_json_file,
+    load_yaml_config,
+    save_json_file,
     setup_llm,
     setup_workspace,
     snapshot_sqlite_db,
@@ -146,12 +148,7 @@ def _progress_file(workspace: str) -> Path:
 
 def load_exec_progress(workspace: str) -> dict:
     p = _progress_file(workspace)
-    if p.exists():
-        try:
-            return json.loads(p.read_text())
-        except Exception:
-            return {}
-    return {}
+    return load_json_file(p, {})
 
 
 # we have to save the last step in here too
@@ -165,7 +162,7 @@ def save_exec_progress(
     payload = {"next_index": int(next_index), "plan_hash": plan_hash}
     if last_summary is not None:
         payload["last_summary"] = last_summary
-    p.write_text(json.dumps(payload, indent=2))
+    save_json_file(p, payload)
 
 
 def step_to_text(step) -> str:
@@ -368,25 +365,16 @@ def _hier_progress_file(workspace: str) -> Path:
     return Path(workspace) / "hier_progress.json"
 
 
-def _read_json(path: Path, default):
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except Exception:
-            return default
-    return default
-
-
 def load_hier_progress(workspace: str) -> dict:
     # shape: {"main": {"next_index": int, "plan_hash": str}, "subs": {"<main_idx>": {"next_index": int, "plan_hash": str, "last_summary": str}}}
-    return _read_json(
+    return load_json_file(
         _hier_progress_file(workspace),
         {"main": {"next_index": 0, "plan_hash": None}, "subs": {}},
     )
 
 
 def save_hier_progress(workspace: str, data: dict) -> None:
-    _hier_progress_file(workspace).write_text(json.dumps(data, indent=2))
+    save_json_file(_hier_progress_file(workspace), data)
 
 
 def save_hier_main_progress(
@@ -454,10 +442,9 @@ def load_run_meta(workspace: str) -> dict:
 
 def save_run_meta(workspace: str, **fields) -> dict:
     p = _run_meta_file(workspace)
-    p.parent.mkdir(parents=True, exist_ok=True)  # <-- ensure dir exists
     meta = load_run_meta(workspace)
     meta.update({k: v for k, v in fields.items() if v is not None})
-    p.write_text(json.dumps(meta, indent=2))
+    save_json_file(p, meta)
     return meta
 
 
@@ -841,9 +828,10 @@ def main(
         symlinkdict = getattr(config, "symlink", {}) or None
 
         # sets up the workspace, run config json, etc.
-        workspace = setup_workspace(
-            user_specified_workspace, project, model_name
+        resolved_workspace = (
+            user_specified_workspace or generate_workspace_name(project)
         )
+        workspace = setup_workspace(resolved_workspace, project, model_name)
         print(workspace)
         print(user_specified_workspace)
 
@@ -1318,19 +1306,7 @@ def parse_args_and_user_inputs():
     )
     args = parser.parse_args()
 
-    # --- load YAML -> dict -> shallow namespace (top-level keys only) ---
-    try:
-        with open(args.config, "r", encoding="utf-8") as f:
-            raw_cfg = yaml.safe_load(f) or {}
-            if not isinstance(raw_cfg, dict):
-                raise ValueError("Top-level YAML must be a mapping/object.")
-            cfg = NS(**raw_cfg)  # top-level attrs; nested remain dicts
-    except FileNotFoundError:
-        print(f"Config file not found: {args.config}", file=sys.stderr)
-        sys.exit(2)
-    except Exception as e:
-        print(f"Error loading YAML: {e}", file=sys.stderr)
-        sys.exit(2)
+    cfg = load_yaml_config(args.config)
 
     # ── config-driven model choices ────────────
     models_cfg = getattr(cfg, "models", {}) or {}

@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 import aiosqlite
-import randomname
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field
@@ -21,8 +20,12 @@ from ursa.agents import WebSearchAgent, make_git_agent
 from ursa.prompt_library.planning_prompts import reflection_prompt
 from ursa.util.github_research import gather_github_context
 from ursa.util.plan_execute_utils import (
+    fmt_elapsed,
+    generate_workspace_name,
     hash_plan,
+    load_json_file,
     load_yaml_config,
+    save_json_file,
     setup_llm,
     timed_input_with_countdown,
 )
@@ -64,31 +67,7 @@ def _resolve_workspace(user_workspace: str | None, project: str) -> Path:
     if user_workspace:
         workspace = Path(user_workspace)
     else:
-        suffix = randomname.get_name(
-            adj=(
-                "colors",
-                "emotions",
-                "character",
-                "speed",
-                "size",
-                "weather",
-                "appearance",
-                "sound",
-                "age",
-                "taste",
-                "physics",
-            ),
-            noun=(
-                "cats",
-                "dogs",
-                "apex_predators",
-                "birds",
-                "fish",
-                "fruit",
-                "seasonings",
-            ),
-        )
-        workspace = Path(f"{project}_{suffix}")
+        workspace = Path(generate_workspace_name(project))
 
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "repos").mkdir(exist_ok=True)
@@ -568,19 +547,6 @@ async def _repo_checkpointer(workspace: Path, repo_name: str):
     return checkpointer, conn, db_path
 
 
-def _load_progress(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return {}
-
-
-def _save_progress(path: Path, payload: dict) -> None:
-    path.write_text(json.dumps(payload, indent=2))
-
-
 def _namespace_to_dict(value):
     if isinstance(value, dict):
         return {k: _namespace_to_dict(v) for k, v in value.items()}
@@ -648,18 +614,6 @@ def _parse_resume_overrides(
         resume_files[path.stem] = path
 
     return resume_dir, resume_files
-
-
-def _fmt_elapsed(seconds: float) -> str:
-    """Format elapsed seconds as compact h:mm:ss or m:ss."""
-    s = int(seconds)
-    if s < 60:
-        return f"{s}s"
-    m, s = divmod(s, 60)
-    if m < 60:
-        return f"{m}m{s:02d}s"
-    h, m = divmod(m, 60)
-    return f"{h}h{m:02d}m"
 
 
 def _list_progress_files(progress_dir: Path) -> list[Path]:
@@ -833,11 +787,11 @@ def _build_progress_table(
         if state not in ("queued",):
             started = info.get("started") or now
             total_elapsed = now - started
-            elapsed_text = f"[dim]{_fmt_elapsed(total_elapsed)}[/dim]"
+            elapsed_text = f"[dim]{fmt_elapsed(total_elapsed)}[/dim]"
             step_started = info.get("step_started")
             if step_started and state in ("running", "blocked"):
                 step_elapsed = now - step_started
-                elapsed_text += f" [bold]({_fmt_elapsed(step_elapsed)})[/bold]"
+                elapsed_text += f" [bold]({fmt_elapsed(step_elapsed)})[/bold]"
 
         token_text = ""
         if in_tok or out_tok:
@@ -1083,7 +1037,7 @@ async def _ainvoke_with_heartbeat(
                     tok_str = f" [{_fmt_tokens(total)} tokens]"
             console.log(
                 f"[dim]{repo_name}[/dim] step [bold]{step_name}[/bold] "
-                f"still running ({_fmt_elapsed(elapsed)}){tok_str}"
+                f"still running ({fmt_elapsed(elapsed)}){tok_str}"
             )
 
     stop = asyncio.Event()
@@ -1101,7 +1055,7 @@ async def _ainvoke_with_heartbeat(
     except asyncio.TimeoutError:
         console.log(
             f"[bold red]{repo_name}[/bold red] step [bold]{step_name}[/bold] "
-            f"timed out after {_fmt_elapsed(timeout_sec)}"
+            f"timed out after {fmt_elapsed(timeout_sec)}"
         )
         raise
     finally:
@@ -1202,7 +1156,7 @@ async def _run_repo_steps(
     progress_path = _progress_path(
         workspace, repo["name"], resume_dir, resume_files
     )
-    resume_progress = _load_progress(progress_path) if resume else {}
+    resume_progress = load_json_file(progress_path, {}) if resume else {}
     start_index = int(resume_progress.get("next_index", 0)) if resume else 0
     has_checks = bool(repo.get("checks"))
     step_token_deltas = list(resume_progress.get("step_token_deltas") or [])
@@ -1284,7 +1238,7 @@ async def _run_repo_steps(
                 agent, progress_state, repo["name"], progress_lock
             )
             timeout_msg = (
-                f"Timed out after {_fmt_elapsed(step_timeout_sec)}: {step.name}"
+                f"Timed out after {fmt_elapsed(step_timeout_sec)}: {step.name}"
             )
             step_record = _step_token_record(
                 step_index=idx + 1,
@@ -1308,7 +1262,7 @@ async def _run_repo_steps(
                     info["last_step_tokens"] = last_step_tokens
                     info["step_token_deltas"] = step_token_deltas
                     repo_tokens = _repo_token_snapshot(info)
-                _save_progress(
+                save_json_file(
                     progress_path,
                     {
                         "next_index": idx + 1,
@@ -1331,7 +1285,7 @@ async def _run_repo_steps(
                     info["last_step_tokens"] = last_step_tokens
                     info["step_token_deltas"] = step_token_deltas
                     repo_tokens = _repo_token_snapshot(info)
-                _save_progress(
+                save_json_file(
                     progress_path,
                     {
                         "next_index": idx,
@@ -1357,7 +1311,7 @@ async def _run_repo_steps(
                 })
                 repo_tokens = _repo_token_snapshot(info)
             await _emit_progress(progress_state, progress_lock, max_parallel)
-            _save_progress(
+            save_json_file(
                 progress_path,
                 {
                     "next_index": idx,
@@ -1490,7 +1444,7 @@ async def _run_repo_steps(
             info["last_step_tokens"] = last_step_tokens
             info["step_token_deltas"] = step_token_deltas
             repo_tokens = _repo_token_snapshot(info)
-        _save_progress(
+        save_json_file(
             progress_path,
             {
                 "next_index": idx + 1,
@@ -1547,7 +1501,7 @@ async def _run_repo_steps(
         info = progress_state[repo["name"]]
         repo_tokens = _repo_token_snapshot(info)
 
-    _save_progress(
+    save_json_file(
         progress_path,
         {
             "next_index": len(steps),

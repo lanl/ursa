@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
 
+import randomname
 import yaml
 from langchain.chat_models import init_chat_model
 from rich import get_console
@@ -26,10 +27,43 @@ from rich.text import Text
 
 console = get_console()
 
+_RANDOMNAME_ADJ = (
+    "colors",
+    "emotions",
+    "character",
+    "speed",
+    "size",
+    "weather",
+    "appearance",
+    "sound",
+    "age",
+    "taste",
+    "physics",
+)
+
+_RANDOMNAME_NOUN = (
+    "cats",
+    "dogs",
+    "apex_predators",
+    "birds",
+    "fish",
+    "fruit",
+    "seasonings",
+)
+
 
 # ============================================================================
 # YAML Configuration Loading
 # ============================================================================
+
+
+def generate_workspace_name(project: str = "run") -> str:
+    """Generate a workspace name using randomname, with timestamp fallback."""
+    try:
+        suffix = randomname.get_name(adj=_RANDOMNAME_ADJ, noun=_RANDOMNAME_NOUN)
+    except Exception:
+        suffix = time.strftime("%Y%m%d-%H%M%S")
+    return f"{project}_{suffix}"
 
 
 def load_yaml_config(path: str) -> NS:
@@ -46,6 +80,31 @@ def load_yaml_config(path: str) -> NS:
     except Exception as exc:
         print(f"Failed to load config {path}: {exc}", file=sys.stderr)
         sys.exit(2)
+
+
+def load_json_file(path: str | Path, default: Any):
+    """Load JSON from a file path, returning default on missing/invalid JSON."""
+    p = Path(path)
+    if not p.exists():
+        return default
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return default
+
+
+def save_json_file(
+    path: str | Path,
+    payload: Any,
+    *,
+    indent: int = 2,
+    ensure_parent: bool = True,
+) -> None:
+    """Write JSON payload to disk with optional parent directory creation."""
+    p = Path(path)
+    if ensure_parent:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=indent))
 
 
 # ============================================================================
@@ -353,8 +412,7 @@ def setup_workspace(
     Returns the workspace path as a string.
     """
     if user_specified_workspace is None:
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        workspace = f"{project}_{timestamp}"
+        workspace = generate_workspace_name(project)
     else:
         workspace = user_specified_workspace
 
