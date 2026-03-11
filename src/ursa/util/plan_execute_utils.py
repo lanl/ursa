@@ -480,8 +480,8 @@ def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
                 line = sys.stdin.readline()
                 return line.rstrip("\n") if line else None
 
-            # Update countdown display
-            print(f"\r{prompt}({remaining}s) ", end="", flush=True)
+            # Update countdown display (clear to EOL to avoid ghost text)
+            print(f"\r{prompt}({remaining}s) \x1b[K", end="", flush=True)
 
     except Exception:
         print()

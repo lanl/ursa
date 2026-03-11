@@ -1,0 +1,22 @@
+# Simple configuration for plan_execute_from_yaml.py
+# Run with: python plan_execute_from_yaml.py --config example_from_yaml.yaml
+
+problem: |
+  Write a simple Python script that reads a CSV file, filters rows where a "score" 
+  column is above 90, and writes the results to a new CSV file.
+
+project: csv_filter_project
+
+planning_mode: single
+
+models:
+  default: openai:gpt-4o-mini
+  choices:
+    - openai:gpt-4o-mini
+    - openai:gpt-3.5-turbo
+    - openai:gpt-5.2
+
+logo:
+  enabled: false
+
+symlink: {}
