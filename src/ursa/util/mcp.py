@@ -1,6 +1,7 @@
 from datetime import timedelta
 from typing import Annotated
 
+from langchain_mcp_adapters.callbacks import Callbacks
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp import StdioServerParameters
 from mcp.client.session_group import (
@@ -32,11 +33,10 @@ def validate_server_parameters(config: dict):
                 return candidate(**payload)
             except ValidationError:
                 continue
-        else:
-            raise ValueError(
-                f"Unable to determine transport for MCP server '{config}'. "
-                "Provide 'transport' with one of: stdio, sse, streamable_http."
-            )
+        raise ValueError(
+            f"Unable to determine transport for MCP server '{config}'. "
+            "Provide 'transport' with one of: stdio, sse, streamable_http."
+        )
     else:
         raise ValueError(
             f"Unsupported MCP transport '{transport_hint}' for server '{config}'."
@@ -57,11 +57,13 @@ def transport(sp: ServerParameters) -> str:
     elif isinstance(sp, SseServerParameters):
         return "sse"
     else:
-        raise RuntimeError("Transport for {sp} is unknown")
+        raise TypeError(f"Transport for {sp} is unknown")
 
 
 def start_mcp_client(
     server_configs: dict[str, ServerParameters | dict],
+    *,
+    callbacks: Callbacks | None = None,
 ) -> MultiServerMCPClient:
     client_config = {}
     for server, config in server_configs.items():
@@ -71,7 +73,7 @@ def start_mcp_client(
             **config.model_dump(),
             "transport": transport(config),
         }
-    return MultiServerMCPClient(client_config)
+    return MultiServerMCPClient(client_config, callbacks=callbacks)
 
 
 def _serialize_server_config(config: ServerParameters):
