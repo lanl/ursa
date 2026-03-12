@@ -221,7 +221,7 @@ class HITL:
             **kwargs,
         )
 
-        # Add all agents    
+        # Add all agents
         for name, agent in self.agents.items():
             mcp.tool(
                 self._make_agent_tool(name),
