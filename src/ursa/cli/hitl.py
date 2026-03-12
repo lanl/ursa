@@ -156,6 +156,7 @@ class HITL:
         )
         self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
         self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
+        self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
 
         if self.memory is not None:
             self.agents["recall"] = AgentHITL(
@@ -221,6 +222,8 @@ class HITL:
         )
 
         # Add all agents
+        print(self.agents)
+
         for name, agent in self.agents.items():
             mcp.tool(
                 self._make_agent_tool(name),
