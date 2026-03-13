@@ -156,6 +156,7 @@ class HITL:
         )
         self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
         self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
+        self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
 
         if self.memory is not None:
             self.agents["recall"] = AgentHITL(
