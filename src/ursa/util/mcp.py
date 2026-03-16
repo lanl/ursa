@@ -19,7 +19,7 @@ def validate_server_parameters(config: dict):
         return StdioServerParameters(**payload)
     elif transport_hint == "sse":
         return SseServerParameters(**payload)
-    elif transport_hint == "streamable_http":
+    elif transport_hint in ["streamable_http", "streamable-http"]:
         return StreamableHttpParameters(**payload)
     elif transport_hint is None:
         # Let Pydantic infer (backwards compatibility)

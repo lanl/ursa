@@ -3,8 +3,15 @@ import os
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from dsi.dsi import DSI
 from langchain_core.tools import tool
+
+# Gating for optional dependance
+no_DSI = False
+try:
+    from dsi.dsi import DSI
+except Exception:
+    no_DSI = True
+
 
 _NULL = io.StringIO()  # Hides DSI outout
 
@@ -134,6 +141,8 @@ def load_dsi_tool(
     Returns:
         str: message indicating success or failure
     """
+    if no_DSI:
+        return "Optional dependence [dsi] not installed. Tool will not work."
 
     master_database_previously_set = True
     if master_db_folder == "":
@@ -189,6 +198,8 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
     Returns:
         collection: the results of the query
     """
+    if no_DSI:
+        return "Optional dependence [dsi] not installed. Tool will not work."
 
     # print(f"query {query_str}, db_path: {db_path}")
 

@@ -15,6 +15,7 @@ from rich.console import Console as RealConsole
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import ModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, UrsaRepl
+from ursa.util.has_optional_dep_group import has_optional_dep_group
 
 
 @pytest.fixture(autouse=True)
@@ -117,7 +118,10 @@ def _stub_hitl_dependencies(monkeypatch):
         "plan",
         "web",
         "recall",
-    ],
+    ]
+    + ["dsi"]
+    if has_optional_dep_group("dsi")
+    else [],
 )
 async def test_agents_apply_agent_config_overrides(
     agent_name, tmp_path, monkeypatch

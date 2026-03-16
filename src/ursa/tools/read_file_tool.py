@@ -34,13 +34,17 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
 @tool
 def download_file_tool(
     url: Annotated[str, "web link for the file"],
-    output_path: Annotated[str, "local path to save the file"] = ".",
+    output_path: Annotated[
+        str, "local path to save the file within the workspace"
+    ],
+    runtime: ToolRuntime[AgentContext],
 ) -> str:
     """Download a file from a URL and save it locally.
 
     Arg:
         url (str): a string containing the URL of the file to download.
         output_path (str): the local path where the file should be saved.
+                           Default to '.' for workspace root
     Returns:
         Confirmation message with the saved file path.
     """
@@ -51,7 +55,7 @@ def download_file_tool(
         response.raise_for_status()
 
         # Ensure directory exists
-        output_path = Path(output_path)
+        output_path = runtime.context.workspace / Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write file to disk

@@ -57,6 +57,7 @@ classifiers = [
 
 [project.scripts]
 ursa = "ursa.cli:main"
+ursa-dashboard = "ursa_dashboard.main:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
@@ -65,6 +66,10 @@ Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
 [project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.120.0",
+    "uvicorn>=0.37.0",
+]
 fm = [
     "torch>=2.9.0",
 ] # Ursa's MCP FM interface
@@ -84,9 +89,6 @@ otel = [
 ]
 dsi = [
     "dsi-workflow>=1.1.4",
-    "jupyterlab",
-    "ipykernel",
-    "ipywidgets",
 ]
 
 [build-system]
@@ -114,6 +116,7 @@ pycodestyle.max-doc-length = 80
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
+ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

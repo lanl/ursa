@@ -4,16 +4,13 @@ import random
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from time import time as now
-from typing import Annotated, Any, Mapping, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from dsi.dsi import DSI
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
-from rich.console import Console
-from rich.markdown import Markdown as RichMarkdown
 
 from ursa.tools.dsi_search_tools import (
     load_dsi_tool,
@@ -35,7 +32,7 @@ from ursa.tools.write_code_tool import (
     write_code,
 )
 
-from .base import BaseAgent
+from .base import AgentWithTools, BaseAgent
 
 _NULL = io.StringIO()  # Hides DSI outout
 
@@ -178,35 +175,19 @@ def should_call_tools(state: DSIState) -> str:
     return "continue"
 
 
-class DSIAgent(BaseAgent[DSIState]):
+class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
+    state_type = DSIState
+
     def __init__(
         self,
         llm: BaseChatModel,
         database_path: str = "",
         output_mode: str = "agent",
         run_path: str = "",
+        thread_id: str | None = None,
         **kwargs,
     ):
-        super().__init__(llm, **kwargs)
-
-        self.db_schema = ""
-        self.db_description = ""
-
-        self.master_db_folder = ""
-        self.master_database_path = ""
-        self.current_db_abs_path = ""
-
-        self.msg = {}
-        self.output_mode = output_mode
-
-        # Try to load the master database if a path is provided, otherwise wait for the user to load one
-        if run_path == "":
-            self.run_path = os.getcwd()
-        else:
-            self.run_path = run_path
-        self.load_master_db(database_path)
-
-        self.tools = [
+        default_tools = [
             run_web_search,
             run_osti_search,
             run_arxiv_search,
@@ -217,6 +198,23 @@ class DSIAgent(BaseAgent[DSIState]):
             write_code,
             edit_code,
         ]
+
+        super().__init__(llm=llm, tools=default_tools, **kwargs)
+        self.db_schema = ""
+        self.db_description = ""
+
+        self.master_db_folder = ""
+        self.master_database_path = ""
+        self.current_db_abs_path = ""
+
+        self.output_mode = output_mode
+
+        # Try to load the master database if a path is provided, otherwise wait for the user to load one
+        if run_path == "":
+            self.run_path = os.getcwd()
+        else:
+            self.run_path = run_path
+        self.load_master_db(database_path)
 
         self.prompt = """
         You are a data-analysis agent who can write python code, SQL queries, and generate plots to answer user questions based on the data available in a DSI object.
@@ -242,10 +240,10 @@ class DSIAgent(BaseAgent[DSIState]):
         - Do not restate the prompt or reasoning; just act and report the outcome briefly.
         """
 
-        self.thread_id = str(random.randint(1, 20000))
-        self.llm = self.llm.bind_tools(self.tools)
-        self.tool_node = ToolNode(self.tools)
-        self._build_graph()
+        if thread_id:
+            self.thread_id = thread_id
+        else:
+            self.thread_id = str(random.randint(1, 20000))
 
     def load_master_db(self, master_database: str) -> None:
         """Load the  master dataset from the given path.
@@ -291,32 +289,21 @@ class DSIAgent(BaseAgent[DSIState]):
         }
 
     def _build_graph(self):
-        self.graph = StateGraph(DSIState)
+        self.llm = self.llm.bind_tools(self.tools.values())
 
-        self.graph.add_node("response", self._response_node)
-        self.graph.add_node("tools", self.tool_node)
+        self.add_node(self._response_node, "response")
+        self.add_node(self.tool_node, "tools")
 
         self.graph.add_edge(START, "response")
         self.graph.add_conditional_edges(
             "response",
-            should_call_tools,
+            self._wrap_cond(should_call_tools, "should_call_tools", "dsi"),
             {
                 "call_tools": "tools",
                 "continue": END,
             },
         )
         self.graph.add_edge("tools", "response")
-
-        self.action = self.graph.compile(checkpointer=self.checkpointer)
-
-    # matches __call__
-    def _invoke(
-        self, inputs: Mapping[str, Any], recursion_limit: int = 1000, **_
-    ):
-        config = self.build_config(
-            recursion_limit=recursion_limit, tags=["graph"]
-        )
-        return self.action.invoke(inputs, config)
 
     def craft_message(self, human_msg):
         """Craft the message with context if available."""
@@ -374,6 +361,63 @@ class DSIAgent(BaseAgent[DSIState]):
 
         return {"messages": messages}
 
+    def format_query(self, user_query):
+        """
+           Injest string query into the agent state
+
+        Arg:
+           user_query (str): the user question
+        """
+        return self.craft_message(user_query)
+
+    def format_result(self, result: DSIState, start_time=None) -> str:
+        """
+        Parse result state into the desired output string
+
+        Arg:
+           result (DSIState): The state output from the DSI agent
+        """
+        response_text = result["response"]
+        cleaned_output = response_text.strip()
+
+        # total_tokens = str(
+        #     result["metadata"].get("token_usage", {}).get("total_tokens", 0)
+        # ).strip()
+
+        # if start_time:
+        #     elapsed = now() - start_time
+        #     time_string = f"Query took: {elapsed:.2f} seconds. "
+        # else:
+        #     time_string = ""
+
+        # Removing per PR comment from awadell1
+        # Leaving in comments to try to pick up later.
+        # I agree this should get picked up outside the agent though
+        # if self.output_mode == "jupyter":
+        #     from IPython.display import Markdown, display
+
+        #     display(Markdown(cleaned_output))
+
+        #     print(
+        #         f"\n{time_string}Total tokens used: {total_tokens}.\n"
+        #     )
+
+        # elif self.output_mode == "console":
+        #     console = Console()
+        #     md = RichMarkdown(cleaned_output)
+        #     console.print(md)
+
+        #     print(
+        #         f"\n{time_string}Total tokens used: {total_tokens}.\n"
+        #     )
+
+        # elif self.output_mode == "agent":
+        #     # do not print the output, just return it as a string
+        #     pass
+        # else:
+        #     print(cleaned_output)
+        return cleaned_output
+
     def ask(self, user_query) -> None:
         """Ask a question to the DSI Explorer agent.
 
@@ -383,42 +427,10 @@ class DSIAgent(BaseAgent[DSIState]):
 
         start = now()
 
-        msg = self.craft_message(user_query)
+        msg = self.format_query(user_query)
 
-        result = self._invoke(
+        result = self.invoke(
             msg, config={"configurable": {"thread_id": self.thread_id}}
         )
 
-        # Get and display the cleaned output
-        response_text = result["response"]
-        cleaned_output = response_text.strip()
-
-        elapsed = now() - start
-        total_tokens = str(
-            result["metadata"].get("token_usage", {}).get("total_tokens", 0)
-        ).strip()
-
-        if self.output_mode == "jupyter":
-            from IPython.display import Markdown, display
-
-            display(Markdown(cleaned_output))
-
-            print(
-                f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n"
-            )
-
-        elif self.output_mode == "console":
-            console = Console()
-            md = RichMarkdown(cleaned_output)
-            console.print(md)
-
-            print(
-                f"\nQuery took: {elapsed:.2f} seconds, total tokens used: {total_tokens}.\n"
-            )
-
-        elif self.output_mode == "agent":
-            # do not print the output, just return it as a string
-            pass
-
-        else:
-            print(cleaned_output)
+        return self.format_result(result, start)

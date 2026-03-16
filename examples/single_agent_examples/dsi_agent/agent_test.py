@@ -1,11 +1,10 @@
 import os
-import sqlite3
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.agents import DSIAgent
+from ursa.util import Checkpointer
 
 # Get the data
 current_file = Path(__file__).resolve()
@@ -19,12 +18,8 @@ model = ChatOpenAI(
     model="gpt-5.1", max_tokens=100000, timeout=None, max_retries=2
 )
 
-workspace = "dsi_agent_example"
-os.makedirs(workspace, exist_ok=True)
-rdb_path = Path(workspace) / "dsi_agent_checkpoint.db"
-rdb_path.parent.mkdir(parents=True, exist_ok=True)
-rconn = sqlite3.connect(str(rdb_path), check_same_thread=False)
-dsiagent_checkpointer = SqliteSaver(rconn)
+workspace = Path("dsi_agent_example")
+dsiagent_checkpointer = Checkpointer.from_workspace(workspace)
 
 
 ai = DSIAgent(

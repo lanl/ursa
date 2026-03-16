@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any, Callable, Iterable
@@ -76,9 +77,35 @@ def _stringify_output(x: Any) -> str:
 def _invoke_tool(
     tool: Runnable | Callable[..., Any], args: dict[str, Any]
 ) -> Any:
+    """Invoke a tool from a synchronous context.
+
+    Some tool implementations (notably MCP-adapted tools exposed as
+    StructuredTool instances) are *async-only* and will raise an error like
+    "... does not support sync invocation" when `.invoke()` is used.
+
+    For those tools we fall back to running `.ainvoke()` in a fresh event
+    loop when possible.
+    """
+
     # Runnable (LangChain tools & chains)
     if isinstance(tool, Runnable):
-        return tool.invoke(args)
+        try:
+            return tool.invoke(args)
+        except Exception as e:
+            if "does not support sync invocation" in str(e) and hasattr(
+                tool, "ainvoke"
+            ):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return asyncio.run(tool.ainvoke(args))
+
+                raise RuntimeError(
+                    "Async-only tool was invoked from within a running event loop. "
+                    "Use `await tool.ainvoke(...)` (or provide an async caller) instead."
+                ) from e
+            raise
+
     # Plain callable
     try:
         return tool(**args)

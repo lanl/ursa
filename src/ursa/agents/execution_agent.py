@@ -221,6 +221,51 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
 
+    def _patch_dangling(
+        self, state: ExecutionState, summarized: bool
+    ) -> ExecutionState:
+        new_state = deepcopy(state)
+        dangling_response = (
+            "Response Not Found from tool. "
+            "May have timed out or been forgotten due to summarization."
+        )
+
+        tool_ids = []
+        for msg in new_state["messages"]:
+            if count_tokens_approximately([msg]) > 100000 and isinstance(
+                msg, ToolMessage
+            ):
+                trunc_message = "Message too long - truncated."
+                msg.content = trunc_message
+                summarized = True
+            if hasattr(msg, "tool_calls"):
+                for call in msg.tool_calls:
+                    tool_ids.append(call["id"])
+            if isinstance(msg, ToolMessage):
+                tool_ids.remove(msg.tool_call_id)
+        if tool_ids:
+            summarized = True
+            print(
+                f"[Dangling Tool Call Warning] The following tool IDs "
+                f"were dangling:\n{tool_ids}\nReplies of missing response applied."
+            )
+            for tool_id in tool_ids:
+                for msg_ind, msg in enumerate(new_state["messages"]):
+                    if hasattr(msg, "tool_calls"):
+                        if any([tc["id"] == tool_id for tc in msg.tool_calls]):
+                            # Inserts tool response one after the dangling tool call
+                            #    Mutates new_state so break afterward to reset loop.
+                            #    Not as efficient as could be but should be correct
+                            new_state["messages"].insert(
+                                msg_ind + 1,
+                                ToolMessage(
+                                    content=dangling_response,
+                                    tool_call_id=tool_id,
+                                ),
+                            )
+                            break
+        return new_state, summarized
+
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
         new_state = deepcopy(state)
@@ -283,22 +328,31 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 summary,
             ]
             summarized_messages.extend(conversation_to_keep)
-            tokens_after_summarize = count_tokens_approximately(
-                summarized_messages
-            )
-            console.print(
-                Panel(
-                    (
-                        f"Summarized Conversation History:\n"
-                        f"Summary:\n{summary.text}\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
-                    ),
-                    title="[bold yellow1 on black]Summarize Past Context",
-                    border_style="yellow1",
-                    style="bold yellow1 on black",
+            verbose = False
+            # Keeping this here for future capability add
+            #    removing this from printing generally,
+            #    but we may want to bring this back with some
+            #    verbosity option in the future.
+            #
+            # Right now setting verbose to False so this is
+            #     always skipped but here to revisit.
+            if verbose:
+                tokens_after_summarize = count_tokens_approximately(
+                    summarized_messages
                 )
-            )
+                console.print(
+                    Panel(
+                        (
+                            f"Summarized Conversation History:\n"
+                            f"Summary:\n{summary.text}\n"
+                            f"Approximate tokens before: {tokens_before_summarize}\n"
+                            f"Approximate tokens after: {tokens_after_summarize}\n"
+                        ),
+                        title="[bold yellow1 on black]Summarize Past Context",
+                        border_style="yellow1",
+                        style="bold yellow1 on black",
+                    )
+                )
             new_state["messages"] = summarized_messages
             summarized = True
         return new_state, summarized
@@ -357,6 +411,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
+        new_state, full_overwrite = self._patch_dangling(
+            new_state, full_overwrite
+        )
+
         # 3) Ensure the executor prompt is the first SystemMessage.
         messages = deepcopy(new_state["messages"])
         if isinstance(messages[0], SystemMessage):
@@ -412,6 +470,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state["messages"] = new_state["messages"] + [recap_message]
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
+        new_state, full_overwrite = self._patch_dangling(
+            new_state, full_overwrite
+        )
         try:
             response = self.llm.invoke(
                 input=new_state["messages"],
