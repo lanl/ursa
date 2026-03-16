@@ -16,6 +16,13 @@ import trafilatura
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 
+# Optionally disable SSL for trafilatura
+no_ssl = os.environ['URSA_DISABLE_SSL']
+if no_ssl is not None and no_ssl.lower() == 'true':
+    no_ssl = True
+else:
+    no_ssl = False
+
 # Check for optional dependencies
 docx_installed = False
 pptx_installed = False
@@ -466,6 +473,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     cfg.set("DEFAULT", "favor_recall", "false")  # be stricter; less noise
     try:
         # If you fetched HTML already, use extract() on string; otherwise, fetch_url(url)
+        downloaded = trafilatura.fetch_url(html,no_ssl=no_ssl)
         txt = trafilatura.extract(
             html,
             config=cfg,
