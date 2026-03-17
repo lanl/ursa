@@ -15,7 +15,7 @@ dataset_path = str(current_dir / "data/oceans_11/ocean_11_datasets.db")
 print(dataset_path)
 
 model = ChatOpenAI(
-    model="gpt-5.1", max_tokens=100000, timeout=None, max_retries=2
+    model="gpt-5.4", max_tokens=100000, timeout=None, max_retries=2
 )
 
 workspace = Path("dsi_agent_example")
@@ -31,19 +31,25 @@ ai = DSIAgent(
 )
 
 print("\nQuery: Tell me about the datasets you have.")
-ai.ask("Tell me about the datasets you have.")
+response = ai.ask("Tell me about the datasets you have.")
+print(response)
 
 print("\nQuery: Do you have any implosion data?")
-ai.ask("Do you have any implosion data?")
+response = ai.ask("Do you have any implosion data?")
+print(response)
 
 print("\nQuery: Tell me everything you have about that Ignition dataset")
-ai.ask("Tell me everything you have about that Ignition dataset")
+response = ai.ask("Tell me everything you have about that Ignition dataset")
+print(response)
 
 print("\nQuery: Can you find some arxiv papers related to this?")
-ai.ask("can you find some arxiv papers related to this")
+response = ai.ask("can you find some arxiv papers related to this")
+print(response)
 
 print("\nQuery: Can you find some OSTI papers related to this?")
-ai.ask("can you find some OSTI papers related to this")
+response = ai.ask("can you find some OSTI papers related to this")
+print(response)
 
 print("\nQuery: Can you find a websearch on implosion?")
-ai.ask("can you find some websearch on implosion?")
+response = ai.ask("can you find some websearch on implosion?")
+print(response)

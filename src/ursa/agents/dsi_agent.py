@@ -10,6 +10,7 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
+from rich.console import Console
 
 from ursa.tools.dsi_search_tools import (
     _get_db_abs_path,
@@ -18,6 +19,7 @@ from ursa.tools.dsi_search_tools import (
 )
 from ursa.tools.read_file_tool import (
     read_file,
+    download_file_tool,
 )
 from ursa.tools.run_command_tool import (
     run_command,
@@ -173,6 +175,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             run_arxiv_search,
             load_dsi_tool,
             query_dsi_tool,
+            download_file_tool,
             read_file,
             run_command,
             write_code,
@@ -360,42 +363,6 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         response_text = result["response"]
         cleaned_output = response_text.strip()
 
-        # total_tokens = str(
-        #     result["metadata"].get("token_usage", {}).get("total_tokens", 0)
-        # ).strip()
-
-        # if start_time:
-        #     elapsed = now() - start_time
-        #     time_string = f"Query took: {elapsed:.2f} seconds. "
-        # else:
-        #     time_string = ""
-
-        # Removing per PR comment from awadell1
-        # Leaving in comments to try to pick up later.
-        # I agree this should get picked up outside the agent though
-        # if self.output_mode == "jupyter":
-        #     from IPython.display import Markdown, display
-
-        #     display(Markdown(cleaned_output))
-
-        #     print(
-        #         f"\n{time_string}Total tokens used: {total_tokens}.\n"
-        #     )
-
-        # elif self.output_mode == "console":
-        #     console = Console()
-        #     md = RichMarkdown(cleaned_output)
-        #     console.print(md)
-
-        #     print(
-        #         f"\n{time_string}Total tokens used: {total_tokens}.\n"
-        #     )
-
-        # elif self.output_mode == "agent":
-        #     # do not print the output, just return it as a string
-        #     pass
-        # else:
-        #     print(cleaned_output)
         return cleaned_output
 
     def ask(self, user_query) -> None:
@@ -413,4 +380,14 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             msg, config={"configurable": {"thread_id": self.thread_id}}
         )
 
-        return self.format_result(result, start)
+        formatted_result = self.format_result(result, start)
+        
+        # I would like to add those
+        # if self.output_mode == "console":
+        #     print(formatted_result)
+                   
+        # elif self.output_mode == "jupyter":
+        #     from IPython.display import Markdown, display
+        #     display(Markdown(formatted_result))
+            
+        return formatted_result
