@@ -16,7 +16,10 @@ console = get_console()
 
 
 def _validate_file_path(
-    filename: str, workspace_dir: Path, repo_path: Path | None = None
+    filename: str,
+    workspace_dir: Path,
+    repo_path: Path | None = None,
+    allow_unsafe_writes: bool=False,
 ) -> tuple[Path, str | None]:
     """Validate that a filename is within workspace and optionally within a repo.
 
@@ -24,6 +27,7 @@ def _validate_file_path(
         filename: The requested filename to write to
         workspace_dir: The workspace directory (all files must be under this)
         repo_path: Optional repo directory (if provided, file must be under this)
+        allow_unsafe_writes: Permit writes outside workspace directory and repo directory. This is unsafe; users should use a sandbox or container when enabling this option.
 
     Returns:
         Tuple of (resolved_path, error_message). If error_message is not None,
@@ -38,32 +42,30 @@ def _validate_file_path(
     file_path = file_path.resolve()
 
     # Validate it's within the workspace
-    try:
-        file_path.relative_to(workspace_dir.resolve())
-    except ValueError:
+    if not allow_unsafe_writes and not file_path.is_relative_to(
+        workspace_dir.resolve()
+    ):
         return None, (
             f"File path '{filename}' resolves outside workspace directory. "
             "Files must be written within the workspace."
         )
 
     # If repo_path is specified, validate it's within the repo
-    if repo_path is not None:
+    if not allow_unsafe_writes and repo_path is not None:
         # Resolve repo_path relative to workspace if it's not absolute
         repo_resolved = (
             repo_path if repo_path.is_absolute() else workspace_dir / repo_path
         )
         repo_resolved = repo_resolved.resolve()
 
-        try:
+        if not file_path.is_relative_to(repo_resolved):
             file_path.relative_to(repo_resolved)
-        except ValueError:
             return None, (
                 f"File path '{filename}' resolves outside repository directory. "
                 "Files must be written within the repository."
             )
 
     return file_path, None
-
 
 @tool(description="Write source code to a file")
 def write_code(
