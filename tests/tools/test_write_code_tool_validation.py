@@ -247,6 +247,24 @@ class TestWriteCodePathValidation:
         assert "successfully" in result.lower()
         assert target.exists()
 
+    def test_write_code_repo_path_not_found_rejected(
+        self, mock_runtime, tmpdir
+    ):
+        """Test write_code fails clearly when repo path does not exist."""
+        workspace = Path(tmpdir)
+        mock_runtime.context.workspace = workspace
+
+        missing_repo = workspace / "does-not-exist"
+        result = write_code.func(
+            "print('hello')",
+            "test.py",
+            mock_runtime,
+            repo_path=str(missing_repo),
+        )
+
+        assert "failed" in result.lower()
+        assert "repository path not found" in result.lower()
+
 
 class TestEditCodePathValidation:
     """Test edit_code function with path validation."""
@@ -344,3 +362,37 @@ class TestEditCodePathValidation:
 
         assert "successfully" in result.lower()
         assert target.read_text() == "x = 2\n"
+
+    def test_edit_code_binary_file_returns_failure(self, mock_runtime, tmpdir):
+        """Test edit_code handles binary files without raising."""
+        workspace = Path(tmpdir)
+        mock_runtime.context.workspace = workspace
+
+        filename = "binary.bin"
+        test_file = workspace / filename
+        test_file.write_bytes(b"\xff\xfe\x00\x01")
+
+        result = edit_code.func("x", "y", filename, mock_runtime)
+
+        assert "failed" in result.lower()
+        assert "binary" in result.lower()
+
+    def test_edit_code_repo_path_not_found_rejected(self, mock_runtime, tmpdir):
+        """Test edit_code fails clearly when repo path does not exist."""
+        workspace = Path(tmpdir)
+        mock_runtime.context.workspace = workspace
+
+        filename = "test.py"
+        (workspace / filename).write_text("x = 1\n")
+        missing_repo = workspace / "does-not-exist"
+
+        result = edit_code.func(
+            "x = 1",
+            "x = 2",
+            filename,
+            mock_runtime,
+            repo_path=str(missing_repo),
+        )
+
+        assert "failed" in result.lower()
+        assert "repository path not found" in result.lower()

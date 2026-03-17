@@ -110,6 +110,13 @@ def write_code(
         if not repo.is_absolute():
             repo = workspace_dir / repo
         repo = repo.resolve()
+        if not repo.exists():
+            return f"Failed to write {filename}: Repository path not found."
+        if not repo.is_dir():
+            return (
+                f"Failed to write {filename}: Repository path is not "
+                "a directory."
+            )
 
     code_file, error = _validate_file_path(
         filename,
@@ -150,7 +157,7 @@ def write_code(
             "[red]Failed to write file:[/]",
             exc,
         )
-        return f"Failed to write {filename}."
+        return f"Failed to write {filename}: {exc}"
 
     console.print(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
@@ -203,6 +210,13 @@ def edit_code(
         if not repo.is_absolute():
             repo = workspace_dir / repo
         repo = repo.resolve()
+        if not repo.exists():
+            return f"Failed to edit {filename}: Repository path not found."
+        if not repo.is_dir():
+            return (
+                f"Failed to edit {filename}: Repository path is not "
+                "a directory."
+            )
 
     code_file, error = _validate_file_path(
         filename,
@@ -226,6 +240,10 @@ def edit_code(
             "[red]File not found:[/]",
         )
         return f"Failed: {filename} not found."
+    except ValueError as exc:
+        return f"Failed to edit {filename}: {exc}"
+    except OSError as exc:
+        return f"Failed to edit {filename}: Could not read file: {exc}"
 
     # Clean up markdown fences
     old_code_clean = old_code
@@ -256,7 +274,7 @@ def edit_code(
             "[red]Failed to write file:[/]",
             exc,
         )
-        return f"Failed to edit {filename}."
+        return f"Failed to edit {filename}: {exc}"
 
     console.print(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
