@@ -24,15 +24,12 @@ messages.mkdir(exist_ok=True)
 workspaces = Path("./workspaces/workflows")
 
 for name, llm in models.items():
-    planner = PlanningAgent(llm=llm)
+    workspace = workspaces / name
+    planner = PlanningAgent(llm=llm, workspace=workspace)
     executor = ExecutionAgent(
-        llm=llm, ursa_logger=planner.ursa_logger, workspace=workspaces / name
+        llm=llm, ursa_logger=planner.ursa_logger, workspace=workspace
     )
-    workflow = PlanningExecutorWorkflow(
-        planner=planner,
-        executor=executor,
-        ursa_logger=planner.ursa_logger,
-    )
+    workflow = PlanningExecutorWorkflow(planner=planner, executor=executor)
     workflow(
         "Write a python script <10 lines to compute Pi "
         "using Monte Carlo; use standard lib only."

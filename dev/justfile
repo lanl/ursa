@@ -1,5 +1,17 @@
 @help:
     just -l -u
 
+[parallel]
+test: test-executor test-planner test-workflow
+
+test-executor:
+    uv run test-executor.py
+
+test-planner:
+    uv run test-planner.py
+
+test-workflow:
+    uv run test-workflow.py
+
 clean:
     rm -rf messages workspaces ursa_workspace
