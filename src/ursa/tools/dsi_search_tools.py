@@ -1,4 +1,5 @@
 import io
+import json
 import os
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -100,10 +101,10 @@ def _get_db_info(db_path: str) -> tuple[list, dict, str]:
         return tables, schema, desc
 
 
-def _get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
+def _get_db_abs_path(db_path: str, run_path: str) -> tuple[str, str]:
     """Get the absolute path of a DSI database given its path.
 
-    Arg:
+    Args:
         db_path (str): the path of the DSI database (can be relative or absolute)
         run_path (str): the path of the codebase to resolve relative paths against
 
@@ -111,30 +112,29 @@ def _get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
         str: the absolute path of the DSI database
         str: the absolute path of the folder containing the DSI database
     """
+    p = Path(db_path).expanduser()
 
-    p = Path(db_path)
     if not p.is_absolute():
-        master_database_path = str((Path(run_path) / db_path).expanduser())
-        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + "/"
-    else:
-        master_database_path = db_path
-        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + "/"
+        p = (Path(run_path).expanduser() / p).resolve()
+
+    master_database_path = str(p)
+    master_db_folder = os.path.join(str(p.parent), "")
 
     return master_database_path, master_db_folder
+
 
 
 ########################################################################
 #### Tools Available
 
-
 @tool
 def load_dsi_tool(
-    path: str, run_path: str = "", master_db_folder: str = ""
-) -> dict:
+    db_path: str, run_path: str = "", master_db_folder: str = ""
+) -> str:
     """Load a DSI object from the path and add information to the context for the llm to use.
 
-    Arg:
-        path (str): the path to the DSI object to load
+    Args:
+        db_path (str): the path to the DSI object to load
         run_path (str): the path this code is being run from
         master_db_folder (str): the folder containing the master database, used to resolve relative paths when loading new databases
 
@@ -149,17 +149,17 @@ def load_dsi_tool(
         master_database_previously_set = False
         # the ai is loading the master database for the first time
         master_database_path, master_db_folder = _get_db_abs_path(
-            path, run_path
+            db_path, run_path
         )
         data_path = master_database_path.strip()
     else:
-        p = Path(path)
+        p = Path(db_path).expanduser()
         if not p.is_absolute():
-            db_path = str(master_db_folder + "/" + path)
+            _db_path = str(Path(master_db_folder).expanduser() / p)
         else:
-            db_path = path
-
-        data_path = db_path.strip()
+            _db_path = str(p)
+            
+        data_path = _db_path.strip()
 
     if not _check_db_valid(data_path):
         return f"Failed to load DSI database at: {data_path}. Please check the path and ensure it points to a valid DSI .db file."
@@ -167,21 +167,22 @@ def load_dsi_tool(
     try:
         _, _db_schema, _db_description = _get_db_info(data_path)
         _current_db_abs_path = data_path
+        schema_text = json.dumps(_db_schema, indent=2, ensure_ascii=False)
 
         if master_database_previously_set is False:
-            return {
-                "the current working database path (current_db_abs_path) is": _current_db_abs_path,
-                "the master database path (master_database_path) is": master_database_path,
-                "the master databse folder (master_db_folder) is": master_db_folder,
-                "the current databse schema is": _db_schema,
-                "the database description is": _db_description,
-            }
+            return f"""
+- Current working database path (current_db_abs_path): {_current_db_abs_path}
+- Master database path (master_database_path): {master_database_path}
+- Master database folder (master_db_folder): {master_db_folder}
+- Current database schema: {schema_text}
+- Database description: {_db_description}
+""".strip()
         else:
-            return {
-                "the current working database path (current_db_abs_path) is": _current_db_abs_path,
-                "the current databse schema is": _db_schema,
-                "the database description is": _db_description,
-            }
+            return f"""
+- Current working database path (current_db_abs_path): {_current_db_abs_path}
+- Current database schema: {schema_text}
+- Database description: {_db_description}
+""".strip()
 
     except Exception as e:
         return f"Failed to load database information: {e}"
@@ -199,7 +200,7 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
         collection: the results of the query
     """
     if no_DSI:
-        return "Optional dependence [dsi] not installed. Tool will not work."
+        return {"error": "Optional dependency [dsi] not installed. Tool will not work."}
 
     # print(f"query {query_str}, db_path: {db_path}")
 

@@ -13,6 +13,7 @@ from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
 
 from ursa.tools.dsi_search_tools import (
+    _get_db_abs_path,
     load_dsi_tool,
     query_dsi_tool,
 )
@@ -124,27 +125,7 @@ def get_db_info(db_path: str) -> tuple[list, dict, str]:
         return tables, schema, desc
 
 
-def get_db_abs_path(db_path: str, run_path: str) -> [str, str]:
-    """Get the absolute path of a DSI database given its path.
 
-    Arg:
-        db_path (str): the path of the DSI database (can be relative or absolute)
-        run_path (str): the path of the codebase to resolve relative paths against
-
-    Returns:
-        str: the absolute path of the DSI database
-        str: the absolute path of the folder containing the DSI database
-    """
-
-    p = Path(db_path)
-    if not p.is_absolute():
-        master_database_path = str((Path(run_path) / db_path).expanduser())
-        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + "/"
-    else:
-        master_database_path = db_path
-        master_db_folder = "/".join(master_database_path.split("/")[:-1]) + "/"
-
-    return master_database_path, master_db_folder
 
 
 ########################################################################
@@ -256,7 +237,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             print("No DSI database provided. Please load one")
             return
 
-        _master_database_path, _master_db_folder = get_db_abs_path(
+        _master_database_path, _master_db_folder = _get_db_abs_path(
             master_database, self.run_path
         )
         absolute_db_path = _master_database_path

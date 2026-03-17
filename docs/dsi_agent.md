@@ -1,6 +1,6 @@
 # DSIAgent Documentation
 
-`DSIAgent` is a class that manages access to DSI databases and also manages path location of databases.
+`DSIAgent` is a class that manages access to DSI owned databases and also manages path location of databases. The [DSI](https://github.com/lanl/dsi) framework support a number of databases, such as Sqlite, DuckDB, ... . More information is available [here](https://lanl.github.io/dsi/introduction.html).
 
 
 ## Basic Usage
