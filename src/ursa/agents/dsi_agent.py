@@ -2,7 +2,6 @@ import io
 import os
 import random
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
 from time import time as now
 from typing import Annotated, Any, TypedDict
 
