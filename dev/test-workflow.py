@@ -13,7 +13,7 @@ models = {
         "ollama:nemotron-3-super:120b", reasoning=True
     ),
     "openai-gpt-5-nano": init_chat_model(
-        "openai:gpt-5-nano", reasoning=dict(effort="low", summary="auto")
+        "openai:gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
     ),
     # NOTE: This model does not reason
     "ollama-nemotron-mini": init_chat_model("ollama:nemotron-mini:4b"),

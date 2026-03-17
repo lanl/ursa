@@ -1,3 +1,4 @@
+# ruff: noqa
 from langchain.chat_models import init_chat_model
 
 prompt = (
@@ -14,7 +15,7 @@ print(ollama_response.text)
 # OpenAI
 # llm = init_chat_model("openai:gpt-5-nano", reasoning=True) # fails
 openai_llm = init_chat_model(
-    "openai:gpt-5-nano", reasoning=dict(effort="low", summary="auto")
+    "openai:gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
 )
 openai_response = openai_llm.invoke(prompt)
 openai_response.content_blocks
