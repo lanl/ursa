@@ -24,8 +24,10 @@ messages.mkdir(exist_ok=True)
 workspaces = Path("./workspaces/workflows")
 
 for name, llm in models.items():
-    planner = PlanningAgent(llm=llm, workspace=workspaces / name)
-    executor = ExecutionAgent(llm=llm, ursa_logger=planner.ursa_logger)
+    planner = PlanningAgent(llm=llm)
+    executor = ExecutionAgent(
+        llm=llm, ursa_logger=planner.ursa_logger, workspace=workspaces / name
+    )
     workflow = PlanningExecutorWorkflow(
         planner=planner,
         executor=executor,

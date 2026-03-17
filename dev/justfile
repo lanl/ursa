@@ -1,0 +1,5 @@
+@help:
+    just -l -u
+
+clean:
+    rm -rf messages workspaces ursa_workspace
