@@ -80,6 +80,14 @@ Both `write_code` and `edit_code` validate file paths to prevent:
 - **Writes outside the workspace** (all files must be within the workspace directory)
 - **Writes outside the repository** (optional, when `repo_path` parameter is used)
 
+Path validation is enabled by default. For trusted sandbox/container usage, you can opt in to unsafe writes by setting:
+
+```bash
+export URSA_ALLOW_UNSAFE_WRITES=1
+```
+
+When enabled, workspace and repository boundary checks are bypassed for `write_code` and `edit_code`.
+
 Example: Specifying a repo boundary ensures all file modifications stay within that repository.
 
 ### Golangci-lint Integration

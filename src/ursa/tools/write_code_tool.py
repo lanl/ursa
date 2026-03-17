@@ -1,3 +1,4 @@
+import os
 import time
 from pathlib import Path
 
@@ -19,8 +20,8 @@ def _validate_file_path(
     filename: str,
     workspace_dir: Path,
     repo_path: Path | None = None,
-    allow_unsafe_writes: bool=False,
-) -> tuple[Path, str | None]:
+    allow_unsafe_writes: bool = False,
+) -> tuple[Path | None, str | None]:
     """Validate that a filename is within workspace and optionally within a repo.
 
     Args:
@@ -59,13 +60,26 @@ def _validate_file_path(
         repo_resolved = repo_resolved.resolve()
 
         if not file_path.is_relative_to(repo_resolved):
-            file_path.relative_to(repo_resolved)
             return None, (
                 f"File path '{filename}' resolves outside repository directory. "
                 "Files must be written within the repository."
             )
 
     return file_path, None
+
+
+def _allow_unsafe_writes_enabled() -> bool:
+    """Return whether unsafe writes are explicitly enabled via environment.
+
+    Set URSA_ALLOW_UNSAFE_WRITES to one of: 1, true, yes, on.
+    """
+    return os.getenv("URSA_ALLOW_UNSAFE_WRITES", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
 
 @tool(description="Write source code to a file")
 def write_code(
@@ -86,6 +100,7 @@ def write_code(
     """
     # Determine the full path to the target file
     workspace_dir = runtime.context.workspace
+    allow_unsafe_writes = _allow_unsafe_writes_enabled()
     console.print("[cyan]Writing file:[/]", filename)
 
     # Validate file path
@@ -96,12 +111,19 @@ def write_code(
             repo = workspace_dir / repo
         repo = repo.resolve()
 
-    code_file, error = _validate_file_path(filename, workspace_dir, repo)
+    code_file, error = _validate_file_path(
+        filename,
+        workspace_dir,
+        repo,
+        allow_unsafe_writes=allow_unsafe_writes,
+    )
     if error:
         console.print(
             f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
         )
         return f"Failed to write {filename}: {error}"
+    if code_file is None:
+        return f"Failed to write {filename}: Invalid file path."
 
     # Show syntax-highlighted preview before writing to file
     try:
@@ -171,6 +193,7 @@ def edit_code(
         Success / failure message.
     """
     workspace_dir = runtime.context.workspace
+    allow_unsafe_writes = _allow_unsafe_writes_enabled()
     console.print("[cyan]Editing file:[/cyan]", filename)
 
     # Validate file path
@@ -181,12 +204,19 @@ def edit_code(
             repo = workspace_dir / repo
         repo = repo.resolve()
 
-    code_file, error = _validate_file_path(filename, workspace_dir, repo)
+    code_file, error = _validate_file_path(
+        filename,
+        workspace_dir,
+        repo,
+        allow_unsafe_writes=allow_unsafe_writes,
+    )
     if error:
         console.print(
             f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
         )
         return f"Failed to edit {filename}: {error}"
+    if code_file is None:
+        return f"Failed to edit {filename}: Invalid file path."
 
     try:
         content = read_text_file(code_file)

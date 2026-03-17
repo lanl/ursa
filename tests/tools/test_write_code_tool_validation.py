@@ -7,6 +7,7 @@ import pytest
 
 from ursa.agents.base import AgentContext
 from ursa.tools.write_code_tool import (
+    _allow_unsafe_writes_enabled,
     _validate_file_path,
     edit_code,
     write_code,
@@ -115,6 +116,39 @@ class TestPathValidation:
         assert error is None
         assert result_path is not None
 
+    def test_allow_unsafe_writes_allows_outside_workspace(self, tmpdir):
+        """Test unsafe writes can bypass workspace validation when enabled."""
+        workspace = Path(tmpdir) / "workspace"
+        workspace.mkdir(parents=True)
+        filename = "../../../etc/passwd"
+
+        result_path, error = _validate_file_path(
+            filename,
+            workspace,
+            allow_unsafe_writes=True,
+        )
+
+        assert error is None
+        assert result_path is not None
+
+
+class TestUnsafeWriteEnvToggle:
+    """Test env var parsing for unsafe write mode."""
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    def test_truthy_values_enable_unsafe_writes(self, monkeypatch, value):
+        monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", value)
+        assert _allow_unsafe_writes_enabled() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
+    def test_falsey_values_disable_unsafe_writes(self, monkeypatch, value):
+        monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", value)
+        assert _allow_unsafe_writes_enabled() is False
+
+    def test_missing_env_defaults_to_safe_mode(self, monkeypatch):
+        monkeypatch.delenv("URSA_ALLOW_UNSAFE_WRITES", raising=False)
+        assert _allow_unsafe_writes_enabled() is False
+
 
 class TestWriteCodePathValidation:
     """Test write_code function with path validation."""
@@ -197,6 +231,22 @@ class TestWriteCodePathValidation:
         assert "failed" in result.lower()
         assert "outside repository" in result.lower()
 
+    def test_write_code_outside_workspace_allowed_when_env_enabled(
+        self, mock_runtime, tmpdir, monkeypatch
+    ):
+        """Test write_code allows unsafe writes when env toggle is enabled."""
+        workspace = Path(tmpdir) / "workspace"
+        workspace.mkdir(parents=True)
+        mock_runtime.context.workspace = workspace
+
+        monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", "1")
+        target = Path(tmpdir) / "outside.py"
+
+        result = write_code.func("print('hello')", str(target), mock_runtime)
+
+        assert "successfully" in result.lower()
+        assert target.exists()
+
 
 class TestEditCodePathValidation:
     """Test edit_code function with path validation."""
@@ -277,3 +327,20 @@ class TestEditCodePathValidation:
 
         assert "failed" in result.lower()
         assert "outside repository" in result.lower()
+
+    def test_edit_code_outside_workspace_allowed_when_env_enabled(
+        self, mock_runtime, tmpdir, monkeypatch
+    ):
+        """Test edit_code allows unsafe edits when env toggle is enabled."""
+        workspace = Path(tmpdir) / "workspace"
+        workspace.mkdir(parents=True)
+        mock_runtime.context.workspace = workspace
+
+        monkeypatch.setenv("URSA_ALLOW_UNSAFE_WRITES", "1")
+        target = Path(tmpdir) / "outside.py"
+        target.write_text("x = 1\n")
+
+        result = edit_code.func("x = 1", "x = 2", str(target), mock_runtime)
+
+        assert "successfully" in result.lower()
+        assert target.read_text() == "x = 2\n"
