@@ -51,7 +51,6 @@ from langgraph.store.sqlite import SqliteStore
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
-from ursa.util.history import QuietLogger, UrsaLogger
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
@@ -162,7 +161,6 @@ class BaseAgent(Generic[TState], ABC):
         autosave_metrics: bool = True,
         otel_metrics: bool = False,
         thread_id: str | None = None,
-        ursa_logger: UrsaLogger | None = None,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -186,7 +184,6 @@ class BaseAgent(Generic[TState], ABC):
         )
 
         self.workspace.mkdir(exist_ok=True, parents=True)
-        self.ursa_logger = ursa_logger or QuietLogger()
 
     @property
     def name(self) -> str:
@@ -351,9 +348,7 @@ class BaseAgent(Generic[TState], ABC):
 
             # Delegate to the subclass implementation with the normalized inputs
             # and any control parameters
-            output = invoke_method(normalized, config=config, **kwargs)
-            self.ursa_logger.append_messages(output["messages"])
-            return output
+            return invoke_method(normalized, config=config, **kwargs)
 
         finally:
             # Clean up the invocation depth tracking
@@ -1009,10 +1004,3 @@ class AgentWithTools:
             self.__dict__.pop("compiled_graph", None)
             if hasattr(self, "graph"):
                 self.build_graph()
-
-    @property
-    def messages(self):
-        return self.ursa_logger.messages
-
-    def save_messages(self, path: Path, indent: int = 2):
-        self.ursa_logger.save_messages(path=path, indent=indent)
