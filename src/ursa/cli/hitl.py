@@ -23,6 +23,7 @@ from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
+from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
 
@@ -147,6 +148,8 @@ class HITL:
         self.agents: dict[str, AgentHITL] = {}
         self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
+        if has_optional_dep_group("dsi"):
+            self.agents["dsi"] = AgentHITL(agent_class=agents.DSIAgent)
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
             config={"agent_memory": self.memory},
