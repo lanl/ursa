@@ -5,7 +5,7 @@ import os
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_UP, Decimal, getcontext
 from importlib import resources
-from typing import Any
+from typing import Any, Optional
 
 getcontext().prec = 28  # robust money math
 
@@ -18,7 +18,7 @@ class ModelPricing:
     # Prices are USD per 1,000 tokens
     input_per_1k: Decimal
     output_per_1k: Decimal
-    reasoning_per_1k: Decimal | None = (
+    reasoning_per_1k: Optional[Decimal] = (
         None  # None --> charge 0 for reasoning tokens
     )
     cached_input_multiplier: Decimal = Decimal(
@@ -110,7 +110,7 @@ def resolve_model_name(event: dict[str, Any]) -> str:
 
 def find_pricing(
     model: str, registry: dict[str, ModelPricing]
-) -> ModelPricing | None:
+) -> Optional[ModelPricing]:
     if model in registry:
         return registry[model]
     # simple wildcard support like "local/*"
@@ -131,8 +131,8 @@ def default_registry_path() -> str:
 
 
 def load_registry(
-    path: str | None = None,
-    overrides: dict[str, Any] | None = None,
+    path: Optional[str] = None,
+    overrides: Optional[dict[str, Any]] = None,
     use_default_if_missing: bool = True,
 ) -> dict[str, ModelPricing]:
     """
@@ -216,7 +216,7 @@ def price_event(
     event: dict[str, Any],
     registry: dict[str, ModelPricing],
     overwrite: bool = False,
-) -> tuple[dict[str, Any], Decimal | None, str]:
+) -> tuple[dict[str, Any], Optional[Decimal], str]:
     """
     Returns (event, total_cost_decimal_or_None, cost_source)
       cost_source ∈ {"provider", "computed", "no_usage", "no_pricing"}
@@ -258,7 +258,7 @@ def price_event(
 
 def price_payload(
     payload: dict[str, Any],
-    registry: dict[str, ModelPricing] | None = None,
+    registry: Optional[dict[str, ModelPricing]] = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """
@@ -297,8 +297,8 @@ def price_payload(
 
 def price_file(
     in_path: str,
-    out_path: str | None = None,
-    registry_path: str | None = None,
+    out_path: Optional[str] = None,
+    registry_path: Optional[str] = None,
     overwrite: bool = False,
 ) -> str:
     """
@@ -313,7 +313,7 @@ def price_file(
     payload = price_payload(payload, registry=reg, overwrite=overwrite)
 
     if not out_path:
-        base, _ = os.path.splitext(in_path)
+        base, ext = os.path.splitext(in_path)
         out_path = f"{base}.priced.json"
 
     with open(out_path, "w", encoding="utf-8") as f:

@@ -1,6 +1,7 @@
 import asyncio
 
 from langchain.chat_models import init_chat_model
+
 from ursa.agents import WebSearchAgent
 
 ##### Run a simple example of a WebSearch Agent.

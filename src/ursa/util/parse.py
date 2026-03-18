@@ -7,7 +7,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
 import justext
@@ -233,14 +233,14 @@ def _download_stream_to(path: str, resp: requests.Response) -> str:
 
 
 def _get_soup(
-    url: str, timeout: int = 20, headers: dict[str, str] | None = None
+    url: str, timeout: int = 20, headers: Optional[dict[str, str]] = None
 ) -> BeautifulSoup:
     r = requests.get(url, timeout=timeout, headers=headers or {})
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
 
 
-def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> str | None:
+def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> Optional[str]:
     # 1) meta citation_pdf_url
     meta = soup.find("meta", attrs={"name": "citation_pdf_url"})
     if meta and meta.get("content"):
@@ -323,10 +323,10 @@ def _ocr_to_searchable_pdf(
 def resolve_pdf_from_osti_record(
     rec: dict[str, Any],
     *,
-    headers: dict[str, str] | None = None,
-    unpaywall_email: str | None = None,
+    headers: Optional[dict[str, str]] = None,
+    unpaywall_email: Optional[str] = None,
     timeout: int = 25,
-) -> tuple[str | None, str | None, str]:
+) -> tuple[Optional[str], Optional[str], str]:
     """
     Returns (pdf_url, landing_used, note)
       - pdf_url: direct downloadable PDF URL if found (or a strong candidate)

@@ -60,7 +60,7 @@ def load_db_description(db_path: str) -> str:
             db_desc = f.read()
 
         return str(db_desc)
-    except Exception:  # noqa: BLE001
+    except Exception:    # noqa: BLE001
         return ""
 
 
@@ -123,6 +123,9 @@ def get_db_info(db_path: str) -> tuple[list, dict, str]:
 
     except Exception:  # noqa: BLE001
         return tables, schema, desc
+
+
+
 
 
 ########################################################################
@@ -377,13 +380,13 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         )
 
         formatted_result = self.format_result(result, start)
-
+        
         # I would like to add those
         # if self.output_mode == "console":
         #     print(formatted_result)
-
+                   
         # elif self.output_mode == "jupyter":
         #     from IPython.display import Markdown, display
         #     display(Markdown(formatted_result))
-
+            
         return formatted_result

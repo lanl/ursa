@@ -7,7 +7,7 @@ import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from .artifacts import scan_artifacts
 from .events import make_event
@@ -742,7 +742,7 @@ class RunManager:
         run_id: str,
         agent_id: str,
         stream_name: str,
-        stream: asyncio.StreamReader | None,
+        stream: Optional[asyncio.StreamReader],
         log_path: Path,
         cap_bytes: int,
     ) -> None:

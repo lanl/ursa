@@ -5,7 +5,7 @@ import platform
 import threading
 from cmd import Cmd
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 import aiosqlite
 from fastmcp import FastMCP
@@ -169,9 +169,9 @@ class HITL:
 
         # Apply agent-specific configuration overrides
         for agent, agent_config in agent_overrides.items():
-            assert (
-                agent in self.agents
-            ), f"Unknown agent {agent}, Know agents: {','.join(self.agents.keys())}"
+            assert agent in self.agents, (
+                f"Unknown agent {agent}, Know agents: {','.join(self.agents.keys())}"
+            )
             self.agents[agent].config.update(agent_config)
             logging.debug(
                 f"Updated {agent} config: {self.agents[agent].config}"
@@ -418,7 +418,7 @@ class UrsaRepl(Cmd):
                 self.console.print(name + ": {}")
 
 
-def get_provider_and_model(model_str: str | None):
+def get_provider_and_model(model_str: Optional[str]):
     if model_str is None:
         return "none", "none"
 

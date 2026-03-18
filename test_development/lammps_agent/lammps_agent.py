@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.runnables import RunnableLambda
+
 from ursa.agents import LammpsAgent
 from ursa.agents.lammps_agent import working
 

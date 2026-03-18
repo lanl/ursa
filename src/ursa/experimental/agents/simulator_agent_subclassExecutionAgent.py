@@ -1,10 +1,14 @@
 import sqlite3
 from pathlib import Path
+from typing import (
+    Optional,
+)
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_core.tools import tool
 from langgraph.checkpoint.sqlite import SqliteSaver
+
 from ursa.agents import ExecutionAgent, RAGAgent
 from ursa.prompt_library.simulator_prompts import simulation_coordinator_prompt
 
@@ -22,10 +26,10 @@ class SimulatorAgent(ExecutionAgent):
         llm: BaseChatModel,
         embedding=None,
         use_web=False,
-        tokens_before_summarize: int | None = 50000,
-        messages_to_keep: int | None = 20,
-        safe_codes: list[str] | None = None,
-        workspace: str | None = "ursa_simulation_workspace",
+        tokens_before_summarize: Optional[int] = 50000,
+        messages_to_keep: Optional[int] = 20,
+        safe_codes: Optional[list[str]] = None,
+        workspace: Optional[str] = "ursa_simulation_workspace",
         **kwargs,
     ):
         super().__init__(

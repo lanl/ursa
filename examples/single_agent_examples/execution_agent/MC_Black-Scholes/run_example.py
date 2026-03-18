@@ -34,9 +34,10 @@ from typing import Any
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from preflight import run_preflight
+from ux import UX, add_ux_args, resolve_ux_config, setup_file_logging
+
 from ursa.agents.execution_agent import ExecutionAgent
 from ursa.util import Checkpointer
-from ux import UX, add_ux_args, resolve_ux_config, setup_file_logging
 
 # --- Ensure we import the *local* URSA package (ursa/src/ursa) when running from the repo.
 # This example directory may be nested under ./ursa/examples/..., so we search upwards.

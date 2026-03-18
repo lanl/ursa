@@ -11,6 +11,7 @@ from fastmcp.client import Client
 from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
+
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import ModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, UrsaRepl

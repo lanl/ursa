@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import pytest
+
 from ursa.agents.hypothesizer_agent import HypothesizerAgent
 
 

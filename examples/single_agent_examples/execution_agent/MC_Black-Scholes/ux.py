@@ -20,7 +20,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -34,7 +34,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 class UXConfig:
     quiet: bool
     is_tty: bool
-    log_file: Path | None
+    log_file: Optional[Path]
 
     # Rich is optional and only used when not quiet and on a TTY.
     rich_available: bool
@@ -56,7 +56,7 @@ def add_ux_args(parser: argparse.ArgumentParser) -> None:
 
 
 def resolve_ux_config(
-    *, args: argparse.Namespace, default_log_file: Path | None = None
+    *, args: argparse.Namespace, default_log_file: Optional[Path] = None
 ) -> UXConfig:
     """Resolve final UX behavior from args, env, and TTY detection."""
 
@@ -70,7 +70,7 @@ def resolve_ux_config(
 
     quiet = bool(getattr(args, "quiet", False)) or quiet_default
 
-    log_file: Path | None
+    log_file: Optional[Path]
     lf = getattr(args, "log_file", None)
     if lf is None or str(lf).strip() == "":
         log_file = default_log_file
@@ -94,7 +94,7 @@ def resolve_ux_config(
 
 
 def setup_file_logging(
-    *, log_file: Path | None, level: int = logging.INFO
+    *, log_file: Optional[Path], level: int = logging.INFO
 ) -> logging.Logger:
     """Configure logging to write to a file (and only to a file).
 
@@ -201,8 +201,8 @@ class UX:
 
 
 def resolve_path_under(
-    base: Path, maybe_relative: Path | None
-) -> Path | None:
+    base: Path, maybe_relative: Optional[Path]
+) -> Optional[Path]:
     """Resolve a path relative to base if it's not absolute."""
 
     if maybe_relative is None:

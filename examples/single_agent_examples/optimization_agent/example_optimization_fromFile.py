@@ -2,6 +2,7 @@ import os
 import pprint
 
 from langchain_openai import ChatOpenAI
+
 from ursa.agents.optimization_agent import OptimizationAgent
 
 model = ChatOpenAI(

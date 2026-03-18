@@ -1,4 +1,4 @@
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 
 class DecisionVariableType(TypedDict):
@@ -16,7 +16,7 @@ class DecisionVariableType(TypedDict):
 
 class ParameterType(TypedDict):
     name: str  # parameter name
-    value: Any | None  # parameter value; None
+    value: Optional[Any]  # parameter value; None
     description: str  # natural language description
     is_user_supplied: bool  # 1 if user supplied parameter
 
@@ -61,8 +61,8 @@ class ProblemSpec(TypedDict):
     parameters: list[ParameterType]  # list of all parameters
     objective: ObjectiveType  # structred objective function details
     constraints: list[ConstraintType]  # structured constraint details
-    problem_class: str | None  # optimization problem class
-    latex: str | None  # latex formulation of the problem
+    problem_class: Optional[str]  # optimization problem class
+    latex: Optional[str]  # latex formulation of the problem
     status: Literal["DRAFT", "VERIFIED", "ERROR"]  # problem status
     notes: NotesType  # structured notes data
 
@@ -70,7 +70,9 @@ class ProblemSpec(TypedDict):
 class SolverSpec(TypedDict):
     solver: str  # name of the solver, replace with Literal["Gurobi","Ipopt",...] to restrict solvers
     library: str  # library or relevant packages for the solver
-    algorithm: str | None  # algorithm used to solve the problem
-    license: str | None  # License status of the solver (open-source, commercial,etc.)
-    parameters: list[dict] | None  # other parameters relevant to the problem
-    notes: str | None  # justifying the choice of solver
+    algorithm: Optional[str]  # algorithm used to solve the problem
+    license: Optional[
+        str
+    ]  # License status of the solver (open-source, commercial,etc.)
+    parameters: Optional[list[dict]]  # other parameters relevant to the problem
+    notes: Optional[str]  # justifying the choice of solver

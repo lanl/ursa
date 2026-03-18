@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, Optional, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import init_embeddings
@@ -9,6 +9,7 @@ from langchain_core.messages import (
 from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
 from rich import get_console
+
 from ursa.agents import ExecutionAgent, RAGAgent
 from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import recap_prompt
@@ -99,7 +100,7 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         embedding=None,
         log_state: bool = False,
         use_web: bool = False,
-        workspace: Path | str | None = None,
+        workspace: Optional[Path | str] = None,
         checkpointer=Checkpointer,
         thread_id=str,
         **kwargs,

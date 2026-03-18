@@ -4,11 +4,12 @@ import time
 from pathlib import Path
 
 import pytest
+
 import ursa.tools.read_file_tool as rft
-from ursa.util import parse
 
 # import the module (not just the symbol) so monkeypatch works cleanly
 from tests.tools.utils import make_runtime
+from ursa.util import parse
 
 
 def _touch(p: Path, content: bytes = b"%PDF-1.4\n%fake\n") -> None:

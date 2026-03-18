@@ -32,6 +32,7 @@ from typing import (
     Annotated,
     Any,
     Literal,
+    Optional,
     TypedDict,
 )
 
@@ -190,12 +191,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Any | AgentMemory | None = None,
+        agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
-        extra_tools: list[BaseTool] | None | None = None,
+        extra_tools: Optional[list[BaseTool] | None] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        safe_codes: list[str] | None = None,
+        safe_codes: Optional[list[str]] = None,
         **kwargs,
     ):
         default_tools = [
