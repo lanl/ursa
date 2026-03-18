@@ -60,7 +60,7 @@ def load_db_description(db_path: str) -> str:
             db_desc = f.read()
 
         return str(db_desc)
-    except Exception:
+    except Exception:    # noqa: BLE001
         return ""
 
 
@@ -84,7 +84,7 @@ def check_db_valid(db_path: str) -> bool:
                 )  # force things to fail if the table is empty
                 temp_store.close()
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     return True
@@ -121,7 +121,7 @@ def get_db_info(db_path: str) -> tuple[list, dict, str]:
 
         return tables, schema, desc
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         return tables, schema, desc
 
 

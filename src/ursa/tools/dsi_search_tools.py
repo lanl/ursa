@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 no_DSI = False
 try:
     from dsi.dsi import DSI
-except Exception:
+except ImportError:
     no_DSI = True
 
 
@@ -38,7 +38,7 @@ def _load_db_description(db_path: str) -> str:
             db_desc = f.read()
 
         return str(db_desc)
-    except Exception:
+    except OSError:
         return ""
 
 
@@ -62,7 +62,7 @@ def _check_db_valid(db_path: str) -> bool:
                 )  # force things to fail if the table is empty
                 temp_store.close()
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     return True
@@ -97,7 +97,7 @@ def _get_db_info(db_path: str) -> tuple[list, dict, str]:
 
         return tables, schema, desc
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         return tables, schema, desc
 
 
@@ -184,7 +184,7 @@ def load_dsi_tool(
 - Database description: {_db_description}
 """.strip()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return f"Failed to load database information: {e}"
 
 
@@ -214,7 +214,7 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
             return {}
         return df.to_dict(orient="records")
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
 
     finally:
@@ -222,5 +222,5 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
             try:
                 with redirect_stdout(_NULL), redirect_stderr(_NULL):
                     _store.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001
+                print(f"Error closing DSI store: {e}")
