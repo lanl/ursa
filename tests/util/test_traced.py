@@ -21,7 +21,12 @@ def test_traced_chat_openai():
 
 
 def has_ollama_model(model_name: str):
-    models = ollama.list()["models"]
+    try:
+        models = ollama.list()["models"]
+    except Exception:
+        print("ollama server is not running")
+        return False
+
     for m in models:
         if m.model == model_name:
             return True
@@ -30,7 +35,7 @@ def has_ollama_model(model_name: str):
 
 @pytest.mark.skipif(
     not has_ollama_model(OLLAMA_TEST_MODEL),
-    reason=f"{OLLAMA_TEST_MODEL} not installed",
+    reason=f"{OLLAMA_TEST_MODEL} not available",
 )
 def test_traced_chat_ollama():
     llm = TracedChatOllama(model=OLLAMA_TEST_MODEL, reasoning=True)
