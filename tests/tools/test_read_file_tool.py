@@ -1,10 +1,10 @@
 from pathlib import Path
 
 from langchain.chat_models import BaseChatModel
-
-from tests.tools.utils import make_runtime
 from ursa.tools.read_file_tool import read_file
 from ursa.util import parse
+
+from tests.tools.utils import make_runtime
 
 
 def test_read_file_reads_text_from_workspace(

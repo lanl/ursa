@@ -6,7 +6,6 @@ import pytest
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
-
 from ursa.agents import ExecutionAgent
 
 

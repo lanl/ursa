@@ -1,6 +1,5 @@
 from langchain_openai import ChatOpenAI
 from rich import get_console
-
 from ursa.agents import LammpsAgent
 
 console = get_console()

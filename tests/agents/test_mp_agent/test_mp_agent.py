@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from ursa.agents import MaterialsProjectAgent
 
 

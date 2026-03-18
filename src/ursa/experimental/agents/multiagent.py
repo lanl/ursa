@@ -1,7 +1,6 @@
 import json
 import re
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from langchain.agents import create_agent
@@ -9,7 +8,6 @@ from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage
 from langchain.tools import tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
-
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.util import Checkpointer
 
@@ -184,9 +182,9 @@ class Ursa:
     def __init__(
         self,
         llm: BaseChatModel,
-        extra_tools: Optional[list] = None,
+        extra_tools: list | None = None,
         workspace: Path = Path("ursa_workspace"),
-        checkpointer: Optional[BaseCheckpointSaver] = None,
+        checkpointer: BaseCheckpointSaver | None = None,
         thread_id: str = "ursa",
         max_reflection_steps: int = 1,
         system_prompt: str = system_prompt,

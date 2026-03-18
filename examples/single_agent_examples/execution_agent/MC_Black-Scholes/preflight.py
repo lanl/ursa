@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _is_dir_writable(path: Path) -> tuple[bool, Optional[str]]:
+def _is_dir_writable(path: Path) -> tuple[bool, str | None]:
     """Check directory is writable by creating and deleting a tiny file."""
     try:
         path.mkdir(parents=True, exist_ok=True)

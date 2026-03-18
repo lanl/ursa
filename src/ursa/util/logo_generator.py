@@ -6,7 +6,6 @@ import random
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
 
 from openai import OpenAI  # pip install openai
 from rich.console import Console
@@ -452,7 +451,7 @@ def _size_for(aspect: str, mode: str) -> str:
     return "1024x1024"
 
 
-def _normalize_size(size: Optional[str], aspect: str, mode: str) -> str:
+def _normalize_size(size: str | None, aspect: str, mode: str) -> str:
     """
     If size is None or invalid, pick a sensible API-supported default based on aspect/mode.
     """
@@ -543,7 +542,7 @@ def _build_scene_prompt(
     style_slug: str,
     workspace: str,
     gist: str,
-    palette: Optional[str],
+    palette: str | None,
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
 ) -> str:
@@ -588,7 +587,7 @@ def _build_scene_prompt(
 
 def _render_prompt_panel(
     *,
-    console: Optional[Console],
+    console: Console | None,
     style_slug: str,
     workspace: str,
     prompt: str,
@@ -748,9 +747,9 @@ def generate_logo_sync(
     aspect: str = "square",
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
-    console: Optional[Console] = None,
+    console: Console | None = None,
     image_model_provider: str = "openai",
-    image_provider_kwargs: Optional[dict] = None,
+    image_provider_kwargs: dict | None = None,
 ) -> Path:
     """
     Generate images.
@@ -947,10 +946,10 @@ def kickoff_logo(
     aspect: str = "square",
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
-    console: Optional[Console] = None,
-    image_model: Optional[str] = None,
+    console: Console | None = None,
+    image_model: str | None = None,
     image_model_provider: str = "openai",
-    image_provider_kwargs: Optional[dict] = None,
+    image_provider_kwargs: dict | None = None,
 ):
     _final_model = image_model or model
 

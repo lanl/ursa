@@ -1,5 +1,4 @@
 import pytest
-
 from ursa.agents.acquisition_agents import OSTIAgent
 
 

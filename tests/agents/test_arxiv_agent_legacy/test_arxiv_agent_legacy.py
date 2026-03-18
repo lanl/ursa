@@ -1,5 +1,4 @@
 import pytest
-
 from ursa.agents.arxiv_agent import ArxivAgentLegacy
 
 

@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from langchain.chat_models import init_chat_model
-
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer

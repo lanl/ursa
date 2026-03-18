@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
 from rich import get_console
-
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer

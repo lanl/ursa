@@ -8,7 +8,6 @@ from langchain_core.messages import HumanMessage
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util.logo_generator import kickoff_logo

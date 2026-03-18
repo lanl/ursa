@@ -2,7 +2,7 @@ import difflib
 import json
 import os
 import subprocess
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 
 import tiktoken
 from langchain.chat_models import BaseChatModel
@@ -30,8 +30,8 @@ except Exception:
 class LammpsState(TypedDict, total=False):
     simulation_task: str
     elements: list[str]
-    template: Optional[str]
-    chosen_potential: Optional[Any]
+    template: str | None
+    chosen_potential: Any | None
 
     matches: list[Any]
     idx: int
@@ -40,7 +40,7 @@ class LammpsState(TypedDict, total=False):
     summaries_combined: str
 
     input_script: str
-    run_returncode: Optional[int]
+    run_returncode: int | None
     run_stdout: str
     run_stderr: str
     run_history: list[dict[str, Any]]
@@ -54,9 +54,9 @@ class LammpsAgent(BaseAgent[LammpsState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        potential_files: Optional[list[str]] = None,
-        pair_style: Optional[str] = None,
-        pair_coeff: Optional[str] = None,
+        potential_files: list[str] | None = None,
+        pair_style: str | None = None,
+        pair_coeff: str | None = None,
         max_potentials: int = 5,
         max_fix_attempts: int = 10,
         find_potential_only: bool = False,

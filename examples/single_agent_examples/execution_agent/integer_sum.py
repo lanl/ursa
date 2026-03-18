@@ -13,7 +13,6 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich import get_console
 from rich.panel import Panel
-
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
 

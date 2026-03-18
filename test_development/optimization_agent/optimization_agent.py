@@ -1,6 +1,5 @@
-from langchain_core.tools import tool
-
 import ursa.agents.optimization_agent as opt_mod
+from langchain_core.tools import tool
 
 
 async def test_optimization_agent_produces_verified_summary(

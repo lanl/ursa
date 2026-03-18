@@ -23,7 +23,6 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
-
 from ursa.observability.metrics_charts import (
     compute_attribution,
     extract_llm_token_stats,
@@ -1236,13 +1235,13 @@ class Telemetry:
         tracer = trace.get_tracer(agent)
 
         with tracer.start_as_current_span(run_id) as span:
-            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
+            _, parts_i = extract_time_breakdown(payload, group_llm=True)
             [span.set_attribute(i[0], i[1]) for i in parts_i]
 
             att = compute_attribution(payload)
             span.set_attributes(att)
 
-            totals_run, samples_run = extract_llm_token_stats(payload)
+            totals_run, _ = extract_llm_token_stats(payload)
             span.set_attributes(totals_run)
 
         return endpoint

@@ -2,7 +2,6 @@ import asyncio
 
 from langchain_community.callbacks.openai_info import OpenAICallbackHandler
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-
 from ursa.agents import ArxivAgent
 from ursa.observability.timing import render_session_summary
 

@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-
 from ursa.agents import DSIAgent
 from ursa.util import Checkpointer
 

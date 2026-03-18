@@ -3,7 +3,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-
 import ursa.tools.read_file_tool as rft
 
 

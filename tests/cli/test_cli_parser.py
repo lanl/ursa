@@ -1,5 +1,4 @@
 import yaml
-
 from ursa.cli import build_parser, resolve_config
 from ursa.cli.config import ModelConfig, UrsaConfig
 
