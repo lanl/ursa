@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
@@ -1237,7 +1237,7 @@ wheels = [
 [[package]]
 name = "dsi-workflow"
 version = "1.1.4"
-source = { git = "https://github.com/lanl/dsi.git#c973c42411e9eeaa0bac2c1c18dbf57e943b68b0" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gitpython" },
     { name = "matplotlib" },
@@ -1247,6 +1247,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyreadline3", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/aa/7f/41ef72200d6a57b02b1f5f2763d1193e6f71af087e3aa8dfc5281fe87f74/dsi_workflow-1.1.4.tar.gz", hash = "sha256:064e3b43df233051e6f9c3c7fcc12c47c006f5050016c728e8bd9a7ed0367c01", size = 137718, upload-time = "2026-01-27T23:53:58.069Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/0c/bddd59abf1aeed98fd0e1d539f051f6adb00c001626aee1c92e7798b1bc5/dsi_workflow-1.1.4-py3-none-any.whl", hash = "sha256:9b1fe237d2a06105ee03543cf9320510149f5e42048341a0a1e5e9f95c6620cc", size = 161035, upload-time = "2026-01-27T23:53:57.051Z" },
 ]
 
 [[package]]
@@ -7143,7 +7147,6 @@ dependencies = [
     { name = "arxiv" },
     { name = "beautifulsoup4" },
     { name = "ddgs" },
-    { name = "dsi-workflow" },
     { name = "fastmcp" },
     { name = "jsonargparse" },
     { name = "langchain" },
@@ -7174,6 +7177,9 @@ dependencies = [
 dashboard = [
     { name = "fastapi" },
     { name = "uvicorn" },
+]
+dsi = [
+    { name = "dsi-workflow" },
 ]
 fm = [
     { name = "torch" },
@@ -7216,7 +7222,7 @@ requires-dist = [
     { name = "atomman", marker = "extra == 'lammps'", specifier = ">=1.5.2" },
     { name = "beautifulsoup4", specifier = ">=4.13.4,<5.0" },
     { name = "ddgs", specifier = ">=9.5.5" },
-    { name = "dsi-workflow", git = "https://github.com/lanl/dsi.git" },
+    { name = "dsi-workflow", marker = "extra == 'dsi'", specifier = ">=1.1.4" },
     { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.120.0" },
     { name = "fastmcp", specifier = ">=2.13.3" },
     { name = "jsonargparse", specifier = ">=4.45.0" },
@@ -7249,7 +7255,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.37.0" },
 ]
-provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel"]
+provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel", "dsi"]
 
 [package.metadata.requires-dev]
 dev = [

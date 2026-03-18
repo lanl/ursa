@@ -123,9 +123,9 @@ def _get_db_abs_path(db_path: str, run_path: str) -> tuple[str, str]:
     return master_database_path, master_db_folder
 
 
-
 ########################################################################
 #### Tools Available
+
 
 @tool
 def load_dsi_tool(
@@ -158,7 +158,7 @@ def load_dsi_tool(
             _db_path = str(Path(master_db_folder).expanduser() / p)
         else:
             _db_path = str(p)
-            
+
         data_path = _db_path.strip()
 
     if not _check_db_valid(data_path):
@@ -200,7 +200,9 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
         collection: the results of the query
     """
     if no_DSI:
-        return {"error": "Optional dependency [dsi] not installed. Tool will not work."}
+        return {
+            "error": "Optional dependency [dsi] not installed. Tool will not work."
+        }
 
     # print(f"query {query_str}, db_path: {db_path}")
 
