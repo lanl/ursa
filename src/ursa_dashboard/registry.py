@@ -150,9 +150,9 @@ def _baseagent_adapter_builder(
     return build_adapter
 
 
-def _planning_executor_workflow_builder() -> (
-    Callable[[Any, dict[str, Any]], AgentAdapter]
-):
+def _planning_executor_workflow_builder() -> Callable[
+    [Any, dict[str, Any]], AgentAdapter
+]:
     """Build adapter for PlanningExecutorWorkflow.
 
     The workflow composes a PlanningAgent + ExecutionAgent. We create both using the
