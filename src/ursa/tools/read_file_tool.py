@@ -61,10 +61,9 @@ def download_file_tool(
 
         # Write file to disk
         with open(output_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+            f.writelines(response.iter_content(chunk_size=8192))
 
         return f"File successfully downloaded to: {output_path}"
 
-    except Exception as e:
-        return f"Error downloading file: {str(e)}"
+    except Exception as e:  # noqa: BLE001
+        return f"Error downloading file: {e!s}"
