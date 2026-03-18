@@ -61,7 +61,7 @@ class _Traced:
         self._append_message(output)
         return output
 
-    # TODO: ainvoke?
+    # TODO: stream? ainvoke? astream?
 
 
 class TracedChatOllama(_Traced, ChatOllama):
