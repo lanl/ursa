@@ -120,7 +120,7 @@ dataset_path = str(current_dir / "data/oceans_11/ocean_11_datasets.db")
 print(dataset_path)
 
 model = ChatOpenAI(
-    model="gpt-5.4", max_tokens=100000, timeout=None, max_retries=2
+    model="gpt-5.4", max_completion_tokens=10000, timeout=None, max_retries=2
 )
 
 workspace = Path("dsi_agent_example")

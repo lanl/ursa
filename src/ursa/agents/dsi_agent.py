@@ -340,13 +340,21 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
         return {"messages": messages}
 
-    def format_query(self, user_query, state: DSIState | None = None) -> DSIState:
+    def format_query(
+        self, user_query, state: DSIState | None = None
+    ) -> DSIState:
         """
            Injest string query into the agent state
 
         Arg:
            user_query (str): the user question
         """
+        if state is not None and "messages" in state:
+            pass  # This is where we should process it if we want the state
+            # passed in to be appended to. Not sure if we do so reverting
+            # to current behavior for now
+            # state["messages"].append(HumanMessage(content=str(user_query)))
+            # return state
         return self.craft_message(user_query)
 
     def format_result(self, result: DSIState, start_time=None) -> str:
