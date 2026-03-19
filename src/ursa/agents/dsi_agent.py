@@ -340,7 +340,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
         return {"messages": messages}
 
-    def format_query(self, user_query):
+    def format_query(self, user_query, state: DSIState | None = None) -> DSIState:
         """
            Injest string query into the agent state
 
