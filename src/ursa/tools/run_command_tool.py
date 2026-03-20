@@ -23,7 +23,7 @@ def clean_env(workspace: Path):
     import os
 
     env = dict(os.environ)
-    for k in ["VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"]:
+    for k in ["VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PROJECT_ENVIRONMENT"]:
         env.pop(k, None)
 
     old = env.get("PATH", env.get("PATH", ""))
@@ -31,6 +31,7 @@ def clean_env(workspace: Path):
     env["PATH"] = os.pathsep.join(parts)
 
     env["UV_PROJECT"] = str(workspace.resolve())
+    env["UV_PROJECT_ENVIRONMENT"] = str(workspace.resolve() / ".venv")
     return env
 
 
