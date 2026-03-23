@@ -1,12 +1,18 @@
 import json
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
+import ollama
 from langchain.chat_models import BaseChatModel
 from langchain.messages import AnyMessage, HumanMessage
 from langchain_core.messages import BaseMessage
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
+
+
+class HasModelInfo(Protocol):
+    def model_info(self):
+        pass
 
 
 class _Traced:
@@ -38,8 +44,16 @@ class _Traced:
         indent (int|None): indentation for json file. No indentation if None
         supplied.
         """
+        # NOTE: Duck typing for type checker.
+        llm = cast(HasModelInfo, self)
+
+        output = {
+            "messages": [msg.model_dump(mode="json") for msg in self.messages],
+            "model_info": llm.model_info(),
+        }
+
         json.dump(
-            [msg.model_dump() for msg in self.messages],
+            output,
             path.open("w"),
             indent=indent,
         )
@@ -69,8 +83,16 @@ class TracedChatOllama(_Traced, ChatOllama):
         super().__init__(**kwargs)
         self._messages = messages or []
 
+    def model_info(self):
+        return self.model_dump(mode="json") | ollama.show(
+            self.model
+        ).model_dump(mode="json")
+
 
 class TracedChatOpenAI(_Traced, ChatOpenAI):
     def __init__(self, messages: list[AnyMessage] | None = None, **kwargs):
         super().__init__(**kwargs)
         self._messages = messages or []
+
+    def model_info(self):
+        return self.model_dump(mode="json")
