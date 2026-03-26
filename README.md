@@ -12,13 +12,13 @@ The original ArXiv paper is [here](https://arxiv.org/abs/2506.22653).
 
 ## Installation
 You can install `ursa` via `pip` or [`uv`](https://docs.astral.sh/uv/). Installing `ursa` in a clean
-environment with python 3.10-3.12 may be necessary. (Some `ursa` dependencies
+environment with python 3.11-3.12 may be necessary. (Some `ursa` dependencies
 currently do not support `python>=3.13`.)
 
 **uv**
 
 ```sh
-uv init -p 3.12  # or 3.10, 3.11
+uv init -p 3.12  # or 3.11
 uv add ursa-ai
 ```
 
@@ -31,7 +31,7 @@ pip install ursa-ai
 **conda with pip install**
 
 ```sh
-conda create -y -n ursa-env python=3.12  # or 3.10, 3.11
+conda create -y -n ursa-env python=3.12  # or 3.11
 conda run --live-stream -n ursa-env python -m pip install ursa-ai
 ```
 
@@ -45,6 +45,7 @@ Documentation for each URSA agent:
 - [Planning Agent](docs/planning_agent.md)
 - [Execution Agent](docs/execution_agent.md)
 - [ArXiv Agent](docs/arxiv_agent.md)
+- [DSI Agent](docs/dsi_agent.md)
 - [Web Search Agent](docs/web_search_agent.md)
 - [Hypothesizer Agent](docs/hypothesizer_agent.md)
 

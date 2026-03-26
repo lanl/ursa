@@ -23,6 +23,7 @@ from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
+from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
 
@@ -147,6 +148,8 @@ class HITL:
         self.agents: dict[str, AgentHITL] = {}
         self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
+        if has_optional_dep_group("dsi"):
+            self.agents["dsi"] = AgentHITL(agent_class=agents.DSIAgent)
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
             config={"agent_memory": self.memory},
@@ -156,7 +159,9 @@ class HITL:
         )
         self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
         self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
-        self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
+
+        if has_optional_dep_group("lammps"):
+            self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
 
         if self.memory is not None:
             self.agents["recall"] = AgentHITL(
@@ -215,9 +220,7 @@ class HITL:
         mcp = FastMCP(
             "URSA",
             version=ursa_version,
-            on_duplicate_tools="error",
-            on_duplicate_prompts="error",
-            on_duplicate_resources="error",
+            on_duplicate="error",
             **kwargs,
         )
 

@@ -1,0 +1,397 @@
+import io
+import os
+import random
+from contextlib import redirect_stderr, redirect_stdout
+from time import time as now
+from typing import Annotated, Any, TypedDict
+
+from dsi.dsi import DSI
+from langchain.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, START
+from langgraph.graph.message import add_messages
+
+from ursa.tools.dsi_search_tools import (
+    _get_db_abs_path,
+    load_dsi_tool,
+    query_dsi_tool,
+)
+from ursa.tools.read_file_tool import (
+    download_file_tool,
+    read_file,
+)
+from ursa.tools.run_command_tool import (
+    run_command,
+)
+from ursa.tools.search_tools import (
+    run_arxiv_search,
+    run_osti_search,
+    run_web_search,
+)
+from ursa.tools.write_code_tool import (
+    edit_code,
+    write_code,
+)
+
+from .base import AgentWithTools, BaseAgent
+
+_NULL = io.StringIO()  # Hides DSI outout
+
+
+########################################################################
+#### Utility functions
+
+
+def load_db_description(db_path: str) -> str:
+    """Load the database description from a YAML file when provided with the path to a DSI database.
+
+    Arg:
+        db_path (str): the absolute path of the DSI database
+
+    Returns:
+        str: message indicating success or failure
+    """
+
+    try:
+        # The description file is expected to be in the same directory as the database, with the same name but ending in '_description.yaml'
+        db_description_path = db_path.rsplit(".", 1)[0] + "_description.yaml"
+
+        with open(db_description_path, "r") as f:
+            db_desc = f.read()
+
+        return str(db_desc)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def check_db_valid(db_path: str) -> bool:
+    """Check if the provided path points to a valid DSI database.
+
+    Arg:
+        db_path (str): the absolute path of the DSI database
+
+    Returns:
+        bool: True if the database is valid, False otherwise
+    """
+    if not os.path.exists(db_path):
+        return False
+    else:
+        try:
+            with redirect_stdout(_NULL), redirect_stderr(_NULL):
+                temp_store = DSI(db_path, check_same_thread=False)
+                temp_store.list(
+                    True
+                )  # force things to fail if the table is empty
+                temp_store.close()
+
+        except Exception:  # noqa: BLE001
+            return False
+
+    return True
+
+
+def get_db_info(db_path: str) -> tuple[list, dict, str]:
+    """Load the database information (tables and schema) from a DSI database.
+
+    Arg:
+        db_path (str): the absolute path of the DSI database
+
+    Returns:
+        list: the list of tables in the database
+        dict: the schema of the database
+        str: the description of the database (if available, otherwise empty string)
+    """
+
+    tables = []
+    schema = {}
+    desc = ""
+
+    if check_db_valid(db_path) is False:
+        return tables, schema, desc
+
+    try:
+        # with open(os.devnull, "w") as fnull:
+        #     with redirect_stdout(fnull), redirect_stderr(fnull):
+        with redirect_stdout(_NULL), redirect_stderr(_NULL):
+            _dsi_store = DSI(db_path, check_same_thread=False)
+            tables = _dsi_store.list(True)
+            schema = _dsi_store.schema()
+            desc = load_db_description(db_path)
+            _dsi_store.close()
+
+        return tables, schema, desc
+
+    except Exception:  # noqa: BLE001
+        return tables, schema, desc
+
+
+########################################################################
+#### Main code
+
+
+class DSIState(TypedDict):
+    messages: Annotated[list, add_messages]
+    response: str
+    metadata: dict[str, Any]
+    thread_id: str
+
+
+def should_call_tools(state: DSIState) -> str:
+    """Decide whether to call tools or continue.
+
+    Arg:
+        state (State): the current state of the graph
+
+    Returns:
+        str: "call_tools" or "continue"
+    """
+
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "call_tools"
+
+    return "continue"
+
+
+class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
+    state_type = DSIState
+
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        database_path: str = "",
+        output_mode: str = "agent",
+        run_path: str = "",
+        thread_id: str | None = None,
+        **kwargs,
+    ):
+        default_tools = [
+            run_web_search,
+            run_osti_search,
+            run_arxiv_search,
+            load_dsi_tool,
+            query_dsi_tool,
+            download_file_tool,
+            read_file,
+            run_command,
+            write_code,
+            edit_code,
+        ]
+
+        super().__init__(llm=llm, tools=default_tools, **kwargs)
+        self.db_schema = ""
+        self.db_description = ""
+
+        self.master_db_folder = ""
+        self.master_database_path = ""
+        self.current_db_abs_path = ""
+
+        self.output_mode = output_mode
+
+        # Try to load the master database if a path is provided, otherwise wait for the user to load one
+        if run_path == "":
+            self.run_path = os.getcwd()
+        else:
+            self.run_path = run_path
+        self.load_master_db(database_path)
+
+        self.prompt = """
+        You are a data-analysis agent who can write python code, SQL queries, and generate plots to answer user questions based on the data available in a DSI object.
+        Use the load_dsi_tool tool to load DSI files that have a .db extension
+        Use query_dsi_tool to run SQL queries on it
+        When a user asks for data or dataset or ... you have, do NOT list the schema or metadata information you have about tables. Query the DSI objects for data and list the data in the tables.
+        
+        You can:
+        - write and execute Python code,
+        - compose SQL statements but ONLY select; no update or delete
+        - generate plots and diagrams,
+        - analyze and summarize data.
+
+        Requirements:
+        - Planning: Think carefully about the problem, but **do not show your reasoning**.
+        - Data:
+            - Always use the provided tools when available — never simulate results.
+            - Never fabricate or assume sample data. Query or compute real values only.
+            - When creating plots or files, always save them directly to disk (do not embed inline output).
+            - Do not infer or assume any data beyond what is provided by the tools.
+        - Keep all responses concise and focused on the requested task.
+        - Only load a dataset when explicitly asked by a user
+        - Do not restate the prompt or reasoning; just act and report the outcome briefly.
+        """
+
+        if thread_id:
+            self.thread_id = thread_id
+        else:
+            self.thread_id = str(random.randint(1, 20000))
+
+    def load_master_db(self, master_database: str) -> None:
+        """Load the  master dataset from the given path.
+
+        Arg:
+            master_database (str): the path to the DSI object
+        """
+
+        if master_database == "":
+            print("No DSI database provided. Please load one")
+            return
+
+        _master_database_path, _master_db_folder = _get_db_abs_path(
+            master_database, self.run_path
+        )
+        absolute_db_path = _master_database_path
+
+        if check_db_valid(absolute_db_path):
+            self.db_tables, self.db_schema, self.db_description = get_db_info(
+                absolute_db_path
+            )
+
+            # set the values now that we know things are correct
+            self.current_db_abs_path = absolute_db_path
+            self.master_database_path = absolute_db_path
+            self.master_db_folder = _master_db_folder
+
+        else:
+            print("No valid DSI database provided. Please load one")
+            # sys.exit(1)
+
+    # __call__ from my agent
+    def _response_node(self, state):
+        messages = state["messages"]
+
+        conversation = [SystemMessage(content=self.prompt)] + messages
+        response = self.llm.invoke(conversation)
+
+        return {
+            "messages": messages + [response],
+            "response": response.content,
+            "metadata": response.response_metadata,
+        }
+
+    def _build_graph(self):
+        self.llm = self.llm.bind_tools(self.tools.values())
+
+        self.add_node(self._response_node, "response")
+        self.add_node(self.tool_node, "tools")
+
+        self.graph.add_edge(START, "response")
+        self.graph.add_conditional_edges(
+            "response",
+            self._wrap_cond(should_call_tools, "should_call_tools", "dsi"),
+            {
+                "call_tools": "tools",
+                "continue": END,
+            },
+        )
+        self.graph.add_edge("tools", "response")
+
+    def craft_message(self, human_msg):
+        """Craft the message with context if available."""
+
+        base_system_context = f"""
+            The following phrases all refer to this same database:
+            - "master database"
+            - "master dataset"
+            - "DSIExplorer master database"
+            - "Diana dataset
+
+            When the user asks to reload, refresh, reset, reinitialize, restart, or 
+            the **master database**, interpret that as a request to reload the 
+            DSIExplorer master database using the tool load_dsi_tool("{self.master_database_path}"),
+            load the last dataset in the context.
+
+            Do no reload or load the master dataset unless explicitly asked by the user.
+        """
+
+        # Build remaining dynamic system context parts
+        system_parts = [base_system_context]
+
+        if self.current_db_abs_path != "":
+            system_parts.append(
+                "The current working database path (current_db_abs_path) is: "
+                + self.current_db_abs_path
+            )
+
+        if self.master_database_path != "":
+            system_parts.append(
+                "The master database path (master_database_path) is: "
+                + self.master_database_path
+            )
+
+        if self.db_schema != "":
+            system_parts.append(
+                "The schema of the dataset loaded: " + self.db_schema
+            )
+
+        if self.db_description != "":
+            system_parts.append("Dataset description: " + self.db_description)
+
+        # Combine
+        if system_parts:
+            system_message = SystemMessage(content="\n\n".join(system_parts))
+            messages = [system_message, HumanMessage(content=human_msg)]
+        else:
+            messages = [HumanMessage(content=human_msg)]
+
+        # clear
+        self.db_schema = ""
+        self.db_description = ""
+        self.master_database_path = ""
+        self.current_db_abs_path = ""
+
+        return {"messages": messages}
+
+    def format_query(
+        self, user_query, state: DSIState | None = None
+    ) -> DSIState:
+        """
+           Injest string query into the agent state
+
+        Arg:
+           user_query (str): the user question
+        """
+        if state is not None and "messages" in state:
+            pass  # This is where we should process it if we want the state
+            # passed in to be appended to. Not sure if we do so reverting
+            # to current behavior for now
+            # state["messages"].append(HumanMessage(content=str(user_query)))
+            # return state
+        return self.craft_message(user_query)
+
+    def format_result(self, result: DSIState, start_time=None) -> str:
+        """
+        Parse result state into the desired output string
+
+        Arg:
+           result (DSIState): The state output from the DSI agent
+        """
+        response_text = result["response"]
+        cleaned_output = response_text.strip()
+
+        return cleaned_output
+
+    def ask(self, user_query) -> None:
+        """Ask a question to the DSI Explorer agent.
+
+        Arg:
+            user_query (str): the user question
+        """
+
+        start = now()
+
+        msg = self.format_query(user_query)
+
+        result = self.invoke(
+            msg, config={"configurable": {"thread_id": self.thread_id}}
+        )
+
+        formatted_result = self.format_result(result, start)
+
+        # I would like to add those
+        # if self.output_mode == "console":
+        #     print(formatted_result)
+
+        # elif self.output_mode == "jupyter":
+        #     from IPython.display import Markdown, display
+        #     display(Markdown(formatted_result))
+
+        return formatted_result
