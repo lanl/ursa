@@ -14,6 +14,7 @@ from ursa.prompt_library.git_prompts import compose_git_prompt
 from ursa.prompt_library.go_prompts import go_language_prompt
 from ursa.tools.git_tools import GIT_TOOLS
 from ursa.tools.go_tools import GO_TOOLS
+from ursa.tools.write_code_tool import write_code_with_repo
 
 LANGUAGE_REGISTRY: dict[str, dict] = {
     "generic": {
@@ -51,7 +52,7 @@ class GitAgent(ExecutionAgent):
         safe_codes: list[str] | None = None,
         **kwargs,
     ):
-        extra_tools: list[BaseTool] = list(GIT_TOOLS)
+        extra_tools: list[BaseTool] = [*GIT_TOOLS, write_code_with_repo]
         if language_tools:
             extra_tools.extend(language_tools)
 

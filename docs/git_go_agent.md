@@ -50,8 +50,9 @@ print(result["messages"][-1].text)
 
 ### File Operations
 - `read_file`: Read file contents
-- `write_code`: Write new files (with path validation)
-- `edit_code`: Edit existing files (with path validation)
+- `write_code`: Write new files (with optional path validation)
+- `write_code_with_repo`: Write new files constrained to a repository path
+- `edit_code`: Edit existing files (with optional path validation)
 
 ## Configuration and Behavior
 
@@ -75,10 +76,10 @@ Operations use differentiated, operation-specific timeouts (not a unified timeou
 If other operations timeout, try running them in smaller chunks or profiling the specific operation.
 
 ### Path Safety
-Both `write_code` and `edit_code` validate file paths to prevent:
+`write_code`, `write_code_with_repo`, and `edit_code` validate file paths to prevent:
 - **Path traversal attacks** (e.g., `../../../etc/passwd` attempts are rejected)
 - **Writes outside the workspace** (all files must be within the workspace directory)
-- **Writes outside the repository** (optional, when `repo_path` parameter is used)
+- **Writes outside the repository** (`write_code_with_repo`, or `edit_code` when `repo_path` is used)
 
 Path validation is enabled by default. For trusted sandbox/container usage, you can opt in to unsafe writes by setting:
 
@@ -86,7 +87,7 @@ Path validation is enabled by default. For trusted sandbox/container usage, you 
 export URSA_ALLOW_UNSAFE_WRITES=1
 ```
 
-When enabled, workspace and repository boundary checks are bypassed for `write_code` and `edit_code`.
+When enabled, workspace and repository boundary checks are bypassed for `write_code`, `write_code_with_repo`, and `edit_code`.
 
 Example: Specifying a repo boundary ensures all file modifications stay within that repository.
 

@@ -16,10 +16,97 @@ from ursa.util.types import AsciiStr
 console = get_console()
 
 
+def _resolve_repo_dir(
+    repo_path: AsciiStr,
+    workspace_dir: Path,
+    action: str,
+    filename: AsciiStr,
+) -> tuple[Path | None, str | None]:
+    repo = Path(repo_path)
+    if not repo.is_absolute():
+        repo = workspace_dir / repo
+    repo = repo.resolve()
+    if not repo.exists():
+        return (
+            None,
+            f"Failed to {action} {filename}: Repository path not found.",
+        )
+    if not repo.is_dir():
+        return None, (
+            f"Failed to {action} {filename}: Repository path is not a directory."
+        )
+
+    return repo, None
+
+
+def _write_code_file(
+    code: str,
+    filename: AsciiStr,
+    runtime: ToolRuntime[AgentContext],
+    repo: Path | None = None,
+) -> str:
+    workspace_dir = runtime.context.workspace
+    console.print("[cyan]Writing file:[/]", filename)
+
+    code_file, error = _validate_file_path(filename, workspace_dir, repo)
+    if error:
+        console.print(
+            f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
+        )
+        return f"Failed to write {filename}: {error}"
+    if code_file is None:
+        return f"Failed to write {filename}: Invalid file path."
+
+    try:
+        lexer_name = Syntax.guess_lexer(str(code_file), code)
+    except Exception:
+        lexer_name = "text"
+
+    console.print(
+        Panel(
+            Syntax(code, lexer_name, line_numbers=True),
+            title="File Preview",
+            border_style="cyan",
+        )
+    )
+
+    try:
+        code_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(code_file, "w", encoding="utf-8") as f:
+            f.write(code)
+    except Exception as exc:
+        console.print(
+            "[bold bright_white on red] :heavy_multiplication_x: [/] "
+            "[red]Failed to write file:[/]",
+            exc,
+        )
+        return f"Failed to write {filename}: {exc}"
+
+    console.print(
+        f"[bold bright_white on green] :heavy_check_mark: [/] "
+        f"[green]File written:[/] {code_file}"
+    )
+
+    if (store := runtime.store) is not None:
+        store.put(
+            ("workspace", "file_edit"),
+            filename,
+            {
+                "modified": time.time(),
+                "tool_call_id": runtime.tool_call_id,
+                "thread_id": runtime.config.get("metadata", {}).get(
+                    "thread_id", None
+                ),
+            },
+        )
+    return f"File {filename} written successfully."
+
+
 def _validate_file_path(
     filename: str,
     workspace_dir: Path,
     repo_path: Path | None = None,
+    allow_unsafe_writes: bool | None = None,
 ) -> tuple[Path | None, str | None]:
     """Validate that a filename is within workspace and optionally within a repo.
 
@@ -41,7 +128,8 @@ def _validate_file_path(
 
     file_path = file_path.resolve()
 
-    allow_unsafe_writes = _allow_unsafe_writes_enabled()
+    if allow_unsafe_writes is None:
+        allow_unsafe_writes = _allow_unsafe_writes_enabled()
     # Validate it's within the workspace
     if not allow_unsafe_writes and not file_path.is_relative_to(
         workspace_dir.resolve()
@@ -86,7 +174,6 @@ def write_code(
     code: str,
     filename: AsciiStr,
     runtime: ToolRuntime[AgentContext],
-    repo_path: AsciiStr | None = None,
 ) -> str:
     """Write source code to a file
 
@@ -95,87 +182,31 @@ def write_code(
     Args:
         code: The source code content to be written to disk.
         filename: Name of the target file (including its extension).
-        repo_path: Optional repo path - if provided, file must be within this repo.
 
     """
-    # Determine the full path to the target file
+    return _write_code_file(code, filename, runtime)
+
+
+@tool(description="Write source code to a file within a repository boundary")
+def write_code_with_repo(
+    code: str,
+    filename: AsciiStr,
+    runtime: ToolRuntime[AgentContext],
+    repo_path: AsciiStr,
+) -> str:
+    """Write source code to a file constrained to a repository path.
+
+    Args:
+        code: The source code content to be written to disk.
+        filename: Name of the target file (including its extension).
+        repo_path: Repo path - file must resolve within this directory.
+    """
     workspace_dir = runtime.context.workspace
-    console.print("[cyan]Writing file:[/]", filename)
-
-    # Validate file path
-    repo = None
-    if repo_path:
-        repo = Path(repo_path)
-        if not repo.is_absolute():
-            repo = workspace_dir / repo
-        repo = repo.resolve()
-        if not repo.exists():
-            return f"Failed to write {filename}: Repository path not found."
-        if not repo.is_dir():
-            return (
-                f"Failed to write {filename}: Repository path is not "
-                "a directory."
-            )
-
-    code_file, error = _validate_file_path(
-        filename,
-        workspace_dir,
-        repo,
-    )
+    repo, error = _resolve_repo_dir(repo_path, workspace_dir, "write", filename)
     if error:
-        console.print(
-            f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
-        )
-        return f"Failed to write {filename}: {error}"
-    if code_file is None:
-        return f"Failed to write {filename}: Invalid file path."
+        return error
 
-    # Show syntax-highlighted preview before writing to file
-    try:
-        lexer_name = Syntax.guess_lexer(str(code_file), code)
-    except Exception:
-        lexer_name = "text"
-
-    console.print(
-        Panel(
-            Syntax(code, lexer_name, line_numbers=True),
-            title="File Preview",
-            border_style="cyan",
-        )
-    )
-
-    # Write cleaned code to disk
-    try:
-        code_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(code)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write file:[/]",
-            exc,
-        )
-        return f"Failed to write {filename}: {exc}"
-
-    console.print(
-        f"[bold bright_white on green] :heavy_check_mark: [/] "
-        f"[green]File written:[/] {code_file}"
-    )
-
-    # Record the edit operation
-    if (store := runtime.store) is not None:
-        store.put(
-            ("workspace", "file_edit"),
-            filename,
-            {
-                "modified": time.time(),
-                "tool_call_id": runtime.tool_call_id,
-                "thread_id": runtime.config.get("metadata", {}).get(
-                    "thread_id", None
-                ),
-            },
-        )
-    return f"File {filename} written successfully."
+    return _write_code_file(code, filename, runtime, repo)
 
 
 @tool
@@ -203,17 +234,14 @@ def edit_code(
     # Validate file path
     repo = None
     if repo_path:
-        repo = Path(repo_path)
-        if not repo.is_absolute():
-            repo = workspace_dir / repo
-        repo = repo.resolve()
-        if not repo.exists():
-            return f"Failed to edit {filename}: Repository path not found."
-        if not repo.is_dir():
-            return (
-                f"Failed to edit {filename}: Repository path is not "
-                "a directory."
-            )
+        repo, error = _resolve_repo_dir(
+            repo_path,
+            workspace_dir,
+            "edit",
+            filename,
+        )
+        if error:
+            return error
 
     code_file, error = _validate_file_path(
         filename,

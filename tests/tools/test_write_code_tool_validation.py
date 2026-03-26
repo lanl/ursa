@@ -11,6 +11,7 @@ from ursa.tools.write_code_tool import (
     _validate_file_path,
     edit_code,
     write_code,
+    write_code_with_repo,
 )
 
 
@@ -195,7 +196,7 @@ class TestWriteCodePathValidation:
         assert (workspace / "src" / "main").is_dir()
 
     def test_write_code_with_repo_boundary(self, mock_runtime, tmpdir):
-        """Test write_code respects repo boundary when specified."""
+        """Test write_code_with_repo respects repo boundary when specified."""
         workspace = Path(tmpdir)
         repo = workspace / "myrepo"
         repo.mkdir(parents=True)
@@ -204,7 +205,7 @@ class TestWriteCodePathValidation:
         code = "print('hello')"
         filename = "myrepo/test.py"
 
-        result = write_code.func(
+        result = write_code_with_repo.func(
             code, filename, mock_runtime, repo_path=str(repo)
         )
 
@@ -213,7 +214,7 @@ class TestWriteCodePathValidation:
     def test_write_code_outside_repo_boundary_rejected(
         self, mock_runtime, tmpdir
     ):
-        """Test write_code rejects files outside repo boundary."""
+        """Test write_code_with_repo rejects files outside repo boundary."""
         workspace = Path(tmpdir)
         repo = workspace / "myrepo"
         repo.mkdir(parents=True)
@@ -224,7 +225,7 @@ class TestWriteCodePathValidation:
         code = "print('hello')"
         filename = "other/test.py"
 
-        result = write_code.func(
+        result = write_code_with_repo.func(
             code, filename, mock_runtime, repo_path=str(repo)
         )
 
@@ -250,12 +251,12 @@ class TestWriteCodePathValidation:
     def test_write_code_repo_path_not_found_rejected(
         self, mock_runtime, tmpdir
     ):
-        """Test write_code fails clearly when repo path does not exist."""
+        """Test write_code_with_repo fails clearly when repo path does not exist."""
         workspace = Path(tmpdir)
         mock_runtime.context.workspace = workspace
 
         missing_repo = workspace / "does-not-exist"
-        result = write_code.func(
+        result = write_code_with_repo.func(
             "print('hello')",
             "test.py",
             mock_runtime,
