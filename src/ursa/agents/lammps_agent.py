@@ -19,6 +19,13 @@ from ursa.agents.execution_agent import ExecutionAgent
 
 from .base import BaseAgent
 
+# Optionally disable SSL for trafilatura
+no_ssl = os.environ["URSA_DISABLE_SSL"]
+if no_ssl is not None and no_ssl.lower() == "true":
+    no_ssl = True
+else:
+    no_ssl = False
+
 working = True
 try:
     import atomman as am
@@ -316,7 +323,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         }
 
     def _fetch_and_trim_text(self, url: str) -> str:
-        downloaded = trafilatura.fetch_url(url)
+        downloaded = trafilatura.fetch_url(url, no_ssl=no_ssl)
         if not downloaded:
             return "No metadata available"
         text = trafilatura.extract(
