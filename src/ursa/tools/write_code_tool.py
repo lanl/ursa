@@ -20,7 +20,6 @@ def _validate_file_path(
     filename: str,
     workspace_dir: Path,
     repo_path: Path | None = None,
-    allow_unsafe_writes: bool = False,
 ) -> tuple[Path | None, str | None]:
     """Validate that a filename is within workspace and optionally within a repo.
 
@@ -42,6 +41,7 @@ def _validate_file_path(
 
     file_path = file_path.resolve()
 
+    allow_unsafe_writes = _allow_unsafe_writes_enabled()
     # Validate it's within the workspace
     if not allow_unsafe_writes and not file_path.is_relative_to(
         workspace_dir.resolve()
@@ -100,7 +100,6 @@ def write_code(
     """
     # Determine the full path to the target file
     workspace_dir = runtime.context.workspace
-    allow_unsafe_writes = _allow_unsafe_writes_enabled()
     console.print("[cyan]Writing file:[/]", filename)
 
     # Validate file path
@@ -122,7 +121,6 @@ def write_code(
         filename,
         workspace_dir,
         repo,
-        allow_unsafe_writes=allow_unsafe_writes,
     )
     if error:
         console.print(
@@ -200,7 +198,6 @@ def edit_code(
         Success / failure message.
     """
     workspace_dir = runtime.context.workspace
-    allow_unsafe_writes = _allow_unsafe_writes_enabled()
     console.print("[cyan]Editing file:[/cyan]", filename)
 
     # Validate file path
@@ -222,7 +219,6 @@ def edit_code(
         filename,
         workspace_dir,
         repo,
-        allow_unsafe_writes=allow_unsafe_writes,
     )
     if error:
         console.print(
