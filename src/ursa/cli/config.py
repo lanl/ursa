@@ -51,6 +51,33 @@ class ModelConfig(BaseModel):
         return kwargs
 
 
+class ModelsDefaultsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = None
+    profile: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelsAgentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = None
+    profile: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    choices: list[str] = Field(default_factory=list)
+    default: str | None = None
+    providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    defaults: ModelsDefaultsConfig = Field(default_factory=ModelsDefaultsConfig)
+    agents: dict[str, ModelsAgentConfig] = Field(default_factory=dict)
+
+
 class UrsaConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -75,8 +102,10 @@ class UrsaConfig(BaseModel):
     )
     """Default LLM"""
 
+    models: ModelsConfig | None = None
+    """Optional richer model-selection config."""
+
     emb_model: ModelConfig | None = None
-    """Default Embedding model"""
 
     agent_config: dict[str, dict[str, Any]] | None = None
     """ Configuration options for URSA Agents """
@@ -85,11 +114,17 @@ class UrsaConfig(BaseModel):
     """MCP Servers to connect to Ursa."""
 
     def model_post_init(self, __context):
-        """Handle temporary workspace creation post validation."""
+        """Handle temporary workspace creation and derived model config."""
         if str(self.workspace) == "tmp" and not self.workspace.exists():
             temp_workspace = TemporaryDirectory(prefix="ursa")
             self.workspace = Path(temp_workspace.name)
             self._temp_workspace = temp_workspace
+
+        if self.models is not None:
+            self.llm_model = resolve_llm_model_config(
+                self.models,
+                base_llm_model=self.llm_model,
+            )
 
     @classmethod
     def from_namespace(cls, cfg: Namespace):
@@ -170,6 +205,135 @@ def deep_merge_dicts(
     return merged
 
 
+def get_default_models(models_cfg: ModelsConfig | None) -> tuple[str, ...]:
+    fallback = (
+        "openai:gpt-5",
+        "openai:gpt-5-mini",
+        "openai:o3",
+        "openai:o3-mini",
+    )
+    if models_cfg and models_cfg.choices:
+        return tuple(models_cfg.choices)
+    return fallback
+
+
+def get_default_model(models_cfg: ModelsConfig | None) -> str | None:
+    if models_cfg is None:
+        return None
+    return models_cfg.default
+
+
+def resolve_model_choice_from_models_cfg(
+    model_choice: str, models_cfg: ModelsConfig | None
+) -> ModelConfig:
+    """
+    Resolve a model choice like:
+      - openai:gpt-5.2
+      - my_endpoint:openai/gpt-oss-120b
+
+    using the richer `models:` config block and return a concrete ModelConfig.
+    """
+    if ":" in model_choice:
+        alias, pure_model = model_choice.split(":", 1)
+    else:
+        alias, pure_model = "openai", model_choice
+
+    providers = models_cfg.providers if models_cfg else {}
+    prov = providers.get(alias, {})
+
+    model_provider = prov.get("model_provider", alias)
+
+    model_kwargs: dict[str, Any] = {"model": f"{model_provider}:{pure_model}"}
+
+    if prov.get("base_url"):
+        model_kwargs["base_url"] = prov["base_url"]
+    if prov.get("api_key_env"):
+        model_kwargs["api_key_env"] = prov["api_key_env"]
+
+    return ModelConfig.model_validate(model_kwargs, extra="allow")
+
+
+def resolve_llm_model_config(
+    models_cfg: ModelsConfig | None,
+    base_llm_model: ModelConfig | None = None,
+    agent_name: str | None = None,
+) -> ModelConfig:
+    """
+    Resolve the richer `models:` block into a single concrete ModelConfig.
+
+    Merge order:
+      1) base_llm_model or default fallback
+      2) models.defaults.params
+      3) models.profiles[defaults.profile]
+      4) models.agents[agent_name].profile
+      5) models.agents[agent_name].params
+
+    Model selection:
+      - agent-specific model if present
+      - models.defaults.model if present
+      - models.default if present
+      - base_llm_model.model if present
+      - fallback openai:gpt-5.2
+    """
+    if base_llm_model is None:
+        base_llm_model = ModelConfig(
+            model="openai:gpt-5.2",
+            max_completion_tokens=5000,
+        )
+
+    merged_kwargs = base_llm_model.model_dump(exclude_none=True)
+
+    if not models_cfg:
+        return ModelConfig.model_validate(merged_kwargs, extra="allow")
+
+    merged_kwargs = deep_merge_dicts(
+        merged_kwargs, models_cfg.defaults.params or {}
+    )
+
+    default_profile_name = models_cfg.defaults.profile
+    if default_profile_name and default_profile_name in models_cfg.profiles:
+        merged_kwargs = deep_merge_dicts(
+            merged_kwargs, models_cfg.profiles[default_profile_name] or {}
+        )
+
+    agent_cfg = None
+    if agent_name and agent_name in models_cfg.agents:
+        agent_cfg = models_cfg.agents[agent_name]
+
+    if agent_cfg and agent_cfg.profile:
+        if agent_cfg.profile in models_cfg.profiles:
+            merged_kwargs = deep_merge_dicts(
+                merged_kwargs,
+                models_cfg.profiles[agent_cfg.profile] or {},
+            )
+
+    if agent_cfg:
+        merged_kwargs = deep_merge_dicts(merged_kwargs, agent_cfg.params or {})
+
+    chosen_model = None
+    if agent_cfg and agent_cfg.model:
+        chosen_model = agent_cfg.model
+    elif models_cfg.defaults.model:
+        chosen_model = models_cfg.defaults.model
+    elif models_cfg.default:
+        chosen_model = models_cfg.default
+    elif merged_kwargs.get("model"):
+        chosen_model = merged_kwargs["model"]
+    else:
+        chosen_model = "openai:gpt-5.2"
+
+    resolved_model_cfg = resolve_model_choice_from_models_cfg(
+        chosen_model, models_cfg
+    )
+
+    final_kwargs = deep_merge_dicts(
+        resolved_model_cfg.model_dump(exclude_none=True),
+        {k: v for k, v in merged_kwargs.items() if k != "model"},
+    )
+
+    return ModelConfig.model_validate(final_kwargs, extra="allow")
+
+
 ENV_SUB_REGEX = re.compile(r"\${(?P<env>\w+)(?::(?P<default>.+))?}")
 
 
@@ -209,3 +373,31 @@ def interpolate_env(value: str) -> str:
         return environ.get(groups["env"], default=groups["default"])
 
     return ENV_SUB_REGEX.sub(interpolate_env, value)
+
+
+def get_config_planning_mode(cfg: dict[str, Any] | Any) -> str | None:
+    config_mode = None
+
+    if isinstance(cfg, dict):
+        planning_cfg = cfg.get("planning")
+        if isinstance(planning_cfg, dict):
+            config_mode = planning_cfg.get("mode")
+        if not config_mode:
+            config_mode = cfg.get("planning_mode")
+        return config_mode
+
+    planning_cfg = getattr(cfg, "planning", None)
+    if isinstance(planning_cfg, dict):
+        config_mode = planning_cfg.get("mode")
+    if not config_mode:
+        config_mode = getattr(cfg, "planning_mode", None)
+    return config_mode
+
+
+def get_models_cfg(cfg: dict[str, Any] | UrsaConfig) -> ModelsConfig | None:
+    if isinstance(cfg, dict):
+        raw = cfg.get("models")
+        if not raw:
+            return None
+        return ModelsConfig.model_validate(raw)
+    return cfg.models
