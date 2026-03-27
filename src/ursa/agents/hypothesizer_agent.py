@@ -2,11 +2,26 @@ import ast
 from datetime import datetime
 from operator import add, or_
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict, cast
+from typing import (
+    Annotated,
+    Literal,
+    Optional,
+    TypedDict,
+    cast,
+)
 
 from langchain.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
+from langchain_core.tools import BaseTool, tool
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import InjectedState, ToolNode, tools_condition
+from langgraph.types import Overwrite
+
+from ursa.tools import read_file
 
 try:
     from ddgs import DDGS  # pip install duckduckgo-search
@@ -14,20 +29,105 @@ except Exception:
     DDGS = None
 
 
+# from langchain_core.runnables.graph import MermaidDrawMethod
+from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.prompt_library.hypothesizer_prompts import (
     competitor_prompt,
     critic_prompt,
     hypothesizer_prompt,
 )
 
-# from langchain_core.runnables.graph import MermaidDrawMethod
-from .base import BaseAgent
-
 # --- ANSI color codes ---
 GREEN = "\033[92m"
 BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
+
+
+# add this as a LangChain tool so the LLM can figure out what docs there are if it wants to
+@tool(
+    description="List filenames (and sizes) in input_docs_dir (or workspace)."
+)
+def list_input_docs(state: Annotated[dict, InjectedState]) -> str:
+    from pathlib import Path
+
+    print(f"{BLUE}[list_input_docs] called{RESET}")
+
+    root = state.get("input_docs_dir")
+    if not root:
+        msg = "[Error]: no input_docs_dir set in state."
+        print(f"{RED}[list_input_docs] {msg}{RESET}")
+        return msg
+
+    print(f"{BLUE}[list_input_docs] root:{RESET} {root}")
+
+    p = Path(root).resolve()
+    if not p.exists() or not p.is_dir():
+        msg = f"[Error]: input_docs_dir not a directory: {p}"
+        print(f"{RED}[list_input_docs] {msg}{RESET}")
+        return msg
+
+    rows = []
+    for f in sorted([x for x in p.iterdir() if x.is_file()]):
+        try:
+            rows.append(f"{f.name} ({f.stat().st_size} bytes)")
+        except Exception:
+            rows.append(f"{f.name} (size unknown)")
+
+    ret = "\n".join(rows) if rows else "No files found."
+
+    print(f"{GREEN}[list_input_docs] found {len(rows)} file(s){RESET}")
+    if rows:
+        preview = "\n".join(rows[:5])
+        print(f"{GREEN}[list_input_docs] preview:{RESET}\n{preview}")
+
+    return ret
+
+
+@tool(
+    description="Search the web for relevant information and return concise results."
+)
+def web_search(query: str) -> str:
+    print(f"{BLUE}[web_search] called{RESET}")
+    print(f"{BLUE}[web_search] query:{RESET} {query}")
+
+    if DDGS is None:
+        msg = (
+            "[Error]: web search is unavailable because ddgs is not installed."
+        )
+        print(f"{RED}[web_search] {msg}{RESET}")
+        return msg
+
+    try:
+        results = []
+        with DDGS() as ddgs:
+            for i, r in enumerate(ddgs.text(query, max_results=5), start=1):
+                title = r.get("title", "")
+                body = r.get("body", "")
+                href = r.get("href", "")
+                results.append(f"Title: {title}\nSnippet: {body}\nURL: {href}")
+
+                if i == 1:
+                    preview = (
+                        f"Title: {title}\nSnippet: {body[:200]}\nURL: {href}"
+                    )
+                    print(
+                        f"{GREEN}[web_search] first result preview:{RESET}\n{preview}"
+                    )
+
+        if results:
+            print(
+                f"{GREEN}[web_search] returned {len(results)} result(s){RESET}"
+            )
+            return "\n\n".join(results)
+
+        print(f"{BLUE}[web_search] no results found{RESET}")
+        return "No results found."
+
+    except Exception as e:
+        msg = f"[Error performing web search: {type(e).__name__}: {e}]"
+        print(f"{RED}[web_search] {msg}{RESET}")
+        return msg
 
 
 # Define our state schema
@@ -37,23 +137,49 @@ class HypothesizerState(TypedDict, total=False):
     current_iteration: int
     max_iterations: int
     agent1_solution: Annotated[list[str], add]
-    agent2_critiques: list[str]
-    agent3_perspectives: list[str]
+    agent2_critiques: Annotated[list[str], add]
+    agent3_perspectives: Annotated[list[str], add]
     solution: str
     summary_report: str
     visited_sites: Annotated[set[str], or_]
+    input_docs_dir: str
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
-class HypothesizerAgent(BaseAgent[HypothesizerState]):
+class HypothesizerAgent(AgentWithTools, BaseAgent[HypothesizerState]):
     state_type = HypothesizerState
 
-    def __init__(self, llm: BaseChatModel, max_iterations: int = 2, **kwargs):
-        super().__init__(llm, **kwargs)
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        max_iterations: int = 3,
+        extra_tools: Optional[list[BaseTool] | None] = None,
+        enable_web_search: bool = False,
+        **kwargs,
+    ):
+        default_tools = [read_file, list_input_docs]
+
+        # add web search tool if 'enable_web_search' is on
+        if enable_web_search:
+            default_tools.append(web_search)
+
+        if extra_tools:
+            default_tools.extend(extra_tools)
+
+        super().__init__(llm=llm, tools=default_tools, **kwargs)
+
+        # debug print tools enabled
+        print("[HypothesizerAgent] Tools enabled:")
+        for t in self.tools.values():
+            try:
+                print(f"  - {t.name}")
+            except Exception:
+                print(f"  - (unnamed tool) {t}")
+
+        # keep existing setup
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
         self.competitor_prompt = competitor_prompt
-        self.search_tool = DDGS()
-        self.strllm = self.llm | StrOutputParser()
         self.max_iterations = max_iterations
 
     def _normalize_inputs(self, inputs) -> HypothesizerState:
@@ -89,25 +215,34 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
 
         return visited_sites
 
-    def agent1_generate_solution(
+    async def agent1_generate_solution(
         self, state: HypothesizerState
     ) -> HypothesizerState:
-        """Agent 1: Hypothesizer."""
+        """Agent 1: Hypothesizer. One LLM step only; tool routing is handled by the graph."""
         print(
             f"[iteration {state['current_iteration'] + 1}] Entering agent1_generate_solution. Iteration: {state['current_iteration'] + 1}"
         )
+
+        messages = list(state.get("messages", []))
+
+        # If messages already exist, we are returning from a tool call.
+        # Invoke once more using the accumulated state messages, but return only the new AI message.
+        if messages:
+            ai_msg = await self.llm_with_tools.ainvoke(messages)
+            return {"messages": [ai_msg]}
 
         current_iter = state["current_iteration"]
         user_content = f"Question: {state['question']}\n"
 
         if current_iter > 0:
-            user_content += (
-                f"\nPrevious solution: {state['agent1_solution'][-1]}"
-            )
-            user_content += f"\nCritique: {state['agent2_critiques'][-1]}"
-            user_content += (
-                f"\nCompetitor perspective: {state['agent3_perspectives'][-1]}"
-            )
+            if state.get("agent1_solution"):
+                user_content += (
+                    f"\nPrevious solution: {state['agent1_solution'][-1]}"
+                )
+            if state.get("agent2_critiques"):
+                user_content += f"\nCritique: {state['agent2_critiques'][-1]}"
+            if state.get("agent3_perspectives"):
+                user_content += f"\nCompetitor perspective: {state['agent3_perspectives'][-1]}"
 
             user_content += (
                 "\n\n**You must explicitly list how this new solution differs from the previous solution,** "
@@ -117,42 +252,82 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         else:
             user_content += "Research this problem and generate a solution."
 
-        search_query = self.strllm.invoke(
-            f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
+        user_content += (
+            "\n\nTOOLING RULES:\n"
+            "- You have tools: list_input_docs and read_file.\n"
+            "- First call list_input_docs to discover what local files are available.\n"
+            "- Then use read_file only on the files you think are relevant.\n"
+            "- Before citing or relying on ANY local file content, you MUST call read_file on that file.\n"
+            "- Read only the minimum set of files needed (start with README if present).\n"
+            "- If a PDF looks relevant, explicitly read it with read_file.\n"
         )
-        if '"' in search_query:
-            search_query = search_query.split('"')[1]
-        raw_search_results = self.search_tool.text(
-            search_query or state["question"]
-        )
-        user_content += f"\nSearch results: {raw_search_results}"
 
-        # Parse the results if possible, so we can collect URLs
-        visited_sites = self.parse_visited_sites(raw_search_results)
+        search_query = ""
+        visited_sites = set()
 
-        # Provide a system message to define this agent's role
-        messages = [
+        if state.get("input_docs_dir"):
+            user_content += "\n\nNOTE: Use the local documents in input_docs_dir for evidence and context unless asked otherwise."
+        elif "web_search" in self.tools:
+            user_content += "\n\nNOTE: Web search is enabled if needed. Use the web_search tool only when local documents are insufficient."
+        else:
+            user_content += "\n\nNOTE: No local documents provided and web search disabled; rely on model knowledge."
+
+        prompt_messages = [
             SystemMessage(content=self.hypothesizer_prompt),
             HumanMessage(content=user_content),
         ]
-        solution = self.strllm.invoke(messages)
 
-        # Print the entire solution in green
-        print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
+        ai_msg = await self.llm_with_tools.ainvoke(prompt_messages)
+
         print(
             f"[iteration {state['current_iteration'] + 1}] Exiting agent1_generate_solution."
         )
+
         return {
-            "agent1_solution": [solution],
+            "messages": prompt_messages + [ai_msg],
             "question_search_query": search_query,
             "visited_sites": visited_sites,
         }
 
-    def agent2_critique(self, state: HypothesizerState) -> HypothesizerState:
-        """Agent 2: Critic."""
+    def finalize_agent1_solution(
+        self, state: HypothesizerState
+    ) -> HypothesizerState:
+        messages = list(state.get("messages", []))
+
+        last_ai = None
+        for m in reversed(messages):
+            if getattr(m, "type", None) == "ai":
+                last_ai = m
+                break
+
+        solution = (
+            (getattr(last_ai, "text", "") or "").strip() if last_ai else ""
+        )
+
+        print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
+        print(
+            f"[iteration {state['current_iteration'] + 1}] Finalized agent1 solution."
+        )
+
+        return {
+            "agent1_solution": [solution],
+            "messages": Overwrite([]),
+        }
+
+    async def agent2_critique(
+        self, state: HypothesizerState
+    ) -> HypothesizerState:
+        """Agent 2: Critic. One LLM step only; tool routing is handled by the graph."""
         print(
             f"[iteration {state['current_iteration'] + 1}] Entering agent2_critique."
         )
+
+        messages = list(state.get("messages", []))
+
+        # If messages already exist, we are returning from a tool call.
+        if messages:
+            ai_msg = await self.llm_with_tools.ainvoke(messages)
+            return {"messages": [ai_msg]}
 
         solution = state["agent1_solution"][-1]
         user_content = (
@@ -161,35 +336,74 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "Provide a detailed critique of this solution. Identify potential flaws, assumptions, and areas for improvement."
         )
 
-        fact_check_query = f"fact check {state['question_search_query']} solution effectiveness"
+        user_content += (
+            "\n\nYou have tools to list and read local documents. "
+            "If any claim in the proposed solution depends on the documents, "
+            "you MUST verify by reading the relevant file sections and cite them."
+        )
 
-        fact_check_results = self.search_tool.text(fact_check_query)
-        visited_sites = self.parse_visited_sites(fact_check_results)
-        user_content += f"\nFact check results: {fact_check_results}"
+        visited_sites = set()
+
+        if "web_search" in self.tools:
+            user_content += "\nNOTE: Web search is enabled if needed. Use the web_search tool if local documents are insufficient for fact-checking."
+        else:
+            user_content += "\nNOTE: Web search disabled; critique must rely on local docs + reasoning only."
 
         messages = [
             SystemMessage(content=self.critic_prompt),
             HumanMessage(content=user_content),
         ]
-        critique = self.strllm.invoke(messages)
 
-        # Print the entire critique in blue
-        print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
+        ai_msg = await self.llm_with_tools.ainvoke(messages)
+
         print(
             f"[iteration {state['current_iteration'] + 1}] Exiting agent2_critique."
         )
+
         return {
-            "agent2_critiques": [critique],
+            "messages": messages + [ai_msg],
             "visited_sites": visited_sites,
         }
 
-    def agent3_competitor_perspective(
+    def finalize_agent2_critique(
         self, state: HypothesizerState
     ) -> HypothesizerState:
-        """Agent 3: Competitor/Stakeholder Simulator."""
+        messages = list(state.get("messages", []))
+
+        last_ai = None
+        for m in reversed(messages):
+            if getattr(m, "type", None) == "ai":
+                last_ai = m
+                break
+
+        critique = (
+            (getattr(last_ai, "text", "") or "").strip() if last_ai else ""
+        )
+
+        print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
+        print(
+            f"[iteration {state['current_iteration'] + 1}] Finalized agent2 critique."
+        )
+
+        return {
+            "agent2_critiques": [critique],
+            "messages": Overwrite([]),
+        }
+
+    async def agent3_competitor_perspective(
+        self, state: HypothesizerState
+    ) -> HypothesizerState:
+        """Agent 3: Competitor/Stakeholder Simulator. One LLM step only; tool routing is handled by the graph."""
         print(
             f"[iteration {state['current_iteration'] + 1}] Entering agent3_competitor_perspective."
         )
+
+        messages = list(state.get("messages", []))
+
+        # If messages already exist, we are returning from a tool call.
+        if messages:
+            ai_msg = await self.llm_with_tools.ainvoke(messages)
+            return {"messages": [ai_msg]}
 
         solution = state["agent1_solution"][-1]
         critique = state["agent2_critiques"][-1]
@@ -201,30 +415,59 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "Simulate how a competitor, government agency, or other stakeholder might respond to this solution."
         )
 
-        competitor_search_query = (
-            f"competitor responses to {state['question_search_query']}"
+        user_content += (
+            "\n\nYou have tools to list and read local documents. "
+            "Use them to ground the stakeholder response in the provided materials."
         )
 
-        competitor_info = self.search_tool.text(competitor_search_query)
-        visited_sites = self.parse_visited_sites(competitor_info)
-        user_content += f"\nCompetitor information: {competitor_info}"
+        visited_sites = set()
+
+        if "web_search" in self.tools:
+            user_content += "\nNOTE: Web search is enabled if needed. Use the web_search tool if outside information would improve the stakeholder simulation."
+        else:
+            user_content += "\nNOTE: Web search disabled; simulate stakeholder reaction without external web info."
 
         messages = [
             SystemMessage(content=self.competitor_prompt),
             HumanMessage(content=user_content),
         ]
-        perspective = self.strllm.invoke(messages)
 
-        # Print the entire perspective in red
+        ai_msg = await self.llm_with_tools.ainvoke(messages)
+
+        print(
+            f"[iteration {state['current_iteration'] + 1}] Exiting agent3_competitor_perspective."
+        )
+
+        return {
+            "messages": messages + [ai_msg],
+            "visited_sites": visited_sites,
+        }
+
+    def finalize_agent3_perspective(
+        self, state: HypothesizerState
+    ) -> HypothesizerState:
+        messages = list(state.get("messages", []))
+
+        last_ai = None
+        for m in reversed(messages):
+            if getattr(m, "type", None) == "ai":
+                last_ai = m
+                break
+
+        perspective = (
+            (getattr(last_ai, "text", "") or "").strip() if last_ai else ""
+        )
+
         print(
             f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
         )
         print(
-            f"[iteration {state['current_iteration'] + 1}] Exiting agent3_competitor_perspective."
+            f"[iteration {state['current_iteration'] + 1}] Finalized agent3 perspective."
         )
+
         return {
             "agent3_perspectives": [perspective],
-            "visited_sites": visited_sites,
+            "messages": Overwrite([]),
         }
 
     def increment_iteration(
@@ -259,7 +502,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         print(
             f"[iteration {state['current_iteration']}] Generating overall solution with LLM..."
         )
-        solution = self.strllm.invoke(prompt)
+
+        response = self.llm.invoke(prompt)
+        solution = (getattr(response, "text", None) or str(response)).strip()
+
         print(
             f"[iteration {state['current_iteration']}] Overall solution obtained. Preview:",
             solution[:200],
@@ -280,6 +526,84 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # for s in all_sites:
         #     print("  ", s)
         return new_state
+
+    def _strip_code_fences(self, text: str) -> str:
+        """
+        Normalize model output so it is ready to write as a .tex file.
+        Removes markdown fences and trims any leading junk before \\documentclass.
+        """
+        if not text:
+            return text
+
+        s = text.strip()
+
+        if s.startswith("```"):
+            lines = s.splitlines()
+            if lines:
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            s = "\n".join(lines).strip()
+
+        doc_idx = s.find(r"\documentclass")
+        if doc_idx != -1:
+            s = s[doc_idx:]
+
+        return s.strip()
+
+    def _latex_looks_complete(self, text: str) -> bool:
+        s = text or ""
+        return r"\documentclass" in s and r"\end{document}" in s
+
+    def _complete_latex_document(
+        self,
+        prompt: str,
+        max_rounds: int = 3,
+    ) -> str:
+        """
+        Generate LaTeX, and if the model truncates before \\end{document},
+        ask it to continue from where it left off.
+        """
+        latex_llm = self.llm.bind(max_completion_tokens=20000)
+        response = latex_llm.invoke(prompt)
+        text = self._strip_code_fences(
+            (getattr(response, "text", None) or str(response)).strip()
+        )
+
+        if self._latex_looks_complete(text):
+            return text
+
+        current = text
+
+        for _ in range(max_rounds):
+            continuation_prompt = (
+                "You previously started a LaTeX document but stopped before finishing.\n\n"
+                "Continue exactly from where the document stopped.\n"
+                "Do not restart from \\documentclass.\n"
+                "Do not use markdown code fences.\n"
+                "Finish the document and include \\end{document}.\n\n"
+                "Current partial document:\n\n"
+                f"{current}\n"
+            )
+
+            cont_response = latex_llm.invoke(continuation_prompt)
+            cont_text = self._strip_code_fences(
+                (
+                    getattr(cont_response, "text", None) or str(cont_response)
+                ).strip()
+            )
+
+            if cont_text.startswith(r"\documentclass"):
+                # Model restarted instead of continuing. Keep the longer version.
+                if len(cont_text) > len(current):
+                    current = cont_text
+            else:
+                current = current.rstrip() + "\n" + cont_text.lstrip()
+
+            if self._latex_looks_complete(current):
+                return current
+
+        return current
 
     def summarize_process_as_latex(
         self, state: HypothesizerState
@@ -346,7 +670,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             of the full content of the steps.  Finally, include a listing of all of the websites we
             used in our research.
 
-            You must ONLY RETURN LaTeX, nothing else.  It must be valid LaTeX syntax!
+            You must return only raw LaTeX source.
+            Do not use markdown code fences.
+            Your output must be a complete LaTeX document that ends with \\end{{document}}.
+            If the document would be long, still finish it completely.
 
             Your output should start with:
             \\documentclass{{article}}
@@ -379,7 +706,11 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         websites_latex = ""
 
         # Ask the LLM to produce *only* LaTeX content
-        latex_response = self.strllm.invoke(prompt)
+        latex_doc = self._complete_latex_document(prompt)
+        latex_response = latex_doc
+
+        if not isinstance(latex_response, str):
+            latex_response = str(latex_response)
 
         latex_doc = latex_response
 
@@ -415,23 +746,57 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         return {"summary_report": final_latex}
 
     def _build_graph(self):
+        # Bind tools to the LLM used by the three agent stages
+        self.llm_with_tools = self.llm.bind_tools(self.tools.values())
+
         # Add nodes
         self.add_node(self.agent1_generate_solution, "agent1")
+        self.add_node(self.finalize_agent1_solution, "agent1_finalize")
+
         self.add_node(self.agent2_critique, "agent2")
+        self.add_node(self.finalize_agent2_critique, "agent2_finalize")
+
         self.add_node(self.agent3_competitor_perspective, "agent3")
+        self.add_node(self.finalize_agent3_perspective, "agent3_finalize")
+
         self.add_node(self.increment_iteration, "increment_iteration")
         self.add_node(self.generate_solution, "finalize")
         self.add_node(self.print_visited_sites, "print_sites")
         self.add_node(self.summarize_process_as_latex, "summarize_as_latex")
 
-        # Add simple edges for the known flow
-        self.graph.add_edge("agent1", "agent2")
-        self.graph.add_edge("agent2", "agent3")
-        self.graph.add_edge("agent3", "increment_iteration")
+        # Separate tool nodes for each stage
+        self.graph.add_node("agent1_tools", ToolNode(self.tools.values()))
+        self.graph.add_node("agent2_tools", ToolNode(self.tools.values()))
+        self.graph.add_node("agent3_tools", ToolNode(self.tools.values()))
 
-        # Then from increment_iteration, we have a conditional:
-        # If we 'continue', we go back to agent1
-        # If we 'finish', we jump to the finalize node
+        # agent1 -> tools loop or finalize -> agent2
+        self.graph.add_conditional_edges(
+            "agent1",
+            tools_condition,
+            {"tools": "agent1_tools", "__end__": "agent1_finalize"},
+        )
+        self.graph.add_edge("agent1_tools", "agent1")
+        self.graph.add_edge("agent1_finalize", "agent2")
+
+        # agent2 -> tools loop or finalize -> agent3
+        self.graph.add_conditional_edges(
+            "agent2",
+            tools_condition,
+            {"tools": "agent2_tools", "__end__": "agent2_finalize"},
+        )
+        self.graph.add_edge("agent2_tools", "agent2")
+        self.graph.add_edge("agent2_finalize", "agent3")
+
+        # agent3 -> tools loop or finalize -> increment_iteration
+        self.graph.add_conditional_edges(
+            "agent3",
+            tools_condition,
+            {"tools": "agent3_tools", "__end__": "agent3_finalize"},
+        )
+        self.graph.add_edge("agent3_tools", "agent3")
+        self.graph.add_edge("agent3_finalize", "increment_iteration")
+
+        # Existing iteration control flow
         self.graph.add_conditional_edges(
             "increment_iteration",
             should_continue,
@@ -440,10 +805,8 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
 
         self.graph.add_edge("finalize", "summarize_as_latex")
         self.graph.add_edge("summarize_as_latex", "print_sites")
-        # self.graph.add_edge("summarize_as_latex", "compile_pdf")
-        # self.graph.add_edge("compile_pdf", "print_sites")
 
-        # Set the entry point
+        # Entry / exit
         self.graph.set_entry_point("agent1")
         self.graph.set_finish_point("print_sites")
 
@@ -521,7 +884,7 @@ if __name__ == "__main__":
         "agent3_perspectives": [],
         "solution": "",
         "summary_report": "",
-        "visited_sites": [],
+        "visited_sites": set(),
     }
 
     print("Invoking the graph...")

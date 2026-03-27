@@ -1,6 +1,13 @@
 For the Sci-Fi Bill of Rights demo, see sci_fi_bill_of_rights_inputs/README.txt.
 It requires downloading some public TXT files.
 
+Then try:
+`python ./doc_critique_writer.py --config ./sci_fi_bill_of_rights.yaml`
+
+It'll create a unique directory name where a `.txt` and `.tex` file will
+appear after it's done.  You can run `xelatex` on the `.tex` file if you
+want to turn that into a PDF for viewing.
+
 If you want to use this on PDFs, particularly ones that need OCR, then you
 need to install some additional Python libraries.  At this time we haven't
 required those baked into URSA.
