@@ -620,7 +620,7 @@ def main(
             sys.exit(1)
 
         # lock planning_mode per workspace
-        planning_mode, mode_locked = lock_or_warn_planning_mode(
+        planning_mode, _ = lock_or_warn_planning_mode(
             workspace, planning_mode, console=console
         )
         console.print(
@@ -750,7 +750,7 @@ def main(
         save_run_meta(workspace, thread_id=thread_id, model_name=model_name)
 
         # do the main planning step, or load it from checkpoint
-        plan_dict, plan_steps, plan_sig = main_plan_load_or_perform(
+        _, plan_steps, plan_sig = main_plan_load_or_perform(
             planner,
             planner_checkpointer,
             pdb_path,

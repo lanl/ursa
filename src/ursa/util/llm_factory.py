@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import json
-<<<<<<< HEAD
-from dataclasses import dataclass, field
-=======
-import os
 
 # needed for SSL / PKI verifications, if the user needs that
 import ssl
->>>>>>> 9b0fcdd (improvements to support some SSL things as well)
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
