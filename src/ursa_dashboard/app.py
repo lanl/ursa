@@ -3066,8 +3066,10 @@ def create_app() -> FastAPI:
 }
 :root[data-theme="dark"] body { background: var(--bg); color: var(--text); }
 :root[data-theme="dark"] .section { background: rgba(24, 28, 34, 0.92); }
+:root[data-theme="dark"] .logDetails { background: rgba(24, 28, 34, 0.92); }
 :root[data-theme="dark"] .btn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .histItem { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .sessActBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .agentBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .fileItem { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .fileDl { background: #1f242b; color: #8ab4ff; border-color: var(--border); }
