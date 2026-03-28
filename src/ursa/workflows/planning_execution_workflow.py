@@ -15,7 +15,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         - The list is passed, entry by entry to an execution agent to carry out the plan.
     """
 
-    def __init__(self, planner, executor, workspace, **kwargs):
+    def __init__(self, planner, executor, workspace=None, **kwargs):
         super().__init__(**kwargs)
         self.planner = planner
         self.executor = executor
@@ -96,9 +96,6 @@ def main():
 
     tid = "run-" + uuid4().hex[:8]
 
-    # Define the workspace
-    workspace = "example_fibonacci_finder"
-
     # Define a simple problem
     index_to_find = 35
 
@@ -122,9 +119,7 @@ def main():
     )
 
     # Initialize workflow
-    workflow = PlanningExecutorWorkflow(
-        planner=planner, executor=executor, workspace=workspace
-    )
+    workflow = PlanningExecutorWorkflow(planner=planner, executor=executor)
 
     # Run problem through the workflow
     workflow(problem)
