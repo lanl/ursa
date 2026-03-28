@@ -97,6 +97,14 @@ Use the sqlite_demo MCP tools to create a database called materials_demo and a t
 Let's do this using the URSA dashboard!
 
 1. start the URSA dashboard with `ursa-dashboard` in one terminal.  Connect to it with a web browser at
-   the address shown.
-2. start or make sure you still have running the `sqlite_mcp` server in another terminal, `python sqlite_mcp.py`.
+   the address shown.  You should see something like below in the 1st terminal
+![sqlite_mcp](./images/ursa-dashboard.png)
+2. start or make sure you still have running the `sqlite_mcp` server in another terminal, `python sqlite_mcp.py`.  You should see something like below in the 2nd terminal.
 ![sqlite_mcp](./images/sqlite_mcp.png)
+3. in the dashboard, goto Settings --> MCP Tools.  Fill in `sqlite_demo` for the `Server name` and enter the JSON text below for the server config.
+```
+{
+  "transport": "streamable_http",
+  "url": "http://127.0.0.1:8000/mcp"
+}
+```
