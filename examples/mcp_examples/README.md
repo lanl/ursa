@@ -90,21 +90,73 @@ A successful run of test_sqlite_mcp.py should:
 
 ## Connecting This Demo Into URSA
 We're going to use this prompt (or change it as you like) with the ExecutionAgent:
-```
-Use the sqlite_demo MCP tools to create a database called materials_demo and a table called tensile_experiments with the following columns: sample_id as a TEXT primary key, temperature_K as REAL, strain_rate_s as REAL, grain_size_um as REAL, yield_strength_MPa as REAL, and phase_label as TEXT. Then generate 100 synthetic rows of data using numpy with reasonable random distributions: temperature_K uniformly between 250 and 1200, strain_rate_s log-uniformly between 1e-4 and 1e1, grain_size_um normally distributed around 20 with a standard deviation of 5 and clipped to positive values, and yield_strength_MPa computed from a simple synthetic relationship where strength decreases with temperature, increases with strain rate, and increases slightly as grain size decreases, plus some random noise. Assign each row a sample_id from sample_001 to sample_100 and a phase_label of alpha or beta based on whether temperature_K is below or above 700. Insert all rows into the table, query the full table back out, and then plot yield_strength_MPa versus temperature_K with points colored by phase_label - save this to an appropriate PNG filename. Also print a short summary of the table contents and the fitted synthetic trends you used.
+```text
+Use the sqlite_demo MCP tools to create a database called materials_demo
+and a table called tensile_experiments with the following columns:
+sample_id as a TEXT primary key, temperature_K as REAL, strain_rate_s as REAL,
+grain_size_um as REAL, yield_strength_MPa as REAL, and phase_label as TEXT.
+
+Then generate 100 synthetic rows of data using numpy with reasonable random
+distributions: temperature_K uniformly between 250 and 1200, strain_rate_s
+log-uniformly between 1e-4 and 1e1, grain_size_um normally distributed around
+20 with a standard deviation of 5 and clipped to positive values, and
+yield_strength_MPa computed from a simple synthetic relationship where strength
+decreases with temperature, increases with strain rate, and increases slightly
+as grain size decreases, plus some random noise.
+
+Assign each row a sample_id from sample_001 to sample_100 and a phase_label
+of alpha or beta based on whether temperature_K is below or above 700.
+
+Insert all rows into the table, query the full table back out, and then plot
+yield_strength_MPa versus temperature_K with points colored by phase_label.
+Save this to an appropriate PNG filename.
+
+Also print a short summary of the table contents and the fitted synthetic
+trends you used.
 ```
 
 Let's do this using the URSA dashboard!
 
 1. start the URSA dashboard with `ursa-dashboard` in one terminal.  Connect to it with a web browser at
    the address shown.  You should see something like below in the 1st terminal
-![sqlite_mcp](./images/ursa-dashboard.png)
+
+![ursa-dashboard](./images/ursa-dashboard.png)
+
 2. start or make sure you still have running the `sqlite_mcp` server in another terminal, `python sqlite_mcp.py`.  You should see something like below in the 2nd terminal.
+
 ![sqlite_mcp](./images/sqlite_mcp.png)
-3. in the dashboard, goto Settings --> MCP Tools.  Fill in `sqlite_demo` for the `Server name` and enter the JSON text below for the server config.
+
+3. in the dashboard, goto Settings --> MCP Tools.  Fill in `sqlite_demo` for the `Server name` and enter the JSON text below for the server config.  Then `Save` and `Close` the Settings.
 ```
 {
   "transport": "streamable_http",
   "url": "http://127.0.0.1:8000/mcp"
 }
+```
+
+4. Next, click `New Session` under `Execution Agent` and copy/paste the above prompt (the block of text - 
+   or modify  as you like) into the chat window and hit `Send`.
+
+You should see the `sqlite_mcp.py` server (terminal 2) start scrolling as URSA's ExecutionAgent
+makes calls to it.  URSA should write code to solve the prompt above.  If all goes well (and you're
+using a competent enough LLM) you'll end up with a plot that might look something like below.  You
+can find this in the right-most panel, `Artifacts`, as a PNG.  You may have to hit `Refresh` to
+see it.
+
+![artifact-plot](./images/artifact-plot.png)
+
+You should see something like this in the STDOUT window when it does the summary you asked
+for in the prompt:
+```text
+TABLE SUMMARY
+n_rows: 100
+temperature_min: 256.99415626345524
+temperature_max: 1176.8412340549182
+strain_rate_min: 0.00012825089348783022
+strain_rate_max: 9.159627667952444
+grain_size_mean: 19.767563876348888
+grain_size_std: 5.056608889338605
+yield_strength_mean: 610.11508971663
+yield_strength_std: 97.713786427034
+phase_counts: {'alpha': 52, 'beta': 48}
 ```
