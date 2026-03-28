@@ -2137,8 +2137,8 @@ def create_app() -> FastAPI:
   async function loadRunEvents(runId, token) {
     let after = 0;
     let pages = 0;
-    const limit = state.settings?.ui?.events_page_size ?? 5000;
-    const maxPages = state.settings?.ui?.max_event_pages ?? 50;
+    const limit = 5000;
+    const maxPages = 50;
 
     while (pages < maxPages) {
       if (token !== state._logToken) return;
@@ -2787,9 +2787,21 @@ def create_app() -> FastAPI:
     renderMcpServers();
   }
 
+  function applyTheme(theme) {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    let resolved = 'light';
+
+    if (theme === 'dark') resolved = 'dark';
+    else if (theme === 'light') resolved = 'light';
+    else resolved = prefersDark ? 'dark' : 'light';
+
+    document.documentElement.setAttribute('data-theme', resolved);
+  }
+
   async function loadSettings() {
     const res = await api('GET', '/settings');
     state.settings = res.settings || {};
+    applyTheme(state.settings?.ui?.theme || 'system');
     const llm = state.settings.llm || {};
     const runner = state.settings.runner || {};
     const mcp = state.settings.mcp || {};
@@ -2797,8 +2809,7 @@ def create_app() -> FastAPI:
     // Settings-related entries
     const ui = state.settings.ui || {};
     $('#set_stdout_buffer_lines').value = ui.stdout_buffer_lines ?? 20000;
-    $('#set_events_page_size').value = ui.events_page_size ?? 5000;
-    $('#set_max_event_pages').value = ui.max_event_pages ?? 50;
+    $('#set_theme').value = ui.theme || 'system';
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
@@ -2820,9 +2831,8 @@ def create_app() -> FastAPI:
   async function saveSettings() {
     const patch = {
       ui: {
+        theme: ($('#set_theme').value || 'system'),
         stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
-        events_page_size: ($('#set_events_page_size').value === '' ? null : Number($('#set_events_page_size').value)),
-        max_event_pages: ($('#set_max_event_pages').value === '' ? null : Number($('#set_max_event_pages').value)),
       },
       llm: {
         base_url: ($('#set_base_url').value || '').trim() || null,
@@ -2859,6 +2869,7 @@ def create_app() -> FastAPI:
     const payload = { patch: compact(patch) };
     const res = await api('PATCH', '/settings', payload);
     state.settings = res.settings || {};
+    applyTheme(state.settings?.ui?.theme || 'system');
 
     const saved = $('#settingsSaved');
     if (saved) {
@@ -3016,6 +3027,11 @@ def create_app() -> FastAPI:
   }
 
   async function init() {
+    // have to grab settings for light/dark theme first
+    const res = await api('GET', '/settings');
+    state.settings = res.settings || {};
+    applyTheme(state.settings?.ui?.theme || 'system');
+
     setupUi();
     await refreshAgents();
     await refreshSessions();
@@ -3040,6 +3056,33 @@ def create_app() -> FastAPI:
 """
 
     DASHBOARD_CSS = r"""
+:root[data-theme="dark"] {
+  --bg: #111418;
+  --panel: rgba(28, 32, 38, 0.92);
+  --panelSolid: #1c2026;
+  --border: #3a404a;
+  --text: #eceff4;
+  --muted: #aab3bf;
+}
+:root[data-theme="dark"] body { background: var(--bg); color: var(--text); }
+:root[data-theme="dark"] .section { background: rgba(24, 28, 34, 0.92); }
+:root[data-theme="dark"] .btn { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .histItem { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .agentBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .fileItem { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .fileDl { background: #1f242b; color: #8ab4ff; border-color: var(--border); }
+:root[data-theme="dark"] .messages { background: #171b20; border-color: var(--border); }
+:root[data-theme="dark"] .bubble { background: #252b33; color: var(--text); }
+:root[data-theme="dark"] .bubble.user { background: #1d3557; color: #eef4ff; }
+:root[data-theme="dark"] textarea { background: #171b20; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] input, :root[data-theme="dark"] select { background: #171b20; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .artifactText { background: #171b20; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] iframe { background: #171b20; border-color: var(--border); }
+:root[data-theme="dark"] .modalCard { background: #1a1f26; color: var(--text); }
+:root[data-theme="dark"] .settingsNavBtn:hover { background: #252b33; }
+:root[data-theme="dark"] .settingsNavBtn.active { background: #233247; border-color: #355070; }
+:root[data-theme="dark"] .settingsNavBtn { color: #b7bda6; }
+:root[data-theme="dark"] .settingsNavBtn.active { color: #eef4ff; }
 :root {
   --bg: #ffffff;
   --panel: rgba(250, 250, 250, 0.92);
@@ -3328,6 +3371,8 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   border-color: #c9daf8;
 }
 .fieldRow { display:grid; grid-template-columns: 170px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+.fieldHelp { display: grid; grid-template-columns: 170px 1fr; gap: 8px; margin: -2px 0 12px; }
+.fieldHelpText { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .label { color: var(--muted); font-size: 12px; }
 .input { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); }
 textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
@@ -3548,19 +3593,28 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">User Interface</div>
             <div class="fieldRow">
-              <div class="label">Stdout buffer lines</div>
+            <div class="label">Theme</div>
+            <select class="input" id="set_theme">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+            </div>
+            <div class="fieldHelp">
+              <div></div>
+              <div class="fieldHelpText">
+                Follow your OS/browser theme, or force light or dark mode for the dashboard.
+              </div>
+            </div>
+            <div class="fieldRow">
+              <div class="label">STDOUT buffer lines</div>
               <input class="input" id="set_stdout_buffer_lines" type="number" min="5000" step="100" />
             </div>
-            <div class="fieldRow">
-              <div class="label">Events page size</div>
-              <input class="input" id="set_events_page_size" type="number" min="100" max="5000" />
-            </div>
-            <div class="fieldRow">
-              <div class="label">Max event pages</div>
-              <input class="input" id="set_max_event_pages" type="number" min="1" step="1" />
-            </div>
-            <div class="muted small" style="margin-top:6px">
-              Controls how much historical run output the dashboard keeps and reloads.
+            <div class="fieldHelp">
+              <div></div>
+              <div class="fieldHelpText">
+              Number of log lines kept in the browser for the STDOUT pane. Higher values preserve more scrollback but can make the page heavier for very long runs.
+              </div>
             </div>
           </div>
         </div>

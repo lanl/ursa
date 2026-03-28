@@ -77,8 +77,6 @@ class MCPSettings(BaseModel):
 class UISettings(BaseModel):
     theme: str = "system"  # e.g. dark/light mode
     stdout_buffer_lines: int = Field(default=20_000, ge=5_000, le=100_000_000)
-    events_page_size: int = Field(default=5000, ge=100, le=5000)
-    max_event_pages: int = Field(default=50, ge=1, le=1000)
 
 
 class GlobalSettings(BaseModel):
