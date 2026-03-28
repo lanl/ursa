@@ -1606,6 +1606,8 @@ def create_app() -> FastAPI:
     settings: null,
     _renderTimers: { stdout: null, stderr: null },
     _logToken: 0,
+    _followLogs: { stdout: true, stderr: true },
+    _pendingWhilePaused: { stdout: false, stderr: false },
   };
 
   function escHtml(s) {
@@ -2041,12 +2043,18 @@ def create_app() -> FastAPI:
     const key = (which === 'stderr') ? 'stderr' : 'stdout';
     if (state._renderTimers[key]) return;
     state._renderTimers[key] = setTimeout(() => {
-      state._renderTimers[key] = null;
-      const el = (key === 'stderr') ? $('#stderrLog') : $('#stdoutLog');
-      if (!el) return;
-      const raw = (key === 'stderr') ? state.logs.stderr : state.logs.stdout;
-      el.innerHTML = ansiToHtml(raw);
-      el.scrollTop = el.scrollHeight;
+        state._renderTimers[key] = null;
+        const el = (key === 'stderr') ? $('#stderrLog') : $('#stdoutLog');
+        if (!el) return;
+
+        if (!state._followLogs[key]) {
+        state._pendingWhilePaused[key] = true;
+        return;
+        }
+
+        const raw = (key === 'stderr') ? state.logs.stderr : state.logs.stdout;
+        el.innerHTML = ansiToHtml(raw);
+        el.scrollTop = el.scrollHeight;
     }, 60);
   }
 
@@ -2065,23 +2073,55 @@ def create_app() -> FastAPI:
     return out.join('');
   }
 
+  // this helps w/ Rich console animations
+  function applyCarriageReturns(existing, incoming) {
+    let out = existing;
+    let lineStart = out.lastIndexOf('\n') + 1;
+
+    for (let i = 0; i < incoming.length; i++) {
+        const ch = incoming[i];
+
+        if (ch === '\r') {
+        // Move cursor to start of current line.
+        lineStart = out.lastIndexOf('\n') + 1;
+        out = out.slice(0, lineStart);
+        continue;
+        }
+
+        out += ch;
+
+        if (ch === '\n') {
+        lineStart = out.length;
+        }
+    }
+
+    return out;
+  }
+
+  function trimToLastLines(text, maxLines) {
+    text = String(text ?? '');
+    maxLines = Number(maxLines);
+
+    if (!Number.isFinite(maxLines) || maxLines <= 0) return '';
+
+    const lines = text.split('\n');
+    if (lines.length <= maxLines) return text;
+    return lines.slice(-maxLines).join('\n');
+  }
+
   function appendLog(stream, text) {
-    const cap = 250000;
+    const capLines = state.settings?.ui?.stdout_buffer_lines ?? 5000;
     const key = (stream === 'stderr') ? 'stderr' : 'stdout';
     text = String(text ?? '');
 
-    // Some console UIs emit backspaces for spinners.
     text = stripBackspaces(text);
 
-    // Make progress-style output readable even without a real terminal.
-    text = text.replace(/\r(?!\n)/g, '\n');
-
     if (key === 'stderr') {
-      state.logs.stderr = (state.logs.stderr + text);
-      if (state.logs.stderr.length > cap) state.logs.stderr = state.logs.stderr.slice(-cap);
+        state.logs.stderr = applyCarriageReturns(state.logs.stderr, text);
+        state.logs.stderr = trimToLastLines(state.logs.stderr, capLines);
     } else {
-      state.logs.stdout = (state.logs.stdout + text);
-      if (state.logs.stdout.length > cap) state.logs.stdout = state.logs.stdout.slice(-cap);
+        state.logs.stdout = applyCarriageReturns(state.logs.stdout, text);
+        state.logs.stdout = trimToLastLines(state.logs.stdout, capLines);
     }
 
     scheduleLogRender(key);
@@ -2097,9 +2137,10 @@ def create_app() -> FastAPI:
   async function loadRunEvents(runId, token) {
     let after = 0;
     let pages = 0;
-    const limit = 5000;
+    const limit = state.settings?.ui?.events_page_size ?? 5000;
+    const maxPages = state.settings?.ui?.max_event_pages ?? 50;
 
-    while (pages < 50) {
+    while (pages < maxPages) {
       if (token !== state._logToken) return;
       const res = await api('GET', `/runs/${encodeURIComponent(runId)}/events?after_seq=${after}&limit=${limit}`);
       const events = res.events || [];
@@ -2269,66 +2310,80 @@ def create_app() -> FastAPI:
     }
   }
 
+
   function renderSessions() {
     const list = $('#sessionList');
     if (!list) return;
     list.innerHTML = '';
 
     for (const s of state.sessions) {
-      const row = document.createElement('div');
-      row.className = 'sessionRow';
+        const row = document.createElement('div');
+        row.className = 'sessionRow';
 
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'histItem' + (state.activeSessionId === s.session_id ? ' selected' : '');
-      btn.onclick = () => loadSession(s.session_id);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const isRunning = !!s.active_run_id;
+        btn.className = 'histItem' + (state.activeSessionId === s.session_id ? ' selected' : '') + (isRunning ? ' running' : ' idle');
+        btn.onclick = () => loadSession(s.session_id);
 
-      const title = document.createElement('div');
-      title.textContent = s.title || s.session_id;
+        const title = document.createElement('div');
+        title.className = 'sessionTitle';
+        title.textContent = s.title || s.session_id;
 
-      const meta = document.createElement('div');
-      meta.className = 'muted small';
-      const agentName = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
-      const active = s.active_run_id ? ' (running)' : '';
-      meta.textContent = `${agentName} \u00b7 ${fmtTime(s.updated_at)}${active}`;
+        const meta = document.createElement('div');
+        meta.className = 'muted small sessionMeta';
 
-      btn.appendChild(title);
-      btn.appendChild(meta);
+        const agentName = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+        const stateClass = isRunning ? 'running' : 'idle';
+        const stateText = isRunning ? 'Running' : 'Idle';
 
-      const renameBtn = document.createElement('button');
-      renameBtn.type = 'button';
-      renameBtn.className = 'sessActBtn';
-      renameBtn.textContent = 'Rename';
-      renameBtn.title = 'Rename session';
-      renameBtn.onclick = async (e) => {
+        meta.innerHTML = `
+        <span class="sessionMetaState ${stateClass}">
+            <span class="sessionMetaDot"></span>${stateText}
+        </span>
+        <span class="sessionMetaSep">·</span>
+        <span>${escHtml(agentName)}</span>
+        <span class="sessionMetaSep">·</span>
+        <span>${escHtml(fmtTime(s.updated_at))}</span>
+        `;
+
+        btn.appendChild(title);
+        btn.appendChild(meta);
+
+        const renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.className = 'sessActBtn';
+        renameBtn.textContent = 'Rename';
+        renameBtn.title = 'Rename session';
+        renameBtn.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
         const cur = s.title || '';
         const next = prompt('Rename session', cur);
         if (next === null) return;
         await renameSession(s.session_id, next);
-      };
+        };
 
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'sessActBtn danger';
-      delBtn.textContent = 'Delete';
-      delBtn.title = s.active_run_id ? 'Cannot delete while a run is active' : 'Delete session';
-      delBtn.disabled = !!s.active_run_id;
-      delBtn.onclick = async (e) => {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'sessActBtn danger';
+        delBtn.textContent = 'Delete';
+        delBtn.title = s.active_run_id ? 'Cannot delete while a run is active' : 'Delete session';
+        delBtn.disabled = !!s.active_run_id;
+        delBtn.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
         await deleteSessionUI(s.session_id);
-      };
+        };
 
-      row.appendChild(btn);
-      row.appendChild(renameBtn);
-      row.appendChild(delBtn);
-      list.appendChild(row);
+        row.appendChild(btn);
+        row.appendChild(renameBtn);
+        row.appendChild(delBtn);
+        list.appendChild(row);
     }
 
     if (!state.sessions.length) {
-      list.innerHTML = '<div class="muted">No sessions yet. Start one from the Agents list.</div>';
+        list.innerHTML = '<div class="muted">No sessions yet. Start one from the Agents list.</div>';
     }
   }
 
@@ -2337,15 +2392,23 @@ def create_app() -> FastAPI:
     const meta = $('#activeSessionMeta');
     const msgs = $('#sessionMessages');
     const wsTitle = $('#workspaceTitle');
+    const badge = $('#activeSessionStateBadge');
 
     if (!state.activeSession) {
-      if (title) title.textContent = 'No session selected';
-      if (meta) meta.textContent = '';
-      if (msgs) msgs.innerHTML = '<div class="muted">Pick an agent to start a new session, or select a session on the left.</div>';
-      if (wsTitle) wsTitle.textContent = 'Session artifacts';
-      setStatus('');
-      clearRunView();
-      return;
+        if (title) title.textContent = 'No session selected';
+        if (meta) meta.textContent = '';
+        if (msgs) msgs.innerHTML = '<div class="muted">Pick an agent to start a new session, or select a session on the left.</div>';
+        if (wsTitle) wsTitle.textContent = 'Session artifacts';
+
+        if (badge) {
+        badge.style.display = 'none';
+        badge.className = 'sessionStatus idle';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Idle</span>';
+        }
+
+        setStatus('');
+        clearRunView();
+        return;
     }
 
     const s = state.activeSession.session;
@@ -2358,7 +2421,20 @@ def create_app() -> FastAPI:
 
     const activeRunId = s.active_run_id || null;
     const lastRunId = s.last_run_id || null;
-    const viewRunId = activeRunId || lastRunId || null;
+
+    if (badge) {
+        badge.style.display = '';
+        if (activeRunId) {
+        badge.className = 'sessionStatus running';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Running</span>';
+        } else if (lastRunId) {
+        badge.className = 'sessionStatus idle';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Complete</span>';
+        } else {
+        badge.className = 'sessionStatus idle';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Idle</span>';
+        }
+    }
 
     if (activeRunId) setStatus(`run ${activeRunId} \u00b7 running`);
     else if (lastRunId) setStatus(`run ${lastRunId} \u00b7 last run`);
@@ -2368,54 +2444,50 @@ def create_app() -> FastAPI:
     msgs.innerHTML = '';
 
     for (const m of (state.activeSession.messages || [])) {
-      const row = document.createElement('div');
-      row.className = 'msgRow ' + (m.role || '');
+        const row = document.createElement('div');
+        row.className = 'msgRow ' + (m.role || '');
 
-      const head = document.createElement('div');
-      head.className = 'msgHead';
+        const head = document.createElement('div');
+        head.className = 'msgHead';
 
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = (m.role === 'assistant') ? 'Assistant' : (m.role === 'system' ? 'System' : 'You');
-      head.appendChild(who);
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = (m.role === 'assistant') ? 'Assistant' : (m.role === 'system' ? 'System' : 'You');
+        head.appendChild(who);
 
-      const t = document.createElement('span');
-      t.className = 'muted small';
-      t.textContent = ' \u00b7 ' + fmtTime(m.ts);
-      head.appendChild(t);
+        const t = document.createElement('span');
+        t.className = 'muted small';
+        t.textContent = ' \u00b7 ' + fmtTime(m.ts);
+        head.appendChild(t);
 
-      if (m.run_id) {
+        if (m.run_id) {
         const r = document.createElement('span');
         r.className = 'muted small mono';
         r.textContent = ' \u00b7 ' + m.run_id;
         head.appendChild(r);
-      }
+        }
 
-      const body = document.createElement('div');
-      body.className = 'bubble ' + (m.role || '');
-      if (m.role === 'assistant' || m.role === 'system') {
+        const body = document.createElement('div');
+        body.className = 'bubble ' + (m.role || '');
+        if (m.role === 'assistant' || m.role === 'system') {
         body.innerHTML = mdToHtml(m.text || '');
-      } else {
+        } else {
         body.textContent = m.text || '';
-      }
+        }
 
-      row.appendChild(head);
-      row.appendChild(body);
-      msgs.appendChild(row);
+        row.appendChild(head);
+        row.appendChild(body);
+        msgs.appendChild(row);
     }
 
-    // Scroll to bottom
     msgs.scrollTop = msgs.scrollHeight;
 
-    // Show run logs affiliated with this session:
-    // - If a run is currently active, stream it.
-    // - Otherwise, show the last completed run logs.
     if (activeRunId) {
-      showRunStream(activeRunId);
+        showRunStream(activeRunId);
     } else if (lastRunId) {
-      showRunStatic(lastRunId).catch(err => console.error(err));
+        showRunStatic(lastRunId).catch(err => console.error(err));
     } else {
-      clearRunView();
+        clearRunView();
     }
   }
 
@@ -2722,6 +2794,12 @@ def create_app() -> FastAPI:
     const runner = state.settings.runner || {};
     const mcp = state.settings.mcp || {};
 
+    // Settings-related entries
+    const ui = state.settings.ui || {};
+    $('#set_stdout_buffer_lines').value = ui.stdout_buffer_lines ?? 20000;
+    $('#set_events_page_size').value = ui.events_page_size ?? 5000;
+    $('#set_max_event_pages').value = ui.max_event_pages ?? 50;
+
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
     $('#set_api_key_env_var').value = llm.api_key_env_var || '';
@@ -2741,6 +2819,11 @@ def create_app() -> FastAPI:
 
   async function saveSettings() {
     const patch = {
+      ui: {
+        stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
+        events_page_size: ($('#set_events_page_size').value === '' ? null : Number($('#set_events_page_size').value)),
+        max_event_pages: ($('#set_max_event_pages').value === '' ? null : Number($('#set_max_event_pages').value)),
+      },
       llm: {
         base_url: ($('#set_base_url').value || '').trim() || null,
         model: ($('#set_model').value || '').trim() || null,
@@ -2784,6 +2867,40 @@ def create_app() -> FastAPI:
     }
   }
 
+  function setSettingsSection(section) {
+    $$('.settingsNavBtn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.settingsSection === section);
+    });
+    $$('.settingsPane').forEach(pane => {
+        pane.classList.toggle('hidden', pane.dataset.settingsPane !== section);
+    });
+    }
+
+  function setupSettingsNav() {
+    $$('.settingsNavBtn').forEach(btn => {
+        btn.onclick = () => setSettingsSection(btn.dataset.settingsSection);
+    });
+  }
+
+  function setupLogFollowState() {
+    ['stdout', 'stderr'].forEach((key) => {
+        const el = (key === 'stderr') ? $('#stderrLog') : $('#stdoutLog');
+        if (!el) return;
+
+        el.addEventListener('scroll', () => {
+        const thresholdPx = 24;
+        const nearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) <= thresholdPx;
+        state._followLogs[key] = nearBottom;
+
+        if (nearBottom && state._pendingWhilePaused[key]) {
+            state._pendingWhilePaused[key] = false;
+            el.innerHTML = ansiToHtml(state.logs[key]);
+            el.scrollTop = el.scrollHeight;
+        }
+        });
+    });
+  }
+
   function setupUi() {
     // New panel toggles (sidebar is always visible)
     // Migrate old prefs if present.
@@ -2795,6 +2912,7 @@ def create_app() -> FastAPI:
     state.showArtifacts = !!loadPref('ursa.ui.showArtifacts', oldHideRight === null ? true : !oldHideRight);
 
     applyPanelVisibility();
+    setupLogFollowState();
 
     const tChat = $('#toggleChatBtn');
     if (tChat) tChat.onclick = () => { state.showChat = !state.showChat; applyPanelVisibility(); };
@@ -2879,6 +2997,7 @@ def create_app() -> FastAPI:
 
     // Settings modal
     const modal = $('#settingsModal');
+    setupSettingsNav();
     $('#openSettingsBtn').onclick = async () => {
       modal.classList.add('open');
       await loadSettings();
@@ -3059,6 +3178,24 @@ body::before {
 .pill { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--muted); }
 .pill.action { color: #0b57d0; border-color: rgba(11,87,208,0.35); }
 
+.sessionTitle { font-weight: 650; line-height: 1.2; overflow-wrap: anywhere; margin-bottom: 6px; }
+.sessionMeta { line-height: 1.25; overflow-wrap: anywhere; }
+.sessionMetaState { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.sessionMetaState.running { color: #0f7a2f; }
+.sessionMetaState.idle { color: #666; }
+.sessionMetaDot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; background: currentColor; transform: translateY(0.5px); }
+.sessionMetaState.running .sessionMetaDot { animation: sessionPulse 1.4s ease-in-out infinite; }
+.sessionMetaSep { color: #999; margin: 0 4px; }
+.sessionStatus { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; font-size: 11px; line-height: 1; border: 1px solid var(--border); background: #fff; white-space: nowrap; }
+.sessionStatus.running { color: #0f7a2f; border-color: rgba(15, 122, 47, 0.28); background: rgba(15, 122, 47, 0.06); }
+.sessionStatus.idle { color: #666; border-color: rgba(0, 0, 0, 0.10); background: rgba(0, 0, 0, 0.03); }
+.sessionDot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; background: currentColor; transform: translateY(0.5px); }
+.sessionStatus.running .sessionDot { animation: sessionPulse 1.4s ease-in-out infinite; }
+.histItem.running { border-left: 4px solid rgba(15, 122, 47, 0.55); padding-left: 8px; }
+.histItem.selected.running { box-shadow: 0 0 0 2px rgba(15, 122, 47, 0.12); }
+.histItem.selected.idle { box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
+@keyframes sessionPulse { 0%, 100% { transform: translateY(0.5px) scale(1); opacity: 1; } 50% { transform: translateY(0.5px) scale(1.35); opacity: 0.65; } }
+
 .sessionRow { display:flex; gap: 8px; align-items: stretch; margin-bottom: 10px; }
 .sessionRow .histItem { margin-bottom: 0; flex: 1 1 auto; }
 .sessionRow .sessActBtn { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 12px; }
@@ -3134,7 +3271,62 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 .modal { position: fixed; inset: 0; display:none; z-index: 30; }
 .modal.open { display:block; }
 .backdrop { position:absolute; inset:0; background: rgba(0,0,0,0.25); }
-.modalCard { position:absolute; top: 8vh; left: 50%; transform: translateX(-50%); width: min(720px, 94vw); background:#fff; border-radius: 14px; border: 1px solid var(--border); padding: 14px; }
+.modalCard {
+  position: absolute;
+  top: 4vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1100px, 96vw);
+  height: 90vh;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  padding: 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.settingsShell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
+}
+
+.settingsNav {
+  border-right: 1px solid var(--border);
+  padding-right: 12px;
+  overflow: auto;
+}
+
+.settingsContent {
+  min-width: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.settingsNavBtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.settingsNavBtn:hover {
+  background: #f6f6f6;
+}
+
+.settingsNavBtn.active {
+  background: #eef5ff;
+  border-color: #c9daf8;
+}
 .fieldRow { display:grid; grid-template-columns: 170px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
 .label { color: var(--muted); font-size: 12px; }
 .input { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); }
@@ -3251,7 +3443,13 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   <div class="main" id="mainPanel">
     <div class="topbar">
       <div>
-        <div class="title" id="activeSessionTitle">No session selected</div>
+        <div class="row" style="justify-content:flex-start; gap:10px; align-items:center">
+            <div class="title" id="activeSessionTitle">No session selected</div>
+            <div id="activeSessionStateBadge" class="sessionStatus idle" style="display:none">
+            <span class="sessionDot"></span>
+            <span>Idle</span>
+            </div>
+        </div>
         <div class="muted small" id="activeSessionMeta"></div>
       </div>
       <div class="row" style="justify-content:flex-end">
@@ -3324,6 +3522,8 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   </div>
 </div>
 
+
+
 <div class="modal" id="settingsModal" aria-hidden="true">
   <div class="backdrop" id="settingsBackdrop"></div>
   <div class="modalCard">
@@ -3335,46 +3535,84 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <button class="btn" id="closeSettingsBtn" type="button">Close</button>
     </div>
 
-    <div class="section">
-      <div class="sectionHead">LLM</div>
-      <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
-      <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
-      <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
-      <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
-      <div class="fieldRow"><div class="label">Max tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
-      <div class="fieldRow"><div class="label">Temperature</div><input class="input" id="set_temperature" type="number" step="0.1" min="0" max="2" /></div>
-    </div>
-
-    <div class="section">
-      <div class="sectionHead">Runner</div>
-      <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
-    </div>
-
-    <div class="section">
-      <div class="sectionHead">MCP tools</div>
-      <div class="muted small" style="margin: 2px 0 10px">
-        MCP servers configured here will be started in the worker subprocess and their tools will be attached to the ExecutionAgent (and the executor inside the Planning + Execution Workflow) for new runs.
+    <div class="settingsShell">
+      <div class="settingsNav">
+        <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
+        <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
+        <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
       </div>
 
-      <div class="fieldRow">
-        <div class="label">Configured servers</div>
-        <div>
-          <div class="row" id="mcpServersList" style="justify-content:flex-start; gap:6px; flex-wrap:wrap"></div>
-          <div class="muted small" style="margin-top:6px">Click a server name to edit it.</div>
+      <div class="settingsContent">
+        <div class="settingsPane" data-settings-pane="ui">
+          <div class="section">
+            <div class="sectionHead">User Interface</div>
+            <div class="fieldRow">
+              <div class="label">Stdout buffer lines</div>
+              <input class="input" id="set_stdout_buffer_lines" type="number" min="5000" step="100" />
+            </div>
+            <div class="fieldRow">
+              <div class="label">Events page size</div>
+              <input class="input" id="set_events_page_size" type="number" min="100" max="5000" />
+            </div>
+            <div class="fieldRow">
+              <div class="label">Max event pages</div>
+              <input class="input" id="set_max_event_pages" type="number" min="1" step="1" />
+            </div>
+            <div class="muted small" style="margin-top:6px">
+              Controls how much historical run output the dashboard keeps and reloads.
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="fieldRow"><div class="label">Server name</div><input class="input" id="mcp_name" placeholder="my_server" /></div>
-      <div class="fieldRow">
-        <div class="label">Server config (JSON)</div>
-        <textarea class="input" id="mcp_json" rows="6" placeholder='{{"transport":"sse","url":"http://127.0.0.1:3000/sse"}}' style="font-family: var(--mono);"></textarea>
-      </div>
+        <div class="settingsPane hidden" data-settings-pane="llm">
+          <div class="section">
+            <div class="sectionHead">LLM</div>
+            <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
+            <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
+            <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
+            <div class="fieldRow"><div class="label">Max tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
+            <div class="fieldRow"><div class="label">Temperature</div><input class="input" id="set_temperature" type="number" step="0.1" min="0" max="2" /></div>
+          </div>
+        </div>
 
-      <div class="row" style="justify-content:flex-start; gap: 10px">
-        <button class="btn" id="mcpAddUpdateBtn" type="button">Add/Update</button>
-        <button class="btn danger" id="mcpRemoveBtn" type="button">Remove</button>
-        <button class="btn" id="mcpClearBtn" type="button">Clear</button>
-        <div class="muted small" id="mcpStatus"></div>
+        <div class="settingsPane hidden" data-settings-pane="runner">
+          <div class="section">
+            <div class="sectionHead">Runner</div>
+            <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="mcp">
+          <div class="section">
+            <div class="sectionHead">MCP tools</div>
+            <div class="muted small" style="margin: 2px 0 10px">
+              MCP servers configured here will be started in the worker subprocess and their tools will be attached to the ExecutionAgent (and the executor inside the Planning + Execution Workflow) for new runs.
+            </div>
+
+            <div class="fieldRow">
+              <div class="label">Configured servers</div>
+              <div>
+                <div class="row" id="mcpServersList" style="justify-content:flex-start; gap:6px; flex-wrap:wrap"></div>
+                <div class="muted small" style="margin-top:6px">Click a server name to edit it.</div>
+              </div>
+            </div>
+
+            <div class="fieldRow"><div class="label">Server name</div><input class="input" id="mcp_name" placeholder="my_server" /></div>
+            <div class="fieldRow">
+              <div class="label">Server config (JSON)</div>
+              <textarea class="input" id="mcp_json" rows="6" placeholder='{{"transport":"sse","url":"http://127.0.0.1:3000/sse"}}' style="font-family: var(--mono);"></textarea>
+            </div>
+
+            <div class="row" style="justify-content:flex-start; gap: 10px">
+              <button class="btn" id="mcpAddUpdateBtn" type="button">Add/Update</button>
+              <button class="btn danger" id="mcpRemoveBtn" type="button">Remove</button>
+              <button class="btn" id="mcpClearBtn" type="button">Clear</button>
+              <div class="muted small" id="mcpStatus"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -3387,6 +3625,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     </div>
   </div>
 </div>
+
+
+
 
         """
 
