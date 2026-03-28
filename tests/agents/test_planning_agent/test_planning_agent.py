@@ -3,9 +3,31 @@ from langchain_core.messages import HumanMessage
 from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
-async def test_planning_agent_creates_structured_plan(chat_model, tmpdir):
+class FakePlanningChatModel:
+    def model_copy(self, update=None):
+        return self
+
+    def with_structured_output(self, schema, **kwargs):
+        class _Runner:
+            def invoke(self, messages):
+                return schema(
+                    steps=[
+                        {
+                            "name": "Add numbers",
+                            "description": "Add 1 and 2.",
+                            "requires_code": False,
+                            "expected_outputs": ["sum"],
+                            "success_criteria": ["sum equals 3"],
+                        }
+                    ]
+                )
+
+        return _Runner()
+
+
+async def test_planning_agent_creates_structured_plan(tmpdir):
     planning_agent = PlanningAgent(
-        llm=chat_model.model_copy(update={"max_tokens": 4000}),
+        llm=FakePlanningChatModel(),
         workspace=tmpdir,
         max_reflection_steps=0,
     )

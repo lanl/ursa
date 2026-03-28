@@ -28,6 +28,7 @@ nav:
       - arXiv Agent: arxiv_agent.md
       - DSIAgent: dsi_agent.md
       - Execution Agent: execution_agent.md
+      - Git Go Agent: git_go_agent.md
       - Hypothesizer Agent: hypothesizer_agent.md
       - Planning Agent: planning_agent.md
       - Web Search Agent: web_search_agent.md

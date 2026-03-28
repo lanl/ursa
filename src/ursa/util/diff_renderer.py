@@ -85,7 +85,7 @@ class DiffRenderer:
                 code = raw[1:]
             else:
                 style = _STYLE["ctx"]
-                code = raw[1:] if raw.startswith(" ") else raw
+                code = raw.lstrip()
 
             # compute line numbers
             if raw.startswith("+"):
