@@ -43,8 +43,8 @@ class MaterialsProjectAgent(BaseAgent):
         super().__init__(llm, **kwargs)
         self.summarize = summarize
         self.max_results = max_results
-        self.database_path = self.workspace.joinpath(database_path)
-        self.summaries_path = self.workspace.joinpath(summaries_path)
+        self.database_path = self.den.joinpath(database_path)
+        self.summaries_path = self.den.joinpath(summaries_path)
 
         self.database_path.mkdir(parents=True, exist_ok=True)
         self.summaries_path.mkdir(parents=True, exist_ok=True)

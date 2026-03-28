@@ -312,7 +312,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # -----------------------------
         timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         txt_filename = Path(
-            self.workspace,
+            self.den,
             f"iteration_details_{timestamp_str}_chat_history.txt",
         )
         with open(txt_filename, "w", encoding="utf-8") as f:

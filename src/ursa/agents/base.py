@@ -70,7 +70,7 @@ class AgentContext:
     workspace: Path
     """ Workspace path for the agent """
 
-    character: Path
+    den: Path
     """ Path for the consolidated experiences of the agent """
 
     tool_character_limit: int = 30000
@@ -162,7 +162,7 @@ class BaseAgent(Generic[TState], ABC):
         self,
         llm: BaseChatModel,
         workspace: Optional[Path] = None,
-        character: Optional[Path] = None,
+        den: Optional[Path] = None,
         checkpointer: Optional[BaseCheckpointSaver] = None,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
@@ -183,7 +183,7 @@ class BaseAgent(Generic[TState], ABC):
         """
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or "ursa_workspace")
-        self.character = Path(character or Path.home() / ".cache/ursa_agents" / uuid4().hex)
+        self.den = Path(den or Path.home() / ".cache/ursa_agents" / uuid4().hex)
         self.thread_id = thread_id or uuid4().hex
         self.checkpointer = checkpointer
         self.telemetry = Telemetry(
@@ -193,7 +193,7 @@ class BaseAgent(Generic[TState], ABC):
         )
 
         self.workspace.mkdir(exist_ok=True, parents=True)
-        self.character.mkdir(exist_ok=True, parents=True)
+        self.den.mkdir(exist_ok=True, parents=True)
 
     @property
     def name(self) -> str:
@@ -556,7 +556,7 @@ class BaseAgent(Generic[TState], ABC):
     @cached_property
     def storage(self) -> BaseStore:
         """Create a SQLite-backed LangGraph store for persistent graph data."""
-        store_path = self.character / "graph_store.sqlite"
+        store_path = self.den / "graph_store.sqlite"
         conn = sqlite3.connect(
             store_path, check_same_thread=False, isolation_level=None
         )

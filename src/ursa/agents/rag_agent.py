@@ -76,8 +76,8 @@ class RAGAgent(BaseAgent[RAGState]):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.database_path = database_path
-        self.summaries_path = self.character / summaries_path
-        self.vectorstore_path = self.character / vectorstore_path
+        self.summaries_path = self.den / summaries_path
+        self.vectorstore_path = self.den / vectorstore_path
 
         self.vectorstore_path.mkdir(exist_ok=True, parents=True)
         self.vectorstore = self._open_global_vectorstore()
