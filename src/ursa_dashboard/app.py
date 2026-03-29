@@ -1593,6 +1593,7 @@ def create_app() -> FastAPI:
     sessions: [],
     activeSessionId: null,
     activeSession: null, // {session, messages}
+    viewSessionId: null,
     viewRunId: null,
     viewRunKind: 'none', // 'none' | 'static' | 'stream'
     es: null,
@@ -1697,6 +1698,12 @@ def create_app() -> FastAPI:
 
   function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 
+  function setDragShield(active) {
+    $$('iframe').forEach(el => {
+      el.style.pointerEvents = active ? 'none' : '';
+    });
+  }
+
   function setupSplitters() {
     const left = $('#leftPanel');
     const right = $('#rightPanel');
@@ -1719,6 +1726,16 @@ def create_app() -> FastAPI:
     let startX = 0;
     let startW = 0;
 
+    const cleanupDrag = () => {
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setDragShield(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onUp);
+    };
+
     const onMove = (e) => {
       if (!dragging) return;
       const x = e.clientX;
@@ -1731,15 +1748,11 @@ def create_app() -> FastAPI:
 
     const onUp = () => {
       if (!dragging) return;
-      dragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
       try {
         const w = panelEl.getBoundingClientRect().width;
         savePref(cfg.prefKey, Math.round(w));
       } catch {}
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      cleanupDrag();
     };
 
     splitterEl.addEventListener('mousedown', (e) => {
@@ -1749,8 +1762,10 @@ def create_app() -> FastAPI:
       startW = panelEl.getBoundingClientRect().width;
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
+      setDragShield(true);
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
+      window.addEventListener('blur', onUp);
       e.preventDefault();
     });
 
@@ -1775,6 +1790,16 @@ def create_app() -> FastAPI:
     let startY = 0;
     let startH = 0;
 
+    const cleanupDrag = () => {
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setDragShield(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onUp);
+    };
+
     const onMove = (e) => {
       if (!dragging) return;
       const dy = e.clientY - startY;
@@ -1784,7 +1809,6 @@ def create_app() -> FastAPI:
       const minConv = 220;
       const maxRun = Math.max(minRun, bodyH - minConv - 24);
 
-      // Moving mouse up should increase log height.
       let h = startH - dy;
       h = clamp(h, minRun, maxRun);
       run.style.height = `${Math.round(h)}px`;
@@ -1792,15 +1816,11 @@ def create_app() -> FastAPI:
 
     const onUp = () => {
       if (!dragging) return;
-      dragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
       try {
         const h = run.getBoundingClientRect().height;
         savePref('ursa.ui.runSectionHeight', Math.round(h));
       } catch {}
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      cleanupDrag();
     };
 
     split.addEventListener('mousedown', (e) => {
@@ -1810,8 +1830,10 @@ def create_app() -> FastAPI:
       startH = run.getBoundingClientRect().height;
       document.body.style.cursor = 'row-resize';
       document.body.style.userSelect = 'none';
+      setDragShield(true);
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
+      window.addEventListener('blur', onUp);
       e.preventDefault();
     });
 
@@ -2134,6 +2156,95 @@ def create_app() -> FastAPI:
     }
   }
 
+  function getSessionRunIds(sessionDetail) {
+    const ids = [];
+    const seen = new Set();
+
+    function add(id) {
+      id = String(id || '').trim();
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    }
+
+    const sess = sessionDetail?.session || {};
+    for (const m of (sessionDetail?.messages || [])) add(m.run_id);
+    add(sess.last_run_id);
+    add(sess.active_run_id);
+
+    return ids;
+  }
+
+  function appendRunDivider(runId, label='run') {
+    const line = '='.repeat(18);
+    const text = `\n${line} ${label} ${runId} ${line}\n`;
+    appendLog('stdout', text);
+  }
+
+  function sessionLogMetaText(sessionDetail, phaseText='history loaded') {
+    const sess = sessionDetail?.session || {};
+    const runIds = getSessionRunIds(sessionDetail);
+    const n = runIds.length;
+    const noun = n === 1 ? 'run' : 'runs';
+
+    if (sess.active_run_id) {
+      return `session log view · ${n} ${noun} · ${phaseText} ${sess.active_run_id}`;
+    }
+    return `session log view · ${n} ${noun}`;
+  }
+
+  async function showSessionLogs(sessionDetail) {
+    const sess = sessionDetail?.session || null;
+    if (!sess) {
+      clearRunView();
+      return;
+    }
+
+    const runIds = getSessionRunIds(sessionDetail);
+    const activeRunId = String(sess.active_run_id || '').trim();
+    const completedRunIds = activeRunId ? runIds.filter(id => id !== activeRunId) : runIds.slice();
+
+    state._logToken += 1;
+    const token = state._logToken;
+
+    closeRunStream();
+    clearLogs();
+
+    state.viewSessionId = sess.session_id;
+    state.viewRunId = activeRunId || String(sess.last_run_id || '').trim() || null;
+    state.viewRunKind = activeRunId ? 'stream' : (runIds.length ? 'static' : 'none');
+
+    const cancelBtn = $('#cancelRunBtn');
+    if (cancelBtn) cancelBtn.style.display = activeRunId ? '' : 'none';
+
+    if (!runIds.length) {
+      setStatus('');
+      setRunLogMeta('No runs yet in this session.');
+      return;
+    }
+
+    setStatus(activeRunId ? `run ${activeRunId} · running` : `session ${sess.session_id} · complete`);
+    setRunLogMeta(sessionLogMetaText(sessionDetail));
+
+    for (const runId of completedRunIds) {
+      if (token !== state._logToken) return;
+      appendRunDivider(runId, runId === sess.last_run_id && !activeRunId ? 'last run' : 'run');
+      try {
+        await loadRunEvents(runId, token);
+      } catch (e) {
+        appendLog('stderr', `\n[dashboard] Failed to load run ${runId}: ${e.message}\n`);
+      }
+    }
+
+    if (activeRunId) {
+      appendRunDivider(activeRunId, 'running');
+      showRunStream(activeRunId, {
+        preserveExisting: true,
+        metaText: sessionLogMetaText(sessionDetail, 'streaming'),
+      });
+    }
+  }
+
   async function loadRunEvents(runId, token) {
     let after = 0;
     let pages = 0;
@@ -2167,6 +2278,7 @@ def create_app() -> FastAPI:
 
   function clearRunView() {
     closeRunStream();
+    state.viewSessionId = null;
     state.viewRunId = null;
     state.viewRunKind = 'none';
     clearLogs();
@@ -2201,22 +2313,27 @@ def create_app() -> FastAPI:
     }
   }
 
-  function showRunStream(runId) {
+  function showRunStream(runId, opts = {}) {
     if (!runId) return;
+
+    const preserveExisting = !!opts.preserveExisting;
+    const metaText = String(opts.metaText || `run ${runId} · running`);
+
     if (state.viewRunId === runId && state.viewRunKind === 'stream' && state.es) return;
 
     state._logToken += 1;
     const token = state._logToken;
 
     closeRunStream();
-    clearLogs();
+    if (!preserveExisting) clearLogs();
+
     state.viewRunId = runId;
     state.viewRunKind = 'stream';
 
     const cancelBtn = $('#cancelRunBtn');
     if (cancelBtn) cancelBtn.style.display = '';
 
-    setRunLogMeta(`run ${runId} \u00b7 running`);
+    setRunLogMeta(metaText);
 
     const es = new EventSource(`/runs/${encodeURIComponent(runId)}/stream`);
     state.es = es;
@@ -2226,11 +2343,10 @@ def create_app() -> FastAPI:
       try {
         const e = JSON.parse(ev.data);
         const to = (e.payload && e.payload.to) || '';
-        setStatus(to ? `run ${runId} \u00b7 ${to}` : `run ${runId}`);
-        if (to) setRunLogMeta(`run ${runId} \u00b7 ${to}`);
+        setStatus(to ? `run ${runId} · ${to}` : `run ${runId}`);
+        setRunLogMeta(to ? metaText.replace(/streaming\s+\S+$/, `${to} ${runId}`) : metaText);
 
         if (['succeeded','failed','cancelled'].includes(to)) {
-          // Refresh session + workspace after terminal.
           setTimeout(async () => {
             if (token !== state._logToken) return;
             closeRunStream();
@@ -2252,7 +2368,6 @@ def create_app() -> FastAPI:
 
     const onFinal = async (_ev) => {
       if (token !== state._logToken) return;
-      // Assistant message is appended server-side at run completion.
       await refreshSessions();
       if (state.activeSessionId) await loadSession(state.activeSessionId);
     };
@@ -2263,7 +2378,6 @@ def create_app() -> FastAPI:
 
     es.onerror = async () => {
       if (token !== state._logToken) return;
-      // If connection drops, poll session/run state.
       try {
         await refreshSessions();
         if (state.activeSessionId) await loadSession(state.activeSessionId);
@@ -2407,6 +2521,7 @@ def create_app() -> FastAPI:
         }
 
         setStatus('');
+        state.viewSessionId = null;
         clearRunView();
         return;
     }
@@ -2482,13 +2597,10 @@ def create_app() -> FastAPI:
 
     msgs.scrollTop = msgs.scrollHeight;
 
-    if (activeRunId) {
-        showRunStream(activeRunId);
-    } else if (lastRunId) {
-        showRunStatic(lastRunId).catch(err => console.error(err));
-    } else {
-        clearRunView();
-    }
+    showSessionLogs(state.activeSession).catch(err => {
+        console.error(err);
+        appendLog('stderr', `\n[dashboard] Failed to render session logs: ${err.message}\n`);
+    });
   }
 
   async function refreshAgents() {
@@ -3117,21 +3229,73 @@ body::before {
 .main { overflow:hidden; }
 
 .splitter {
-  flex: 0 0 8px;
+  flex: 0 0 12px;
   cursor: col-resize;
-  background: linear-gradient(to right, transparent, rgba(0,0,0,0.08), transparent);
+  position: relative;
+  background: transparent;
 }
+
+.splitter::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.16);
+  border-radius: 999px;
+}
+
+:root[data-theme="dark"] .splitter::before {
+  background: rgba(255,255,255,0.16);
+}
+
+.splitter:hover::before {
+  background: rgba(11,87,208,0.45);
+}
+
+:root[data-theme="dark"] .splitter:hover::before {
+  background: rgba(138,180,255,0.55);
+}
+
 .splitter.hidden { display:none; }
 
 /* Generic utility used throughout JS */
 .hidden { display:none !important; }
 
 .hsplitter {
-  flex: 0 0 8px;
+  flex: 0 0 12px;
   cursor: row-resize;
-  background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.08), transparent);
+  position: relative;
   border-radius: 6px;
+  background: transparent;
 }
+
+.hsplitter::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.22);
+  border-radius: 999px;
+}
+
+:root[data-theme="dark"] .hsplitter::before {
+  background: rgba(255,255,255,0.22);
+}
+
+.hsplitter:hover::before {
+  background: rgba(11,87,208,0.45);
+}
+
+:root[data-theme="dark"] .hsplitter:hover::before {
+  background: rgba(138,180,255,0.55);
+}
+
 .hsplitter.hidden { display:none; }
 
 .sidebar {
@@ -3275,7 +3439,7 @@ body::before {
 .bubble.user { background: #eef5ff; }
 
 .composer { margin-top: 10px; }
-textarea, input, select { font: inherit; }
+textarea, input, select { font: inherit; box-sizing: border-box; }
 textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; border-radius: 10px; border: 1px solid var(--border); }
 
 .logDetails { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #fff; margin-bottom: 10px; }
