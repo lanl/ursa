@@ -7,11 +7,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
 
-import httpx
 import yaml
 from jsonargparse import Namespace
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
 
+from ursa.util.http import build_httpx_async_client, build_httpx_client
 from ursa.util.mcp import ServerParameters, _serialize_server_config
 
 LoggingLevel = Literal[
@@ -44,8 +44,11 @@ class ModelConfig(BaseModel):
         Removes parameters set to `None`
         """
         kwargs = {k: v for k, v in self.model_dump().items() if v is not None}
-        if kwargs.pop("ssl_verify", None) is False:
-            kwargs["http_client"] = httpx.Client(verify=False)
+        ssl_verify = kwargs.pop("ssl_verify", True)
+        kwargs["http_client"] = build_httpx_client(verify=ssl_verify)
+        kwargs["http_async_client"] = build_httpx_async_client(
+            verify=ssl_verify
+        )
         if api_key_env := kwargs.pop("api_key_env", None):
             kwargs["api_key"] = environ.get(api_key_env, None)
         return kwargs

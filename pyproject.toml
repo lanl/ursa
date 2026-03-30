@@ -32,6 +32,7 @@ dependencies = [
     "ddgs>=9.5.5",
     "typer>=0.16.1",
     "trafilatura>=1.6.1,<1.7",
+    "truststore>=0.10.4,<1.0",
     "selectolax>=0.4.0,<0.5",
     "langchain>=1.0.3",
     "langchain-chroma>=1.0.0",
