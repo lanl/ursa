@@ -878,7 +878,7 @@ def create_app() -> FastAPI:
         download_url = f"/runs/{run_id}/workspace/file?path={quote(path)}&disposition=attachment"
 
         header = (
-            f'<div> <span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span>'
+            f'<div> <span class="pill">{html.escape(str(run.get("agent_id", "")))}</span>'
             f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
             f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
         )
