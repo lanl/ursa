@@ -3692,14 +3692,14 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         </div>
 
         <details class="logDetails" id="stdoutDetails" open>
-          <summary class="logHead">stdout</summary>
+          <!-- summary class="logHead">stdout</summary -->
           <pre class="log" id="stdoutLog"></pre>
         </details>
 
-        <details class="logDetails" id="stderrDetails">
+        <!-- details class="logDetails" id="stderrDetails">
           <summary class="logHead">stderr</summary>
           <pre class="log" id="stderrLog"></pre>
-        </details>
+        </details -->
       </div>
     </div>
   </div>
