@@ -818,7 +818,7 @@ def create_app() -> FastAPI:
   <title>{html.escape(title)}</title>
   <style>
     body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }}
-    .muted {{ color: #555; }}
+    .muted {{ color: #fe8181; }}
     .grid {{ display: grid; grid-template-columns: 1fr; gap: 12px; }}
     details {{ border: 1px solid #ddd; border-radius: 8px; padding: 8px 12px; }}
     summary {{ cursor: pointer; font-weight: 600; }}
@@ -878,10 +878,8 @@ def create_app() -> FastAPI:
         download_url = f"/runs/{run_id}/workspace/file?path={quote(path)}&disposition=attachment"
 
         header = (
-            f'<div><a href="/ui/workspace">Workspace</a> / '
-            f'<span class="pill">{html.escape(run.get("agent_id", ""))}</span> '
-            f'<span class="muted">run {html.escape(run_id)}</span></div>'
-            f'<h2 style="margin-top:8px">{html.escape(path)}</h2>'
+            f'<div> <span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span>'
+            f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
             f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
         )
 
@@ -1286,10 +1284,8 @@ def create_app() -> FastAPI:
         download_url = f"/sessions/{session_id}/workspace/file?path={quote(path)}&disposition=attachment"
 
         header = (
-            f'<div><a href="/ui">Dashboard</a> / '
-            f'<span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span> '
-            f'<span class="muted">session {html.escape(session_id)}</span></div>'
-            f'<h2 style="margin-top:8px">{html.escape(path)}</h2>'
+            f'<div> <span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span>'
+            f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
             f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
         )
 
