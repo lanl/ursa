@@ -15,10 +15,10 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from PIL import Image
 from tqdm import tqdm
-from usra.util.http import build_httpx_client
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
+from ursa.util.http import build_httpx_client
 
 
 class PaperMetadata(TypedDict):

@@ -14,20 +14,23 @@ def truststore_ssl_context() -> ssl.SSLContext:
     return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
+def httpx_verify_value(*, verify: bool = True) -> bool | ssl.SSLContext:
+    """Return the HTTPX verify value used across direct clients and kwargs."""
+    if verify is False:
+        return False
+    return truststore_ssl_context()
+
+
 def build_httpx_client(*, verify: bool = True, **kwargs: Any) -> httpx.Client:
     """Build an HTTPX client with truststore-based verification by default."""
-    if verify is False:
-        return httpx.Client(verify=False, **kwargs)
-    return httpx.Client(verify=truststore_ssl_context(), **kwargs)
+    return httpx.Client(verify=httpx_verify_value(verify=verify), **kwargs)
 
 
 def build_httpx_async_client(
     *, verify: bool = True, **kwargs: Any
 ) -> httpx.AsyncClient:
     """Build an async HTTPX client with truststore-based verification."""
-    if verify is False:
-        return httpx.AsyncClient(verify=False, **kwargs)
-    return httpx.AsyncClient(verify=truststore_ssl_context(), **kwargs)
+    return httpx.AsyncClient(verify=httpx_verify_value(verify=verify), **kwargs)
 
 
 def build_mcp_httpx_async_client(
