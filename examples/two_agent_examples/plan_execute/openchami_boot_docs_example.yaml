@@ -1,0 +1,120 @@
+# Multi-repo example: Generate boot-service documentation for openchami.org website
+# 
+# This configuration orchestrates changes across two repos:
+# 1. boot-service: Extract usage examples, API endpoints, and configuration details
+# 2. openchami.org: Generate and publish documentation pages based on boot-service
+
+project: openchami_boot_docs
+
+# Problem statement: What are we trying to accomplish?
+problem: |
+  Generate comprehensive documentation for the OpenCHAMI boot-service and publish it
+  on the openchami.org website. The documentation should include:
+  
+  - Overview of what the boot-service does and its role in the OpenCHAMI ecosystem
+  - API endpoint reference with request/response examples
+  - Configuration guide (environment variables, config files, deployment options)
+  - Usage examples for common workflows (iPXE boot, cloud-init, etc.)
+  - Integration guide for administrators deploying the service
+  - One or more blog posts to describe the service to the OpenCHAMI community
+  
+  The boot-service repo should be analyzed to extract accurate, up-to-date information.
+  The openchami.org repo should have new documentation pages created in the appropriate
+  location with proper navigation links.
+
+# Repository definitions
+repos:
+  - name: boot-service
+    url: https://github.com/openchami/boot-service
+    branch: main
+    checkout: true
+    language: go
+    description: OpenCHAMI boot orchestration service
+    checks:
+      # Verify the repo is in good state (don't break existing functionality)
+      - go mod verify
+      - go vet ./...
+
+  - name: openchami.org
+    url: https://github.com/openchami/openchami.org
+    branch: main
+    checkout: true
+    language: markdown  # Documentation site (likely Hugo, Jekyll, or similar)
+    description: OpenCHAMI project website and documentation
+    checks:
+      # Verify documentation builds successfully
+      - npm run build || echo "No build command found, skipping"
+
+# Model configuration
+models:
+  # Available model providers
+  providers:
+    openai:
+      model_provider: openai
+      api_key_env: OPENAI_API_KEY
+    
+  # Default model choice
+  choices:
+    - openai:gpt-5.2
+    - openai:gpt-5
+    - openai:o3
+    - openai:o3-mini
+    - my_endpoint:openai/gpt-oss-120b # <— example external endpoint + model
+  default: openai:gpt-5
+
+  # Override models for specific roles
+  planner: openai:gpt-5.2
+  executor: openai:gpt-5
+
+  # Named parameter profiles for different capabilities
+  profiles:
+    standard:
+      temperature: 0.2
+      max_completion_tokens: 8000
+    
+    reasoning:
+      temperature: 0.1
+      max_completion_tokens: 16000
+      reasoning:
+        effort: medium
+
+  # Global defaults
+  defaults:
+    profile: standard
+    params:
+      temperature: 0.2
+      max_retries: 2
+
+  # Per-agent overrides
+  agents:
+    planner:
+      profile: reasoning
+      params:
+        max_completion_tokens: 16000
+    
+    executor:
+      profile: standard
+      params:
+        max_completion_tokens: 10000
+
+# Planning configuration
+planner:
+  reflection_steps: 2  # Number of plan review iterations
+  
+  research:
+    # GitHub research: automatically fetch issues/PRs from repo URLs
+    github:
+      enabled: true
+      max_issues: 20
+      max_prs: 10
+    
+# Execution configuration
+execution:
+  max_parallel: 2  # Process both repos in parallel when possible
+  recursion_limit: 2000  # LangGraph recursion limit
+  resume: true  # Support resuming from checkpoints
+  status_interval_sec: 10  # Progress table update frequency
+  max_check_retries: 2  # Retry failed verification checks
+  step_timeout_sec: 0  # timeout per step (0 = no limit)
+  timeout_mode: pause  # On timeout: pause, skip, or fail
+  skip_failed_repos: false  # Stop all repos if one fails

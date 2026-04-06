@@ -1,0 +1,58 @@
+# Simple configuration for plan_execute_multi_repo.py
+# Run with: python plan_execute_multi_repo.py --config example_multi_repo.yaml
+
+problem: |
+  Create a simple three-part system:
+  1. A shared library (utils_lib) with utility functions for CSV processing
+  2. A CLI tool (csv_cli) that uses the shared library
+  3. Documentation (docs) describing how to use the CLI
+
+repos:
+  - name: utils_lib
+    path: /tmp/ursa_test_repos/utils_lib
+    url: https://github.com/example/utils_lib.git
+    branch: main
+    checkout: false
+    description: Shared utility functions for CSV processing
+    language: python
+
+  - name: csv_cli
+    path: /tmp/ursa_test_repos/csv_cli
+    url: https://github.com/example/csv_cli.git
+    branch: main
+    checkout: false
+    description: Command-line tool for CSV filtering
+    language: python
+
+  - name: docs
+    path: /tmp/ursa_test_repos/docs
+    url: https://github.com/example/docs.git
+    branch: main
+    checkout: false
+    description: Documentation for the CSV processing system
+    language: markdown
+
+project: multi_repo_csv_system
+
+models:
+  default: openai:gpt-4o-mini
+  choices:
+    - openai:gpt-4o-mini
+    - openai:gpt-3.5-turbo
+
+planner:
+  reflection_steps: 1
+  research:
+    github:
+      enabled: false
+    queries: []
+
+execution:
+  max_parallel: 2
+  recursion_limit: 2000
+  resume: false
+  status_interval_sec: 5
+  max_check_retries: 2
+  step_timeout_sec: 0
+  timeout_mode: pause
+  skip_failed_repos: false

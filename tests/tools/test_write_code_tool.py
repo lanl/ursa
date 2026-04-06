@@ -5,7 +5,11 @@ from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
 from tests.tools.utils import make_runtime
-from ursa.tools.write_code_tool import edit_code, write_code
+from ursa.tools.write_code_tool import (
+    edit_code,
+    write_code,
+    write_code_with_repo,
+)
 
 
 def test_write_code_records_store_entry(
@@ -83,6 +87,34 @@ def test_edit_code_noop_when_old_code_missing(
     assert "No changes made" in result
     assert target.read_text(encoding="utf-8") == "print('hello')\n"
     assert store.get(("workspace", "file_edit"), "script.py") is None
+
+
+def test_write_code_with_repo_records_store_entry(
+    tmp_path: Path, chat_model: BaseChatModel
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = InMemoryStore()
+    runtime = make_runtime(
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="tc-2",
+        thread_id="thread-2",
+    )
+
+    result = write_code_with_repo.func(
+        code="print(7)",
+        filename="repo/sample.py",
+        runtime=runtime,
+        repo_path=str(repo),
+    )
+
+    assert "written successfully" in result
+    item = store.get(("workspace", "file_edit"), "repo/sample.py")
+    assert item is not None
+    assert item.value["tool_call_id"] == "tc-2"
+    assert item.value["thread_id"] == "thread-2"
 
 
 def test_edit_code_missing_file(tmp_path: Path, chat_model: BaseChatModel):

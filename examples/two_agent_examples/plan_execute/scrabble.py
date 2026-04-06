@@ -201,7 +201,7 @@ def main(mode: str):
         return answer
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e!s}")
         import traceback
 
         traceback.print_exc()
