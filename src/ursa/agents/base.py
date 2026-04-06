@@ -55,6 +55,7 @@ from langgraph.store.sqlite import SqliteStore
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
+from ursa.util import Checkpointer
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
@@ -162,8 +163,9 @@ class BaseAgent(Generic[TState], ABC):
         self,
         llm: BaseChatModel,
         workspace: Optional[Path] = None,
-        den: Optional[Path] = None,
+        den: Optional[Path | str] = None,
         checkpointer: Optional[BaseCheckpointSaver] = None,
+        persist_agent: Optional[bool] = False,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
@@ -183,12 +185,26 @@ class BaseAgent(Generic[TState], ABC):
         """
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or "ursa_workspace")
-        self.den = Path(den or Path.home() / ".cache/ursa_agents" / uuid4().hex)
-        self.thread_id = thread_id or uuid4().hex
+        set_checkpointer = True if checkpointer else False
         self.checkpointer = checkpointer
+        if persist_agent:
+            if set_checkpointer:
+                print("[WARNING]: Both checkpointer and den persistence set. Using checkpointer, but only use one in the future.")
+                self.den = self.workspace
+            else:
+                if den:
+                    den_name = den
+                else:
+                    den_name = uuid4().hex
+                    print(f"[Agent Created]: {den_name}")
+                self.den = Path.home() / ".cache/ursa_agents" / Path(den_name)
+                self.checkpointer = Checkpointer.from_workspace(self.den)
+        else:
+            self.den = self.workspace
+        self.thread_id = thread_id or uuid4().hex
         self.telemetry = Telemetry(
             enable=enable_metrics,
-            output_dir=self.workspace.joinpath(metrics_dir),
+            output_dir=self.den.joinpath(metrics_dir),
             save_json_default=autosave_metrics,
         )
 
@@ -203,7 +219,7 @@ class BaseAgent(Generic[TState], ABC):
     @property
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
-        return AgentContext(llm=self.llm, workspace=self.workspace)
+        return AgentContext(llm=self.llm, workspace=self.workspace, den=self.den)
 
     def add_node(
         self,
