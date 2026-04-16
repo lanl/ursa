@@ -14,7 +14,7 @@ def test_read_file_reads_text_from_workspace(
     target.write_text("sample text", encoding="utf-8")
 
     result = read_file.func(
-        filename=str(target.name),
+        path=str(target.name),
         runtime=make_runtime(
             tmp_path,
             llm=chat_model,
@@ -22,12 +22,18 @@ def test_read_file_reads_text_from_workspace(
         ),
     )
 
-    assert result == "sample text"
+    assert result == {
+        "path": str(target.resolve()),
+        "type": "file",
+        "text": "sample text",
+        "next_offset": len("sample text"),
+    }
 
 
 def test_read_file_uses_pdf_reader(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
+    (tmp_path / "report.pdf").write_bytes(b"%PDF-1.4\n%fake\n")
     called = {}
 
     def fake_pdf_reader(path: Path) -> str:
@@ -47,7 +53,8 @@ def test_read_file_uses_pdf_reader(
         llm=chat_model,
         tool_call_id="pdf-call",
     )
-    result = read_file.func(filename="report.pdf", runtime=runtime)
+    result = read_file.func(path="report.pdf", runtime=runtime)
 
-    assert result == "pdf contents"
+    assert result["type"] == "file"
+    assert result["text"] == "pdf contents"
     assert called["path"] == tmp_path / "report.pdf"

@@ -26,7 +26,7 @@ def _touch(p: Path, content: bytes = b"%PDF-1.4\n%fake\n") -> None:
 #     )
 
 
-def _call_tool(filename: str, workspace: Path) -> str:
+def _call_tool(path: str, workspace: Path) -> str:
     tool_obj = rft.read_file
 
     runtime = make_runtime(
@@ -36,10 +36,12 @@ def _call_tool(filename: str, workspace: Path) -> str:
     )
     # Prefer the stable tool interface across langchain_core versions
     if hasattr(tool_obj, "invoke"):
-        return tool_obj.invoke({"filename": filename, "runtime": runtime})
+        return tool_obj.invoke(
+            {"path": path, "limit": 10_000, "runtime": runtime}
+        )["text"]
 
     # Fallback (older behavior)
-    return tool_obj.func(filename=filename, runtime=runtime)
+    return tool_obj.func(path=path, limit=10_000, runtime=runtime)["text"]
 
 
 def test_no_ocr_when_text_is_sufficient(tmp_path, monkeypatch):

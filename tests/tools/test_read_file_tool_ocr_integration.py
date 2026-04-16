@@ -36,12 +36,25 @@ def _make_scanned_pdf(path: Path, text: str = "Hello OCR 123") -> None:
     c.save()
 
 
-def _call_tool(filename: str, workspace: Path) -> str:
-    state = {"workspace": str(workspace)}
+def _call_tool(path: str, workspace: Path) -> str:
+    runtime = rft.ToolRuntime(
+        state={},
+        context=rft.AgentContext(
+            llm=None,
+            workspace=workspace,
+            tool_character_limit=10_000,
+        ),
+        config={"metadata": {"thread_id": "thread"}},
+        stream_writer=lambda _: None,
+        tool_call_id="read-file-call",
+        store=None,
+    )
     tool_obj = rft.read_file
     if hasattr(tool_obj, "invoke"):
-        return tool_obj.invoke({"filename": filename, "state": state})
-    return tool_obj.func(filename=filename, state=state)
+        return tool_obj.invoke(
+            {"path": path, "limit": 10_000, "runtime": runtime}
+        )["text"]
+    return tool_obj.func(path=path, limit=10_000, runtime=runtime)["text"]
 
 
 def test_real_ocr_creates_openable_pdf_and_extracts_text(tmp_path):
