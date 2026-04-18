@@ -1,0 +1,1 @@
+I am testing your PDF generation capabilities. I will upload a summary of a paper; your task is to reconstruct it into a formal research paper. You may enrich the content with any logically coherent information. Please compose the paper using LaTeX—mimicking the style of an arXiv preprint—and then compile it to provide me with a downloadable PDF file.

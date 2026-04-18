@@ -5,6 +5,8 @@ iteration*txt
 *.swp
 .env
 
+.claude
+
 # Python-generated files
 __pycache__/
 *.py[oc]
