@@ -9,6 +9,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from ursa.util.http import inject_truststore_into_ssl
+
 
 def _normalize_model(model: str) -> str:
     # Examples use "openai:gpt-5-mini".
@@ -64,6 +66,7 @@ def _maybe_run_async(result):
 
 
 def main() -> int:
+    inject_truststore_into_ssl()
     ap = argparse.ArgumentParser()
     ap.add_argument("--agent-id", required=True)
     ap.add_argument("--run-id", required=True)

@@ -13,6 +13,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from ursa.util.http import build_httpx_client
+
 # Reuse a small thread pool so callers can "fire-and-continue" with one line.
 _EXEC = ThreadPoolExecutor(max_workers=2, thread_name_prefix="logo-gen")
 
@@ -773,7 +775,10 @@ def generate_logo_sync(
         for k in ("api_key", "base_url", "organization"):
             if k in image_provider_kwargs and image_provider_kwargs[k]:
                 client_kwargs[k] = image_provider_kwargs[k]
-    client = OpenAI(**client_kwargs)
+    client = OpenAI(
+        http_client=build_httpx_client(),
+        **client_kwargs,
+    )
 
     final_size = _normalize_size(size, aspect, mode)
     # Scenes tend to look odd with transparent backgrounds; force opaque.

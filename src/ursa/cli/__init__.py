@@ -11,6 +11,7 @@ from ursa.cli.config import (
     deep_merge_dicts,
     dict_diff,
 )
+from ursa.util.http import inject_truststore_into_ssl
 
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
 
@@ -71,6 +72,7 @@ def resolve_config(cfg) -> UrsaConfig:
 
 
 def main(args=None):
+    inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
     ursa_config = resolve_config(cfg)
