@@ -91,6 +91,9 @@ otel = [
 dsi = [
     "dsi-workflow>=1.1.4",
 ]
+image = [
+    "pillow>=11.3.0,<12.0.0",
+]
 
 [build-system]
 requires = ["setuptools>=74.1,<80", "setuptools-git-versioning>=2.0,<3"]
