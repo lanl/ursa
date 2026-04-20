@@ -126,7 +126,7 @@ Let's do this using the URSA dashboard!
 
 ![sqlite_mcp](./images/sqlite_mcp.png)
 
-3. in the dashboard, goto Settings --> MCP Tools.  Fill in `sqlite_demo` for the `Server name` and enter the JSON text below for the server config.  Then `Save` and `Close` the Settings.
+3. in the dashboard, go to Settings --> MCP Tools.  Fill in `sqlite_demo` for the `Server name` and enter the JSON text below for the server config.  Then `Save` and `Close` the Settings.
 ```
 {
   "transport": "streamable_http",
