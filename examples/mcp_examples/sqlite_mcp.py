@@ -21,8 +21,6 @@ Notes:
 - The query tool is intentionally read-only and only allows SELECT / WITH queries.
 """
 
-from __future__ import annotations
-
 import re
 import sqlite3
 from pathlib import Path
