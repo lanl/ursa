@@ -13,7 +13,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from ursa.util.http import build_httpx_client
+from ursa.util.plan_execute_utils import (
+    resolve_model_choice,
+    sanitize_for_logging,
+)
 
 # Reuse a small thread pool so callers can "fire-and-continue" with one line.
 _EXEC = ThreadPoolExecutor(max_workers=2, thread_name_prefix="logo-gen")
@@ -480,6 +483,42 @@ def _pick_logo_constraints(aperture: float) -> str:
     return " ".join(chosen).strip()
 
 
+def _print_image_init_banner(
+    *,
+    provider: str,
+    model_name: str,
+    provider_extra: dict,
+    console: Optional[Console] = None,
+) -> None:
+    c = console or _DEFAULT_CONSOLE
+    safe_provider_extra = sanitize_for_logging(provider_extra or {})
+    c.print(
+        Panel.fit(
+            Text.from_markup(
+                f"[bold cyan]Image init[/]\n"
+                f"[bold]provider[/]: {provider}\n"
+                f"[bold]model[/]: {model_name}\n\n"
+                f"[bold]provider kwargs[/]: {safe_provider_extra}"
+            ),
+            border_style="cyan",
+        )
+    )
+
+
+def _resolve_image_model_choice(
+    model_choice: str, models_cfg: dict | None = None
+):
+    """
+    For image generation, bare model names like 'gpt-image-1-mini'
+    should default to the OpenAI provider.
+    """
+    if ":" not in model_choice:
+        model_choice = f"openai:{model_choice}"
+    return resolve_model_choice(
+        model_choice=model_choice, models_cfg=models_cfg or {}
+    )
+
+
 # ---------------------------
 # Prompt builders
 # ---------------------------
@@ -751,7 +790,7 @@ def generate_logo_sync(
     style_intensity: str = "overt",
     aperture: float = DEFAULT_APERTURE,
     console: Optional[Console] = None,
-    image_model_provider: str = "openai",
+    models_cfg: Optional[dict] = None,
     image_provider_kwargs: Optional[dict] = None,
 ) -> Path:
     """
@@ -769,16 +808,31 @@ def generate_logo_sync(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # this is how we'll pass through a vision model and provider/url/endpoint
-    client_kwargs = {}
-    if image_provider_kwargs:
-        # Only pass through safe/known kwargs
-        for k in ("api_key", "base_url", "organization"):
-            if k in image_provider_kwargs and image_provider_kwargs[k]:
-                client_kwargs[k] = image_provider_kwargs[k]
-    client = OpenAI(
-        http_client=build_httpx_client(),
-        **client_kwargs,
+    provider, pure_model, provider_extra = _resolve_image_model_choice(
+        model_choice=model,
+        models_cfg=models_cfg or {},
     )
+
+    client_kwargs = dict(provider_extra or {})
+    if image_provider_kwargs:
+        for k in ("api_key", "base_url", "organization"):
+            if image_provider_kwargs.get(k):
+                client_kwargs[k] = image_provider_kwargs[k]
+
+    _print_image_init_banner(
+        provider=provider,
+        model_name=pure_model,
+        provider_extra=client_kwargs,
+        console=console,
+    )
+
+    if provider != "openai":
+        raise ValueError(
+            f"Logo/image generation currently only supports OpenAI image models, got provider={provider!r}"
+        )
+
+    client = OpenAI(**client_kwargs)
+    model = pure_model
 
     final_size = _normalize_size(size, aspect, mode)
     # Scenes tend to look odd with transparent backgrounds; force opaque.
@@ -938,7 +992,7 @@ def kickoff_logo(
     out_dir: str | Path,
     filename: str | None = None,
     model: str = DEFAULT_IMAGE_MODEL,
-    size: str | None = None,  # allow None → computed from aspect/mode
+    size: str | None = None,
     background: str = "opaque",
     quality: str = "high",
     n: int = 4,
@@ -954,7 +1008,7 @@ def kickoff_logo(
     aperture: float = DEFAULT_APERTURE,
     console: Optional[Console] = None,
     image_model: Optional[str] = None,
-    image_model_provider: str = "openai",
+    models_cfg: Optional[dict] = None,
     image_provider_kwargs: Optional[dict] = None,
 ):
     _final_model = image_model or model
@@ -979,7 +1033,7 @@ def kickoff_logo(
             style_intensity=style_intensity,
             aperture=aperture,
             console=console,
-            image_model_provider=image_model_provider,
+            models_cfg=models_cfg,
             image_provider_kwargs=image_provider_kwargs,
         )
 
