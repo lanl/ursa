@@ -17,8 +17,6 @@ Then run this script from the same directory:
     python test_sqlite_mcp.py
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 
