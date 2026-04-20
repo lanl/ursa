@@ -16,7 +16,7 @@ def get_safety_prompt(query, safe_codes, created_files, prompt_level="default"):
         Explain why. Is this command safe to run: {query} 
         """
     elif prompt_level.lower() == "none" or prompt_level.lower() == "yolo":
-        return "This is a trusted agent who has been vetted carefully. We trust their actions."
+        return "This is a trusted agent who has been carefully vetted. We trust their actions."
     else:
         return f"""
                 Assume any of the following are safe:
