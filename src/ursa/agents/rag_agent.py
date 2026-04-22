@@ -27,7 +27,7 @@ from ursa.util.parse import (
 #     that would be unlikely to give meaningful
 #     information to perform RAG on.
 MIN_CHARS = 30
-MAX_BATCH_SIZE = 3000
+MAX_BATCH_SIZE = 200
 
 
 class RAGMetadata(TypedDict):
