@@ -1,11 +1,12 @@
+from collections.abc import Iterator
 from math import sqrt
 from pathlib import Path
-from typing import Iterator
+from types import SimpleNamespace
 
 import pytest
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ursa.agents import ExecutionAgent
 
@@ -66,6 +67,17 @@ def stub_execution_tools(monkeypatch):
 class ToolReadyFakeChatModel(GenericFakeChatModel):
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+class TaggedResponseFakeChatModel(GenericFakeChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return ToolBoundTaggedResponseFakeChatModel(
+            messages=_message_stream("tool-bound-response")
+        )
+
+
+class ToolBoundTaggedResponseFakeChatModel(GenericFakeChatModel):
+    pass
 
 
 def _message_stream(content: str) -> Iterator[AIMessage]:
@@ -138,17 +150,46 @@ async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
     tool_names = list(execution_agent.tools.keys())
     assert "fake_run_command" in tool_names
     assert "do_magic" in tool_names
-    ai_messages = [
-        message
-        for message in result["messages"]
-        if isinstance(message, AIMessage)
-    ]
-    assert ai_messages
-    assert isinstance(result["messages"][-1], AIMessage)
-    assert (
-        isinstance(execution_agent.workspace, Path)
-        and execution_agent.workspace.exists()
+
+
+def test_execution_agent_uses_unbound_model_for_summary_and_recap(
+    tmpdir: Path,
+):
+    execution_agent = ExecutionAgent(
+        llm=TaggedResponseFakeChatModel(messages=_message_stream("base-response")),
+        workspace=tmpdir,
+        tokens_before_summarize=1,
+        messages_to_keep=1,
     )
+    _ = execution_agent.compiled_graph
+
+    summarized_state, summarized = execution_agent._summarize_context(
+        {
+            "messages": [
+                SystemMessage(content="system"),
+                HumanMessage(content="x" * 200),
+                HumanMessage(content="keep me"),
+            ],
+            "symlinkdir": {},
+        }
+    )
+    assert summarized is True
+    assert summarized_state["messages"][1].content == "base-response"
+
+    execution_agent.tokens_before_summarize = 99999
+    recap_result = execution_agent.recap(
+        {
+            "messages": [SystemMessage(content="system"), HumanMessage(content="hi")],
+            "symlinkdir": {},
+        }
+    )
+    assert recap_result["messages"][1].content == "base-response"
+
+    query_result = execution_agent.query_executor(
+        {"messages": [HumanMessage(content="hi")], "symlinkdir": {}},
+        runtime=SimpleNamespace(context=execution_agent.context),
+    )
+    assert query_result["messages"].content == "tool-bound-response"
 
 
 def test_safe_codes_in_store(chat_model, tmpdir):

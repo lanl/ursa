@@ -220,6 +220,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.log_state = log_state
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
+        self.tool_llm = llm
 
     # Check message history length and summarize to shorten the token usage:
     def _summarize_context(self, state: ExecutionState) -> ExecutionState:
@@ -366,7 +367,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 4) Invoke the LLM with the prepared message sequence.
         try:
-            response = self.llm.invoke(
+            response = self.tool_llm.invoke(
                 messages, self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
@@ -471,9 +472,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
 
-        # Bind tools to llm and context summarizer
-
-        self.llm = self.llm.bind_tools(self.tools.values())
+        # Keep self.llm unbound for summary/recap calls. The executor loop uses a
+        # separate tool-bound model so provider-specific tool transcripts cannot
+        # leak into summarization history.
+        self.tool_llm = self.llm.bind_tools(self.tools.values())
 
         # Register nodes:
         # - "agent": LLM planning/execution step
