@@ -1,5 +1,7 @@
 import typer
 
+from ursa.util.http import inject_truststore_into_ssl
+
 app = typer.Typer(help="Ursa Dashboard Runner")
 
 
@@ -9,6 +11,7 @@ def main(
     port: int = typer.Option(8080, help="The port to bind to."),
 ):
     """Launch the Ursa Web Dashboard."""
+    inject_truststore_into_ssl()
     try:
         import uvicorn
 

@@ -826,6 +826,7 @@ def main(
         problem = getattr(config, "problem", "")
         project = getattr(config, "project", "run")
         symlinkdict = getattr(config, "symlink", {}) or None
+        models_cfg = getattr(config, "models", {}) or {}
 
         # sets up the workspace, run config json, etc.
         resolved_workspace = (
@@ -865,79 +866,80 @@ def main(
 
         # ---- One-time project logo kickoff (per workspace) -----------------
         meta = load_run_meta(workspace)
-        logo_cfg = getattr(cfg, "logo", {}) or {}
-        logo_enabled = bool(logo_cfg.get("enabled", True))
+        logo_cfg = getattr(config, "logo", {}) or {}
+        logo_enabled = bool(logo_cfg.get("enabled", False))
 
         if logo_enabled and not meta.get("logo_created"):
-            # knobs (you can keep reading from cfg, or hard-code)
-            scene_n = int(logo_cfg.get("scene_n", 2))
-            sticker_n = int(logo_cfg.get("sticker_n", 4))
+
+            def _logo_error(label: str, e: Exception):
+                console.print(
+                    Panel.fit(
+                        f"[bold red]{label}[/] {type(e).__name__}: {e!s}",
+                        border_style="red",
+                    )
+                )
+
+            scene_style = logo_cfg.get("scene", "random")
             stickers_enabled = bool(logo_cfg.get("stickers", True))
 
-            # IMPORTANT: to get 4 DIFFERENT scene styles, use random
-            scene_style = "random"
+            default_n = int(logo_cfg.get("n", 2))
+            scene_n = int(logo_cfg.get("scene_n", default_n))
+            sticker_n = int(logo_cfg.get("sticker_n", default_n))
 
-            # Optional: aperture to open/close prompt constraints (0..1)
+            raw_logo_model = logo_cfg.get("model", "gpt-image-1-mini")
             aperture = float(logo_cfg.get("aperture", 0.75))
 
             scene_dir = Path(workspace) / "logo_art" / "scenes"
             sticker_dir = Path(workspace) / "logo_art" / "stickers"
 
-            try:
-                _ = kickoff_logo(
+            kickoff_logo(
+                problem_text=problem,
+                workspace=workspace,
+                out_dir=scene_dir,
+                model=raw_logo_model,
+                quality="high",
+                n=scene_n,
+                style=scene_style,
+                mode="scene",
+                aspect="wide",
+                style_intensity="overt",
+                aperture=aperture,
+                console=console,
+                models_cfg=models_cfg,
+                on_done=lambda p: console.print(
+                    Panel.fit(
+                        f"[bold yellow]Project art saved:[/] {p}",
+                        border_style="yellow",
+                    )
+                ),
+                on_error=lambda e: _logo_error("Art generation failed:", e),
+            )
+
+            if stickers_enabled:
+                kickoff_logo(
                     problem_text=problem,
                     workspace=workspace,
-                    out_dir=scene_dir,
+                    out_dir=sticker_dir,
+                    model=raw_logo_model,
+                    size="1024x1024",
                     quality="high",
-                    n=scene_n,  # e.g. 4
-                    style=scene_style,  # MUST be "random" for multi-style scenes
-                    mode="scene",
-                    aspect="wide",
-                    style_intensity="overt",
+                    n=sticker_n,
+                    style="sticker",
                     aperture=aperture,
                     console=console,
+                    models_cfg=models_cfg,
                     on_done=lambda p: console.print(
                         Panel.fit(
-                            f"[bold yellow]Project art saved:[/] {p}",
+                            f"[bold yellow]Project sticker art saved:[/] {p}",
                             border_style="yellow",
                         )
                     ),
-                    on_error=lambda e: console.print(
-                        Panel.fit(
-                            f"[bold red]Art generation failed:[/] {e}",
-                            border_style="red",
-                        )
+                    on_error=lambda e: _logo_error(
+                        "Art sticker generation failed:", e
                     ),
                 )
 
-                if stickers_enabled:
-                    _ = kickoff_logo(
-                        problem_text=problem,
-                        workspace=workspace,
-                        out_dir=sticker_dir,
-                        size="1024x1024",
-                        quality="high",
-                        n=sticker_n,
-                        style="sticker",
-                        aperture=aperture,
-                        console=console,
-                        on_done=lambda p: console.print(
-                            Panel.fit(
-                                f"[bold yellow]Project sticker art saved:[/] {p}",
-                                border_style="yellow",
-                            )
-                        ),
-                        on_error=lambda e: console.print(
-                            Panel.fit(
-                                f"[bold red]Art sticker generation failed:[/] {e}",
-                                border_style="red",
-                            )
-                        ),
-                    )
-            finally:
-                save_run_meta(workspace, logo_created=True)
-
-        models_cfg = getattr(config, "models", {}) or {}
+            save_run_meta(workspace, logo_created=True)
 
         # gets the agents we'll use for this example including their checkpointer handles and database
         thread_id, planner_tuple, executor_tuple = setup_agents(

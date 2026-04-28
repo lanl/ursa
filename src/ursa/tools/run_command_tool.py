@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from typing import TypedDict
@@ -7,7 +8,7 @@ from langchain_core.tools import tool
 from rich import get_console
 
 from ursa.agents.base import AgentContext
-from ursa.prompt_library.execution_prompts import (
+from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
 from ursa.util.types import AsciiStr
@@ -53,9 +54,12 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     else:
         safe_codes = []
 
+    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
     llm = runtime.context.llm
     safety_result = llm.with_structured_output(SafetyAssessment).invoke(
-        get_safety_prompt(query, safe_codes, edited_files)
+        get_safety_prompt(
+            query, safe_codes, edited_files, prompt_level=prompt_level
+        )
     )
 
     if not safety_result["is_safe"]:

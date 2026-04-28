@@ -196,7 +196,29 @@ def test_model_config_kwargs_includes_extra():
     assert kwargs["model"] == "openai:gpt-5"
     assert kwargs["max_completion_tokens"] == 1024
     assert "http_client" in kwargs  # ssl_verify False triggers custom client
+    assert "http_async_client" in kwargs
     assert kwargs["timeout"] == 30
+
+
+def test_model_config_openai_uses_truststore_client():
+    cfg = ModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
+
+    kwargs = cfg.kwargs
+
+    assert kwargs["model"] == "openai:gpt-5"
+    assert "http_client" in kwargs
+    assert "http_async_client" in kwargs
+
+
+def test_model_config_ollama_uses_client_kwargs():
+    cfg = ModelConfig(model="ollama:nomic-embed-text:latest")
+
+    kwargs = cfg.kwargs
+
+    assert kwargs["model"] == "ollama:nomic-embed-text:latest"
+    assert "http_client" not in kwargs
+    assert "http_async_client" not in kwargs
+    assert kwargs["client_kwargs"]["verify"] is not False
 
 
 def test_api_key_env(monkeypatch, tmp_path):

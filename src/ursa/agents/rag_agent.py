@@ -27,6 +27,7 @@ from ursa.util.parse import (
 #     that would be unlikely to give meaningful
 #     information to perform RAG on.
 MIN_CHARS = 30
+MAX_BATCH_SIZE = 200
 
 
 class RAGMetadata(TypedDict):
@@ -223,9 +224,16 @@ class RAGAgent(BaseAgent[RAGState]):
         if state["doc_texts"]:
             print("[RAG Agent] Ingesting Documents Into RAG Database....")
             with self._vs_lock:
-                self.vectorstore.add_documents(batch_docs, ids=batch_ids)
-                for id in batch_ids:
-                    self._mark_paper_ingested(id)
+                for i in range(0, len(batch_docs), MAX_BATCH_SIZE):
+                    chunk_docs = batch_docs[i : i + MAX_BATCH_SIZE]
+                    chunk_ids = batch_ids[i : i + MAX_BATCH_SIZE]
+
+                    # Ingest the specific chunk
+                    self.vectorstore.add_documents(chunk_docs, ids=chunk_ids)
+
+                    # Mark these specific papers as ingested
+                    for id in chunk_ids:
+                        self._mark_paper_ingested(id)
 
         return state
 

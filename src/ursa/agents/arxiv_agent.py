@@ -18,11 +18,7 @@ from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
-
-try:
-    from openai import OpenAI
-except Exception:
-    pass
+from ursa.util.http import build_httpx_client
 
 
 class PaperMetadata(TypedDict):
@@ -39,12 +35,14 @@ class PaperState(TypedDict, total=False):
 
 
 def describe_image(image: Image.Image) -> str:
-    if "OpenAI" not in globals():
+    try:
+        from openai import OpenAI
+    except ImportError:
         print(
             "Vision transformer for summarizing images currently only implemented for OpenAI API."
         )
         return ""
-    client = OpenAI()
+    client = OpenAI(http_client=build_httpx_client())
 
     buffered = BytesIO()
     image.save(buffered, format="PNG")

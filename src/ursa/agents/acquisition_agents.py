@@ -23,6 +23,7 @@ from PIL import Image
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
+from ursa.util.http import build_httpx_client
 from ursa.util.parse import (
     _derive_filename_from_cd_or_url,
     _download_stream_to,
@@ -113,7 +114,7 @@ def _download(url: str, dest_path: str, timeout: int = 20) -> str:
 def describe_image(image: Image.Image) -> str:
     if OpenAI is None:
         return ""
-    client = OpenAI()
+    client = OpenAI(http_client=build_httpx_client())
     buf = BytesIO()
     image.save(buf, format="PNG")
     import base64

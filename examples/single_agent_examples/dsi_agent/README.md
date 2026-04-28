@@ -3,7 +3,7 @@ The dsi_agent example allows data from the [Data Science Infrastructure Project 
 
 A simple example can be run as follows:
 ```bash
-python examples/single_agent_examples/dsi_agent/agent_test.py
+python examples/single_agent_examples/dsi_agent/agent_example.py
 ```
 
 To use the jupyter-notebook, do the following: 

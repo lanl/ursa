@@ -4,8 +4,11 @@ import argparse
 import os
 import sys
 
+from ursa.util.http import inject_truststore_into_ssl
+
 
 def main(argv: list[str] | None = None) -> int:
+    inject_truststore_into_ssl()
     ap = argparse.ArgumentParser(prog="ursa-dashboard")
     ap.add_argument(
         "--host", default=os.environ.get("URSA_DASHBOARD_HOST", "127.0.0.1")

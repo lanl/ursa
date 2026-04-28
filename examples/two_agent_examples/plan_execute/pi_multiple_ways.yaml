@@ -90,7 +90,7 @@ logo:
   scene: random     # e.g., noir, sci-fi, horror, fantasy, etc. ("random" by default)
   stickers: true    # also make sticker variants
   n: 2              # how many variants for each batch
-  model: openai:gpt-image-1 # warning: most 'vision' models do not support image *GENERATION*, this one does
+  model: openai:gpt-image-1-mini # warning: most 'vision' models do not support image *GENERATION*, this one does
 
 
 problem: |

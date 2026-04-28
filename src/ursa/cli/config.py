@@ -7,11 +7,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
 
-import httpx
 import yaml
 from jsonargparse import Namespace
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
 
+from ursa.util.http import (
+    build_httpx_async_client,
+    build_httpx_client,
+    httpx_verify_value,
+)
 from ursa.util.mcp import ServerParameters, _serialize_server_config
 
 LoggingLevel = Literal[
@@ -38,14 +42,39 @@ class ModelConfig(BaseModel):
     ssl_verify: bool = True
     """Flag for verifying SSL certs. during API access"""
 
+    def _provider(self) -> str:
+        return self.model.split(":", 1)[0]
+
+    @staticmethod
+    def _merge_provider_kwargs(
+        kwargs: dict[str, Any], key: str, extra: dict[str, Any]
+    ) -> None:
+        current = kwargs.get(key)
+        if current is None:
+            kwargs[key] = extra
+            return
+        if isinstance(current, dict):
+            kwargs[key] = {**extra, **current}
+
     @property
     def kwargs(self) -> dict:
         """Return a dict suitable for init_chat_model/init_embedding_model
         Removes parameters set to `None`
         """
         kwargs = {k: v for k, v in self.model_dump().items() if v is not None}
-        if kwargs.pop("ssl_verify", None) is False:
-            kwargs["http_client"] = httpx.Client(verify=False)
+        ssl_verify = kwargs.pop("ssl_verify", True)
+        provider = self._provider()
+        if provider in {"openai", "azure_openai"}:
+            kwargs["http_client"] = build_httpx_client(verify=ssl_verify)
+            kwargs["http_async_client"] = build_httpx_async_client(
+                verify=ssl_verify
+            )
+        elif provider == "ollama":
+            self._merge_provider_kwargs(
+                kwargs,
+                "client_kwargs",
+                {"verify": httpx_verify_value(verify=ssl_verify)},
+            )
         if api_key_env := kwargs.pop("api_key_env", None):
             kwargs["api_key"] = environ.get(api_key_env, None)
         return kwargs
