@@ -93,6 +93,12 @@ class UrsaConfig(BaseModel):
     )
     """Directory to store URSA's output."""
 
+    name: str | None = None
+    """Name of the agent for persistence."""
+
+    group: str | None = "default"
+    """Security group for the agent to control information flow"""
+
     thread_id: str | None = None
     """ Thread ID for persistence """
 

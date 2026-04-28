@@ -71,8 +71,14 @@ class AgentContext:
     workspace: Path
     """ Workspace path for the agent """
 
+    name: str
+    """ Name for persisting the agent """
+
+    group: str
+    """ Name for the group for the agent to operate in. Controls data and endpoint availability"""
+
     den: Path
-    """ Path for the consolidated experiences of the agent """
+    """ Path to the persistent storage for the agent"""
 
     tool_character_limit: int = 30000
     """ Suggested limit on tool call responses """
@@ -163,7 +169,8 @@ class BaseAgent(Generic[TState], ABC):
         self,
         llm: BaseChatModel,
         workspace: Optional[Path] = None,
-        den: Optional[Path | str] = None,
+        name: Optional[str] = None,
+        group: Optional[str] = "default",
         checkpointer: Optional[BaseCheckpointSaver] = None,
         persist_agent: Optional[bool] = False,
         enable_metrics: bool = True,
@@ -185,23 +192,34 @@ class BaseAgent(Generic[TState], ABC):
         """
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or "ursa_workspace")
+        self.name = name
+        self.group = group
+        if not (Path.home() / ".cache/ursa_agents" / group).exists() and group != "default":
+            raise ValueError((f"Group '{group}' does not exist. "
+                             f"Please use `ursa create-group {group} <group_config_file>` to create"
+                             ))
         set_checkpointer = True if checkpointer else False
+        set_name = True if name else False
         self.checkpointer = checkpointer
+        persist_agent = (name is not None) or set_checkpointer
+        den_name = str(self.workspace)
         if persist_agent:
             if set_checkpointer:
-                print("[WARNING]: Both checkpointer and den persistence set. Using checkpointer, but only use one in the future.")
-                self.den = self.workspace
+                if set_name:
+                    print((
+                        "[WARNING]: Both checkpointer and den persistence set."
+                        " Using checkpointer, but only use one in the future."
+                    ))
+                self.den = self.workspace                
             else:
-                if den:
-                    den_name = den
-                else:
-                    den_name = uuid4().hex
-                    print(f"[Agent Created]: {den_name}")
-                self.den = Path.home() / ".cache/ursa_agents" / Path(den_name)
+                den_name = Path(group) / name
+                self.den = Path.home() / ".cache/ursa_agents" / den_name
                 self.checkpointer = Checkpointer.from_workspace(self.den)
+                print(f"[Agent Created]: {den_name}")
         else:
+            # Keep current behavior if the user is not persisting.
             self.den = self.workspace
-        self.thread_id = thread_id or uuid4().hex
+        self.thread_id = thread_id or den_name
         self.telemetry = Telemetry(
             enable=enable_metrics,
             output_dir=self.den.joinpath(metrics_dir),
@@ -212,14 +230,14 @@ class BaseAgent(Generic[TState], ABC):
         self.den.mkdir(exist_ok=True, parents=True)
 
     @property
-    def name(self) -> str:
+    def agent_type(self) -> str:
         """Agent name."""
         return self.__class__.__name__
 
     @property
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
-        return AgentContext(llm=self.llm, workspace=self.workspace, den=self.den)
+        return AgentContext(llm=self.llm, workspace=self.workspace, name=self.name, group=self.group, den=self.den)
 
     def add_node(
         self,
@@ -861,6 +879,7 @@ class BaseAgent(Generic[TState], ABC):
         # Convert input to a runnable if it's not already one
         r = coerce_to_runnable(runnable_or_fn, name=name, trace=True)
         # Apply node configuration and return the configured runnable
+        print(f"DEBUG: {name} - tags: {extra_tags}\nFn: {runnable_or_fn}")
         return r.with_config(**self._node_cfg(name, *extra_tags))
 
     def _wrap_node(self, fn_or_runnable, name: str, *extra_tags: str):

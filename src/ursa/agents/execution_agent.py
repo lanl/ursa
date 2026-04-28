@@ -198,6 +198,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         safe_codes: Optional[list[str]] = None,
+        use_web: bool = True,
         **kwargs,
     ):
         default_tools = [
@@ -206,10 +207,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             edit_code,
             read_file,
             read_image_tool,
+        ]
+        if use_web:
+            default_tools.extend([
             run_web_search,
             run_osti_search,
-            run_arxiv_search,
-        ]
+            run_arxiv_search
+        ])
         if extra_tools:
             default_tools.extend(extra_tools)
 

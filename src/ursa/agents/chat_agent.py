@@ -1,11 +1,20 @@
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END
 from langgraph.graph.message import add_messages
 
+from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 
-from .base import BaseAgent
+from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools.read_image_tool import read_image_tool
+from ursa.tools.search_tools import (
+    run_arxiv_search,
+    run_osti_search,
+    run_web_search,
+)
 
 
 class ChatState(TypedDict):
@@ -13,7 +22,7 @@ class ChatState(TypedDict):
     thread_id: str
 
 
-class ChatAgent(BaseAgent[ChatState]):
+class BasicChatAgent(BaseAgent[ChatState]):
     """Chat Agent"""
 
     state_type = ChatState
@@ -38,3 +47,59 @@ class ChatAgent(BaseAgent[ChatState]):
         self.add_node(self._response_node)
         self.graph.set_entry_point("_response_node")
         self.graph.set_finish_point("_response_node")
+
+def should_continue(state: ChatState) -> Literal["finish", "continue"]:
+    """Return 'finish' if no tool calls in the last message, else 'continue'.
+
+    Args:
+        state: The current execution state containing messages.
+
+    Returns:
+        A literal "finish" if the last message has no tool calls,
+        otherwise "continue".
+    """
+    messages = state["messages"]
+    last_message = messages[-1]
+    # If there is no tool call, then we finish
+    if not last_message.tool_calls:
+        return "finish"
+    # Otherwise if there is, we continue
+    else:
+        return "continue"
+
+
+class ChatAgent(AgentWithTools, BasicChatAgent):
+    """Chat Agent"""
+    state_type = ChatState
+
+    def __init__(
+            self,
+            llm: BaseChatModel,
+            use_web: bool = False,
+            **kwargs,
+        ):
+        default_tools = [
+            run_command,
+            write_code,
+            edit_code,
+            read_file,
+            read_image_tool
+        ]
+        if use_web:
+            default_tools.extend([
+            run_web_search,
+            run_osti_search,
+            run_arxiv_search
+            ])
+        super().__init__(llm=llm, tools=default_tools, **kwargs)
+
+    def _build_graph(self):
+        self.add_node(self._response_node, "respond")
+        self.add_node(self.tool_node, "tool_node")
+        self.graph.set_entry_point("respond")
+        self.graph.add_conditional_edges(
+            "respond",
+            self._wrap_cond(should_continue, "should_continue", "Chat"),
+            {"continue": "tool_node", "finish": END},
+        )
+        self.graph.add_edge("tool_node", "respond")
