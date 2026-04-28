@@ -23,7 +23,7 @@ class ChatState(TypedDict):
 
 
 class BasicChatAgent(BaseAgent[ChatState]):
-    """Chat Agent"""
+    """Basic Chat Agent"""
 
     state_type = ChatState
 
@@ -94,12 +94,18 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
         super().__init__(llm=llm, tools=default_tools, **kwargs)
 
     def _build_graph(self):
+        # Bind tools to llm and context summarizer
+        self.llm = self.llm.bind_tools(self.tools.values())
+        
         self.add_node(self._response_node, "respond")
         self.add_node(self.tool_node, "tool_node")
         self.graph.set_entry_point("respond")
         self.graph.add_conditional_edges(
             "respond",
-            self._wrap_cond(should_continue, "should_continue", "Chat"),
-            {"continue": "tool_node", "finish": END},
+            self._wrap_cond(should_continue, "should_continue"),
+            {
+                "continue": "tool_node", 
+                "finish": END
+            },
         )
         self.graph.add_edge("tool_node", "respond")

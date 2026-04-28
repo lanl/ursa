@@ -5,6 +5,7 @@ import platform
 import threading
 from cmd import Cmd
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 import aiosqlite
@@ -112,6 +113,9 @@ class HITL:
         agent_overrides = dict(config.agent_config or {})
         memory_overrides = agent_overrides.pop("memory", None)
 
+        self.agent_name = self.config.agent_name
+        self.group = self.config.group
+
         self.model: BaseChatModel = init_chat_model(
             **self.config.llm_model.kwargs
         )
@@ -182,9 +186,8 @@ class HITL:
         self.last_agent_result = None
 
     async def _get_checkpointer(
-        self, name: str = "checkpoint"
-    ) -> AsyncSqliteSaver:
-        checkpoint_path = (self.config.workspace / name).with_suffix(".db")
+        self, checkpoint_path: Path) -> AsyncSqliteSaver:
+        checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(checkpoint_path))
         return AsyncSqliteSaver(conn)
@@ -194,14 +197,17 @@ class HITL:
 
         # Lazily instantiate the agents
         if agent._agent is None:
-            checkpointer = await self._get_checkpointer(name)
             await agent.instantiate(
                 llm=self.model,
                 workspace=self.workspace,
-                checkpointer=checkpointer,
+                agent_name=self.agent_name,
+                group=self.group,
                 mcp_client=self.mcp_client,
                 thread_id=f"{self.thread_id}",
             )
+            # Replacing the sync checkpointer with an async one for the hitl
+            async_checkpointer = await self._get_checkpointer(agent._agent.den)
+            agent._agent.checkpointer = async_checkpointer
 
         assert agent._agent is not None
         return agent
@@ -331,7 +337,7 @@ class UrsaRepl(Cmd):
     def run_agent(self, name: str, prompt: str | None = None):
         if not prompt:
             prompt = input(f"{name}: ")
-        with self.console.status("Generating response"):
+        with self.console.status("Generating response\n"):
             result = self.hitl.run_agent(name, prompt)
             result = self.ursa_loop.submit(result)
 

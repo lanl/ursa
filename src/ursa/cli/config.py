@@ -93,7 +93,7 @@ class UrsaConfig(BaseModel):
     )
     """Directory to store URSA's output."""
 
-    name: str | None = None
+    agent_name: str | None = None
     """Name of the agent for persistence."""
 
     group: str | None = "default"

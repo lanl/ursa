@@ -71,7 +71,7 @@ class AgentContext:
     workspace: Path
     """ Workspace path for the agent """
 
-    name: str
+    agent_name: str
     """ Name for persisting the agent """
 
     group: str
@@ -169,10 +169,9 @@ class BaseAgent(Generic[TState], ABC):
         self,
         llm: BaseChatModel,
         workspace: Optional[Path] = None,
-        name: Optional[str] = None,
+        agent_name: Optional[str] = None,
         group: Optional[str] = "default",
         checkpointer: Optional[BaseCheckpointSaver] = None,
-        persist_agent: Optional[bool] = False,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
@@ -192,16 +191,16 @@ class BaseAgent(Generic[TState], ABC):
         """
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or "ursa_workspace")
-        self.name = name
+        self.agent_name = agent_name
         self.group = group
         if not (Path.home() / ".cache/ursa_agents" / group).exists() and group != "default":
             raise ValueError((f"Group '{group}' does not exist. "
                              f"Please use `ursa create-group {group} <group_config_file>` to create"
                              ))
         set_checkpointer = True if checkpointer else False
-        set_name = True if name else False
+        set_name = True if agent_name else False
         self.checkpointer = checkpointer
-        persist_agent = (name is not None) or set_checkpointer
+        persist_agent = (agent_name is not None) or set_checkpointer
         den_name = str(self.workspace)
         if persist_agent:
             if set_checkpointer:
@@ -212,10 +211,11 @@ class BaseAgent(Generic[TState], ABC):
                     ))
                 self.den = self.workspace                
             else:
-                den_name = Path(group) / name
+                den_name = Path(group) / agent_name
                 self.den = Path.home() / ".cache/ursa_agents" / den_name
+                if not self.den.exists():
+                    print(f"[Agent Created]: {den_name}")
                 self.checkpointer = Checkpointer.from_workspace(self.den)
-                print(f"[Agent Created]: {den_name}")
         else:
             # Keep current behavior if the user is not persisting.
             self.den = self.workspace
@@ -230,14 +230,14 @@ class BaseAgent(Generic[TState], ABC):
         self.den.mkdir(exist_ok=True, parents=True)
 
     @property
-    def agent_type(self) -> str:
+    def name(self) -> str:
         """Agent name."""
         return self.__class__.__name__
 
     @property
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
-        return AgentContext(llm=self.llm, workspace=self.workspace, name=self.name, group=self.group, den=self.den)
+        return AgentContext(llm=self.llm, workspace=self.workspace, agent_name=self.agent_name, group=self.group, den=self.den)
 
     def add_node(
         self,
@@ -879,7 +879,6 @@ class BaseAgent(Generic[TState], ABC):
         # Convert input to a runnable if it's not already one
         r = coerce_to_runnable(runnable_or_fn, name=name, trace=True)
         # Apply node configuration and return the configured runnable
-        print(f"DEBUG: {name} - tags: {extra_tags}\nFn: {runnable_or_fn}")
         return r.with_config(**self._node_cfg(name, *extra_tags))
 
     def _wrap_node(self, fn_or_runnable, name: str, *extra_tags: str):

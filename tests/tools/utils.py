@@ -22,6 +22,9 @@ def make_runtime(
         state={},
         context=AgentContext(
             llm=llm,
+            agent_name=None,
+            group="default",
+            den=None,
             workspace=workspace,
             tool_character_limit=limit,
         ),
