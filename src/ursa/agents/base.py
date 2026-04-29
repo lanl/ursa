@@ -55,6 +55,7 @@ from langgraph.store.sqlite import SqliteStore
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
+from ursa.security import enforce_model_group_policy
 from ursa.util import Checkpointer
 
 InputLike = str | Mapping[str, Any]
@@ -193,6 +194,7 @@ class BaseAgent(Generic[TState], ABC):
         self.workspace = Path(workspace or "ursa_workspace")
         self.agent_name = agent_name
         self.group = group
+        enforce_model_group_policy(self.llm, self.group)
         if not (Path.home() / ".cache/ursa_agents" / group).exists() and group != "default":
             raise ValueError((f"Group '{group}' does not exist. "
                              f"Please use `ursa create-group {group} <group_config_file>` to create"

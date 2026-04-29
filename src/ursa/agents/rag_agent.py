@@ -15,6 +15,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
+from ursa.security import enforce_model_group_policy
 from ursa.util.parse import (
     OFFICE_EXTENSIONS,
     SPECIAL_TEXT_FILENAMES,
@@ -74,6 +75,7 @@ class RAGAgent(BaseAgent[RAGState]):
         self.embedding = embedding or init_embeddings(
             "openai:text-embedding-3-small"
         )
+        enforce_model_group_policy(self.embedding, self.group)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.database_path = database_path

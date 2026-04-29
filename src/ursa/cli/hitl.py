@@ -24,6 +24,7 @@ from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
+from ursa.security import enforce_group_base_url_policy, enforce_model_group_policy
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
 from ursa.util.memory_logger import AgentMemory
@@ -116,14 +117,18 @@ class HITL:
         self.agent_name = self.config.agent_name
         self.group = self.config.group
 
+        enforce_group_base_url_policy(self.config.llm_model.base_url, self.group)
         self.model: BaseChatModel = init_chat_model(
             **self.config.llm_model.kwargs
         )
-        self.embedding = (
-            init_embeddings(**self.config.emb_model.kwargs)
-            if self.config.emb_model
-            else None
-        )
+        enforce_model_group_policy(self.model, self.group)
+        self.embedding = None
+        if self.config.emb_model:
+            enforce_group_base_url_policy(
+                self.config.emb_model.base_url, self.group
+            )
+            self.embedding = init_embeddings(**self.config.emb_model.kwargs)
+            enforce_model_group_policy(self.embedding, self.group)
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
         self.memory = (
             AgentMemory(
