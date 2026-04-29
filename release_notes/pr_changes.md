@@ -11,16 +11,6 @@
   - If it doesnt, have error checking 
 - Tools for writing/reading self documentation for context offloading
 
-## Settable agent "group" for information control
-- The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
-  and not be able to be loaded from persistence in another group. The goal is to ensure that the user can 
-  persist agents but not have to worry about accidentially using an agent that has information in one context 
-  (like Triad proprietary data or CUI) and pointing it an endpoint that it shouldnt (like the public OpenAI endpoint)
-- `group_name` above is the name of the group. Need to make this user settable and users should use intuitive names
-
-### TODO:
-- Implement this at all.
-
 ## Chat has tools now
 - The efforts to do ChatWithTools naturally just became giving the basic Chat functionality tools and renaming the
   ChatAgent as BasicChatAgent. The goal here is that the ChatAgent becomes the natural way to interact downstream with
@@ -41,6 +31,17 @@
 
 
 # Things to implement in this PR still:
+
+
+## Settable agent "group" for information control
+- The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
+  and not be able to be loaded from persistence in another group. The goal is to ensure that the user can 
+  persist agents but not have to worry about accidentially using an agent that has information in one context 
+  (like Triad proprietary data or CUI) and pointing it an endpoint that it shouldnt (like the public OpenAI endpoint)
+- `group_name` above is the name of the group. Need to make this user settable and users should use intuitive names
+
+### TODO:
+- Implement this at all.
 
 
 ## RAG integration:

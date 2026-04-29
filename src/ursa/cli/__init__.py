@@ -1,15 +1,31 @@
 import logging
 from pathlib import Path
 
+import yaml
 from jsonargparse import ArgumentParser, set_parsing_settings
 
 from ursa import __version__
+from ursa.cli.agent_management import (
+    add_agent_management_subcommands,
+    copy_agent,
+    list_agents,
+    save_agent,
+    show_agent,
+)
 from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
     deep_merge_dicts,
     dict_diff,
+)
+from ursa.cli.groups import (
+    add_group_subcommands,
+    create_group,
+    delete_group,
+    list_groups,
+    show_group,
+    update_group,
 )
 from ursa.util.http import inject_truststore_into_ssl
 
@@ -51,6 +67,12 @@ def build_parser() -> ArgumentParser:
         dest="subcommand",
     )
 
+    # Agent group management commands
+    add_group_subcommands(subparsers)
+
+    # Agent management commands
+    add_agent_management_subcommands(subparsers)
+
     return parser
 
 
@@ -75,16 +97,56 @@ def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
-    ursa_config = resolve_config(cfg)
 
     subcommand = cfg.get("subcommand", None)
-    cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
-
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
 
-    if cfg["print_config"]:
-        import yaml
+    match subcommand:
+        case "list-groups":
+            list_groups()
+            return
+        case "create-group":
+            cmd_config = cfg.get(subcommand, None)
+            create_group(cmd_config.group_name, cmd_config.config_file)
+            return
+        case "delete-group":
+            cmd_config = cfg.get(subcommand, None)
+            delete_group(cmd_config.group_name)
+            return
+        case "show-group":
+            cmd_config = cfg.get(subcommand, None)
+            show_group(cmd_config.group_name)
+            return
+        case "update-group":
+            cmd_config = cfg.get(subcommand, None)
+            update_group(cmd_config.group_name, cmd_config.config_file)
+            return
+        case "list-agents":
+            cmd_config = cfg.get(subcommand, None)
+            list_agents(cmd_config.group)
+            return
+        case "show-agent":
+            cmd_config = cfg.get(subcommand, None)
+            show_agent(cmd_config.name, cmd_config.group)
+            return
+        case "save-agent":
+            cmd_config = cfg.get(subcommand, None)
+            save_agent(cmd_config.name, cmd_config.group)
+            return
+        case "copy-agent":
+            cmd_config = cfg.get(subcommand, None)
+            copy_agent(
+                cmd_config.name,
+                cmd_config.source_agent,
+                cmd_config.group,
+                cmd_config.from_group,
+            )
+            return
 
+    ursa_config = resolve_config(cfg)
+    cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
+
+    if cfg["print_config"]:
         print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))
         exit(0)
 
