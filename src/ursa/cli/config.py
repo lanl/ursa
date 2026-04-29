@@ -84,6 +84,7 @@ class UrsaConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         validate_assignment=True,
+        populate_by_name=True,
     )
 
     _temp_workspace: TemporaryDirectory | None = PrivateAttr(default=None)

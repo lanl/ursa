@@ -55,7 +55,17 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print the Ursa configuration and exit",
     )
-    parser.add_class_arguments(UrsaConfig, help="URSA configuration")
+    parser.add_class_arguments(
+        UrsaConfig,
+        help="URSA configuration",
+        skip={"agent_name"},
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Name of the agent for persistence",
+    )
 
     # Run Ursa as an MCP Server
     mcp_parser = ArgumentParser()
@@ -78,7 +88,19 @@ def build_parser() -> ArgumentParser:
 
 def resolve_config(cfg) -> UrsaConfig:
     """Produce the effective UrsaConfig from the parsed arguments."""
-    cli_config = UrsaConfig.from_namespace(cfg)
+    cfg_dict = cfg.as_dict()
+    # Change `name` to `agent_name` for consistency with agent
+    #    arguments. 
+    # TODO: Longer term, we should make our agents use `name`
+    #    as the argument for the class, but this is a problem
+    #    with the current class property `name` that is used by
+    #    the CLI
+    if cfg_dict.get("name") is not None:
+        cfg_dict["agent_name"] = cfg_dict.pop("name")
+    else:
+        cfg_dict.pop("name", None)
+
+    cli_config = UrsaConfig.model_validate(cfg_dict, extra="ignore")
     config_path = getattr(cfg, "config", None)
     if not config_path:
         return cli_config

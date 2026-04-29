@@ -11,7 +11,7 @@ URSA currently exposes two primary CLI entry points:
 - `ursa mcp-server`  
   Launches URSA agents as tools in an MCP server.
 
-The CLI also supports configuration options such as `--config`, `--log-level`, and `--print-config`, along with newer commands for organizing agents into groups and managing saved agent directories.
+The CLI also supports configuration options such as `--config`, `--log-level`, `--print-config`, and `--name`, along with newer commands for organizing agents into groups and managing saved agent directories.
 
 ## Basic usage
 
@@ -30,6 +30,14 @@ ursa --config my_config.yaml
 ```
 
 This loads configuration from a YAML or JSON file.
+
+### Start with a workspace and agent name
+
+```bash
+ursa --workspace docs --name testbot
+```
+
+Use `--name` to set the user-facing name of the agent. Internally, URSA still uses its existing `agent_name` configuration field, but the CLI now consistently exposes `--name`.
 
 ### Set log level
 
@@ -69,6 +77,19 @@ ursa mcp-server --transport stdio
 ```
 
 Additional MCP server options include host, port, transport, and log level.
+
+## Naming convention
+
+The CLI now consistently uses `--name` for user-facing agent naming.
+
+Examples:
+
+```bash
+ursa --name testbot
+ursa show-agent --name testbot --group default
+ursa save-agent --name testbot --group default
+ursa copy-agent --name testbot_new --from testbot
+```
 
 ## Agent groups
 
@@ -238,16 +259,24 @@ ursa create-group work allowed_urls.yaml
 ursa list-agents --group work
 ```
 
-### 4. Save an existing agent
+### 4. Start URSA with a named agent
 
 ```bash
-ursa save-agent --name testbot --group default
+ursa --workspace . --name testbot --group work
 ```
 
-### 5. Copy the saved state into a new working agent
+then do work with the agent through prompting.
+
+### 5. Save an existing agent
 
 ```bash
-ursa copy-agent --name testbot_experiment --from testbot_20260429_101530 --from-group default --group work
+ursa save-agent --name testbot --group work
+```
+
+### 6. Copy the saved state into a new working agent
+
+```bash
+ursa copy-agent --name testbot_experiment --from testbot_20260429_101530 --from-group work --group work
 ```
 
 ## Tips
@@ -264,6 +293,7 @@ ursa copy-agent --name testbot_experiment --from testbot_20260429_101530 --from-
 ```bash
 ursa
 ursa --config my_config.yaml
+ursa --workspace . --name testbot
 ursa --print-config
 ursa mcp-server
 ```

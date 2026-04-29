@@ -2,14 +2,26 @@
 
 ## Separated Agent history/presistence from workspace
 - User can set an agent's name which will point to a directory in `~/.cache/ursa_agents/<group_name>/<agent_name>`
+  - Agent checkpointing and "module" like loading of checkpointed agents with data/time logging
 - Future use of that agent name will load the history of the agent and allow it to read in contextual information 
   like skills that it saves.
 
 ### TODO:
-- Agent checkpointing and "module" like loading of checkpointed agents with data/time logging
+- ~~Agent checkpointing and "module" like loading of checkpointed agents with data/time logging~~
 - Make sure that if you try to give an atypical agent an existing name, that it will still work
   - If it doesnt, have error checking 
 - Tools for writing/reading self documentation for context offloading
+
+## Settable agent "group" for information control
+- The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
+  and not be able to be loaded from persistence in another group. The goal is to ensure that the user can 
+  persist agents but not have to worry about accidentially using an agent that has information in one context 
+  (like Triad proprietary data or CUI) and pointing it an endpoint that it shouldnt (like the public OpenAI endpoint)
+- `group_name` above is the name of the group. Need to make this user settable and users should use intuitive names
+  - Implemented the baseline interaction of this with the CLI. 
+
+### TODO:
+- Propogate this to the white-list checking. 
 
 ## Chat has tools now
 - The efforts to do ChatWithTools naturally just became giving the basic Chat functionality tools and renaming the
@@ -18,7 +30,6 @@
 
 ### TODO:
 - Test
-- ??
 
 ## Added a use_web argument to the execution agent and chat agent
 - Added a flag so a user can easily turn on and off using web-based search tools. 
@@ -31,18 +42,6 @@
 
 
 # Things to implement in this PR still:
-
-
-## Settable agent "group" for information control
-- The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
-  and not be able to be loaded from persistence in another group. The goal is to ensure that the user can 
-  persist agents but not have to worry about accidentially using an agent that has information in one context 
-  (like Triad proprietary data or CUI) and pointing it an endpoint that it shouldnt (like the public OpenAI endpoint)
-- `group_name` above is the name of the group. Need to make this user settable and users should use intuitive names
-
-### TODO:
-- Implement this at all.
-
 
 ## RAG integration:
 - Persistent agents should be able to use RAG on their history in some way
