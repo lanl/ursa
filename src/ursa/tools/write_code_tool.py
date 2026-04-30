@@ -90,7 +90,7 @@ def _write_code_file(
     if (store := runtime.store) is not None:
         store.put(
             ("workspace", "file_edit"),
-            filename,
+            str(filename),
             {
                 "modified": time.time(),
                 "tool_call_id": runtime.tool_call_id,
@@ -309,7 +309,7 @@ def edit_code(
     if (store := runtime.store) is not None:
         store.put(
             ("workspace", "file_edit"),
-            filename,
+            str(filename),
             {
                 "modified": time.time(),
                 "tool_call_id": runtime.tool_call_id,

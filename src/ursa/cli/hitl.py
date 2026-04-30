@@ -106,7 +106,8 @@ def get_base_url(model: BaseChatModel) -> str | None:
 class HITL:
     def __init__(self, config: UrsaConfig):
         self.config = config
-        self.thread_id = config.thread_id or "ursa_cli"
+        agent_tid = "/".join([config.group, config.agent_name])
+        self.thread_id = config.thread_id or agent_tid or "ursa_cli"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
