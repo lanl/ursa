@@ -8,9 +8,9 @@
 
 ### TODO:
 - ~~Agent checkpointing and "module" like loading of checkpointed agents with data/time logging~~
-- Make sure that if you try to give an atypical agent an existing name, that it will still work
-  - If it doesnt, have error checking 
 - Tools for writing/reading self documentation for context offloading
+- Implement interface for web dashboard
+- Ensure this did not break the YAML workflow
 
 ## Settable agent "group" for information control
 - The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
@@ -21,7 +21,10 @@
   - Implemented the baseline interaction of this with the CLI. 
 
 ### TODO:
-- Propogate this to the white-list checking. 
+- ~~Propogate this to the white-list checking.~~
+- Test for python scripting interface
+- Implement for plan_execute_from_yaml
+- Test for dashboard
 
 ## Chat has tools now
 - The efforts to do ChatWithTools naturally just became giving the basic Chat functionality tools and renaming the
