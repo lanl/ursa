@@ -69,10 +69,10 @@ class AgentHITL:
         return self._agent.__doc__
 
     async def __call__(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         last_agent_result: str | None = None,
-        last_agent: Any | None = None
+        last_agent: Any | None = None,
     ) -> str:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
@@ -183,7 +183,7 @@ class HITL:
             )
 
         self.last_agent_result = None
-        self.last_agent        = None
+        self.last_agent = None
 
     async def _get_checkpointer(
         self, name: str = "checkpoint"
@@ -214,9 +214,9 @@ class HITL:
         assert name in self.agents, f"Unknown agent {name}"
         agent = await self.get_agent(name)
         msg = await agent(
-            prompt, 
-            last_agent_result=self.last_agent_result, 
-            last_agent=self.last_agent
+            prompt,
+            last_agent_result=self.last_agent_result,
+            last_agent=self.last_agent,
         )
         assert isinstance(msg, str)
         self.last_agent_result = msg
