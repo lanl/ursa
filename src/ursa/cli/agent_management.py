@@ -152,7 +152,7 @@ def save_agent(agent_name: str, group_name: str = "default") -> None:
         raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    checkpoint_name = f"{validate_agent_name(agent_name)}_{timestamp}"
+    checkpoint_name = f"{validate_agent_name(agent_name)}.{timestamp}"
     dst = src.parent / checkpoint_name
     _copy_directory(src, dst)
     print(f"Saved agent checkpoint: {checkpoint_name}")

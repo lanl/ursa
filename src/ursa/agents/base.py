@@ -221,7 +221,7 @@ class BaseAgent(Generic[TState], ABC):
         else:
             # Keep current behavior if the user is not persisting.
             self.den = self.workspace
-        self.thread_id = thread_id or den_name
+        self.thread_id = thread_id or "ursa"
         self.telemetry = Telemetry(
             enable=enable_metrics,
             output_dir=self.den.joinpath(metrics_dir),

@@ -11,6 +11,7 @@
 - Tools for writing/reading self documentation for context offloading
 - Implement interface for web dashboard
 - Ensure this did not break the YAML workflow
+- ~~Make sure the tool outputs are in the "den" and not the "workspace"~~
 
 ## Settable agent "group" for information control
 - The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
@@ -32,7 +33,8 @@
   a persisted agent or to combine agents together.
 
 ### TODO:
-- Test
+- Add summarization and dangling tool fixes to agents generally. These will be needed more broadly for stable running
+- Fix the weird issues with user messages not starting conversations, multiple system messages, etc.
 
 ## Added a use_web argument to the execution agent and chat agent
 - Added a flag so a user can easily turn on and off using web-based search tools. 
@@ -43,15 +45,15 @@
   and because until it is settable in the CLI/Dashboard, I want it to still be True there.
 
 
-
 # Things to implement in this PR still:
 
-## RAG integration:
-- Persistent agents should be able to use RAG on their history in some way
-  - Maybe theres a way to resuscitate the old AgentMemory structure here
-- Easier to couple in RAG as a tool 
-  - Maybe be able to give the agents a list of paths to data to RAG?
-  - There is probably a clever way to do this
+## URSA and URSA dev bots
+- Once the above is working, making an URSA bot and URSA dev bot that can be packaged
+  with URSA in the public repo, both as examples of these sorts of persistent agents
+  but also to share the ability to have these sort of bots shared for everyone working on
+  or with URSA.
+
+# Things to implement in a future PR:
 
 # Choosing the right agents:
 - A RAGbearian:
@@ -61,11 +63,12 @@
   - A RAG agent that gets access to each persisted agent's memory in a group and can help the user select which persisted agent
     would be the best for a given task.
 
-# URSA and URSA dev bots
-- Once the above is working, making an URSA bot and URSA dev bot that can be packaged
-  with URSA in the public repo, both as examples of these sorts of persistent agents
-  but also to share the ability to have these sort of bots shared for everyone working on
-  or with URSA.
+## RAG integration:
+- Persistent agents should be able to use RAG on their history in some way
+  - Maybe theres a way to resuscitate the old AgentMemory structure here
+- Easier to couple in RAG as a tool 
+  - Maybe be able to give the agents a list of paths to data to RAG?
+  - There is probably a clever way to do this
 
 ## Agent interaction environments
 - Maybe this moves out to a separate one but seems useful here.
