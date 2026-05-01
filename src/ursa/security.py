@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 import yaml
 from langchain.chat_models import BaseChatModel
 
-from ursa.cli.groups import AGENT_GROUPS_DIR
+from ursa.cli.groups import AGENT_GROUPS_DIR, GROUP_CONFIG_FILENAME
 
 
 class GroupBaseURLPolicyError(ValueError):
@@ -48,13 +48,12 @@ def _load_group_allowed_base_urls(group: str) -> list[str] | None:
             f"Group '{group}' does not exist. Please create it before use."
         )
 
-    yaml_files = sorted(group_dir.glob("*.yaml")) + sorted(group_dir.glob("*.yml"))
-    if not yaml_files:
+    config_file = group_dir / GROUP_CONFIG_FILENAME
+    if not config_file.exists() or not config_file.is_file():
         raise GroupBaseURLPolicyError(
-            f"Group '{group}' is missing a YAML config with 'allowed_base_urls'."
+            f"Group '{group}' is missing required config file '{GROUP_CONFIG_FILENAME}'."
         )
 
-    config_file = yaml_files[0]
     with open(config_file, "r", encoding="utf-8") as fid:
         data = yaml.safe_load(fid)
 
@@ -116,12 +115,14 @@ def enforce_group_base_url_policy(base_url: str | None, group: str | None) -> No
     if is_base_url_allowed(normalized, effective_group):
         return
 
+    allowed = _load_group_allowed_base_urls(effective_group) or []
+
     if not normalized:
         raise GroupBaseURLPolicyError(
-            f"Group '{effective_group}' requires an explicit model base_url that matches its whitelist."
+            f"Group '{effective_group}' requires an explicit model base_url that matches its whitelist. "
+            f"\nAllowed base URLs:\n {', '.join(allowed)}"
         )
 
-    allowed = _load_group_allowed_base_urls(effective_group) or []
     raise GroupBaseURLPolicyError(
         f"Base URL '{normalized}' is not allowed for group '{effective_group}'. "
         f"Allowed base URLs: {', '.join(allowed)}"

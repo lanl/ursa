@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 AGENT_GROUPS_DIR = Path("~/.cache/ursa_agents").expanduser()
+GROUP_CONFIG_FILENAME = "group.yaml"
 
 
 def add_group_subcommands(subparsers) -> None:
@@ -116,10 +117,10 @@ def create_group(group_name: str, config_file: Path) -> None:
         raise FileExistsError(f"Group already exists: {group_name}")
 
     group_dir.mkdir()
-    destination = group_dir / config_file.name
+    destination = group_dir / GROUP_CONFIG_FILENAME
     shutil.copy2(config_file, destination)
     print(f"Created group '{group_name}' at {group_dir}")
-    print(f"Copied config to {destination}")
+    print(f"Stored group config at {destination}")
 
 
 def delete_group(group_name: str) -> None:
@@ -170,6 +171,6 @@ def update_group(group_name: str, config_file: Path) -> None:
     if not group_dir.exists() or not group_dir.is_dir():
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
-    destination = group_dir / config_file.name
+    destination = group_dir / GROUP_CONFIG_FILENAME
     shutil.copy2(config_file, destination)
-    print(f"Updated group '{group_name}' with config {destination}")
+    print(f"Updated group '{group_name}' config at {destination}")
