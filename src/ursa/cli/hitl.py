@@ -71,15 +71,18 @@ class AgentHITL:
         return self._agent.__doc__
 
     async def __call__(
-        self, prompt: str, last_agent_result: str | None = None
+        self,
+        prompt: str,
+        last_agent_result: str | None = None,
+        last_agent: Any | None = None,
     ) -> str:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
 
         # Inject the previous agent's response into the query
-        if last_agent_result is not None:
+        if (last_agent_result is not None) and (last_agent != agent):
             prompt = "\n".join([
-                f"The last agent output was: {last_agent_result}",
+                f"The last agent output was: {last_agent_result}\n\n",
                 f"The user stated: {prompt}",
             ])
 
@@ -190,6 +193,7 @@ class HITL:
             )
 
         self.last_agent_result = None
+        self.last_agent = None
 
     async def _get_checkpointer(
         self, checkpoint_path: Path) -> AsyncSqliteSaver:
@@ -221,9 +225,14 @@ class HITL:
     async def run_agent(self, name: str, prompt: str) -> str:
         assert name in self.agents, f"Unknown agent {name}"
         agent = await self.get_agent(name)
-        msg = await agent(prompt, last_agent_result=self.last_agent_result)
+        msg = await agent(
+            prompt,
+            last_agent_result=self.last_agent_result,
+            last_agent=self.last_agent,
+        )
         assert isinstance(msg, str)
         self.last_agent_result = msg
+        self.last_agent = agent._agent
         return msg
 
     def as_mcp_server(self, **kwargs):
