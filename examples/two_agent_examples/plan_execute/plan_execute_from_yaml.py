@@ -774,11 +774,20 @@ def run_substeps(
             )
 
             # Check if the graph has a the symlinkdir information already.
-            #     if not, set from the yaml. If so, it will inherit from the 
+            #     if not, set from the yaml. If so, it will inherit from the
             #     checkpoint.
-            config = {"configurable": {"thread_id": executor.thread_id, "recursion_limit": 999_999}}
-            if executor.compiled_graph.get_state(config).values.get("symlinkdir", None):
-                agent_input = {"messages": [HumanMessage(content=sub_exec_prompt)]}
+            config = {
+                "configurable": {
+                    "thread_id": executor.thread_id,
+                    "recursion_limit": 999_999,
+                }
+            }
+            if executor.compiled_graph.get_state(config).values.get(
+                "symlinkdir", None
+            ):
+                agent_input = {
+                    "messages": [HumanMessage(content=sub_exec_prompt)]
+                }
             else:
                 agent_input = {
                     "messages": [HumanMessage(content=sub_exec_prompt)],
