@@ -8,10 +8,11 @@
 
 ### TODO:
 - ~~Agent checkpointing and "module" like loading of checkpointed agents with data/time logging~~
-- Tools for writing/reading self documentation for context offloading
+- ~~Tools for writing/reading self documentation for context offloading~~
 - Implement interface for web dashboard
 - Ensure this did not break the YAML workflow
 - ~~Make sure the tool outputs are in the "den" and not the "workspace"~~
+- ~~Build a share/import agent capability to be able to share stored agents.~~
 
 ## Settable agent "group" for information control
 - The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 

@@ -61,6 +61,12 @@ from ursa.prompt_library.execution_prompts import (
     recap_prompt,
 )
 from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools import (
+    list_experiences,
+    write_experience,
+    read_experience,
+    edit_experience,
+)
 from ursa.tools.read_image_tool import read_image_tool
 from ursa.tools.search_tools import (
     run_arxiv_search,
@@ -207,6 +213,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             edit_code,
             read_file,
             read_image_tool,
+            read_experience,
+            write_experience,
+            edit_experience,
+            list_experiences,
         ]
         if use_web:
             default_tools.extend([

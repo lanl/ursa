@@ -1,5 +1,7 @@
 import re
 import shutil
+import tarfile
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -82,6 +84,51 @@ def add_agent_management_subcommands(subparsers) -> None:
         dest="subcommand",
     )
 
+    share_agent_parser = ArgumentParser()
+    share_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
+    share_agent_parser.add_argument(
+        "--group",
+        default="default",
+        type=str,
+        help="Group containing the agent",
+    )
+    share_agent_parser.add_argument(
+        "--no-checkpoint",
+        action="store_true",
+        help="Share only the experiences subdirectory instead of the full agent directory",
+    )
+    subparsers.add_subcommand(
+        "share-agent",
+        share_agent_parser,
+        help="Create a shareable tar.gz archive of an agent in the current working directory",
+        dest="subcommand",
+    )
+
+    import_agent_parser = ArgumentParser()
+    import_agent_parser.add_argument(
+        "archive_file",
+        type=Path,
+        help="Path to the shared agent tar.gz archive",
+    )
+    import_agent_parser.add_argument(
+        "--name",
+        default=None,
+        type=str,
+        help="Name to assign the imported agent; defaults to the shared name",
+    )
+    import_agent_parser.add_argument(
+        "--group",
+        default="default",
+        type=str,
+        help="Destination group for the imported agent",
+    )
+    subparsers.add_subcommand(
+        "import-agent",
+        import_agent_parser,
+        help="Import a shared agent archive into a group",
+        dest="subcommand",
+    )
+
 
 def ensure_group_dir(group_name: str) -> Path:
     if not group_name.strip():
@@ -121,6 +168,21 @@ def _copy_directory(src: Path, dst: Path) -> None:
     if dst.exists():
         raise FileExistsError(f"Destination already exists: {dst}")
     shutil.copytree(src, dst)
+
+
+def _share_archive_name(group_name: str, agent_name: str, no_checkpoint: bool) -> str:
+    suffix = "experiences" if no_checkpoint else "full"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"ursa_agent_{group_name}_{agent_name}_{suffix}_{timestamp}.tar.gz"
+
+
+def _safe_extract_tar(tar: tarfile.TarFile, path: Path) -> None:
+    destination = path.resolve()
+    for member in tar.getmembers():
+        member_path = (destination / member.name).resolve()
+        if not member_path.is_relative_to(destination):
+            raise ValueError("Archive contains unsafe paths")
+    tar.extractall(destination)
 
 
 def list_agents(group_name: str = "default") -> None:
@@ -177,4 +239,80 @@ def copy_agent(
     _copy_directory(src, dst)
     print(f"Copied agent '{source_agent_name}' to '{new_agent_name}'")
     print(f"Source: {src}")
+    print(f"Destination: {dst}")
+
+
+def share_agent(
+    agent_name: str,
+    group_name: str = "default",
+    no_checkpoint: bool = False,
+) -> None:
+    src = agent_dir(group_name, agent_name)
+    if not src.exists() or not src.is_dir():
+        raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
+
+    archive_name = _share_archive_name(group_name, validate_agent_name(agent_name), no_checkpoint)
+    archive_path = Path.cwd() / archive_name
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_root = Path(tmpdir)
+        export_root = tmp_root / validate_agent_name(agent_name)
+        export_root.mkdir(parents=True, exist_ok=True)
+
+        if no_checkpoint:
+            experiences_src = src / "experiences"
+            if experiences_src.exists() and experiences_src.is_dir():
+                shutil.copytree(experiences_src, export_root / "experiences")
+            manifest = export_root / "SHARED_AGENT_INFO.txt"
+            manifest.write_text(
+                "This archive contains only the agent experiences directory.\n"
+                f"Original agent: {agent_name}\n"
+                f"Original group: {group_name}\n",
+                encoding="utf-8",
+            )
+        else:
+            for item in src.iterdir():
+                dst = export_root / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dst)
+                else:
+                    shutil.copy2(item, dst)
+
+        with tarfile.open(archive_path, "w:gz") as tar:
+            tar.add(export_root, arcname=export_root.name)
+
+    print(f"Created shared agent archive: {archive_path}")
+
+
+def import_agent(
+    archive_file: Path,
+    group_name: str = "default",
+    agent_name: str | None = None,
+) -> None:
+    archive_file = archive_file.expanduser().resolve()
+    if not archive_file.exists() or not archive_file.is_file():
+        raise FileNotFoundError(f"Archive file not found: {archive_file}")
+
+    dst_group = ensure_group_dir(group_name)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_root = Path(tmpdir)
+        with tarfile.open(archive_file, "r:gz") as tar:
+            _safe_extract_tar(tar, tmp_root)
+
+        extracted_dirs = [p for p in tmp_root.iterdir() if p.is_dir()]
+        if len(extracted_dirs) != 1:
+            raise ValueError("Shared agent archive must contain exactly one top-level directory")
+
+        src_root = extracted_dirs[0]
+        inferred_name = validate_agent_name(src_root.name)
+        final_name = validate_agent_name(agent_name) if agent_name else inferred_name
+        dst = dst_group / final_name
+        if dst.exists():
+            raise FileExistsError(f"Destination agent already exists: {final_name} in group {group_name}")
+
+        shutil.copytree(src_root, dst)
+
+    print(f"Imported shared agent '{final_name}' into group '{group_name}'")
+    print(f"Source archive: {archive_file}")
     print(f"Destination: {dst}")

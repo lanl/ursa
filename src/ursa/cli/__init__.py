@@ -8,8 +8,10 @@ from ursa import __version__
 from ursa.cli.agent_management import (
     add_agent_management_subcommands,
     copy_agent,
+    import_agent,
     list_agents,
     save_agent,
+    share_agent,
     show_agent,
 )
 from ursa.cli.config import (
@@ -90,7 +92,7 @@ def resolve_config(cfg) -> UrsaConfig:
     """Produce the effective UrsaConfig from the parsed arguments."""
     cfg_dict = cfg.as_dict()
     # Change `name` to `agent_name` for consistency with agent
-    #    arguments. 
+    #    arguments.
     # TODO: Longer term, we should make our agents use `name`
     #    as the argument for the class, but this is a problem
     #    with the current class property `name` that is used by
@@ -163,6 +165,14 @@ def main(args=None):
                 cmd_config.group,
                 cmd_config.from_group,
             )
+            return
+        case "share-agent":
+            cmd_config = cfg.get(subcommand, None)
+            share_agent(cmd_config.name, cmd_config.group, cmd_config.no_checkpoint)
+            return
+        case "import-agent":
+            cmd_config = cfg.get(subcommand, None)
+            import_agent(cmd_config.archive_file, cmd_config.group, cmd_config.name)
             return
 
     ursa_config = resolve_config(cfg)
