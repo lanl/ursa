@@ -96,7 +96,8 @@ class ErrorResponse(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
-    agent_id: str
+    agent_id: str | None = None
+    agent_name: str | None = None
     title: str | None = None
 
 
@@ -106,6 +107,7 @@ class SessionPatchRequest(BaseModel):
 
 class SessionMessageRequest(BaseModel):
     text: str
+    agent_id: str | None = None
     # Optional per-message overrides (advanced)
     params: dict[str, Any] = Field(default_factory=dict)
     agent_init: dict[str, Any] = Field(default_factory=dict)
@@ -119,11 +121,14 @@ class SessionMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
     text: str
     run_id: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
 
 
 class SessionRecord(BaseModel):
     session_id: str
     agent_id: str
+    agent_name: str | None = None
     title: str
     created_at: str
     updated_at: str
@@ -150,7 +155,7 @@ class SessionMessageResponse(BaseModel):
 
 class SessionWorkspaceListResponse(BaseModel):
     session_id: str
-    agent_id: str
+    agent_id: str | None = None
     files: list[dict[str, Any]]
 
 

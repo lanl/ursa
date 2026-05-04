@@ -41,17 +41,23 @@ def session_paths(workspace_root: Path, session_id: str) -> SessionPaths:
 
 
 def create_session(
-    workspace_root: Path, *, agent_id: str, title: str | None = None
+    workspace_root: Path,
+    *,
+    agent_id: str,
+    agent_name: str | None = None,
+    title: str | None = None,
 ) -> dict[str, Any]:
     session_id = new_ulid()
     paths = session_paths(workspace_root, session_id)
     paths.workspace_dir.mkdir(parents=True, exist_ok=True)
 
     now = utc_now()
+    resolved_agent_name = str(agent_name or "").strip() or None
     rec: dict[str, Any] = {
         "session_id": session_id,
         "agent_id": agent_id,
-        "title": title or f"{agent_id} session",
+        "agent_name": resolved_agent_name,
+        "title": title or (f"{resolved_agent_name}" if resolved_agent_name else f"{agent_id} session"),
         "created_at": now,
         "updated_at": now,
         "active_run_id": None,
@@ -127,6 +133,8 @@ def append_message(
     text: str,
     run_id: str | None = None,
     message_id: str | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     paths = session_paths(workspace_root, session_id)
     msg = {
@@ -135,6 +143,8 @@ def append_message(
         "role": role,
         "text": text,
         "run_id": run_id,
+        "agent_id": agent_id,
+        "agent_name": agent_name,
     }
     append_jsonl(paths.messages_path, msg)
     update_session(workspace_root, session_id, {})
@@ -187,6 +197,9 @@ def build_prompt_from_messages(
             if role == "user"
             else ("Assistant" if role == "assistant" else "System")
         )
+        agent_id = str(m.get("agent_id") or "").strip()
+        if agent_id:
+            prefix = f"{prefix}[{agent_id}]"
         lines.append(f"{prefix}: {txt}")
 
     lines.append(f"User: {new_user_text}")

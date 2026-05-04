@@ -109,9 +109,9 @@ def main() -> int:
             llm_cfg.get("model") or ""
         ).strip().lower() in {"none", "disabled"}
         llm = None if llm_disabled else _init_llm(llm_cfg)
-        # Ensure deterministic run id threading.
+        # Ensure consistent cross-session threading.
         agent_init = dict(agent_init)
-        agent_init.setdefault("thread_id", args.run_id)
+        agent_init["thread_id"] = "ursa"
         agent_init.setdefault("enable_metrics", True)
 
         adapter = entry.build_adapter(llm, agent_init)

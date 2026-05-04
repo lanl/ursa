@@ -26,10 +26,16 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("URSA_DASHBOARD_WORKSPACE_ROOT"),
         help="Workspace root directory (overrides URSA_DASHBOARD_WORKSPACE_ROOT)",
     )
+    ap.add_argument(
+        "--group",
+        default=os.environ.get("URSA_DASHBOARD_GROUP", "default"),
+        help="Agent group to use from ~/.cache/ursa_agents/<group>",
+    )
     args = ap.parse_args(argv)
 
     if args.workspace:
         os.environ["URSA_DASHBOARD_WORKSPACE_ROOT"] = args.workspace
+    os.environ["URSA_DASHBOARD_GROUP"] = str(args.group or "default")
 
     try:
         import uvicorn  # type: ignore
