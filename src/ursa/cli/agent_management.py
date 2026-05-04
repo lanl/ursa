@@ -41,6 +41,21 @@ def add_agent_management_subcommands(subparsers) -> None:
         dest="subcommand",
     )
 
+    delete_agent_parser = ArgumentParser()
+    delete_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
+    delete_agent_parser.add_argument(
+        "--group",
+        default="default",
+        type=str,
+        help="Group containing the agent",
+    )
+    subparsers.add_subcommand(
+        "delete-agent",
+        delete_agent_parser,
+        help="Delete an agent from a group",
+        dest="subcommand",
+    )
+
     save_agent_parser = ArgumentParser()
     save_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
     save_agent_parser.add_argument(
@@ -206,6 +221,16 @@ def show_agent(agent_name: str, group_name: str = "default") -> None:
         for entry in entries:
             kind = "dir" if entry.is_dir() else "file"
             print(f"  - [{kind}] {entry.name}")
+
+
+def delete_agent(agent_name: str, group_name: str = "default") -> None:
+    path = agent_dir(group_name, agent_name)
+    if not path.exists() or not path.is_dir():
+        raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
+
+    shutil.rmtree(path)
+    print(f"Deleted agent '{agent_name}' from group '{group_name}'")
+    print(f"Path: {path}")
 
 
 def save_agent(agent_name: str, group_name: str = "default") -> None:

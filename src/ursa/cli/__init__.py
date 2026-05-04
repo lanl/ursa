@@ -8,6 +8,7 @@ from ursa import __version__
 from ursa.cli.agent_management import (
     add_agent_management_subcommands,
     copy_agent,
+    delete_agent,
     import_agent,
     list_agents,
     save_agent,
@@ -152,6 +153,10 @@ def main(args=None):
         case "show-agent":
             cmd_config = cfg.get(subcommand, None)
             show_agent(cmd_config.name, cmd_config.group)
+            return
+        case "delete-agent":
+            cmd_config = cfg.get(subcommand, None)
+            delete_agent(cmd_config.name, cmd_config.group)
             return
         case "save-agent":
             cmd_config = cfg.get(subcommand, None)
