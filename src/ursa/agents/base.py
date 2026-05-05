@@ -39,7 +39,7 @@ from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
 from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import (
@@ -55,6 +55,7 @@ from langgraph.store.sqlite import SqliteStore
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
+from ursa.util.events import AgentEvents
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
@@ -198,6 +199,10 @@ class BaseAgent(Generic[TState], ABC):
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
         return AgentContext(llm=self.llm, workspace=self.workspace)
+
+    def events(self, config: RunnableConfig | None = None) -> AgentEvents:
+        """Return a helper for emitting structured agent progress events."""
+        return AgentEvents(agent=self.name, config=config)
 
     def add_node(
         self,
