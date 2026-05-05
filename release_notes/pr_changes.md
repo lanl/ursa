@@ -9,10 +9,11 @@
 ### TODO:
 - ~~Agent checkpointing and "module" like loading of checkpointed agents with data/time logging~~
 - ~~Tools for writing/reading self documentation for context offloading~~
-- Implement interface for web dashboard
+- ~~Implement interface for web dashboard~~
 - Ensure this did not break the YAML workflow
 - ~~Make sure the tool outputs are in the "den" and not the "workspace"~~
 - ~~Build a share/import agent capability to be able to share stored agents.~~
+- There needs to be something for handling the case where a user wants to have two sessions going with the same persistent agent. Right now, their checkpoint writes may get in the way of each other, leading to a bad checkpoint file or at the very least, a messy, disjointed history.
 
 ## Settable agent "group" for information control
 - The user can set the "group" for the agents. Agents in a particular group will have whitelisted endpoints 
@@ -21,12 +22,14 @@
   (like Triad proprietary data or CUI) and pointing it an endpoint that it shouldnt (like the public OpenAI endpoint)
 - `group_name` above is the name of the group. Need to make this user settable and users should use intuitive names
   - Implemented the baseline interaction of this with the CLI. 
+- Tested for dashboard. Might be useful to make this check happen 
 
 ### TODO:
 - ~~Propogate this to the white-list checking.~~
 - Test for python scripting interface
 - Implement for plan_execute_from_yaml
-- Test for dashboard
+- Tested for dashboard - might be useful to make this check happen at launch instead of when the user tries to send a message. 
+
 
 ## Chat has tools now
 - The efforts to do ChatWithTools naturally just became giving the basic Chat functionality tools and renaming the

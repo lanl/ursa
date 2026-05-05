@@ -93,6 +93,7 @@ from ursa.cli.agent_management import (
     save_agent as cli_save_agent,
     validate_agent_name,
 )
+from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
 
 
 def create_app() -> FastAPI:
@@ -150,7 +151,14 @@ def create_app() -> FastAPI:
                 "URSA_DASHBOARD_MODE=remote requires URSA_DASHBOARD_TOKEN"
             )
         await rm.start()
-        settings_store.load()
+        settings = settings_store.load()
+        try:
+            enforce_group_base_url_policy(
+                (settings.llm.base_url if getattr(settings, "llm", None) else None),
+                dashboard_group,
+            )
+        except GroupBaseURLPolicyError as e:
+            raise RuntimeError(str(e)) from e
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
@@ -255,9 +263,8 @@ def create_app() -> FastAPI:
         agent_name = str(req.agent_name or "").strip() or None
         if agent_name is not None:
             validate_agent_name(agent_name)
-            path = AGENT_GROUPS_DIR / dashboard_group / agent_name
-            if not path.exists() or not path.is_dir():
-                raise HTTPException(status_code=404, detail="Unknown agent_name")
+            # New named agents are allowed. If the directory does not yet exist,
+            # the underlying agent class will create persistent state on first use.
 
         agent_id = str(req.agent_id or "").strip() or "chat_agent"
         if agent_id not in REGISTRY or (
@@ -2485,7 +2492,7 @@ def create_app() -> FastAPI:
     form.innerHTML = `
       <div class="small muted" style="margin-bottom:8px">New session in group: ${escHtml(state.dashboardGroup || 'default')}</div>
       <button class="btn primary" id="createUnnamedSessionBtn" type="button" style="width:100%">Start New Session</button>
-      <div class="muted small" style="margin-top:8px">Starts a new unnamed session. You can choose agent type from the chat panel.</div>
+      <div class="muted small" style="margin-top:8px">Start an unnamed session or create a new named agent session.</div>
     `;
     wrap.appendChild(form);
 
@@ -2494,7 +2501,7 @@ def create_app() -> FastAPI:
     existing.style.padding = '12px';
     const items = (state.agentNames || []);
     existing.innerHTML = `
-      <div class="small muted" style="margin-bottom:8px">Continue with an agent by name</div>
+      <div style="margin-bottom:8px; font-size:1rem; font-weight:600;">Continue with an agent by name</div>
       <input id="agentSearchInput" placeholder="Type an agent name to search..." style="width:100%; margin-bottom:8px" />
       <div id="agentSearchResults"></div>
     `;
@@ -2549,7 +2556,19 @@ def create_app() -> FastAPI:
     const createBtn = $('#createUnnamedSessionBtn');
     if (createBtn) {
       createBtn.onclick = async () => {
-        await startSession('', '');
+        const makeNamed = confirm('Press OK to create a new named agent session. Press Cancel for an unnamed session.');
+        if (!makeNamed) {
+          await startSession('', '');
+          return;
+        }
+        const name = prompt('Enter the new agent name');
+        if (name === null) return;
+        const trimmed = String(name || '').trim();
+        if (!trimmed) {
+          alert('Agent name cannot be empty.');
+          return;
+        }
+        await startSession('', trimmed);
       };
     }
   }
