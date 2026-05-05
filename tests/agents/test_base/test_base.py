@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Annotated, TypedDict
 
 import pytest
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 
 # LangChain core bits
@@ -88,6 +89,29 @@ class Agent(BaseAgent):
         self.add_node(self._run_impl, "run_impl")
         self.graph.set_entry_point("run_impl")
         self.graph.set_finish_point("run_impl")
+
+
+class EventAgent(Agent):
+    def _run_impl(self, state: SpecState, config=None):
+        self.events(config).emit("Drafting plan", stage="generate")
+        return {"messages": [AIMessage(content="done")]}
+
+
+class RecordingAsyncHandler(AsyncCallbackHandler):
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    async def on_custom_event(
+        self,
+        name: str,
+        data,
+        *,
+        run_id,
+        tags=None,
+        metadata=None,
+        **kwargs,
+    ) -> None:
+        self.events.append((name, data))
 
 
 @pytest.fixture
@@ -219,8 +243,32 @@ def test_base_agent_provisions_sqlite_store(tmpdir: Path):
     assert item is not None
     assert item.value["value"] == "ok"
 
-    if hasattr(store, "conn"):
-        store.conn.close()
+
+@pytest.mark.asyncio
+async def test_ainvoke_merges_callback_config(tmpdir: Path):
+    agent = EventAgent(
+        llm=TinyCountingModel(),
+        workspace=tmpdir,
+        enable_metrics=False,
+    )
+    handler = RecordingAsyncHandler()
+
+    result = await agent.ainvoke(
+        "hello",
+        config={"callbacks": [handler]},
+    )
+
+    assert result["messages"][-1].text == "done"
+    assert handler.events == [
+        (
+            "ursa_agent_progress",
+            {
+                "agent": "EventAgent",
+                "stage": "generate",
+                "message": "Drafting plan",
+            },
+        )
+    ]
 
 
 async def test_chat_interface(tmpdir: Path):

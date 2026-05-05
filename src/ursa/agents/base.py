@@ -318,6 +318,7 @@ class BaseAgent(Generic[TState], ABC):
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
+        invoke_config = dict(config or {})
 
         try:
             # Start telemetry tracking for the top-level invocation
@@ -357,7 +358,7 @@ class BaseAgent(Generic[TState], ABC):
 
             # Delegate to the subclass implementation with the normalized inputs
             # and any control parameters
-            return invoke_method(normalized, config=config, **kwargs)
+            return invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
             # Clean up the invocation depth tracking
@@ -756,7 +757,8 @@ class BaseAgent(Generic[TState], ABC):
 
             # Normalize inputs and delegate to the actual streaming implementation
             normalized = self._normalize_inputs(inputs)
-            yield from self._stream(normalized, config=config, **kwargs)
+            stream_config = dict(config or {})
+            yield from self._stream(normalized, **stream_config, **kwargs)
 
         finally:
             # Decrement invocation depth when exiting

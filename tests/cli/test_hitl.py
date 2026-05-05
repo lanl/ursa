@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import re
@@ -13,8 +14,10 @@ from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
 from ursa.agents.base import AgentWithTools
+from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import ModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, UrsaRepl
+from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 
 
@@ -165,6 +168,132 @@ async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     agent = await hitl.get_agent("chat")
     assert agent._agent is not None
     assert agent._agent.thread_id == "custom-thread"
+
+
+@pytest.mark.asyncio
+async def test_hitl_run_agent_forwards_callbacks(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    config = UrsaConfig(
+        workspace=tmp_path / "global-workspace",
+        emb_model=ModelConfig(model="fake-embedding"),
+    )
+    hitl = HITL(config)
+    captured = {}
+    previous_agent = object()
+    current_agent = object()
+
+    class DummyAgent:
+        _agent = current_agent
+
+        async def __call__(
+            self,
+            prompt: str,
+            last_agent_result: str | None = None,
+            last_agent=None,
+            callbacks=None,
+        ) -> str:
+            captured["prompt"] = prompt
+            captured["last_agent_result"] = last_agent_result
+            captured["last_agent"] = last_agent
+            captured["callbacks"] = callbacks
+            return "agent result"
+
+    async def fake_get_agent(name: str):
+        assert name == "chat"
+        return DummyAgent()
+
+    hitl.last_agent_result = "previous result"
+    hitl.last_agent = previous_agent
+    monkeypatch.setattr(hitl, "get_agent", fake_get_agent)
+
+    callbacks = ["callback-1"]
+    result = await hitl.run_agent("chat", "hello", callbacks=callbacks)
+
+    assert result == "agent result"
+    assert captured == {
+        "prompt": "hello",
+        "last_agent_result": "previous result",
+        "last_agent": previous_agent,
+        "callbacks": callbacks,
+    }
+    assert hitl.last_agent_result == "agent result"
+    assert hitl.last_agent is current_agent
+
+
+def test_hitl_log_event_handler_renders_events(tmp_path):
+    output = io.StringIO()
+    console = RealConsole(
+        file=output,
+        force_terminal=False,
+        force_interactive=False,
+        color_system=None,
+        width=80,
+    )
+    handler = HITLLogEventHandler(console=console, workspace=tmp_path)
+
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "PlanningAgent",
+                "stage": "reflect_result",
+                "message": "Plan needs another pass",
+                "approved": False,
+                "reason": "Need one more concrete step.",
+            },
+            run_id="agent-run",
+        )
+    )
+    asyncio.run(
+        handler.on_tool_start(
+            {"name": "run_command"},
+            '{"query":"uname -s"}',
+            run_id="tool-run",
+            inputs={"query": "uname -s"},
+        )
+    )
+    asyncio.run(
+        handler.on_tool_end(
+            "STDOUT:\nDarwin\nSTDERR:\n",
+            run_id="tool-run",
+        )
+    )
+
+    rendered = output.getvalue()
+    assert "Plan" in rendered
+    assert "Plan needs another pass" in rendered
+    assert "Need one more concrete step." in rendered
+    assert "Running command: uname -s" in rendered
+    assert "Command finished: uname -s" in rendered
+    assert "Darwin" in rendered
+
+
+def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    config = UrsaConfig(
+        workspace=tmp_path / "global-workspace",
+        emb_model=ModelConfig(model="fake-embedding"),
+    )
+    hitl = HITL(config)
+    shell = UrsaRepl(hitl, stdout=io.StringIO())
+    captured = {}
+
+    async def fake_run_agent(name: str, prompt: str, callbacks=None) -> str:
+        captured["name"] = name
+        captured["prompt"] = prompt
+        captured["callbacks"] = callbacks
+        return "done"
+
+    monkeypatch.setattr(hitl, "run_agent", fake_run_agent)
+    monkeypatch.setattr(shell.ursa_loop, "submit", lambda coro: asyncio.run(coro))
+    monkeypatch.setattr(shell, "show", lambda *args, **kwargs: None)
+
+    shell.run_agent("chat", "hello")
+
+    assert captured["name"] == "chat"
+    assert captured["prompt"] == "hello"
+    assert len(captured["callbacks"]) == 1
+    assert isinstance(captured["callbacks"][0], HITLLogEventHandler)
 
 
 def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
