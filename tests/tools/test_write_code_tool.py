@@ -13,9 +13,16 @@ from ursa.tools.write_code_tool import (
 
 
 def test_write_code_records_store_entry(
-    tmp_path: Path, chat_model: BaseChatModel
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     store = InMemoryStore()
+    events = []
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda event_name, payload, config: events.append(
+            (event_name, payload, config)
+        ),
+    )
     runtime = make_runtime(
         tmp_path,
         llm=chat_model,
@@ -31,6 +38,30 @@ def test_write_code_records_store_entry(
     assert item.value["tool_call_id"] == "tc-1"
     assert item.value["thread_id"] == "thread-1"
     assert item.value["modified"] <= time.time()
+    assert events[0] == (
+        "ursa_agent_progress",
+        {
+            "tool": "write_code",
+            "tool_call_id": "tc-1",
+            "stage": "write",
+            "message": "Writing file",
+            "phase": "start",
+            "filename": "sample.py",
+            "path": str(tmp_path / "sample.py"),
+        },
+        runtime.config,
+    )
+    event_name, payload, config = events[1]
+    assert event_name == "ursa_agent_progress"
+    assert config == runtime.config
+    assert payload["tool"] == "write_code"
+    assert payload["tool_call_id"] == "tc-1"
+    assert payload["stage"] == "write"
+    assert payload["message"] == "File written"
+    assert payload["phase"] == "end"
+    assert payload["filename"] == "sample.py"
+    assert payload["path"] == str(tmp_path / "sample.py")
+    assert isinstance(payload["elapsed_ms"], float)
 
 
 def test_edit_code_updates_file_and_records(

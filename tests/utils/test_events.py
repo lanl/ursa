@@ -1,6 +1,10 @@
-import pytest
+from pathlib import Path
 
-from ursa.util.events import AgentEvents
+import pytest
+from langchain.tools import ToolRuntime
+
+from ursa.agents.base import AgentContext
+from ursa.util.events import AgentEvents, ToolEvents
 
 
 def test_emit_dispatches_structured_payload(
@@ -50,6 +54,70 @@ def test_emit_is_noop_without_config(
     events = AgentEvents(agent="planner", config=None)
     assert events.emit("Drafting plan", stage="generate") is None
     assert called is False
+
+
+def test_emit_tolerates_missing_parent_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_dispatch(*args, **kwargs) -> None:
+        raise RuntimeError(
+            "Unable to dispatch an adhoc event without a parent run id."
+        )
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        fake_dispatch,
+    )
+
+    payload = AgentEvents(
+        agent="planner",
+        config={"metadata": {"thread_id": "thread-2"}},
+    ).emit("Drafting plan", stage="generate")
+
+    assert payload == {
+        "agent": "planner",
+        "stage": "generate",
+        "message": "Drafting plan",
+    }
+
+
+def test_tool_events_emit_tool_payload_from_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
+        calls.append((event_name, payload, config))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        fake_dispatch,
+    )
+
+    runtime = ToolRuntime(
+        state={},
+        context=AgentContext(llm=None, workspace=Path("workspace")),
+        config={"metadata": {"thread_id": "thread-9"}},
+        stream_writer=lambda _: None,
+        tool_call_id="tool-call-9",
+        store=None,
+    )
+
+    events = ToolEvents.from_runtime("write_code", runtime)
+    payload = events.emit(
+        "Writing file",
+        stage="write",
+        path="workspace/sample.py",
+    )
+
+    assert payload == {
+        "tool": "write_code",
+        "tool_call_id": "tool-call-9",
+        "stage": "write",
+        "message": "Writing file",
+        "path": "workspace/sample.py",
+    }
+    assert calls == [("ursa_agent_progress", payload, runtime.config)]
 
 
 def test_range_emits_start_and_end(

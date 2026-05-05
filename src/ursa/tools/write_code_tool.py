@@ -10,6 +10,7 @@ from rich.syntax import Syntax
 
 from ursa.agents.base import AgentContext
 from ursa.util.diff_renderer import DiffRenderer
+from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_file
 from ursa.util.types import AsciiStr
 
@@ -69,11 +70,19 @@ def _write_code_file(
             border_style="cyan",
         )
     )
-
+    events = ToolEvents.from_runtime("write_code", runtime)
     try:
-        code_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(code)
+        with events.range(
+            "write",
+            "Writing file",
+            done="File written",
+            error="Failed to write file",
+            filename=filename,
+            path=str(code_file),
+        ):
+            code_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(code_file, "w", encoding="utf-8") as f:
+                f.write(code)
     except Exception as exc:
         console.print(
             "[bold bright_white on red] :heavy_multiplication_x: [/] "
@@ -81,12 +90,10 @@ def _write_code_file(
             exc,
         )
         return f"Failed to write {filename}: {exc}"
-
     console.print(
         f"[bold bright_white on green] :heavy_check_mark: [/] "
         f"[green]File written:[/] {code_file}"
     )
-
     if (store := runtime.store) is not None:
         store.put(
             ("workspace", "file_edit"),
@@ -292,7 +299,7 @@ def edit_code(
     try:
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(updated)
-    except Exception as exc:
+    except OSError as exc:
         console.print(
             "[bold bright_white on red] :heavy_multiplication_x: [/] "
             "[red]Failed to write file:[/]",

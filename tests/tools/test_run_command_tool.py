@@ -42,28 +42,76 @@ def test_run_command_invokes_subprocess_in_workspace(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     recorded = {}
+    events = []
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
     def fake_run(*args, **kwargs):
         recorded["args"] = args
         recorded["kwargs"] = kwargs
-        return SimpleNamespace(stdout="output", stderr="")
+        return SimpleNamespace(stdout="output", stderr="", returncode=0)
 
     monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda event_name, payload, config: events.append(
+            (event_name, payload, config)
+        ),
+    )
 
+    runtime = make_runtime(
+        tmp_path,
+        llm=chat_model,
+        thread_id="run-thread",
+        tool_call_id="run-call",
+    )
     result = run_command.func(
         "echo hi",
-        runtime=make_runtime(
-            tmp_path,
-            llm=chat_model,
-            thread_id="run-thread",
-            tool_call_id="run-call",
-        ),
+        runtime=runtime,
     )
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
     assert recorded["kwargs"]["cwd"] == tmp_path
     assert recorded["kwargs"]["shell"] is True
+    assert events[0] == (
+        "ursa_agent_progress",
+        {
+            "tool": "run_command",
+            "tool_call_id": "run-call",
+            "stage": "safety_check",
+            "message": "Command passed safety check",
+            "query": "echo hi",
+            "safe": True,
+            "reason": "Evaluated in test",
+        },
+        runtime.config,
+    )
+    assert events[1] == (
+        "ursa_agent_progress",
+        {
+            "tool": "run_command",
+            "tool_call_id": "run-call",
+            "stage": "execute",
+            "message": "Running command",
+            "phase": "start",
+            "query": "echo hi",
+        },
+        runtime.config,
+    )
+    event_name, payload, config = events[2]
+    assert event_name == "ursa_agent_progress"
+    assert config == runtime.config
+    assert payload["tool"] == "run_command"
+    assert payload["tool_call_id"] == "run-call"
+    assert payload["stage"] == "execute"
+    assert payload["message"] == "Command finished"
+    assert payload["phase"] == "end"
+    assert payload["query"] == "echo hi"
+    assert payload["returncode"] == 0
+    assert payload["stdout_chars"] == len("output")
+    assert payload["stderr_chars"] == 0
+    assert payload["stdout_truncated"] is False
+    assert payload["stderr_truncated"] is False
+    assert isinstance(payload["elapsed_ms"], float)
 
 
 def test_run_command_truncates_output(
@@ -158,10 +206,17 @@ def test_run_command_blocks_commands_that_fail_safety_check(
     captured = _patch_safety_result(
         monkeypatch, chat_model, is_safe=False, reason="Not safe in test"
     )
+    events = []
     monkeypatch.setattr(
         "ursa.tools.run_command_tool.subprocess.run",
         lambda *args, **kwargs: pytest.fail(
             "subprocess.run should not be called for unsafe commands"
+        ),
+    )
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda event_name, payload, config: events.append(
+            (event_name, payload, config)
         ),
     )
 
@@ -180,15 +235,16 @@ def test_run_command_blocks_commands_that_fail_safety_check(
 
     monkeypatch.setattr(InMemoryStore, "search", tracked_search)
 
+    runtime = make_runtime(
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="unsafe",
+        thread_id="run-thread",
+    )
     result = run_command.func(
         "rm -rf important_files",
-        runtime=make_runtime(
-            tmp_path,
-            llm=chat_model,
-            store=store,
-            tool_call_id="unsafe",
-            thread_id="run-thread",
-        ),
+        runtime=runtime,
     )
 
     assert result.startswith(
@@ -201,4 +257,19 @@ def test_run_command_blocks_commands_that_fail_safety_check(
     assert search_calls == [
         (("workspace", "file_edit"), 1000),
         (("workspace", "safe_codes"), 1000),
+    ]
+    assert events == [
+        (
+            "ursa_agent_progress",
+            {
+                "tool": "run_command",
+                "tool_call_id": "unsafe",
+                "stage": "safety_check",
+                "message": "Command deemed unsafe",
+                "query": "rm -rf important_files",
+                "safe": False,
+                "reason": "Not safe in test",
+            },
+            runtime.config,
+        )
     ]

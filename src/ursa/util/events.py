@@ -1,41 +1,42 @@
-"""Structured progress events for URSA agents.
+"""Structured progress events for URSA agents and tools.
 
-Agents in URSA run inside LangGraph/LangChain, which means progress updates can
-be surfaced as custom events instead of being printed to stdout. This module
-provides a small, opinionated wrapper around LangChain's custom event APIs so
-agent code can do two common things without repeating the same plumbing:
+URSA runs inside LangGraph/LangChain, so progress updates can be surfaced as
+custom events instead of being printed to stdout. This module provides a small,
+opinionated wrapper around LangChain's custom event APIs so both agents and
+tools can do two common things without repeating the same plumbing:
 
-1. Emit a one-off event with :meth:`AgentEvents.emit` or :meth:`AgentEvents.aemit`.
+1. Emit a one-off event with ``emit`` / ``aemit``.
 2. Mark a scoped range with ``with events.range(...)`` or
    ``async with events.range(...)``.
 
-All emitted payloads share the same stable top-level keys:
+Every emitted payload includes:
 
-- ``agent``: short agent identifier, such as ``"planner"``
-- ``stage``: machine-readable lifecycle marker
-- ``message``: concise human-readable status string
+- a source identifier such as ``agent="planner"`` or ``tool="write_code"``
+- ``stage``: a machine-readable lifecycle marker
+- ``message``: a concise human-readable status string
 
-Any extra keyword arguments are merged into the payload unchanged.
+Any extra keyword arguments are merged into the payload unchanged. Tools reuse
+the same custom event channel as agents so downstream consumers only need one
+subscription.
 
 Examples
 --------
-One-off progress update:
+One-off agent progress update:
 
 >>> events = AgentEvents(agent="planner", config=config)
 >>> events.emit("Drafting plan", stage="generate")
 
-Scoped range with automatic start/end/error events:
+Scoped agent range with automatic start/end/error events:
 
 >>> with events.range("generate", "Drafting plan", done="Plan ready") as span:
 ...     plan = build_plan()
 ...     span.update(step_count=len(plan.steps))
 
-The same range helper also works in async code:
+Tool usage from a ``ToolRuntime``:
 
->>> async with events.range("search_query", "Generating query") as span:
-...     query = await llm.ainvoke(prompt)
-...     span.done_message = "Acquisition query ready"
-...     span.update(query=query.content)
+>>> events = ToolEvents.from_runtime("write_code", runtime)
+>>> with events.range("write", "Writing file", done="File written"):
+...     path.write_text(code)
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Self
 
+from langchain.tools import ToolRuntime
 from langchain_core.callbacks.manager import (
     adispatch_custom_event,
     dispatch_custom_event,
@@ -51,15 +53,18 @@ from langchain_core.callbacks.manager import (
 from langchain_core.runnables import RunnableConfig
 
 DEFAULT_EVENT_NAME = "ursa_agent_progress"
+_MISSING_PARENT_RUN_ERROR = (
+    "Unable to dispatch an adhoc event without a parent run id."
+)
 
 
 @dataclass(slots=True)
-class AgentEvents:
-    """Emit standardized URSA progress events for a single agent.
+class ProgressEvents:
+    """Emit standardized URSA progress events for a single source.
 
     Parameters
     ----------
-    agent:
+    name:
         Stable short identifier included in every payload.
     config:
         Runnable config propagated by LangGraph/LangChain. When ``None``, all
@@ -67,11 +72,18 @@ class AgentEvents:
     event_name:
         Underlying LangChain custom event name. The default preserves the
         contract already used by the deployed branch work.
+    name_key:
+        Payload key used for the source identifier, for example ``"agent"`` or
+        ``"tool"``.
+    default_payload:
+        Extra fields merged into every emitted payload.
     """
 
-    agent: str
+    name: str
     config: RunnableConfig | None = None
     event_name: str = DEFAULT_EVENT_NAME
+    name_key: str = "name"
+    default_payload: dict[str, Any] = field(default_factory=dict)
 
     def emit(
         self,
@@ -84,7 +96,11 @@ class AgentEvents:
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
-        dispatch_custom_event(self.event_name, body, config=self.config)
+        try:
+            dispatch_custom_event(self.event_name, body, config=self.config)
+        except RuntimeError as exc:
+            if _MISSING_PARENT_RUN_ERROR not in str(exc):
+                raise
         return body
 
     async def aemit(
@@ -98,11 +114,15 @@ class AgentEvents:
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
-        await adispatch_custom_event(
-            self.event_name,
-            body,
-            config=self.config,
-        )
+        try:
+            await adispatch_custom_event(
+                self.event_name,
+                body,
+                config=self.config,
+            )
+        except RuntimeError as exc:
+            if _MISSING_PARENT_RUN_ERROR not in str(exc):
+                raise
         return body
 
     def range(
@@ -132,11 +152,70 @@ class AgentEvents:
         **payload: Any,
     ) -> dict[str, Any]:
         return {
-            "agent": self.agent,
+            self.name_key: self.name,
             "stage": stage,
             "message": message,
+            **self.default_payload,
             **payload,
         }
+
+
+class AgentEvents(ProgressEvents):
+    """Emit standardized URSA progress events for a single agent."""
+
+    def __init__(
+        self,
+        agent: str,
+        config: RunnableConfig | None = None,
+        event_name: str = DEFAULT_EVENT_NAME,
+    ) -> None:
+        super().__init__(
+            name=agent,
+            config=config,
+            event_name=event_name,
+            name_key="agent",
+        )
+
+
+class ToolEvents(ProgressEvents):
+    """Emit standardized URSA progress events for a single tool."""
+
+    def __init__(
+        self,
+        tool: str,
+        config: RunnableConfig | None = None,
+        event_name: str = DEFAULT_EVENT_NAME,
+        *,
+        tool_call_id: str | None = None,
+    ) -> None:
+        default_payload: dict[str, Any] = {}
+        if tool_call_id is not None:
+            default_payload["tool_call_id"] = tool_call_id
+        super().__init__(
+            name=tool,
+            config=config,
+            event_name=event_name,
+            name_key="tool",
+            default_payload=default_payload,
+        )
+
+    @classmethod
+    def from_runtime(
+        cls,
+        tool: str,
+        runtime: ToolRuntime[Any] | None,
+        *,
+        event_name: str = DEFAULT_EVENT_NAME,
+    ) -> ToolEvents:
+        """Create a tool event helper from a LangGraph ``ToolRuntime``."""
+        if runtime is None:
+            return cls(tool=tool, event_name=event_name)
+        return cls(
+            tool=tool,
+            config=runtime.config,
+            event_name=event_name,
+            tool_call_id=runtime.tool_call_id,
+        )
 
 
 @dataclass(slots=True)
@@ -153,7 +232,7 @@ class EventRange:
       when the final outcome is only known after work completes.
     """
 
-    events: AgentEvents
+    events: ProgressEvents
     stage: str
     start_message: str
     done_message: str | None = None
@@ -243,4 +322,10 @@ class EventRange:
         )
 
 
-__all__ = ["DEFAULT_EVENT_NAME", "AgentEvents", "EventRange"]
+__all__ = [
+    "DEFAULT_EVENT_NAME",
+    "AgentEvents",
+    "EventRange",
+    "ProgressEvents",
+    "ToolEvents",
+]
