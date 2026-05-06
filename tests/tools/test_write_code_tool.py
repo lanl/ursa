@@ -1,6 +1,7 @@
 import time
 from pathlib import Path
 
+import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
@@ -10,6 +11,16 @@ from ursa.tools.write_code_tool import (
     write_code,
     write_code_with_repo,
 )
+
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
 
 
 def test_write_code_records_store_entry(
@@ -47,6 +58,7 @@ def test_write_code_records_store_entry(
             "tool_call_id": "tc-1",
             "stage": "write",
             "message": "Writing file",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
             "phase": "start",
             "filename": "sample.py",
             "path": str(tmp_path / "sample.py"),
@@ -60,6 +72,7 @@ def test_write_code_records_store_entry(
     assert payload["tool_call_id"] == "tc-1"
     assert payload["stage"] == "write"
     assert payload["message"] == "File written"
+    assert payload["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert payload["phase"] == "end"
     assert payload["filename"] == "sample.py"
     assert payload["path"] == str(tmp_path / "sample.py")

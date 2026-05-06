@@ -27,6 +27,32 @@ class HITLLogEventHandler(AsyncCallbackHandler):
     def ignore_llm(self) -> bool:
         return True
 
+    async def on_chat_model_start(
+        self,
+        serialized: Any,
+        messages: Any,
+        *,
+        run_id,
+        parent_run_id=None,
+        tags=None,
+        metadata=None,
+        **kwargs,
+    ) -> None:
+        return None
+
+    async def on_llm_start(
+        self,
+        serialized: Any,
+        prompts: Any,
+        *,
+        run_id,
+        parent_run_id=None,
+        tags=None,
+        metadata=None,
+        **kwargs,
+    ) -> None:
+        return None
+
     def _clean(self, value: Any) -> str:
         return " ".join(str(value or "").split()).strip()
 

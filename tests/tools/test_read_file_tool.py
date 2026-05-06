@@ -1,10 +1,21 @@
 from pathlib import Path
 
+import pytest
 from langchain.chat_models import BaseChatModel
 
 from tests.tools.utils import make_runtime
 from ursa.tools.read_file_tool import read_file
 from ursa.util import parse
+
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
 
 
 def test_read_file_reads_text_from_workspace(
@@ -43,6 +54,7 @@ def test_read_file_reads_text_from_workspace(
                 "tool_call_id": "read-file-call",
                 "stage": "read",
                 "message": "Reading file",
+                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
                 "path": str(target),
             },
             runtime.config,

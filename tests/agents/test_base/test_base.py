@@ -17,6 +17,8 @@ from langgraph.runtime import Runtime
 from ursa.agents.base import AgentContext, BaseAgent
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER
 
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
 
 # --- Tiny offline model that triggers LLM callbacks and returns usage ---
 class TinyCountingModel(BaseChatModel):
@@ -114,6 +116,14 @@ class RecordingAsyncHandler(AsyncCallbackHandler):
         **kwargs,
     ) -> None:
         self.events.append((name, data))
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
 
 
 @pytest.fixture
@@ -311,6 +321,7 @@ async def test_ainvoke_merges_callback_config(tmpdir: Path):
                 "agent": "EventAgent",
                 "stage": "generate",
                 "message": "Drafting plan",
+                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
             },
         )
     ]
@@ -333,7 +344,8 @@ async def test_ainvoke_logs_progress_event_by_default(
     assert result["messages"][-1].text == "done"
     assert caplog.messages == [
         'event="ursa_agent_progress" agent="EventAgent" '
-        'stage="generate" message="Drafting plan"'
+        'stage="generate" message="Drafting plan" '
+        'data={"monotonic_timestamp_ns": 123456789}'
     ]
 
 

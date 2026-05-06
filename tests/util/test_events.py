@@ -8,6 +8,16 @@ from langchain.tools import ToolRuntime
 from ursa.agents.base import AgentContext
 from ursa.util.events import AgentEvents, EventLoggingHandler, ToolEvents
 
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
+
 
 def test_emit_dispatches_structured_payload(
     monkeypatch: pytest.MonkeyPatch,
@@ -34,6 +44,7 @@ def test_emit_dispatches_structured_payload(
         "agent": "planner",
         "stage": "generate",
         "message": "Drafting plan",
+        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "step_count": 2,
     }
     assert calls == [("ursa_agent_progress", payload, config)]
@@ -80,6 +91,7 @@ def test_emit_tolerates_missing_parent_run(
         "agent": "planner",
         "stage": "generate",
         "message": "Drafting plan",
+        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
     }
 
 
@@ -95,6 +107,7 @@ def test_event_logging_handler_logs_structured_payload(
                 "agent": "planner",
                 "stage": "generate",
                 "message": "Drafting plan",
+                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
                 "step_count": 2,
             },
             run_id=uuid4(),
@@ -103,7 +116,7 @@ def test_event_logging_handler_logs_structured_payload(
     assert caplog.messages == [
         'event="ursa_agent_progress" agent="planner" '
         'stage="generate" message="Drafting plan" '
-        'data={"step_count": 2}'
+        'data={"monotonic_timestamp_ns": 123456789, "step_count": 2}'
     ]
 
 
@@ -141,6 +154,7 @@ def test_tool_events_emit_tool_payload_from_runtime(
         "tool_call_id": "tool-call-9",
         "stage": "write",
         "message": "Writing file",
+        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "path": "workspace/sample.py",
     }
     assert calls == [("ursa_agent_progress", payload, runtime.config)]
@@ -174,12 +188,16 @@ def test_range_emits_start_and_end(
         "agent": "planner",
         "stage": "generate",
         "message": "Drafting plan",
+        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "phase": "start",
         "iteration": 1,
     }
     assert calls[1]["agent"] == "planner"
     assert calls[1]["stage"] == "generate"
     assert calls[1]["message"] == "Plan ready"
+    assert (
+        calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
+    )
     assert calls[1]["phase"] == "end"
     assert calls[1]["iteration"] == 1
     assert calls[1]["step_count"] == 3
@@ -215,8 +233,10 @@ def test_range_emits_error(
         raise RuntimeError("boom")
 
     assert calls[0]["phase"] == "start"
+    assert calls[0]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert calls[1]["phase"] == "error"
     assert calls[1]["message"] == "Plan failed"
+    assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert calls[1]["error_type"] == "RuntimeError"
     assert calls[1]["error"] == "boom"
     assert calls[1]["iteration"] == 2
@@ -254,6 +274,7 @@ async def test_aemit_dispatches_and_async_range_works(
         "agent": "acquisition",
         "stage": "search_query",
         "message": "Acquisition query ready",
+        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
         "query": "heat transfer",
     }
 
@@ -266,5 +287,7 @@ async def test_aemit_dispatches_and_async_range_works(
 
     assert calls[0] == payload
     assert calls[1]["phase"] == "start"
+    assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert calls[2]["phase"] == "end"
+    assert calls[2]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert calls[2]["query"] == "cooling load"

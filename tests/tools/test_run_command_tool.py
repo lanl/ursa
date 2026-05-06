@@ -10,6 +10,16 @@ from tests.tools.utils import make_runtime
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
 from ursa.util.types import AsciiStr
 
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
+
 
 def _patch_safety_result(
     monkeypatch,
@@ -81,6 +91,7 @@ def test_run_command_invokes_subprocess_in_workspace(
             "tool_call_id": "run-call",
             "stage": "safety_check",
             "message": "Command passed safety check",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
             "query": "echo hi",
             "safe": True,
             "reason": "Evaluated in test",
@@ -94,6 +105,7 @@ def test_run_command_invokes_subprocess_in_workspace(
             "tool_call_id": "run-call",
             "stage": "execute",
             "message": "Running command",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
             "phase": "start",
             "query": "echo hi",
         },
@@ -106,6 +118,7 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert payload["tool_call_id"] == "run-call"
     assert payload["stage"] == "execute"
     assert payload["message"] == "Command finished"
+    assert payload["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert payload["phase"] == "end"
     assert payload["query"] == "echo hi"
     assert payload["returncode"] == 0
@@ -270,6 +283,7 @@ def test_run_command_blocks_commands_that_fail_safety_check(
                 "tool_call_id": "unsafe",
                 "stage": "safety_check",
                 "message": "Command deemed unsafe",
+                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
                 "query": "rm -rf important_files",
                 "safe": False,
                 "reason": "Not safe in test",
