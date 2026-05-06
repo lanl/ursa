@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
+
+from rich.console import Console
+
+from ursa.cli.callbacks import HITLLogEventHandler
 
 from .events import Event
 
@@ -35,7 +42,9 @@ class BaseAgentInProcessAdapter:
     them to the run event log.
 
     Therefore, this adapter intentionally does **not** redirect/capture stdout/stderr
-    in-process (doing so would hide logs from the runner).
+    in-process (doing so would hide logs from the runner). Instead it attaches the
+    shared CLI callback handler so structured progress is rendered directly into the
+    worker's stdout stream.
 
     Exceptions are allowed to propagate so the worker can mark the run as failed.
     """
@@ -60,19 +69,31 @@ class BaseAgentInProcessAdapter:
 
         self._setup_hook = hook
 
-    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:  # noqa: ARG002
+    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:
+        del sink
         agent = self._agent_factory(ctx.workspace_dir, inputs)
         if self._setup_hook is not None:
             r = self._setup_hook(agent, ctx, inputs)
             if asyncio.iscoroutine(r):
                 asyncio.run(r)
-        result = agent.invoke(inputs)
+        result = _invoke_with_cli_handler(
+            agent,
+            inputs,
+            workspace_dir=ctx.workspace_dir,
+        )
 
         # Prefer BaseAgent.format_result if available; else just string-ify.
         if hasattr(agent, "format_result"):
             try:
                 return str(agent.format_result(result))
-            except Exception:
+            except (
+                AttributeError,
+                IndexError,
+                KeyError,
+                NotImplementedError,
+                TypeError,
+                ValueError,
+            ):
                 return str(result)
         return str(result)
 
@@ -100,16 +121,67 @@ class DirectInvokeAdapter:
 
         self._setup_hook = hook
 
-    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:  # noqa: ARG002
+    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:
+        del sink
         agent = self._agent_factory(ctx.workspace_dir, inputs)
         if self._setup_hook is not None:
             r = self._setup_hook(agent, ctx, inputs)
             if asyncio.iscoroutine(r):
                 asyncio.run(r)
-        result = agent.invoke(inputs)
+        result = _invoke_with_cli_handler(
+            agent,
+            inputs,
+            workspace_dir=ctx.workspace_dir,
+        )
         if hasattr(agent, "format_result"):
             try:
                 return str(agent.format_result(result))
-            except Exception:
+            except (
+                AttributeError,
+                IndexError,
+                KeyError,
+                NotImplementedError,
+                TypeError,
+                ValueError,
+            ):
                 return str(result)
         return str(result)
+
+
+def _dashboard_console() -> Console:
+    """Create the plain-text console used for dashboard worker log streaming."""
+    return Console(
+        file=sys.stdout,
+        force_terminal=False,
+        force_interactive=False,
+        color_system=None,
+        width=120,
+    )
+
+
+def _supports_invoke_config(agent: Any) -> bool:
+    """Return whether ``agent.invoke(...)`` accepts a runnable config."""
+    try:
+        params = inspect.signature(agent.invoke).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        param.name == "config" or param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in params
+    )
+
+
+def _invoke_with_cli_handler(
+    agent: Any,
+    inputs: Any,
+    *,
+    workspace_dir: Path,
+) -> Any:
+    """Invoke a dashboard target, attaching the shared CLI callback when supported."""
+    if not _supports_invoke_config(agent):
+        return agent.invoke(inputs)
+    handler = HITLLogEventHandler(
+        console=_dashboard_console(),
+        workspace=workspace_dir,
+    )
+    return agent.invoke(inputs, config={"callbacks": [handler]})
