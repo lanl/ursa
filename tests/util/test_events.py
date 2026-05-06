@@ -195,9 +195,7 @@ def test_range_emits_start_and_end(
     assert calls[1]["agent"] == "planner"
     assert calls[1]["stage"] == "generate"
     assert calls[1]["message"] == "Plan ready"
-    assert (
-        calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
-    )
+    assert calls[1]["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
     assert calls[1]["phase"] == "end"
     assert calls[1]["iteration"] == 1
     assert calls[1]["step_count"] == 3

@@ -290,9 +290,10 @@ def test_build_config_dedupes_default_callbacks(tmpdir: Path):
         DEFAULT_EVENT_LOGGING_HANDLER,
     ]
     assert callbacks[-1] is custom_handler
-    assert sum(
-        callback is DEFAULT_EVENT_LOGGING_HANDLER for callback in callbacks
-    ) == 1
+    assert (
+        sum(callback is DEFAULT_EVENT_LOGGING_HANDLER for callback in callbacks)
+        == 1
+    )
     assert (
         sum(callback is agent.telemetry.callbacks[0] for callback in callbacks)
         == 1
