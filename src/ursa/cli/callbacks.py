@@ -184,7 +184,9 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             detail = self._display_path(data.get("path"))
             style = "success"
         elif tool == "write_code":
-            detail = self._display_path(data.get("path") or data.get("filename"))
+            detail = self._display_path(
+                data.get("path") or data.get("filename")
+            )
             style = "error" if phase == "error" else "success"
         elif tool == "run_command":
             detail = self._clean(data.get("query"))
@@ -213,8 +215,10 @@ class HITLLogEventHandler(AsyncCallbackHandler):
                 parts.append(f"stderr {data['stderr_chars']} chars")
             if parts:
                 self.console.print(f"[dim]  {', '.join(parts)}[/]")
-        elif tool == "run_command" and stage == "safety_check" and not data.get(
-            "safe", True
+        elif (
+            tool == "run_command"
+            and stage == "safety_check"
+            and not data.get("safe", True)
         ):
             for line in self._wrap(data.get("reason"), max_lines=2):
                 self.console.print(f"[dim]  {line}[/]")
@@ -335,7 +339,9 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             self.console.print("[success]📖 Reading file[/]")
         self.emitted_any = True
 
-    def _print_read_file_end(self, payload: Any, *, path: str | None = None) -> None:
+    def _print_read_file_end(
+        self, payload: Any, *, path: str | None = None
+    ) -> None:
         detail = self._display_path(path)
         if detail:
             self.console.print(f"[success]📖 File read:[/] {detail}")
@@ -349,7 +355,9 @@ class HITLLogEventHandler(AsyncCallbackHandler):
                 border_style="green",
             )
 
-    def _print_write_code_start(self, filename: str | None, path: str | None) -> None:
+    def _print_write_code_start(
+        self, filename: str | None, path: str | None
+    ) -> None:
         detail = self._display_path(path or filename)
         if detail:
             self.console.print(f"[success]✏️ Writing file:[/] {detail}")
@@ -427,7 +435,9 @@ class HITLLogEventHandler(AsyncCallbackHandler):
         tool_name = tool_info.get("name")
         payload = output.content if isinstance(output, ToolMessage) else output
         success = (
-            output.status == "success" if isinstance(output, ToolMessage) else True
+            output.status == "success"
+            if isinstance(output, ToolMessage)
+            else True
         )
         if tool_name == "run_command":
             self._print_run_command_end(

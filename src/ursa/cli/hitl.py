@@ -3,8 +3,8 @@ import logging
 import os
 import platform
 import threading
-from collections.abc import Sequence
 from cmd import Cmd
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 

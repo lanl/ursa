@@ -176,12 +176,15 @@ def test_range_emits_error(
     )
 
     events = AgentEvents(agent="planner", config={"callbacks": []})
-    with pytest.raises(RuntimeError, match="boom"), events.range(
-        "generate",
-        "Drafting plan",
-        error="Plan failed",
-        iteration=2,
-    ) as span:
+    with (
+        pytest.raises(RuntimeError, match="boom"),
+        events.range(
+            "generate",
+            "Drafting plan",
+            error="Plan failed",
+            iteration=2,
+        ) as span,
+    ):
         span.update(step_count=1)
         raise RuntimeError("boom")
 

@@ -19,9 +19,11 @@ def test_write_code_records_store_entry(
     events = []
     monkeypatch.setattr(
         "ursa.util.events.dispatch_custom_event",
-        lambda event_name, payload, config: events.append(
-            (event_name, payload, config)
-        ),
+        lambda event_name, payload, config: events.append((
+            event_name,
+            payload,
+            config,
+        )),
     )
     runtime = make_runtime(
         tmp_path,

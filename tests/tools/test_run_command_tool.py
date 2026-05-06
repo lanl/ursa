@@ -53,9 +53,11 @@ def test_run_command_invokes_subprocess_in_workspace(
     monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
     monkeypatch.setattr(
         "ursa.util.events.dispatch_custom_event",
-        lambda event_name, payload, config: events.append(
-            (event_name, payload, config)
-        ),
+        lambda event_name, payload, config: events.append((
+            event_name,
+            payload,
+            config,
+        )),
     )
 
     runtime = make_runtime(
@@ -215,9 +217,11 @@ def test_run_command_blocks_commands_that_fail_safety_check(
     )
     monkeypatch.setattr(
         "ursa.util.events.dispatch_custom_event",
-        lambda event_name, payload, config: events.append(
-            (event_name, payload, config)
-        ),
+        lambda event_name, payload, config: events.append((
+            event_name,
+            payload,
+            config,
+        )),
     )
 
     store = InMemoryStore()

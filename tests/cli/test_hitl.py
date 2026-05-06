@@ -285,7 +285,9 @@ def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
         return "done"
 
     monkeypatch.setattr(hitl, "run_agent", fake_run_agent)
-    monkeypatch.setattr(shell.ursa_loop, "submit", lambda coro: asyncio.run(coro))
+    monkeypatch.setattr(
+        shell.ursa_loop, "submit", lambda coro: asyncio.run(coro)
+    )
     monkeypatch.setattr(shell, "show", lambda *args, **kwargs: None)
 
     shell.run_agent("chat", "hello")
