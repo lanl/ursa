@@ -93,9 +93,7 @@ class AgentHITL:
 
         invoke_config = None
         if callbacks:
-            invoke_config = {
-                "callbacks": [*agent.telemetry.callbacks, *callbacks]
-            }
+            invoke_config = {"callbacks": list(callbacks)}
 
         new_state = await agent.ainvoke(query, config=invoke_config)
         msg = agent.format_result(new_state)

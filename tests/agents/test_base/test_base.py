@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -14,6 +15,7 @@ from langgraph.runtime import Runtime
 
 # Your project imports
 from ursa.agents.base import AgentContext, BaseAgent
+from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER
 
 
 # --- Tiny offline model that triggers LLM callbacks and returns usage ---
@@ -244,6 +246,49 @@ def test_base_agent_provisions_sqlite_store(tmpdir: Path):
     assert item.value["value"] == "ok"
 
 
+def test_build_config_includes_default_event_logging_handler(tmpdir: Path):
+    agent = Agent(
+        llm=TinyCountingModel(),
+        workspace=tmpdir,
+        enable_metrics=False,
+    )
+
+    config = agent.build_config()
+
+    assert config["callbacks"] == [DEFAULT_EVENT_LOGGING_HANDLER]
+
+
+def test_build_config_dedupes_default_callbacks(tmpdir: Path):
+    agent = Agent(
+        llm=TinyCountingModel(),
+        workspace=tmpdir,
+        enable_metrics=True,
+    )
+    custom_handler = RecordingAsyncHandler()
+
+    config = agent.build_config(
+        callbacks=[
+            agent.telemetry.callbacks[0],
+            DEFAULT_EVENT_LOGGING_HANDLER,
+            custom_handler,
+        ]
+    )
+
+    callbacks = config["callbacks"]
+    assert callbacks[:4] == [
+        *agent.telemetry.callbacks,
+        DEFAULT_EVENT_LOGGING_HANDLER,
+    ]
+    assert callbacks[-1] is custom_handler
+    assert sum(
+        callback is DEFAULT_EVENT_LOGGING_HANDLER for callback in callbacks
+    ) == 1
+    assert (
+        sum(callback is agent.telemetry.callbacks[0] for callback in callbacks)
+        == 1
+    )
+
+
 @pytest.mark.asyncio
 async def test_ainvoke_merges_callback_config(tmpdir: Path):
     agent = EventAgent(
@@ -268,6 +313,27 @@ async def test_ainvoke_merges_callback_config(tmpdir: Path):
                 "message": "Drafting plan",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ainvoke_logs_progress_event_by_default(
+    tmpdir: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    agent = EventAgent(
+        llm=TinyCountingModel(),
+        workspace=tmpdir,
+        enable_metrics=False,
+    )
+
+    with caplog.at_level(logging.INFO, logger="ursa.util.events"):
+        result = await agent.ainvoke("hello")
+
+    assert result["messages"][-1].text == "done"
+    assert caplog.messages == [
+        'event="ursa_agent_progress" agent="EventAgent" '
+        'stage="generate" message="Drafting plan"'
     ]
 
 

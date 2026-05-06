@@ -15,6 +15,10 @@ Every emitted payload includes:
 - ``stage``: a machine-readable lifecycle marker
 - ``message``: a concise human-readable status string
 
+BaseAgent also installs a default callback handler from this module that writes
+these structured events to Python logging at ``INFO`` level. That keeps the
+event stream visible in logs even when no interactive renderer is attached.
+
 Any extra keyword arguments are merged into the payload unchanged. Tools reuse
 the same custom event channel as agents so downstream consumers only need one
 subscription.
@@ -41,11 +45,14 @@ Tool usage from a ``ToolRuntime``:
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Self
 
 from langchain.tools import ToolRuntime
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.callbacks.manager import (
     adispatch_custom_event,
     dispatch_custom_event,
@@ -56,6 +63,77 @@ DEFAULT_EVENT_NAME = "ursa_agent_progress"
 _MISSING_PARENT_RUN_ERROR = (
     "Unable to dispatch an adhoc event without a parent run id."
 )
+LOGGER = logging.getLogger(__name__)
+
+
+class EventLoggingHandler(BaseCallbackHandler):
+    """Write structured URSA progress events to the Python logger.
+
+    The handler is intentionally narrow: it only logs URSA's structured custom
+    progress events and ignores all other callback activity. The emitted log
+    line keeps a compact summary for humans while preserving any remaining
+    payload fields as JSON for debugging and ingestion.
+    """
+
+    def __init__(
+        self,
+        *,
+        event_name: str = DEFAULT_EVENT_NAME,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.event_name = event_name
+        self.logger = logger or LOGGER
+
+    def on_custom_event(
+        self,
+        name: str,
+        data: Any,
+        *,
+        run_id,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log matching progress events at ``INFO`` level."""
+        if name != self.event_name or not isinstance(data, dict):
+            return
+        if not self.logger.isEnabledFor(logging.INFO):
+            return
+        self.logger.info(
+            self._format_message(name, data),
+            extra={
+                "ursa_event_name": name,
+                "ursa_event_payload": data,
+            },
+        )
+
+    def _format_message(self, name: str, data: dict[str, Any]) -> str:
+        parts = [f"event={json.dumps(name)}"]
+        for key in ("agent", "tool", "name", "stage", "phase", "message"):
+            value = data.get(key)
+            if value in (None, ""):
+                continue
+            parts.append(f"{key}={json.dumps(str(value), ensure_ascii=False)}")
+
+        extras = {
+            key: value
+            for key, value in data.items()
+            if key not in {"agent", "tool", "name", "stage", "phase", "message"}
+        }
+        if extras:
+            parts.append(
+                "data="
+                + json.dumps(
+                    extras,
+                    default=str,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+        return " ".join(parts)
+
+
+DEFAULT_EVENT_LOGGING_HANDLER = EventLoggingHandler()
 
 
 @dataclass(slots=True)
@@ -323,8 +401,10 @@ class EventRange:
 
 
 __all__ = [
+    "DEFAULT_EVENT_LOGGING_HANDLER",
     "DEFAULT_EVENT_NAME",
     "AgentEvents",
+    "EventLoggingHandler",
     "EventRange",
     "ProgressEvents",
     "ToolEvents",

@@ -16,7 +16,7 @@ from rich.console import Console as RealConsole
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import ModelConfig, UrsaConfig
-from ursa.cli.hitl import HITL, UrsaRepl
+from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 
@@ -218,6 +218,39 @@ async def test_hitl_run_agent_forwards_callbacks(tmp_path, monkeypatch):
     }
     assert hitl.last_agent_result == "agent result"
     assert hitl.last_agent is current_agent
+
+
+@pytest.mark.asyncio
+async def test_agent_hitl_passes_extra_callbacks_only():
+    captured = {}
+    custom_callback = object()
+
+    class DummyAgent:
+        telemetry = type("Telemetry", (), {"callbacks": ["telemetry"]})()
+
+        def format_query(self, prompt: str, state=None):
+            captured["prompt"] = prompt
+            captured["state"] = state
+            return {"messages": [prompt]}
+
+        async def ainvoke(self, query, config=None):
+            captured["query"] = query
+            captured["config"] = config
+            return {"messages": ["done"]}
+
+        def format_result(self, result):
+            return "done"
+
+    wrapper = AgentHITL(agent_class=object)
+    wrapper._agent = DummyAgent()
+
+    result = await wrapper("hello", callbacks=[custom_callback])
+
+    assert result == "done"
+    assert captured["prompt"] == "hello"
+    assert captured["state"] is None
+    assert captured["query"] == {"messages": ["hello"]}
+    assert captured["config"] == {"callbacks": [custom_callback]}
 
 
 def test_hitl_log_event_handler_renders_events(tmp_path):

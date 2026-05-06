@@ -1,10 +1,12 @@
+import logging
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from langchain.tools import ToolRuntime
 
 from ursa.agents.base import AgentContext
-from ursa.util.events import AgentEvents, ToolEvents
+from ursa.util.events import AgentEvents, EventLoggingHandler, ToolEvents
 
 
 def test_emit_dispatches_structured_payload(
@@ -79,6 +81,30 @@ def test_emit_tolerates_missing_parent_run(
         "stage": "generate",
         "message": "Drafting plan",
     }
+
+
+def test_event_logging_handler_logs_structured_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = EventLoggingHandler()
+
+    with caplog.at_level(logging.INFO, logger="ursa.util.events"):
+        handler.on_custom_event(
+            "ursa_agent_progress",
+            {
+                "agent": "planner",
+                "stage": "generate",
+                "message": "Drafting plan",
+                "step_count": 2,
+            },
+            run_id=uuid4(),
+        )
+
+    assert caplog.messages == [
+        'event="ursa_agent_progress" agent="planner" '
+        'stage="generate" message="Drafting plan" '
+        'data={"step_count": 2}'
+    ]
 
 
 def test_tool_events_emit_tool_payload_from_runtime(
