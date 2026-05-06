@@ -48,7 +48,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from time import perf_counter
+from time import monotonic_ns, perf_counter
 from typing import Any, Self
 
 from langchain.tools import ToolRuntime
@@ -233,6 +233,7 @@ class ProgressEvents:
             self.name_key: self.name,
             "stage": stage,
             "message": message,
+            "monotonic_timestamp_ns": monotonic_ns(),
             **self.default_payload,
             **payload,
         }
@@ -355,10 +356,7 @@ class EventRange:
     def _terminal_payload(self) -> dict[str, Any]:
         payload = dict(self.payload)
         if self.include_elapsed_ms and self._started_at is not None:
-            payload["elapsed_ms"] = round(
-                (perf_counter() - self._started_at) * 1000,
-                3,
-            )
+            payload["elapsed_ms"] = (perf_counter() - self._started_at) * 1000
         return payload
 
     def _emit_terminal(self, exc: BaseException | None) -> None:
