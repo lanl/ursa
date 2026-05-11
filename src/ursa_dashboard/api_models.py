@@ -115,6 +115,12 @@ class SessionMessageRequest(BaseModel):
     runner: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionWorkspaceSetRequest(BaseModel):
+    # Absolute path to use as this session's workspace. Pass null or an empty
+    # string to reset to the dashboard-managed default session workspace.
+    path: str | None = None
+
+
 class SessionMessage(BaseModel):
     message_id: str
     ts: str
@@ -157,6 +163,9 @@ class SessionWorkspaceListResponse(BaseModel):
     session_id: str
     agent_id: str | None = None
     files: list[dict[str, Any]]
+    workspace_path: str | None = None
+    default_workspace_path: str | None = None
+    is_default_workspace: bool = True
 
 
 class SessionFileMetaResponse(BaseModel):
