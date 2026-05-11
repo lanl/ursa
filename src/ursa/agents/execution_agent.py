@@ -32,6 +32,7 @@ from typing import (
     Annotated,
     Any,
     Literal,
+    NotRequired,
     Optional,
     TypedDict,
 )
@@ -45,7 +46,6 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite
@@ -59,6 +59,7 @@ from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
     recap_prompt,
+    get_review_prompt,
 )
 from ursa.tools import edit_code, read_file, run_command, write_code
 from ursa.tools import (
@@ -86,6 +87,13 @@ BOLD = "\033[1m"
 
 
 # Classes for typing
+class ReviewAssessment(TypedDict):
+    """Structured assessment of whether execution has addressed the request."""
+
+    is_complete: bool
+    reason: str
+
+
 class ExecutionState(TypedDict):
     """TypedDict representing the execution agent's mutable run state used by nodes.
 
@@ -93,30 +101,40 @@ class ExecutionState(TypedDict):
     - messages: list of messages (System/Human/AI/Tool).
     - symlinkdir: optional dict describing a symlink operation (source, dest,
       is_linked).
+    - review: optional structured review of whether the work is complete.
     """
 
     messages: Annotated[list[AnyMessage], add_messages]
     symlinkdir: dict
+    review: NotRequired[ReviewAssessment]
 
 
-def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
-    """Return 'recap' if no tool calls in the last message, else 'continue'.
+def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
+    """Return 'review' if no tool calls in the last message, else 'continue'.
 
     Args:
         state: The current execution state containing messages.
 
     Returns:
-        A literal "recap" if the last message has no tool calls,
+        A literal "review" if the last message has no tool calls,
         otherwise "continue".
     """
     messages = state["messages"]
     last_message = messages[-1]
-    # If there is no tool call, then we finish
+    # If there is no tool call, then review the work before finishing.
     if not last_message.tool_calls:
-        return "recap"
-    # Otherwise if there is, we continue
+        return "review"
+    # Otherwise if there is, we continue.
     else:
         return "continue"
+
+
+def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
+    """Route to recap when review passes, otherwise continue execution."""
+    review = state.get("review") or {}
+    if review.get("is_complete"):
+        return "recap"
+    return "continue"
 
 
 def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
@@ -204,7 +222,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         safe_codes: Optional[list[str]] = None,
-        use_web: bool = True,
+        use_web: bool = False,
         **kwargs,
     ):
         default_tools = [
@@ -237,142 +255,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
 
-    def _patch_dangling(
-        self, state: ExecutionState, summarized: bool
-    ) -> ExecutionState:
-        new_state = deepcopy(state)
-        dangling_response = (
-            "Response Not Found from tool. "
-            "May have timed out or been forgotten due to summarization."
-        )
-
-        tool_ids = []
-        for msg in new_state["messages"]:
-            if count_tokens_approximately([msg]) > 100000 and isinstance(
-                msg, ToolMessage
-            ):
-                trunc_message = "Message too long - truncated."
-                msg.content = trunc_message
-                summarized = True
-            if hasattr(msg, "tool_calls"):
-                for call in msg.tool_calls:
-                    tool_ids.append(call["id"])
-            if isinstance(msg, ToolMessage):
-                tool_ids.remove(msg.tool_call_id)
-        if tool_ids:
-            summarized = True
-            print(
-                f"[Dangling Tool Call Warning] The following tool IDs "
-                f"were dangling:\n{tool_ids}\nReplies of missing response applied."
-            )
-            for tool_id in tool_ids:
-                for msg_ind, msg in enumerate(new_state["messages"]):
-                    if hasattr(msg, "tool_calls"):
-                        if any([tc["id"] == tool_id for tc in msg.tool_calls]):
-                            # Inserts tool response one after the dangling tool call
-                            #    Mutates new_state so break afterward to reset loop.
-                            #    Not as efficient as could be but should be correct
-                            new_state["messages"].insert(
-                                msg_ind + 1,
-                                ToolMessage(
-                                    content=dangling_response,
-                                    tool_call_id=tool_id,
-                                ),
-                            )
-                            break
-        return new_state, summarized
-
-    # Check message history length and summarize to shorten the token usage:
-    def _summarize_context(self, state: ExecutionState) -> ExecutionState:
-        new_state = deepcopy(state)
-        summarized = False
-        tokens_before_summarize = count_tokens_approximately(
-            new_state["messages"][1:]
-        )
-
-        if tokens_before_summarize > self.tokens_before_summarize:
-            # Start from 1 to skip system message.
-            conversation_to_summarize = new_state["messages"][
-                1 : -self.messages_to_keep
-            ]
-            conversation_to_keep = new_state["messages"][
-                -self.messages_to_keep :
-            ]
-            tool_ids = []
-            for msg in conversation_to_summarize:
-                if hasattr(msg, "tool_calls"):
-                    for call in msg.tool_calls:
-                        tool_ids.append(call["id"])
-                if isinstance(msg, ToolMessage):
-                    tool_ids.remove(msg.tool_call_id)
-            if tool_ids:
-                print(
-                    f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
-                )
-                conversation_to_keep_copy = conversation_to_keep.copy()
-                for msg in conversation_to_keep_copy:
-                    if (
-                        isinstance(msg, ToolMessage)
-                        and msg.tool_call_id in tool_ids
-                    ):
-                        conversation_to_summarize.append(msg)
-                        conversation_to_keep.remove(msg)
-                        tool_ids.remove(msg.tool_call_id)
-            if tool_ids:
-                # We may need to implement something here for if a tool has not
-                # responded but its tool call is far enough back that it is being
-                # summarized away. Likely an edge case for non-async, but async
-                # may cause a problem here.
-                print(
-                    f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
-                )
-                pass
-
-            summarize_prompt = f"""
-            Your only tasks is to provide a detailed, comprehensive summary of the following
-            conversation.
-
-            Your summary will be the only information retained from the conversation, so ensure
-            it contains all details that need to be remembered to meet the goals of the work.
-
-            Conversation to summarize:
-            {conversation_to_summarize}
-            """
-            summary = self.llm.invoke(summarize_prompt)
-            summarized_messages = [
-                SystemMessage(content=self.executor_prompt),
-                summary,
-            ]
-            summarized_messages.extend(conversation_to_keep)
-            verbose = False
-            # Keeping this here for future capability add
-            #    removing this from printing generally,
-            #    but we may want to bring this back with some
-            #    verbosity option in the future.
-            #
-            # Right now setting verbose to False so this is
-            #     always skipped but here to revisit.
-            if verbose:
-                tokens_after_summarize = count_tokens_approximately(
-                    summarized_messages
-                )
-                console.print(
-                    Panel(
-                        (
-                            f"Summarized Conversation History:\n"
-                            f"Summary:\n{summary.text}\n"
-                            f"Approximate tokens before: {tokens_before_summarize}\n"
-                            f"Approximate tokens after: {tokens_after_summarize}\n"
-                        ),
-                        title="[bold yellow1 on black]Summarize Past Context",
-                        border_style="yellow1",
-                        style="bold yellow1 on black",
-                    )
-                )
-            new_state["messages"] = summarized_messages
-            summarized = True
-        return new_state, summarized
-
     # Define the function that calls the model
     def query_executor(
         self, state: ExecutionState, runtime: Runtime[AgentContext]
@@ -402,8 +284,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         full_overwrite = False
 
-        # 1.5) Check message history length and summarize to shorten the token usage:
-        new_state, full_overwrite = self._summarize_context(new_state)
+        # 1.5) Check message history length, summarize, and patch dangling tool calls.
+        new_state, full_overwrite = self.prepare_messages_context(
+            new_state, system_prompt=self.executor_prompt
+        )
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
@@ -427,9 +311,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
-        new_state, full_overwrite = self._patch_dangling(
-            new_state, full_overwrite
-        )
 
         # 3) Ensure the executor prompt is the first SystemMessage.
         messages = deepcopy(new_state["messages"])
@@ -461,6 +342,98 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
+    def _get_original_user_request(self, state: ExecutionState) -> str:
+        """Return the first human message as the original user request."""
+        for msg in state.get("messages", []):
+            if isinstance(msg, HumanMessage):
+                return str(getattr(msg, "text", None) or msg.content)
+        messages = state.get("messages", [])
+        if messages:
+            msg = messages[0]
+            return str(getattr(msg, "text", None) or getattr(msg, "content", ""))
+        return ""
+
+    def review_work(self, state: ExecutionState) -> ExecutionState:
+        """Review whether the completed work adequately addresses the request.
+
+        This node runs after the executor emits an ordinary assistant response without
+        requesting any tool calls. It asks the LLM for a structured assessment of the
+        work so far. If the work is incomplete, the review rationale is appended as a
+        HumanMessage so the executor can continue with explicit feedback. If the work
+        is complete, only the structured review state is updated and the graph proceeds
+        to recap.
+        """
+        new_state = deepcopy(state)
+        full_overwrite = False
+
+        new_state, full_overwrite = self.prepare_messages_context(
+            new_state, system_prompt=self.executor_prompt
+        )
+
+        user_request = self._get_original_user_request(new_state)
+        review_message = HumanMessage(content=get_review_prompt(user_request))
+        review_messages = list(new_state["messages"]) + [review_message]
+
+        try:
+            review_result = self.llm.with_structured_output(
+                ReviewAssessment
+            ).invoke(
+                review_messages,
+                config=self.build_config(tags=["review"]),
+            )
+        except Exception as e:
+            # Avoid trapping the graph in an infinite review loop if the review model
+            # call fails. The recap will still surface the work completed so far.
+            review_result = {
+                "is_complete": True,
+                "reason": f"Review step failed with error: {e}. Proceeding to recap.",
+            }
+            print("Review error: ", e)
+
+        is_complete = bool(review_result.get("is_complete", False))
+        reason = str(review_result.get("reason", ""))
+        review: ReviewAssessment = {
+            "is_complete": is_complete,
+            "reason": reason,
+        }
+
+        console.print(
+            Panel(
+                Markdown(reason or "No review reason provided."),
+                title=(
+                    "[bold green]Execution Review: Complete[/bold green]"
+                    if is_complete
+                    else "[bold yellow]Execution Review: Continue[/bold yellow]"
+                ),
+                border_style="green" if is_complete else "yellow",
+                expand=False,
+            )
+        )
+
+        if is_complete:
+            if full_overwrite:
+                return {
+                    "messages": Overwrite(new_state["messages"]),
+                    "review": review,
+                    "symlinkdir": new_state.get("symlinkdir", {}),
+                }
+            return {"review": review}
+
+        feedback = HumanMessage(
+            content=(
+                "Review of the current work determined that the original user "
+                "request has not yet been adequately addressed. Continue working "
+                "and specifically address the following review feedback:\n\n"
+                f"{reason}"
+            )
+        )
+        return self.messages_update(
+            new_state,
+            [feedback],
+            full_overwrite=full_overwrite,
+            extra={"review": review, "symlinkdir": new_state.get("symlinkdir", {})},
+        )
+
     def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
@@ -478,17 +451,16 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         new_state = deepcopy(state)
         full_overwrite = False
 
-        # 0) Check message history length and summarize to shorten the token usage:
-        new_state, full_overwrite = self._summarize_context(new_state)
+        # 0) Check message history length, summarize, and patch dangling tool calls.
+        new_state, full_overwrite = self.prepare_messages_context(
+            new_state, system_prompt=self.executor_prompt
+        )
 
         # 1) Construct the summarization message list (system prompt + prior messages).
         recap_message = HumanMessage(content=self.recap_prompt)
         new_state["messages"] = new_state["messages"] + [recap_message]
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
-        new_state, full_overwrite = self._patch_dangling(
-            new_state, full_overwrite
-        )
         try:
             response = self.llm.invoke(
                 input=new_state["messages"],
@@ -555,24 +527,34 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # Register nodes:
         # - "agent": LLM planning/execution step
         # - "action": tool dispatch (run_command, write_code, etc.)
+        # - "review": structured completeness review before final recap
         # - "recap": summary/finalization step
         self.add_node(self.query_executor, "agent")
         self.add_node(self.tool_node, "action")
+        self.add_node(self.review_work, "review")
         self.add_node(self.recap, "recap")
 
         # Set entrypoint: execution starts with the "agent" node.
         self.graph.set_entry_point("agent")
 
-        # From "agent", either continue (tools) or finish (recap),
+        # From "agent", either continue with tools or review the completed work,
         # based on presence of tool calls in the last message.
         self.graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "action", "recap": "recap"},
+            {"continue": "action", "review": "review"},
         )
 
         # After tools run, return control to the agent for the next step.
         self.graph.add_edge("action", "agent")
+
+        # After review, either ask the executor to continue with review feedback or
+        # finish with the recap node.
+        self.graph.add_conditional_edges(
+            "review",
+            self._wrap_cond(review_complete, "review_complete", "execution"),
+            {"continue": "agent", "recap": "recap"},
+        )
 
         # The graph completes at the "recap" node.
         self.graph.set_finish_point("recap")

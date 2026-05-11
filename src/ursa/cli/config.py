@@ -103,6 +103,9 @@ class UrsaConfig(BaseModel):
     thread_id: str | None = None
     """ Thread ID for persistence """
 
+    use_web: bool = False
+    """Enable web-search tools for ChatAgent and ExecutionAgent."""
+
     llm_model: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
             model="openai:gpt-5.4",

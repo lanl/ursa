@@ -7,12 +7,8 @@
   like skills that it saves.
 
 ### TODO:
-- ~~Agent checkpointing and "module" like loading of checkpointed agents with data/time logging~~
-- ~~Tools for writing/reading self documentation for context offloading~~
-- ~~Implement interface for web dashboard~~
 - Ensure this did not break the YAML workflow
-- ~~Make sure the tool outputs are in the "den" and not the "workspace"~~
-- ~~Build a share/import agent capability to be able to share stored agents.~~
+- Ensure that the agents do a good job of reading/writing these changes. Right now, agents need to be told to pretty explicitly
 - There needs to be something for handling the case where a user wants to have two sessions going with the same persistent agent. Right now, their checkpoint writes may get in the way of each other, leading to a bad checkpoint file or at the very least, a messy, disjointed history.
 
 ## Settable agent "group" for information control
@@ -22,47 +18,35 @@
   (like Triad proprietary data or CUI) and pointing it an endpoint that it shouldnt (like the public OpenAI endpoint)
 - `group_name` above is the name of the group. Need to make this user settable and users should use intuitive names
   - Implemented the baseline interaction of this with the CLI. 
-- Tested for dashboard. Might be useful to make this check happen 
+- Tested for dashboard.
 
 ### TODO:
-- ~~Propogate this to the white-list checking.~~
-- Test for python scripting interface
 - Implement for plan_execute_from_yaml
-- Tested for dashboard - might be useful to make this check happen at launch instead of when the user tries to send a message. 
-
 
 ## Chat has tools now
 - The efforts to do ChatWithTools naturally just became giving the basic Chat functionality tools and renaming the
   ChatAgent as BasicChatAgent. The goal here is that the ChatAgent becomes the natural way to interact downstream with
   a persisted agent or to combine agents together.
-
-### TODO:
-- Add summarization and dangling tool fixes to agents generally. These will be needed more broadly for stable running
-- Fix the weird issues with user messages not starting conversations, multiple system messages, etc.
+- Moved the summarization and dangling tool handling to the base agent class. This will allow it to be pulled into 
+  other agents more easily and be more stable/structured. Really this was needed eventually with the move to persistent 
+  agents because others can pick up a message history that could have problems. 
+  - Gave the execution agent a review/kickback step to differentiate from this ChatWithThools agent.
 
 ## Added a use_web argument to the execution agent and chat agent
 - Added a flag so a user can easily turn on and off using web-based search tools. 
+- Propagated into arguments/settings for the CLI and Dashboard
+
+## URSA and URSA dev bot
+- Did a lot of dev with an "ursa_cli_bot" which basically can act as an URSA dev bot that can be packaged
+  with URSA going forward to allow others to have an agent easily pick up the dev notes
 
 ### TODO:
-- Make this propagate into arguments/settings for the CLI and Dashboard
-- Make this default to False, so that web tools are opt-in. Right now this defaults to true for compatibility
-  and because until it is settable in the CLI/Dashboard, I want it to still be True there.
-
-
-# Things to implement in this PR still:
-
-## URSA and URSA dev bots
-- Once the above is working, making an URSA bot and URSA dev bot that can be packaged
-  with URSA in the public repo, both as examples of these sorts of persistent agents
-  but also to share the ability to have these sort of bots shared for everyone working on
-  or with URSA.
+- Make an "ursa" agent that has reviewed the code usage and can act as an oracle for Q/A
+- Need to actually package into the git repo (and figure the best way to do so)
 
 # Things to implement in a future PR:
 
 # Choosing the right agents:
-- A RAGbearian:
-  - An agent that can search documentation on what each RAG database has and can pipe user requests to the most
-    relevant RAG Agent
 - A BotBearian:
   - A RAG agent that gets access to each persisted agent's memory in a group and can help the user select which persisted agent
     would be the best for a given task.
@@ -73,6 +57,11 @@
 - Easier to couple in RAG as a tool 
   - Maybe be able to give the agents a list of paths to data to RAG?
   - There is probably a clever way to do this
+- A RAGbearian:
+  - An agent that can search documentation on what each RAG database has and can pipe user requests to the most
+    relevant RAG Agent
+  - Like the BotBearian, but of the RAG databases. 
+    - Perhaps centralizing RAG agents like other agents is all that needs to happen here?
 
 ## Agent interaction environments
 - Maybe this moves out to a separate one but seems useful here.

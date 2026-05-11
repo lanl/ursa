@@ -190,6 +190,7 @@ def _planning_executor_workflow_builder() -> Callable[
                 "messages_to_keep",
                 "safe_codes",
                 "log_state",
+                "use_web",
             ]:
                 planner_init.pop(k, None)
             executor_init.pop("max_reflection_steps", None)
@@ -289,7 +290,7 @@ register(
         spec=AgentSpec(
             agent_id="execution_agent",
             display_name="Execution Agent",
-            description="Tool-using agent that can write/edit files, run shell commands, and search the web/arXiv/OSTI.",
+            description="Tool-using agent that can write/edit files and run shell commands. Web/arXiv/OSTI search tools are available only when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -360,7 +361,7 @@ register(
         spec=AgentSpec(
             agent_id="planning_executor_workflow",
             display_name="Planning + Execution Workflow",
-            description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step. Best for longer, complex tasks.",
+            description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step. Best for longer, complex tasks. Executor web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,

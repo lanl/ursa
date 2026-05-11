@@ -34,8 +34,9 @@ class BasicChatAgent(BaseAgent[ChatState]):
     state_type = ChatState
 
     def _response_node(self, state: ChatState) -> ChatState:
-        res = self.llm.invoke(state["messages"])
-        return {"messages": [res]}
+        new_state, full_overwrite = self.prepare_messages_context(state)
+        res = self.llm.invoke(new_state["messages"])
+        return self.messages_update(new_state, [res], full_overwrite=full_overwrite)
 
     def format_query(self, prompt: str, state: ChatState | None = None):
         if state is None:

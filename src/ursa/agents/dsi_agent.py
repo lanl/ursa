@@ -256,16 +256,21 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
     # __call__ from my agent
     def _response_node(self, state):
-        messages = state["messages"]
+        new_state, full_overwrite = self.prepare_messages_context(state)
+        messages = new_state["messages"]
 
         conversation = [SystemMessage(content=self.prompt)] + messages
         response = self.llm.invoke(conversation)
 
-        return {
-            "messages": messages + [response],
-            "response": response.content,
-            "metadata": response.response_metadata,
-        }
+        return self.messages_update(
+            new_state,
+            [response],
+            full_overwrite=full_overwrite,
+            extra={
+                "response": response.content,
+                "metadata": response.response_metadata,
+            },
+        )
 
     def _build_graph(self):
         self.llm = self.llm.bind_tools(self.tools.values())

@@ -158,13 +158,19 @@ class HITL:
                         )
 
         self.agents: dict[str, AgentHITL] = {}
-        self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
+        self.agents["chat"] = AgentHITL(
+            agent_class=agents.ChatAgent,
+            config={"use_web": self.config.use_web},
+        )
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
         if has_optional_dep_group("dsi"):
             self.agents["dsi"] = AgentHITL(agent_class=agents.DSIAgent)
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
-            config={"agent_memory": self.memory},
+            config={
+                "agent_memory": self.memory,
+                "use_web": self.config.use_web,
+            },
         )
         self.agents["hypothesize"] = AgentHITL(
             agent_class=agents.HypothesizerAgent

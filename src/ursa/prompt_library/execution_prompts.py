@@ -35,6 +35,20 @@ Your responsibilities is to write a condensed summary of the conversation.
     - Highlight any places where those goals were not achieved and why.
 """
 
+def get_review_prompt(user_prompt):
+    return f"""
+Review the work completed to this point.
+
+A reminder of the original user request:
+{user_prompt}
+
+Please perform a step-by-step evaluation:
+1. Task Breakdown: List the core objectives within the user's request.
+2. Scope Categorization: Identify which objectives are actionable by an agent with the available tools and which are out-of-scope.
+3. Execution Review: Assess whether the agent successfully completed all the in-scope objectives. 
+4. Final Verdict: Conclude with a final status decision to continue or if the work is complete and give a reasoning to your verdict 
+"""
+
 
 def get_safety_prompt(query, safe_codes, created_files):
     return f"""

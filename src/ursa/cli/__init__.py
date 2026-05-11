@@ -64,6 +64,13 @@ def build_parser() -> ArgumentParser:
         skip={"agent_name"},
     )
     parser.add_argument(
+        "--use-web",
+        dest="use_web",
+        action="store_true",
+        default=False,
+        help="Enable web-search tools for ChatAgent and ExecutionAgent.",
+    )
+    parser.add_argument(
         "--name",
         type=str,
         default=None,

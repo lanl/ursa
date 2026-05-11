@@ -19,6 +19,7 @@ import asyncio
 import re
 import sqlite3
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -38,7 +39,8 @@ from uuid import uuid4
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables import RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -50,6 +52,7 @@ from langgraph.graph.state import (
 from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
+from langgraph.types import Overwrite
 from langgraph.store.sqlite import SqliteStore
 
 from ursa.observability.timing import (
@@ -178,6 +181,9 @@ class BaseAgent(Generic[TState], ABC):
         autosave_metrics: bool = True,
         otel_metrics: bool = False,
         thread_id: Optional[str] = None,
+        tokens_before_summarize: int = 50000,
+        messages_to_keep: int = 20,
+        max_single_tool_message_tokens: int = 100000,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -194,6 +200,9 @@ class BaseAgent(Generic[TState], ABC):
         self.workspace = Path(workspace or "ursa_workspace")
         self.agent_name = agent_name
         self.group = group
+        self.tokens_before_summarize = tokens_before_summarize
+        self.messages_to_keep = messages_to_keep
+        self.max_single_tool_message_tokens = max_single_tool_message_tokens
         enforce_model_group_policy(self.llm, self.group)
         if not (Path.home() / ".cache/ursa_agents" / group).exists() and group != "default":
             raise ValueError((f"Group '{group}' does not exist. "
@@ -553,6 +562,219 @@ class BaseAgent(Generic[TState], ABC):
             ):
                 return result["messages"][-1].text
         raise NotImplementedError()
+
+    def _message_tool_call_ids(self, msg: Any) -> list[str]:
+        """Return LangChain tool-call IDs requested by a message, if any."""
+        return [call["id"] for call in getattr(msg, "tool_calls", []) or [] if "id" in call]
+
+    def _patch_dangling(
+        self,
+        state: Mapping[str, Any],
+        summarized: bool = False,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Patch missing tool responses in a LangGraph message state.
+
+        Tool-calling chat models require every AI tool call to be followed by a
+        corresponding ``ToolMessage``. If a tool result is missing because a run
+        timed out, failed, or summarization trimmed it away, later model calls can
+        fail with provider-side message validation errors. This utility inserts a
+        synthetic response for any dangling tool call ID and truncates extremely
+        large tool messages.
+
+        Args:
+            state: A graph state containing a ``messages`` list.
+            summarized: Existing overwrite flag from prior state mutation.
+
+        Returns:
+            ``(new_state, full_overwrite_required)``. When the boolean is true,
+            callers using an ``add_messages`` reducer should return an
+            ``Overwrite(new_state["messages"])`` update rather than appending.
+        """
+        if "messages" not in state:
+            return state, summarized
+
+        new_state = deepcopy(state)
+        dangling_response = (
+            "Response Not Found from tool. "
+            "May have timed out or been forgotten due to summarization."
+        )
+
+        pending_tool_ids: list[str] = []
+        for msg in new_state["messages"]:
+            if isinstance(msg, ToolMessage):
+                if (
+                    self.max_single_tool_message_tokens is not None
+                    and count_tokens_approximately([msg])
+                    > self.max_single_tool_message_tokens
+                ):
+                    msg.content = "Message too long - truncated."
+                    summarized = True
+                try:
+                    pending_tool_ids.remove(msg.tool_call_id)
+                except ValueError:
+                    # Orphan tool messages are not ideal, but do not create the
+                    # provider-side validation error that missing tool responses do.
+                    pass
+                continue
+
+            pending_tool_ids.extend(self._message_tool_call_ids(msg))
+
+        if pending_tool_ids:
+            summarized = True
+            print(
+                f"[Dangling Tool Call Warning] The following tool IDs "
+                f"were dangling:\n{pending_tool_ids}\nReplies of missing response applied."
+            )
+            for tool_id in pending_tool_ids:
+                for msg_ind, msg in enumerate(new_state["messages"]):
+                    if tool_id in self._message_tool_call_ids(msg):
+                        new_state["messages"].insert(
+                            msg_ind + 1,
+                            ToolMessage(
+                                content=dangling_response,
+                                tool_call_id=tool_id,
+                            ),
+                        )
+                        break
+
+        return new_state, summarized
+
+    def _summarize_context(
+        self,
+        state: Mapping[str, Any],
+        *,
+        system_prompt: str | None = None,
+        summary_prompt: str | None = None,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Summarize long ``state['messages']`` histories.
+
+        This preserves the first/system message and the last
+        ``self.messages_to_keep`` messages, replacing the middle of the
+        transcript with an LLM-generated summary when the approximate token count
+        exceeds ``self.tokens_before_summarize``.
+
+        The method also avoids creating dangling tool-call pairs when possible by
+        moving tool responses that correspond to summarized-away calls into the
+        summarized block.
+        """
+        if "messages" not in state:
+            return state, False
+
+        new_state = deepcopy(state)
+        messages = list(new_state.get("messages") or [])
+        if len(messages) <= 1:
+            return new_state, False
+
+        tokens_before = count_tokens_approximately(messages[1:])
+        if tokens_before <= self.tokens_before_summarize:
+            return new_state, False
+
+        keep_count = max(0, int(self.messages_to_keep or 0))
+        body_messages = messages[1:]
+        if keep_count == 0:
+            conversation_to_summarize = body_messages
+            conversation_to_keep = []
+        elif len(body_messages) > keep_count:
+            conversation_to_summarize = body_messages[:-keep_count]
+            conversation_to_keep = body_messages[-keep_count:]
+        else:
+            # Nothing can be summarized while still preserving the requested tail.
+            return new_state, False
+
+        tool_ids: list[str] = []
+        for msg in conversation_to_summarize:
+            tool_ids.extend(self._message_tool_call_ids(msg))
+            if isinstance(msg, ToolMessage):
+                try:
+                    tool_ids.remove(msg.tool_call_id)
+                except ValueError:
+                    pass
+
+        if tool_ids:
+            print(f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}")
+            keep_copy = list(conversation_to_keep)
+            for msg in keep_copy:
+                if isinstance(msg, ToolMessage) and msg.tool_call_id in tool_ids:
+                    conversation_to_summarize.append(msg)
+                    conversation_to_keep.remove(msg)
+                    tool_ids.remove(msg.tool_call_id)
+
+        if tool_ids:
+            print(
+                f"Tool ID '{tool_ids}' was in the messages to summarize, but was not "
+                "found in the responses. Could be dangling tool call."
+            )
+
+        summarize_prompt = summary_prompt or f"""
+        Your only task is to provide a detailed, comprehensive summary of the following
+        conversation.
+
+        Your summary will be the only information retained from the conversation, so ensure
+        it contains all details that need to be remembered to meet the goals of the work.
+
+        Conversation to summarize:
+        {conversation_to_summarize}
+        """
+        summary = self.llm.invoke(summarize_prompt)
+
+        first_message = messages[0]
+        if system_prompt is not None:
+            first_message = SystemMessage(content=system_prompt)
+
+        new_state["messages"] = [first_message, summary] + conversation_to_keep
+        return new_state, True
+
+    def prepare_messages_context(
+        self,
+        state: Mapping[str, Any],
+        *,
+        system_prompt: str | None = None,
+        summary_prompt: str | None = None,
+        patch_dangling: bool = True,
+        summarize: bool = True,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Apply standard message-history maintenance before an LLM call.
+
+        Returns ``(new_state, full_overwrite_required)``. Graph nodes using the
+        ``add_messages`` reducer should use :meth:`messages_update` with the
+        returned flag to avoid appending duplicate history after summarization or
+        dangling-tool patching.
+        """
+        new_state = deepcopy(state)
+        full_overwrite = False
+        if summarize:
+            new_state, full_overwrite = self._summarize_context(
+                new_state,
+                system_prompt=system_prompt,
+                summary_prompt=summary_prompt,
+            )
+        if patch_dangling:
+            new_state, full_overwrite = self._patch_dangling(new_state, full_overwrite)
+        return new_state, full_overwrite
+
+    def messages_update(
+        self,
+        state: Mapping[str, Any],
+        message_update: Any,
+        *,
+        full_overwrite: bool = False,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build a LangGraph-safe update for states with a ``messages`` reducer."""
+        update = dict(extra or {})
+        if full_overwrite:
+            messages = list(state.get("messages") or [])
+            if message_update is None:
+                update["messages"] = Overwrite(messages)
+            else:
+                if isinstance(message_update, list):
+                    messages.extend(message_update)
+                else:
+                    messages.append(message_update)
+                update["messages"] = Overwrite(messages)
+        else:
+            update["messages"] = message_update
+        return update
 
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         """Normalizes various input formats into a standardized mapping.

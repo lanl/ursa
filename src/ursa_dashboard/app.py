@@ -141,7 +141,29 @@ def create_app() -> FastAPI:
 
     rm = RunManager()
     settings_store = SettingsStore(rm.workspace_root)
-    dashboard_group = str(os.environ.get("URSA_DASHBOARD_GROUP", "default") or "default").strip() or "default"
+    dashboard_group = (
+        str(os.environ.get("URSA_DASHBOARD_GROUP", "default") or "default").strip()
+        or "default"
+    )
+    dashboard_use_web = str(os.environ.get("URSA_DASHBOARD_USE_WEB", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    web_opt_in_agent_ids = {
+        "chat_agent",
+        "execution_agent",
+        "planning_executor_workflow",
+    }
+
+    def _agent_init_with_dashboard_defaults(
+        agent_id: str, agent_init: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        out = dict(agent_init or {})
+        if agent_id in web_opt_in_agent_ids:
+            out.setdefault("use_web", dashboard_use_web)
+        return out
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -405,7 +427,7 @@ def create_app() -> FastAPI:
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
 
-        agent_init = dict(req.agent_init or {})
+        agent_init = _agent_init_with_dashboard_defaults(agent_id, req.agent_init)
         if agent_name is not None:
             agent_init["agent_name"] = agent_name
         agent_init["group"] = dashboard_group
@@ -505,10 +527,12 @@ def create_app() -> FastAPI:
         if req.agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
 
+        agent_init = _agent_init_with_dashboard_defaults(req.agent_id, req.agent_init)
+
         rec = await rm.create_run(
             agent_id=req.agent_id,
             params=req.params,
-            agent_init=req.agent_init,
+            agent_init=agent_init,
             llm=llm,
             runner=runner,
             extra={"mcp": mcp},

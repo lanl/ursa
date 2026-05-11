@@ -31,11 +31,22 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("URSA_DASHBOARD_GROUP", "default"),
         help="Agent group to use from ~/.cache/ursa_agents/<group>",
     )
+    ap.add_argument(
+        "--use-web",
+        action="store_true",
+        default=str(os.environ.get("URSA_DASHBOARD_USE_WEB", ""))
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"},
+        help="Enable web-search tools for dashboard-created chat/execution agents",
+    )
     args = ap.parse_args(argv)
 
     if args.workspace:
         os.environ["URSA_DASHBOARD_WORKSPACE_ROOT"] = args.workspace
     os.environ["URSA_DASHBOARD_GROUP"] = str(args.group or "default")
+    if args.use_web:
+        os.environ["URSA_DASHBOARD_USE_WEB"] = "1"
 
     try:
         import uvicorn  # type: ignore
