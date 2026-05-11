@@ -23,10 +23,12 @@ from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
-from ursa.security import enforce_group_base_url_policy, enforce_model_group_policy
+from ursa.security import (
+    enforce_group_base_url_policy,
+    enforce_model_group_policy,
+)
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
-from ursa.util.memory_logger import AgentMemory
 
 ursa_banner = r"""
   __  ________________ _
@@ -118,7 +120,9 @@ class HITL:
         self.agent_name = self.config.agent_name
         self.group = self.config.group
 
-        enforce_group_base_url_policy(self.config.llm_model.base_url, self.group)
+        enforce_group_base_url_policy(
+            self.config.llm_model.base_url, self.group
+        )
         self.model: BaseChatModel = init_chat_model(
             **self.config.llm_model.kwargs
         )
@@ -195,7 +199,8 @@ class HITL:
         self.last_agent = None
 
     async def _get_checkpointer(
-        self, checkpoint_path: Path) -> AsyncSqliteSaver:
+        self, checkpoint_path: Path
+    ) -> AsyncSqliteSaver:
         checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(checkpoint_path))

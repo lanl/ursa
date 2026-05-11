@@ -101,9 +101,7 @@ def write_experience(
         )
 
     console.print("[cyan]Writing experience file:[/]", experience_file)
-    return (
-        f"Experience file {experience_file.relative_to(runtime.context.den)} {action} successfully."
-    )
+    return f"Experience file {experience_file.relative_to(runtime.context.den)} {action} successfully."
 
 
 @tool
@@ -143,9 +141,7 @@ def edit_experience(
         console.print(
             "[yellow] ⚠️ 'old_content' not found in experience file; no changes made.[/]"
         )
-        return (
-            f"No changes made to {filename}: 'old_content' not found in experience file."
-        )
+        return f"No changes made to {filename}: 'old_content' not found in experience file."
 
     updated = content.replace(old_content, new_content, 1)
 
@@ -182,9 +178,7 @@ def edit_experience(
             },
         )
 
-    return (
-        f"Experience file {experience_file.relative_to(runtime.context.den)} updated successfully."
-    )
+    return f"Experience file {experience_file.relative_to(runtime.context.den)} updated successfully."
 
 
 @tool
@@ -225,11 +219,15 @@ def list_experiences(runtime: ToolRuntime[AgentContext]) -> str:
     """
     experiences_dir = _experiences_dir(runtime)
     files = sorted(
-        path.name for path in experiences_dir.iterdir() if path.is_file() and path.suffix.lower() == ".md"
+        path.name
+        for path in experiences_dir.iterdir()
+        if path.is_file() and path.suffix.lower() == ".md"
     )
 
     if not files:
         return "No experience files found in experiences/."
 
     console.print("[cyan]Listing experience files...")
-    return "Available experience files:\n" + "\n".join(f"- {name}" for name in files)
+    return "Available experience files:\n" + "\n".join(
+        f"- {name}" for name in files
+    )

@@ -7,19 +7,21 @@ from langgraph.graph.message import add_messages
 
 from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
-
-from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools import (
+    edit_code,
+    edit_experience,
+    list_experiences,
+    read_experience,
+    read_file,
+    run_command,
+    write_code,
+    write_experience,
+)
 from ursa.tools.read_image_tool import read_image_tool
 from ursa.tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
     run_web_search,
-)
-from ursa.tools import (
-    list_experiences,
-    write_experience,
-    read_experience,
-    edit_experience,
 )
 
 
@@ -36,7 +38,9 @@ class BasicChatAgent(BaseAgent[ChatState]):
     def _response_node(self, state: ChatState) -> ChatState:
         new_state, full_overwrite = self.prepare_messages_context(state)
         res = self.llm.invoke(new_state["messages"])
-        return self.messages_update(new_state, [res], full_overwrite=full_overwrite)
+        return self.messages_update(
+            new_state, [res], full_overwrite=full_overwrite
+        )
 
     def format_query(self, prompt: str, state: ChatState | None = None):
         if state is None:
@@ -54,6 +58,7 @@ class BasicChatAgent(BaseAgent[ChatState]):
         self.add_node(self._response_node)
         self.graph.set_entry_point("_response_node")
         self.graph.set_finish_point("_response_node")
+
 
 def should_continue(state: ChatState) -> Literal["finish", "continue"]:
     """Return 'finish' if no tool calls in the last message, else 'continue'.
@@ -77,14 +82,15 @@ def should_continue(state: ChatState) -> Literal["finish", "continue"]:
 
 class ChatAgent(AgentWithTools, BasicChatAgent):
     """Chat Agent"""
+
     state_type = ChatState
 
     def __init__(
-            self,
-            llm: BaseChatModel,
-            use_web: bool = False,
-            **kwargs,
-        ):
+        self,
+        llm: BaseChatModel,
+        use_web: bool = False,
+        **kwargs,
+    ):
         default_tools = [
             run_command,
             write_code,
@@ -98,25 +104,22 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
         ]
         if use_web:
             default_tools.extend([
-            run_web_search,
-            run_osti_search,
-            run_arxiv_search
+                run_web_search,
+                run_osti_search,
+                run_arxiv_search,
             ])
         super().__init__(llm=llm, tools=default_tools, **kwargs)
 
     def _build_graph(self):
         # Bind tools to llm and context summarizer
         self.llm = self.llm.bind_tools(self.tools.values())
-        
+
         self.add_node(self._response_node, "respond")
         self.add_node(self.tool_node, "tool_node")
         self.graph.set_entry_point("respond")
         self.graph.add_conditional_edges(
             "respond",
             self._wrap_cond(should_continue, "should_continue"),
-            {
-                "continue": "tool_node", 
-                "finish": END
-            },
+            {"continue": "tool_node", "finish": END},
         )
         self.graph.add_edge("tool_node", "respond")

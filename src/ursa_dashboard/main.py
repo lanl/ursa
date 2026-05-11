@@ -14,9 +14,9 @@ def main(
     """Launch the Ursa Web Dashboard."""
     inject_truststore_into_ssl()
     try:
-        import uvicorn
-
         import os
+
+        import uvicorn
 
         os.environ["URSA_DASHBOARD_GROUP"] = str(group or "default")
         uvicorn.run(

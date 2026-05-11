@@ -57,7 +57,12 @@ def create_session(
         "session_id": session_id,
         "agent_id": agent_id,
         "agent_name": resolved_agent_name,
-        "title": title or (f"{resolved_agent_name}" if resolved_agent_name else f"{agent_id} session"),
+        "title": title
+        or (
+            f"{resolved_agent_name}"
+            if resolved_agent_name
+            else f"{agent_id} session"
+        ),
         "created_at": now,
         "updated_at": now,
         "active_run_id": None,

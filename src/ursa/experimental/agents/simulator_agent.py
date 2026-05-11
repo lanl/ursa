@@ -106,7 +106,7 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         **kwargs,
     ):
         tools = []
-        super().__init__(llm, tools=tools, workspace=workspace,**kwargs)
+        super().__init__(llm, tools=tools, workspace=workspace, **kwargs)
         self.documenter_prompt = documenter_prompt
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt

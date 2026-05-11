@@ -106,7 +106,9 @@ def is_base_url_allowed(base_url: str | None, group: str | None) -> bool:
     )
 
 
-def enforce_group_base_url_policy(base_url: str | None, group: str | None) -> None:
+def enforce_group_base_url_policy(
+    base_url: str | None, group: str | None
+) -> None:
     effective_group = group or DEFAULT_GROUP_NAME
     if effective_group == DEFAULT_GROUP_NAME:
         return
@@ -129,5 +131,7 @@ def enforce_group_base_url_policy(base_url: str | None, group: str | None) -> No
     )
 
 
-def enforce_model_group_policy(model: BaseChatModel | object, group: str | None) -> None:
+def enforce_model_group_policy(
+    model: BaseChatModel | object, group: str | None
+) -> None:
     enforce_group_base_url_policy(get_model_base_url(model), group)

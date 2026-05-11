@@ -34,12 +34,16 @@ from typing import (
     TypeVar,
     final,
 )
-from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables import RunnableLambda
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -52,8 +56,8 @@ from langgraph.graph.state import (
 from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
-from langgraph.types import Overwrite
 from langgraph.store.sqlite import SqliteStore
+from langgraph.types import Overwrite
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
@@ -204,10 +208,16 @@ class BaseAgent(Generic[TState], ABC):
         self.messages_to_keep = messages_to_keep
         self.max_single_tool_message_tokens = max_single_tool_message_tokens
         enforce_model_group_policy(self.llm, self.group)
-        if not (Path.home() / ".cache/ursa_agents" / group).exists() and group != "default":
-            raise ValueError((f"Group '{group}' does not exist. "
-                             f"Please use `ursa create-group {group} <group_config_file>` to create"
-                             ))
+        if (
+            not (Path.home() / ".cache/ursa_agents" / group).exists()
+            and group != "default"
+        ):
+            raise ValueError(
+                (
+                    f"Group '{group}' does not exist. "
+                    f"Please use `ursa create-group {group} <group_config_file>` to create"
+                )
+            )
         set_checkpointer = True if checkpointer else False
         set_name = True if agent_name else False
         self.checkpointer = checkpointer
@@ -216,11 +226,13 @@ class BaseAgent(Generic[TState], ABC):
         if persist_agent:
             if set_checkpointer:
                 if set_name:
-                    print((
-                        "[WARNING]: Both checkpointer and den persistence set."
-                        " Using checkpointer, but only use one in the future."
-                    ))
-                self.den = self.workspace                
+                    print(
+                        (
+                            "[WARNING]: Both checkpointer and den persistence set."
+                            " Using checkpointer, but only use one in the future."
+                        )
+                    )
+                self.den = self.workspace
             else:
                 den_name = Path(group) / agent_name
                 self.den = Path.home() / ".cache/ursa_agents" / den_name
@@ -248,7 +260,13 @@ class BaseAgent(Generic[TState], ABC):
     @property
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
-        return AgentContext(llm=self.llm, workspace=self.workspace, agent_name=self.agent_name, group=self.group, den=self.den)
+        return AgentContext(
+            llm=self.llm,
+            workspace=self.workspace,
+            agent_name=self.agent_name,
+            group=self.group,
+            den=self.den,
+        )
 
     def add_node(
         self,
@@ -565,7 +583,11 @@ class BaseAgent(Generic[TState], ABC):
 
     def _message_tool_call_ids(self, msg: Any) -> list[str]:
         """Return LangChain tool-call IDs requested by a message, if any."""
-        return [call["id"] for call in getattr(msg, "tool_calls", []) or [] if "id" in call]
+        return [
+            call["id"]
+            for call in getattr(msg, "tool_calls", []) or []
+            if "id" in call
+        ]
 
     def _patch_dangling(
         self,
@@ -691,10 +713,15 @@ class BaseAgent(Generic[TState], ABC):
                     pass
 
         if tool_ids:
-            print(f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}")
+            print(
+                f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
+            )
             keep_copy = list(conversation_to_keep)
             for msg in keep_copy:
-                if isinstance(msg, ToolMessage) and msg.tool_call_id in tool_ids:
+                if (
+                    isinstance(msg, ToolMessage)
+                    and msg.tool_call_id in tool_ids
+                ):
                     conversation_to_summarize.append(msg)
                     conversation_to_keep.remove(msg)
                     tool_ids.remove(msg.tool_call_id)
@@ -705,7 +732,9 @@ class BaseAgent(Generic[TState], ABC):
                 "found in the responses. Could be dangling tool call."
             )
 
-        summarize_prompt = summary_prompt or f"""
+        summarize_prompt = (
+            summary_prompt
+            or f"""
         Your only task is to provide a detailed, comprehensive summary of the following
         conversation.
 
@@ -715,6 +744,7 @@ class BaseAgent(Generic[TState], ABC):
         Conversation to summarize:
         {conversation_to_summarize}
         """
+        )
         summary = self.llm.invoke(summarize_prompt)
 
         first_message = messages[0]
@@ -749,7 +779,9 @@ class BaseAgent(Generic[TState], ABC):
                 summary_prompt=summary_prompt,
             )
         if patch_dangling:
-            new_state, full_overwrite = self._patch_dangling(new_state, full_overwrite)
+            new_state, full_overwrite = self._patch_dangling(
+                new_state, full_overwrite
+            )
         return new_state, full_overwrite
 
     def messages_update(

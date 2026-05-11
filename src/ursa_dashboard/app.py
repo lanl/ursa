@@ -36,6 +36,21 @@ from fastapi.responses import (
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from ursa.cli.agent_management import (
+    copy_agent as cli_copy_agent,
+)
+from ursa.cli.agent_management import (
+    delete_agent as cli_delete_agent,
+)
+from ursa.cli.agent_management import (
+    ensure_group_dir,
+    validate_agent_name,
+)
+from ursa.cli.agent_management import (
+    save_agent as cli_save_agent,
+)
+from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
+
 from .api_models import (
     ErrorResponse,
     FileMetaResponse,
@@ -89,15 +104,6 @@ from .sessions import (
     update_session as session_update_session,
 )
 from .settings import AuthConfig, SettingsStore
-from ursa.cli.agent_management import (
-    AGENT_GROUPS_DIR,
-    copy_agent as cli_copy_agent,
-    delete_agent as cli_delete_agent,
-    ensure_group_dir,
-    save_agent as cli_save_agent,
-    validate_agent_name,
-)
-from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
 
 
 def create_app() -> FastAPI:
@@ -146,10 +152,14 @@ def create_app() -> FastAPI:
     rm = RunManager()
     settings_store = SettingsStore(rm.workspace_root)
     dashboard_group = (
-        str(os.environ.get("URSA_DASHBOARD_GROUP", "default") or "default").strip()
+        str(
+            os.environ.get("URSA_DASHBOARD_GROUP", "default") or "default"
+        ).strip()
         or "default"
     )
-    dashboard_use_web = str(os.environ.get("URSA_DASHBOARD_USE_WEB", "")).strip().lower() in {
+    dashboard_use_web = str(
+        os.environ.get("URSA_DASHBOARD_USE_WEB", "")
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
@@ -181,7 +191,11 @@ def create_app() -> FastAPI:
         settings = settings_store.load()
         try:
             enforce_group_base_url_policy(
-                (settings.llm.base_url if getattr(settings, "llm", None) else None),
+                (
+                    settings.llm.base_url
+                    if getattr(settings, "llm", None)
+                    else None
+                ),
                 dashboard_group,
             )
         except GroupBaseURLPolicyError as e:
@@ -270,15 +284,19 @@ def create_app() -> FastAPI:
     def list_agent_names() -> dict[str, Any]:
         group_dir = ensure_group_dir(dashboard_group)
         items: list[dict[str, Any]] = []
-        for path in sorted((p for p in group_dir.iterdir() if p.is_dir()), key=lambda p: p.name.lower()):
+        for path in sorted(
+            (p for p in group_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        ):
             stat = path.stat()
-            items.append(
-                {
-                    "agent_name": path.name,
-                    "updated_at": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
-                    "path": str(path),
-                }
-            )
+            items.append({
+                "agent_name": path.name,
+                "updated_at": datetime.utcfromtimestamp(
+                    stat.st_mtime
+                ).isoformat()
+                + "Z",
+                "path": str(path),
+            })
         return {"group": dashboard_group, "agent_names": items}
 
     @app.post(
@@ -432,7 +450,9 @@ def create_app() -> FastAPI:
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
 
-        agent_init = _agent_init_with_dashboard_defaults(agent_id, req.agent_init)
+        agent_init = _agent_init_with_dashboard_defaults(
+            agent_id, req.agent_init
+        )
         if agent_name is not None:
             agent_init["agent_name"] = agent_name
         agent_init["group"] = dashboard_group
@@ -479,7 +499,10 @@ def create_app() -> FastAPI:
     def get_agent_management() -> dict[str, Any]:
         group_dir = ensure_group_dir(dashboard_group)
         items = []
-        for path in sorted((p for p in group_dir.iterdir() if p.is_dir()), key=lambda p: p.name.lower()):
+        for path in sorted(
+            (p for p in group_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        ):
             items.append({"agent_name": path.name, "path": str(path)})
         return {"group": dashboard_group, "agents": items}
 
@@ -490,17 +513,32 @@ def create_app() -> FastAPI:
     def save_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
         name = validate_agent_name(str(payload.get("agent_name") or "").strip())
         cli_save_agent(name, dashboard_group)
-        return {"ok": True, "action": "save", "agent_name": name, "group": dashboard_group}
+        return {
+            "ok": True,
+            "action": "save",
+            "agent_name": name,
+            "group": dashboard_group,
+        }
 
     @app.post(
         "/agent-management/copy",
         dependencies=[Depends(require_auth)],
     )
     def copy_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
-        source = validate_agent_name(str(payload.get("source_agent_name") or "").strip())
-        new_name = validate_agent_name(str(payload.get("new_agent_name") or "").strip())
+        source = validate_agent_name(
+            str(payload.get("source_agent_name") or "").strip()
+        )
+        new_name = validate_agent_name(
+            str(payload.get("new_agent_name") or "").strip()
+        )
         cli_copy_agent(new_name, source, dashboard_group, dashboard_group)
-        return {"ok": True, "action": "copy", "agent_name": new_name, "source_agent_name": source, "group": dashboard_group}
+        return {
+            "ok": True,
+            "action": "copy",
+            "agent_name": new_name,
+            "source_agent_name": source,
+            "group": dashboard_group,
+        }
 
     @app.post(
         "/agent-management/delete",
@@ -509,7 +547,12 @@ def create_app() -> FastAPI:
     def delete_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
         name = validate_agent_name(str(payload.get("agent_name") or "").strip())
         cli_delete_agent(name, dashboard_group)
-        return {"ok": True, "action": "delete", "agent_name": name, "group": dashboard_group}
+        return {
+            "ok": True,
+            "action": "delete",
+            "agent_name": name,
+            "group": dashboard_group,
+        }
 
     @app.post(
         "/runs", response_model=RunRecord, dependencies=[Depends(require_auth)]
@@ -530,7 +573,9 @@ def create_app() -> FastAPI:
         if req.agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
 
-        agent_init = _agent_init_with_dashboard_defaults(req.agent_id, req.agent_init)
+        agent_init = _agent_init_with_dashboard_defaults(
+            req.agent_id, req.agent_init
+        )
 
         rec = await rm.create_run(
             agent_id=req.agent_id,
@@ -1239,7 +1284,8 @@ def create_app() -> FastAPI:
             p = Path(custom).expanduser()
             if not p.is_absolute():
                 raise HTTPException(
-                    status_code=400, detail="Session workspace path is not absolute"
+                    status_code=400,
+                    detail="Session workspace path is not absolute",
                 )
             return p.resolve()
         return _session_default_workspace_dir(session_id)
@@ -1253,8 +1299,12 @@ def create_app() -> FastAPI:
             "agent_id": str(sess.get("agent_id") or ""),
             "files": files,
             "workspace_path": str(ws),
-            "default_workspace_path": str(_session_default_workspace_dir(session_id)),
-            "is_default_workspace": not bool(str(sess.get("workspace_path") or "").strip()),
+            "default_workspace_path": str(
+                _session_default_workspace_dir(session_id)
+            ),
+            "is_default_workspace": not bool(
+                str(sess.get("workspace_path") or "").strip()
+            ),
         }
         return SessionWorkspaceListResponse(**data)
 
@@ -1342,7 +1392,9 @@ def create_app() -> FastAPI:
         finally:
             root.destroy()
 
-    def _choose_folder_with_osascript(initial_dir: str | None = None) -> str | None:
+    def _choose_folder_with_osascript(
+        initial_dir: str | None = None,
+    ) -> str | None:
         prompt = "Choose an URSA workspace folder"
         script = (
             f'set chosenFolder to choose folder with prompt "{prompt}"\n'
@@ -1366,15 +1418,30 @@ def create_app() -> FastAPI:
         selected = proc.stdout.strip()
         return selected or None
 
-    def _choose_folder_with_zenity(initial_dir: str | None = None) -> str | None:
-        cmd = ["zenity", "--file-selection", "--directory", "--title", "Select URSA workspace folder"]
+    def _choose_folder_with_zenity(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        cmd = [
+            "zenity",
+            "--file-selection",
+            "--directory",
+            "--title",
+            "Select URSA workspace folder",
+        ]
         if initial_dir:
-            cmd.extend(["--filename", str(Path(initial_dir).expanduser()) + os.sep])
+            cmd.extend([
+                "--filename",
+                str(Path(initial_dir).expanduser()) + os.sep,
+            ])
         proc = subprocess.run(cmd, text=True, capture_output=True, timeout=300)
         if proc.returncode != 0:
             if proc.returncode == 1:
                 return None
-            raise RuntimeError((proc.stderr or proc.stdout or "zenity folder chooser failed").strip())
+            raise RuntimeError(
+                (
+                    proc.stderr or proc.stdout or "zenity folder chooser failed"
+                ).strip()
+            )
         selected = proc.stdout.strip()
         return selected or None
 
@@ -1399,7 +1466,11 @@ def create_app() -> FastAPI:
         except Exception as e:
             errors.append(f"tkinter: {e}")
 
-        msg = "; ".join(errors) if errors else "no native folder chooser is available"
+        msg = (
+            "; ".join(errors)
+            if errors
+            else "no native folder chooser is available"
+        )
         raise RuntimeError(msg)
 
     @app.post(
@@ -1407,7 +1478,9 @@ def create_app() -> FastAPI:
         response_model=SessionWorkspaceListResponse,
         dependencies=[Depends(require_auth)],
     )
-    async def choose_session_workspace(session_id: str) -> SessionWorkspaceListResponse:
+    async def choose_session_workspace(
+        session_id: str,
+    ) -> SessionWorkspaceListResponse:
         try:
             sess = session_read_session(rm.workspace_root, session_id)
         except Exception:
@@ -1441,7 +1514,8 @@ def create_app() -> FastAPI:
         p = Path(selected).expanduser()
         if not p.is_absolute():
             raise HTTPException(
-                status_code=400, detail="Selected workspace path is not absolute"
+                status_code=400,
+                detail="Selected workspace path is not absolute",
             )
         try:
             p.mkdir(parents=True, exist_ok=True)
@@ -1452,7 +1526,8 @@ def create_app() -> FastAPI:
             )
         if not p.is_dir():
             raise HTTPException(
-                status_code=400, detail="Selected workspace path is not a directory"
+                status_code=400,
+                detail="Selected workspace path is not a directory",
             )
 
         sess2 = session_update_session(

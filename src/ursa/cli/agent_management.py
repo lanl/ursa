@@ -27,7 +27,9 @@ def add_agent_management_subcommands(subparsers) -> None:
     )
 
     show_agent_parser = ArgumentParser()
-    show_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
+    show_agent_parser.add_argument(
+        "--name", required=True, type=str, help="Agent name"
+    )
     show_agent_parser.add_argument(
         "--group",
         default="default",
@@ -42,7 +44,9 @@ def add_agent_management_subcommands(subparsers) -> None:
     )
 
     delete_agent_parser = ArgumentParser()
-    delete_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
+    delete_agent_parser.add_argument(
+        "--name", required=True, type=str, help="Agent name"
+    )
     delete_agent_parser.add_argument(
         "--group",
         default="default",
@@ -57,7 +61,9 @@ def add_agent_management_subcommands(subparsers) -> None:
     )
 
     save_agent_parser = ArgumentParser()
-    save_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
+    save_agent_parser.add_argument(
+        "--name", required=True, type=str, help="Agent name"
+    )
     save_agent_parser.add_argument(
         "--group",
         default="default",
@@ -72,7 +78,9 @@ def add_agent_management_subcommands(subparsers) -> None:
     )
 
     copy_agent_parser = ArgumentParser()
-    copy_agent_parser.add_argument("--name", required=True, type=str, help="New agent name")
+    copy_agent_parser.add_argument(
+        "--name", required=True, type=str, help="New agent name"
+    )
     copy_agent_parser.add_argument(
         "--from",
         dest="source_agent",
@@ -100,7 +108,9 @@ def add_agent_management_subcommands(subparsers) -> None:
     )
 
     share_agent_parser = ArgumentParser()
-    share_agent_parser.add_argument("--name", required=True, type=str, help="Agent name")
+    share_agent_parser.add_argument(
+        "--name", required=True, type=str, help="Agent name"
+    )
     share_agent_parser.add_argument(
         "--group",
         default="default",
@@ -185,7 +195,9 @@ def _copy_directory(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst)
 
 
-def _share_archive_name(group_name: str, agent_name: str, no_checkpoint: bool) -> str:
+def _share_archive_name(
+    group_name: str, agent_name: str, no_checkpoint: bool
+) -> str:
     suffix = "experiences" if no_checkpoint else "full"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"ursa_agent_{group_name}_{agent_name}_{suffix}_{timestamp}.tar.gz"
@@ -209,7 +221,9 @@ def list_agents(group_name: str = "default") -> None:
 def show_agent(agent_name: str, group_name: str = "default") -> None:
     path = agent_dir(group_name, agent_name)
     if not path.exists() or not path.is_dir():
-        raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
+        raise FileNotFoundError(
+            f"Agent does not exist: {agent_name} in group {group_name}"
+        )
 
     print(f"name: {path.name}")
     print(f"group: {group_name}")
@@ -226,7 +240,9 @@ def show_agent(agent_name: str, group_name: str = "default") -> None:
 def delete_agent(agent_name: str, group_name: str = "default") -> None:
     path = agent_dir(group_name, agent_name)
     if not path.exists() or not path.is_dir():
-        raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
+        raise FileNotFoundError(
+            f"Agent does not exist: {agent_name} in group {group_name}"
+        )
 
     shutil.rmtree(path)
     print(f"Deleted agent '{agent_name}' from group '{group_name}'")
@@ -236,7 +252,9 @@ def delete_agent(agent_name: str, group_name: str = "default") -> None:
 def save_agent(agent_name: str, group_name: str = "default") -> None:
     src = agent_dir(group_name, agent_name)
     if not src.exists() or not src.is_dir():
-        raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
+        raise FileNotFoundError(
+            f"Agent does not exist: {agent_name} in group {group_name}"
+        )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     checkpoint_name = f"{validate_agent_name(agent_name)}.{timestamp}"
@@ -274,9 +292,13 @@ def share_agent(
 ) -> None:
     src = agent_dir(group_name, agent_name)
     if not src.exists() or not src.is_dir():
-        raise FileNotFoundError(f"Agent does not exist: {agent_name} in group {group_name}")
+        raise FileNotFoundError(
+            f"Agent does not exist: {agent_name} in group {group_name}"
+        )
 
-    archive_name = _share_archive_name(group_name, validate_agent_name(agent_name), no_checkpoint)
+    archive_name = _share_archive_name(
+        group_name, validate_agent_name(agent_name), no_checkpoint
+    )
     archive_path = Path.cwd() / archive_name
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -327,14 +349,20 @@ def import_agent(
 
         extracted_dirs = [p for p in tmp_root.iterdir() if p.is_dir()]
         if len(extracted_dirs) != 1:
-            raise ValueError("Shared agent archive must contain exactly one top-level directory")
+            raise ValueError(
+                "Shared agent archive must contain exactly one top-level directory"
+            )
 
         src_root = extracted_dirs[0]
         inferred_name = validate_agent_name(src_root.name)
-        final_name = validate_agent_name(agent_name) if agent_name else inferred_name
+        final_name = (
+            validate_agent_name(agent_name) if agent_name else inferred_name
+        )
         dst = dst_group / final_name
         if dst.exists():
-            raise FileExistsError(f"Destination agent already exists: {final_name} in group {group_name}")
+            raise FileExistsError(
+                f"Destination agent already exists: {final_name} in group {group_name}"
+            )
 
         shutil.copytree(src_root, dst)
 

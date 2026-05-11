@@ -57,7 +57,9 @@ def _tool_line(tool: BaseTool) -> str:
     description = " ".join((tool.description or "").strip().split())
     if len(description) > 220:
         description = description[:217].rstrip() + "..."
-    return f"- `{tool.name}`: {description}" if description else f"- `{tool.name}`"
+    return (
+        f"- `{tool.name}`: {description}" if description else f"- `{tool.name}`"
+    )
 
 
 def _format_tool_group(title: str, tools: list[BaseTool]) -> str:
@@ -207,7 +209,9 @@ class PromptingAgent(BaseAgent[PromptingState]):
         if messages and isinstance(messages[0], SystemMessage):
             messages[0] = SystemMessage(content=self.prompting_agent_prompt)
         else:
-            messages = [SystemMessage(content=self.prompting_agent_prompt)] + messages
+            messages = [
+                SystemMessage(content=self.prompting_agent_prompt)
+            ] + messages
 
         response = self.llm.invoke(
             messages,
@@ -262,7 +266,9 @@ def _is_approval_text(text: str) -> bool:
     return normalized.startswith("approved") or normalized.startswith("approve")
 
 
-def _should_mark_approved(state: PromptingState) -> Literal["approve", "propose"]:
+def _should_mark_approved(
+    state: PromptingState,
+) -> Literal["approve", "propose"]:
     """Approve only when the latest human turn is a clear approval phrase."""
     messages = state.get("messages", [])
     latest_human = None

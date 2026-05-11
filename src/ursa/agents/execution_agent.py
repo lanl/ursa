@@ -58,15 +58,18 @@ from rich.panel import Panel
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
-    recap_prompt,
     get_review_prompt,
+    recap_prompt,
 )
-from ursa.tools import edit_code, read_file, run_command, write_code
 from ursa.tools import (
-    list_experiences,
-    write_experience,
-    read_experience,
+    edit_code,
     edit_experience,
+    list_experiences,
+    read_experience,
+    read_file,
+    run_command,
+    write_code,
+    write_experience,
 )
 from ursa.tools.read_image_tool import read_image_tool
 from ursa.tools.search_tools import (
@@ -238,10 +241,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         ]
         if use_web:
             default_tools.extend([
-            run_web_search,
-            run_osti_search,
-            run_arxiv_search
-        ])
+                run_web_search,
+                run_osti_search,
+                run_arxiv_search,
+            ])
         if extra_tools:
             default_tools.extend(extra_tools)
 
@@ -311,7 +314,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
-
         # 3) Ensure the executor prompt is the first SystemMessage.
         messages = deepcopy(new_state["messages"])
         if isinstance(messages[0], SystemMessage):
@@ -350,7 +352,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         messages = state.get("messages", [])
         if messages:
             msg = messages[0]
-            return str(getattr(msg, "text", None) or getattr(msg, "content", ""))
+            return str(
+                getattr(msg, "text", None) or getattr(msg, "content", "")
+            )
         return ""
 
     def review_work(self, state: ExecutionState) -> ExecutionState:
@@ -431,7 +435,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state,
             [feedback],
             full_overwrite=full_overwrite,
-            extra={"review": review, "symlinkdir": new_state.get("symlinkdir", {})},
+            extra={
+                "review": review,
+                "symlinkdir": new_state.get("symlinkdir", {}),
+            },
         )
 
     def recap(self, state: ExecutionState) -> ExecutionState:

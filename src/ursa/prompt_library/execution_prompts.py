@@ -35,6 +35,7 @@ Your responsibilities is to write a condensed summary of the conversation.
     - Highlight any places where those goals were not achieved and why.
 """
 
+
 def get_review_prompt(user_prompt):
     return f"""
 Review the work completed to this point.

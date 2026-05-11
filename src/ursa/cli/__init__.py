@@ -180,11 +180,15 @@ def main(args=None):
             return
         case "share-agent":
             cmd_config = cfg.get(subcommand, None)
-            share_agent(cmd_config.name, cmd_config.group, cmd_config.no_checkpoint)
+            share_agent(
+                cmd_config.name, cmd_config.group, cmd_config.no_checkpoint
+            )
             return
         case "import-agent":
             cmd_config = cfg.get(subcommand, None)
-            import_agent(cmd_config.archive_file, cmd_config.group, cmd_config.name)
+            import_agent(
+                cmd_config.archive_file, cmd_config.group, cmd_config.name
+            )
             return
 
     ursa_config = resolve_config(cfg)

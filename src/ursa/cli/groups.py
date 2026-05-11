@@ -19,7 +19,9 @@ def add_group_subcommands(subparsers) -> None:
     )
 
     create_group_parser = ArgumentParser()
-    create_group_parser.add_argument("group_name", type=str, help="Name of the group")
+    create_group_parser.add_argument(
+        "group_name", type=str, help="Name of the group"
+    )
     create_group_parser.add_argument(
         "config_file",
         type=Path,
@@ -33,7 +35,9 @@ def add_group_subcommands(subparsers) -> None:
     )
 
     delete_group_parser = ArgumentParser()
-    delete_group_parser.add_argument("group_name", type=str, help="Name of the group")
+    delete_group_parser.add_argument(
+        "group_name", type=str, help="Name of the group"
+    )
     subparsers.add_subcommand(
         "delete-group",
         delete_group_parser,
@@ -42,7 +46,9 @@ def add_group_subcommands(subparsers) -> None:
     )
 
     show_group_parser = ArgumentParser()
-    show_group_parser.add_argument("group_name", type=str, help="Name of the group")
+    show_group_parser.add_argument(
+        "group_name", type=str, help="Name of the group"
+    )
     subparsers.add_subcommand(
         "show-group",
         show_group_parser,
@@ -51,7 +57,9 @@ def add_group_subcommands(subparsers) -> None:
     )
 
     update_group_parser = ArgumentParser()
-    update_group_parser.add_argument("group_name", type=str, help="Name of the group")
+    update_group_parser.add_argument(
+        "group_name", type=str, help="Name of the group"
+    )
     update_group_parser.add_argument(
         "config_file",
         type=Path,
@@ -85,8 +93,12 @@ def validate_group_config(config_file: Path) -> dict:
             "Group config must define a non-empty 'allowed_base_urls' list"
         )
 
-    if not all(isinstance(url, str) and url.strip() for url in allowed_base_urls):
-        raise ValueError("Each entry in 'allowed_base_urls' must be a non-empty string")
+    if not all(
+        isinstance(url, str) and url.strip() for url in allowed_base_urls
+    ):
+        raise ValueError(
+            "Each entry in 'allowed_base_urls' must be a non-empty string"
+        )
 
     return data
 
@@ -151,7 +163,9 @@ def show_group(group_name: str) -> None:
 
     print(f"name: {group_name}")
     print(f"path: {group_dir}")
-    entries = sorted(group_dir.iterdir(), key=lambda p: (not p.is_dir(), p.name))
+    entries = sorted(
+        group_dir.iterdir(), key=lambda p: (not p.is_dir(), p.name)
+    )
     if entries:
         print("contents:")
         for entry in entries:
