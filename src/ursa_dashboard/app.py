@@ -3206,6 +3206,7 @@ def create_app() -> FastAPI:
     sel.onchange = () => {
       state.selectedComposerAgentId = String(sel.value || '');
     };
+  }
 
   async function setSessionWorkspace(path) {
     if (!state.activeSessionId) return;
