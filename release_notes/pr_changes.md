@@ -30,7 +30,7 @@
 - Moved the summarization and dangling tool handling to the base agent class. This will allow it to be pulled into 
   other agents more easily and be more stable/structured. Really this was needed eventually with the move to persistent 
   agents because others can pick up a message history that could have problems. 
-  - Gave the execution agent a review/kickback step to differentiate from this ChatWithThools agent.
+  - Gave the execution agent a review/kickback step to differentiate from this ChatWithTools agent.
 
 ## Added a use_web argument to the execution agent and chat agent
 - Added a flag so a user can easily turn on and off using web-based search tools. 

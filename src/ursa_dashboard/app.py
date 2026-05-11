@@ -155,6 +155,7 @@ def create_app() -> FastAPI:
         "chat_agent",
         "execution_agent",
         "planning_executor_workflow",
+        "prompting_agent",
     }
 
     def _agent_init_with_dashboard_defaults(

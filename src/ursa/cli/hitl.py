@@ -115,7 +115,6 @@ class HITL:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
         agent_overrides = dict(config.agent_config or {})
-        memory_overrides = agent_overrides.pop("memory", None)
 
         self.agent_name = self.config.agent_name
         self.group = self.config.group
@@ -133,15 +132,7 @@ class HITL:
             self.embedding = init_embeddings(**self.config.emb_model.kwargs)
             enforce_model_group_policy(self.embedding, self.group)
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
-        self.memory = (
-            AgentMemory(
-                embedding_model=self.embedding,
-                path=str(self.workspace / "memory"),
-                **(memory_overrides or {}),
-            )
-            if self.embedding
-            else None
-        )
+        self.memory = None
         if base_url := getattr(self.config.llm_model, "base_url"):
             if model_base_url := get_base_url(self.model):
                 if base_url != model_base_url:
@@ -176,6 +167,10 @@ class HITL:
             agent_class=agents.HypothesizerAgent
         )
         self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
+        self.agents["prompt"] = AgentHITL(
+            agent_class=agents.PromptingAgent,
+            config={"use_web": self.config.use_web},
+        )
         self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
 
         if has_optional_dep_group("lammps"):
