@@ -1120,7 +1120,8 @@ def create_app() -> FastAPI:
             p = Path(custom).expanduser()
             if not p.is_absolute():
                 raise HTTPException(
-                    status_code=400, detail="Session workspace path is not absolute"
+                    status_code=400,
+                    detail="Session workspace path is not absolute",
                 )
             return p.resolve()
         return _session_default_workspace_dir(session_id)
@@ -1134,8 +1135,12 @@ def create_app() -> FastAPI:
             "agent_id": str(sess.get("agent_id") or ""),
             "files": files,
             "workspace_path": str(ws),
-            "default_workspace_path": str(_session_default_workspace_dir(session_id)),
-            "is_default_workspace": not bool(str(sess.get("workspace_path") or "").strip()),
+            "default_workspace_path": str(
+                _session_default_workspace_dir(session_id)
+            ),
+            "is_default_workspace": not bool(
+                str(sess.get("workspace_path") or "").strip()
+            ),
         }
         return SessionWorkspaceListResponse(**data)
 
@@ -1223,7 +1228,9 @@ def create_app() -> FastAPI:
         finally:
             root.destroy()
 
-    def _choose_folder_with_osascript(initial_dir: str | None = None) -> str | None:
+    def _choose_folder_with_osascript(
+        initial_dir: str | None = None,
+    ) -> str | None:
         prompt = "Choose an URSA workspace folder"
         script = (
             f'set chosenFolder to choose folder with prompt "{prompt}"\n'
@@ -1247,15 +1254,30 @@ def create_app() -> FastAPI:
         selected = proc.stdout.strip()
         return selected or None
 
-    def _choose_folder_with_zenity(initial_dir: str | None = None) -> str | None:
-        cmd = ["zenity", "--file-selection", "--directory", "--title", "Select URSA workspace folder"]
+    def _choose_folder_with_zenity(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        cmd = [
+            "zenity",
+            "--file-selection",
+            "--directory",
+            "--title",
+            "Select URSA workspace folder",
+        ]
         if initial_dir:
-            cmd.extend(["--filename", str(Path(initial_dir).expanduser()) + os.sep])
+            cmd.extend([
+                "--filename",
+                str(Path(initial_dir).expanduser()) + os.sep,
+            ])
         proc = subprocess.run(cmd, text=True, capture_output=True, timeout=300)
         if proc.returncode != 0:
             if proc.returncode == 1:
                 return None
-            raise RuntimeError((proc.stderr or proc.stdout or "zenity folder chooser failed").strip())
+            raise RuntimeError(
+                (
+                    proc.stderr or proc.stdout or "zenity folder chooser failed"
+                ).strip()
+            )
         selected = proc.stdout.strip()
         return selected or None
 
@@ -1280,7 +1302,11 @@ def create_app() -> FastAPI:
         except Exception as e:
             errors.append(f"tkinter: {e}")
 
-        msg = "; ".join(errors) if errors else "no native folder chooser is available"
+        msg = (
+            "; ".join(errors)
+            if errors
+            else "no native folder chooser is available"
+        )
         raise RuntimeError(msg)
 
     @app.post(
@@ -1288,7 +1314,9 @@ def create_app() -> FastAPI:
         response_model=SessionWorkspaceListResponse,
         dependencies=[Depends(require_auth)],
     )
-    async def choose_session_workspace(session_id: str) -> SessionWorkspaceListResponse:
+    async def choose_session_workspace(
+        session_id: str,
+    ) -> SessionWorkspaceListResponse:
         try:
             sess = session_read_session(rm.workspace_root, session_id)
         except Exception:
@@ -1322,7 +1350,8 @@ def create_app() -> FastAPI:
         p = Path(selected).expanduser()
         if not p.is_absolute():
             raise HTTPException(
-                status_code=400, detail="Selected workspace path is not absolute"
+                status_code=400,
+                detail="Selected workspace path is not absolute",
             )
         try:
             p.mkdir(parents=True, exist_ok=True)
@@ -1333,7 +1362,8 @@ def create_app() -> FastAPI:
             )
         if not p.is_dir():
             raise HTTPException(
-                status_code=400, detail="Selected workspace path is not a directory"
+                status_code=400,
+                detail="Selected workspace path is not a directory",
             )
 
         sess2 = session_update_session(
