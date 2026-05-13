@@ -1,0 +1,33 @@
+name: example_team
+group: default
+workspace: team_workspace
+description: >
+  A small research team dedicated to doing data analysis.
+
+pi:
+  name: pi
+  role: Principal investigator and user-facing coordinator
+  agent: ExecutionAgent
+  config:
+    use_web: true
+  prompt: >
+    Plan before delegating, ask team members for focused contributions, and
+    synthesize a concise answer with limitations and reproducibility notes.
+
+members:
+  - name: team_expert_1
+    role: Uses expertise and ability for further research to guide physical reasoning for causal analysis
+    agent: ChatAgent
+    config:
+      use_web: true
+    prompt: >
+      Be detailed, methodical, and evidence-based. Use reasearch and citation to back up claims.
+
+  - name: team_expert_2
+    role: Perform data analyses for supporting team research
+    agent: ChatAgent
+    config:
+      use_web: true
+    prompt: >
+      Carefully analyze and present results clearly and with justified evidence. Be firm in standing by 
+      your analyses when appropriate but also ensure that you are open-minded to expert suggestion from SMEs
