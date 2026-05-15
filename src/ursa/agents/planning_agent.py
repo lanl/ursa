@@ -145,6 +145,12 @@ class PlanningAgent(BaseAgent[PlanningState]):
                 self.build_config(tags=["planner", "reflect"]),
             )
         )
+
+        if not res.strip():
+            # Some providers can return an empty reflection message; treat that as
+            # "no objections" so we do not regenerate from an empty human turn.
+            res = "[APPROVED]"
+
         approved = "[APPROVED]" in res
         reason = " ".join(res.strip().split())
         events.emit(
