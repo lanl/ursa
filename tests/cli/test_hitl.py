@@ -20,6 +20,8 @@ from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 
+LOGGER = logging.getLogger(__name__)
+
 
 @pytest.fixture(autouse=True)
 def stub_duckduckgo(monkeypatch):
@@ -78,14 +80,14 @@ def test_example_config_smoke():
     ursa_config = UrsaConfig.from_file(DOC_EXAMPLE_CONFIG)
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
-    for name in hitl.agents.keys():
+    for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
 
 
 def test_has_all_agent_do_methods(ursa_config):
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
-    for name in hitl.agents.keys():
+    for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
 
 
@@ -291,6 +293,71 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
             run_id="tool-run",
         )
     )
+    asyncio.run(
+        handler.on_tool_start(
+            {"name": "write_code_with_repo"},
+            '{"filename":"repo/app.py"}',
+            run_id="write-tool-run",
+            inputs={"filename": "repo/app.py"},
+        )
+    )
+    asyncio.run(
+        handler.on_tool_end(
+            "File repo/app.py written successfully.",
+            run_id="write-tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "edit_code",
+                "stage": "edit",
+                "phase": "start",
+                "message": "Editing file",
+                "path": str(tmp_path / "repo" / "app.py"),
+            },
+            run_id="edit-tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "edit_code",
+                "stage": "edit",
+                "message": "No changes made",
+                "filename": "repo/app.py",
+                "reason": "'old_code' not found in file.",
+            },
+            run_id="edit-tool-noop-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_web_search",
+                "stage": "search",
+                "message": "Searching Web",
+                "query": "ursa events",
+            },
+            run_id="search-tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_web_search",
+                "stage": "search_result",
+                "message": "Web search complete",
+                "query": "ursa events",
+                "result_chars": 42,
+            },
+            run_id="search-tool-result-run",
+        )
+    )
 
     rendered = output.getvalue()
     assert "Plan" in rendered
@@ -299,6 +366,14 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     assert "Running command: uname -s" in rendered
     assert "Command finished: uname -s" in rendered
     assert "Darwin" in rendered
+    assert "Writing file: repo/app.py" in rendered
+    assert "File written: repo/app.py" in rendered
+    assert "Editing file: repo/app.py" in rendered
+    assert "No changes made: repo/app.py" in rendered
+    assert "'old_code' not found in file." in rendered
+    assert "Searching Web: ursa events" in rendered
+    assert "Web search complete: ursa events" in rendered
+    assert "42 chars" in rendered
 
 
 def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
@@ -391,14 +466,14 @@ def check_script(
     # expectations
     trace = []
     for input, ref in input_expected:
-        logging.info(f"input: {input}")
+        LOGGER.info("input: %s", input)
         shell.onecmd(input)
         console_output = shell.console.export_text()
         stdout_value = stdout.getvalue()
         stdout_delta = stdout_value[stdout_pos:]
         stdout_pos = len(stdout_value)
         output = stdout_delta or console_output
-        logging.info(f"output: {output}")
+        LOGGER.info("output: %s", output)
         match ref:
             case str():
                 assert output == ref

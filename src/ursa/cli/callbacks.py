@@ -120,6 +120,22 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             if phase == "error":
                 return "✖"
             return "✏️" if phase == "start" else "✅"
+        if tool == "edit_code":
+            if phase == "error":
+                return "✖"
+            if stage == "edit" and data.get("reason"):
+                return "⚠️"
+            return "✏️" if phase == "start" else "✅"
+        if tool in {
+            "run_arxiv_search",
+            "run_web_search",
+            "run_osti_search",
+        }:
+            if phase == "error":
+                return "✖"
+            return "🔎" if stage == "search" else "✅"
+        if tool == "read_image_tool":
+            return "✖" if phase == "error" else "🖼️"
         if tool == "run_command":
             if stage == "safety_check":
                 return "🛡️" if data.get("safe") else "⚠️"
@@ -214,6 +230,29 @@ class HITLLogEventHandler(AsyncCallbackHandler):
                 data.get("path") or data.get("filename")
             )
             style = "error" if phase == "error" else "success"
+        elif tool == "edit_code":
+            detail = self._display_path(
+                data.get("path") or data.get("filename")
+            )
+            if phase == "error":
+                style = "error"
+            elif data.get("reason"):
+                style = "warn"
+            else:
+                style = "success" if phase == "end" else "emph"
+        elif tool in {
+            "run_arxiv_search",
+            "run_web_search",
+            "run_osti_search",
+        }:
+            detail = self._clean(data.get("query"))
+            if phase == "error":
+                style = "error"
+            else:
+                style = "success" if stage == "search_result" else "emph"
+        elif tool == "read_image_tool":
+            detail = self._display_path(data.get("path"))
+            style = "error" if phase == "error" else "success"
         elif tool == "run_command":
             detail = self._clean(data.get("query"))
             if stage == "safety_check":
@@ -247,6 +286,27 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             and not data.get("safe", True)
         ):
             for line in self._wrap(data.get("reason"), max_lines=2):
+                self.console.print(f"[dim]  {line}[/]")
+        elif tool in {
+            "run_arxiv_search",
+            "run_web_search",
+            "run_osti_search",
+        } and isinstance(data.get("result_chars"), int):
+            self.console.print(f"[dim]  {data['result_chars']} chars[/]")
+        elif tool == "read_image_tool" and stage == "read_image_result":
+            parts: list[str] = []
+            if mime_type := self._clean(data.get("mime_type")):
+                parts.append(mime_type)
+            if isinstance(data.get("file_size"), int):
+                parts.append(f"{data['file_size']} bytes")
+            if parts:
+                self.console.print(f"[dim]  {', '.join(parts)}[/]")
+
+        if phase == "error":
+            for line in self._wrap(data.get("error"), max_lines=2):
+                self.console.print(f"[dim]  {line}[/]")
+        elif reason := data.get("reason"):
+            for line in self._wrap(reason, max_lines=2):
                 self.console.print(f"[dim]  {line}[/]")
 
     def _tool_name(self, serialized: Any) -> str:
@@ -442,7 +502,7 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             self._print_read_file_start(
                 payload.get("path") or payload.get("filename")
             )
-        elif tool_name == "write_code":
+        elif tool_name in {"write_code", "write_code_with_repo"}:
             self._print_write_code_start(
                 payload.get("filename"),
                 payload.get("path"),
@@ -477,7 +537,7 @@ class HITLLogEventHandler(AsyncCallbackHandler):
                 path=tool_info.get("input", {}).get("path")
                 or tool_info.get("input", {}).get("filename"),
             )
-        elif tool_name == "write_code":
+        elif tool_name in {"write_code", "write_code_with_repo"}:
             self._print_write_code_end(
                 payload,
                 filename=tool_info.get("input", {}).get("filename"),
@@ -515,6 +575,11 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             return
         if "agent" in data:
             self._print_agent_event(data)
+        elif "tool" in data:
+            tool = self._clean(data.get("tool"))
+            if tool in {"run_command", "read_file", "write_code"}:
+                return
+            self._print_tool_event(data)
 
 
 __all__ = ["HITLLogEventHandler"]

@@ -6,7 +6,7 @@ instructions by invoking LLM tool calls and coordinating a controlled workflow.
 Key features:
 - Workspace management with optional symlinking for external sources.
 - Safety-checked shell execution via run_command with output size budgeting.
-- Code authoring and edits through write_code and edit_code with rich previews.
+- Code authoring and edits through write_code and edit_code.
 - Web search capability through DuckDuckGoSearchResults.
 - Summarization of the session and optional memory logging.
 - Configurable graph with nodes for agent, action, and summarize.
@@ -32,7 +32,6 @@ from typing import (
     Annotated,
     Any,
     Literal,
-    Optional,
     TypedDict,
 )
 
@@ -46,14 +45,10 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite
-
-# Rich
-from rich import get_console
-from rich.markdown import Markdown
-from rich.panel import Panel
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
@@ -68,15 +63,6 @@ from ursa.tools.search_tools import (
     run_web_search,
 )
 from ursa.util.memory_logger import AgentMemory
-
-console = get_console()  # always returns the same instance
-
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
 
 
 # Classes for typing
@@ -193,12 +179,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Optional[Any | AgentMemory] = None,
+        agent_memory: Any | AgentMemory | None = None,
         log_state: bool = False,
-        extra_tools: Optional[list[BaseTool] | None] = None,
+        extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        safe_codes: Optional[list[str]] = None,
+        safe_codes: list[str] | None = None,
         **kwargs,
     ):
         default_tools = [
@@ -226,9 +212,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.tool_llm = llm
 
     def _patch_dangling(
-        self, state: ExecutionState, summarized: bool
+        self,
+        state: ExecutionState,
+        summarized: bool,
+        config: RunnableConfig | None = None,
     ) -> ExecutionState:
         new_state = deepcopy(state)
+        events = self.events(config)
         dangling_response = (
             "Response Not Found from tool. "
             "May have timed out or been forgotten due to summarization."
@@ -249,30 +239,37 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 tool_ids.remove(msg.tool_call_id)
         if tool_ids:
             summarized = True
-            print(
-                f"[Dangling Tool Call Warning] The following tool IDs "
-                f"were dangling:\n{tool_ids}\nReplies of missing response applied."
+            events.emit(
+                "Dangling tool calls patched",
+                stage="dangling_tool_calls",
+                tool_call_ids=list(tool_ids),
             )
             for tool_id in tool_ids:
                 for msg_ind, msg in enumerate(new_state["messages"]):
-                    if hasattr(msg, "tool_calls"):
-                        if any([tc["id"] == tool_id for tc in msg.tool_calls]):
-                            # Inserts tool response one after the dangling tool call
-                            #    Mutates new_state so break afterward to reset loop.
-                            #    Not as efficient as could be but should be correct
-                            new_state["messages"].insert(
-                                msg_ind + 1,
-                                ToolMessage(
-                                    content=dangling_response,
-                                    tool_call_id=tool_id,
-                                ),
-                            )
-                            break
+                    if hasattr(msg, "tool_calls") and any(
+                        tc["id"] == tool_id for tc in msg.tool_calls
+                    ):
+                        # Inserts tool response one after the dangling tool call
+                        #    Mutates new_state so break afterward to reset loop.
+                        #    Not as efficient as could be but should be correct
+                        new_state["messages"].insert(
+                            msg_ind + 1,
+                            ToolMessage(
+                                content=dangling_response,
+                                tool_call_id=tool_id,
+                            ),
+                        )
+                        break
         return new_state, summarized
 
     # Check message history length and summarize to shorten the token usage:
-    def _summarize_context(self, state: ExecutionState) -> ExecutionState:
+    def _summarize_context(
+        self,
+        state: ExecutionState,
+        config: RunnableConfig | None = None,
+    ) -> ExecutionState:
         new_state = deepcopy(state)
+        events = self.events(config)
         summarized = False
         tokens_before_summarize = count_tokens_approximately(
             new_state["messages"][1:]
@@ -294,8 +291,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 if isinstance(msg, ToolMessage):
                     tool_ids.remove(msg.tool_call_id)
             if tool_ids:
-                print(
-                    f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
+                events.emit(
+                    "Preserving tool responses during summarization",
+                    stage="summarize_context",
+                    tool_call_ids=list(tool_ids),
                 )
                 conversation_to_keep_copy = conversation_to_keep.copy()
                 for msg in conversation_to_keep_copy:
@@ -311,10 +310,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 # responded but its tool call is far enough back that it is being
                 # summarized away. Likely an edge case for non-async, but async
                 # may cause a problem here.
-                print(
-                    f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
+                events.emit(
+                    "Dangling tool calls found during summarization",
+                    stage="summarize_context",
+                    tool_call_ids=list(tool_ids),
                 )
-                pass
 
             summarize_prompt = f"""
             Your only tasks is to provide a detailed, comprehensive summary of the following
@@ -332,38 +332,16 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 summary,
             ]
             summarized_messages.extend(conversation_to_keep)
-            verbose = False
-            # Keeping this here for future capability add
-            #    removing this from printing generally,
-            #    but we may want to bring this back with some
-            #    verbosity option in the future.
-            #
-            # Right now setting verbose to False so this is
-            #     always skipped but here to revisit.
-            if verbose:
-                tokens_after_summarize = count_tokens_approximately(
-                    summarized_messages
-                )
-                console.print(
-                    Panel(
-                        (
-                            f"Summarized Conversation History:\n"
-                            f"Summary:\n{summary.text}\n"
-                            f"Approximate tokens before: {tokens_before_summarize}\n"
-                            f"Approximate tokens after: {tokens_after_summarize}\n"
-                        ),
-                        title="[bold yellow1 on black]Summarize Past Context",
-                        border_style="yellow1",
-                        style="bold yellow1 on black",
-                    )
-                )
             new_state["messages"] = summarized_messages
             summarized = True
         return new_state, summarized
 
     # Define the function that calls the model
     def query_executor(
-        self, state: ExecutionState, runtime: Runtime[AgentContext]
+        self,
+        state: ExecutionState,
+        runtime: Runtime[AgentContext],
+        config: RunnableConfig | None = None,
     ) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
@@ -386,12 +364,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
+        events = self.events(config)
         new_state.setdefault("symlinkdir", {})
 
         full_overwrite = False
 
         # 1.5) Check message history length and summarize to shorten the token usage:
-        new_state, full_overwrite = self._summarize_context(new_state)
+        new_state, full_overwrite = self._summarize_context(new_state, config)
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
@@ -411,12 +390,17 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
             # Create the symlink (tell pathlib if the target is a directory).
             dst.symlink_to(src, target_is_directory=src.is_dir())
-            print(f"{RED}Symlinked:{RESET} {src} (source) --> {dst} (dest)")
+            events.emit(
+                "Workspace symlink created",
+                stage="workspace_symlink",
+                source=str(src),
+                destination=str(dst),
+            )
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
         new_state, full_overwrite = self._patch_dangling(
-            new_state, full_overwrite
+            new_state, full_overwrite, config
         )
 
         # 3) Ensure the executor prompt is the first SystemMessage.
@@ -432,10 +416,16 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 messages, self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             response = AIMessage(content=f"Response error {e}")
             msg = new_state["messages"][-1].text
-            print("Error: ", e, " ", msg)
+            events.emit(
+                "Executor response failed",
+                stage="executor_error",
+                error_type=type(e).__name__,
+                error=str(e),
+                latest_message=msg[:2000],
+            )
             new_state["messages"].append(response)
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
@@ -449,7 +439,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
-    def recap(self, state: ExecutionState) -> ExecutionState:
+    def recap(
+        self,
+        state: ExecutionState,
+        config: RunnableConfig | None = None,
+    ) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
@@ -464,10 +458,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 the recap.
         """
         new_state = deepcopy(state)
+        events = self.events(config)
         full_overwrite = False
 
         # 0) Check message history length and summarize to shorten the token usage:
-        new_state, full_overwrite = self._summarize_context(new_state)
+        new_state, full_overwrite = self._summarize_context(new_state, config)
 
         # 1) Construct the summarization message list (system prompt + prior messages).
         recap_message = HumanMessage(content=self.recap_prompt)
@@ -475,7 +470,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
         new_state, full_overwrite = self._patch_dangling(
-            new_state, full_overwrite
+            new_state, full_overwrite, config
         )
         try:
             response = self.llm.invoke(
@@ -483,20 +478,16 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             response_content = f"Response error {e}"
             response = AIMessage(content=response_content)
-            print("Error: ", e, " ", new_state["messages"][-1].text)
-
-        console.print(
-            Panel(
-                Markdown(response_content),
-                title="[bold grey85 on black]Recap of Work",
-                border_style="grey85 on black",
-                style="grey85 on black",
-                expand=False,  # Make panel fit content width
+            events.emit(
+                "Recap failed",
+                stage="recap_error",
+                error_type=type(e).__name__,
+                error=str(e),
+                latest_message=new_state["messages"][-1].text[:2000],
             )
-        )
 
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
@@ -504,9 +495,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             # Collect human/system/tool message content; for AI tool calls, store args.
             for msg in new_state["messages"]:
                 msg_content = msg.text
-                if not isinstance(msg, AIMessage):
-                    memories.append(msg_content)
-                elif not msg.tool_calls:
+                if not isinstance(msg, AIMessage) or not msg.tool_calls:
                     memories.append(msg_content)
                 else:
                     tool_strings = []
@@ -514,8 +503,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                         tool_strings.append("Tool Name: " + tool["name"])
                         for arg_name in tool["args"]:
                             tool_strings.append(
-                                f"Arg: {str(arg_name)}\nValue: "
-                                f"{str(tool['args'][arg_name])}"
+                                f"Arg: {arg_name!s}\nValue: "
+                                f"{tool['args'][arg_name]!s}"
                             )
                     memories.append("\n".join(tool_strings))
             memories.append(response_content)

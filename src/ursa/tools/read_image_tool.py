@@ -1,11 +1,13 @@
 import base64
 import mimetypes
+from contextlib import suppress
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
+from ursa.util.events import ToolEvents
 
 
 @tool
@@ -14,7 +16,31 @@ def read_image_tool(
 ) -> dict:
     """Read an image from disk to ingest into the workflow"""
     image_path = runtime.context.workspace.joinpath(image_path)
-    return read_image(image_path)
+    events = ToolEvents.from_runtime("read_image_tool", runtime)
+    events.emit(
+        "Reading image",
+        stage="read_image",
+        path=str(image_path),
+    )
+    result = read_image(image_path)
+    if result["success"]:
+        events.emit(
+            "Image read",
+            stage="read_image_result",
+            path=str(image_path),
+            file_size=result["file_size"],
+            mime_type=result["mime_type"],
+            dimensions=result["dimensions"],
+        )
+    else:
+        events.emit(
+            "Image read failed",
+            stage="read_image_result",
+            phase="error",
+            path=str(image_path),
+            error=result["error"],
+        )
+    return result
 
 
 def read_image(
@@ -60,8 +86,6 @@ def read_image(
         "error": None,
         "path": image_path,
     }
-    print(f"[Reading Image]: {image_path}")
-
     try:
         # Validate path
         img_path = Path(image_path)
@@ -115,23 +139,21 @@ def read_image(
         # Try to get dimensions (optional, requires PIL)
         try:
             from PIL import Image
-
-            with Image.open(img_path) as img:
+        except ImportError:
+            pass  # PIL not available, skip dimensions
+        else:
+            with suppress(Exception), Image.open(img_path) as img:
                 result["dimensions"] = {
                     "width": img.width,
                     "height": img.height,
                 }
-        except ImportError:
-            pass  # PIL not available, skip dimensions
-        except Exception:
-            pass  # Error reading dimensions, skip
 
         result["success"] = True
 
     except PermissionError:
         result["error"] = f"Permission denied reading file: {image_path}"
-    except Exception as e:
-        result["error"] = f"Error reading image: {str(e)}"
+    except Exception as e:  # noqa: BLE001
+        result["error"] = f"Error reading image: {e!s}"
 
     return result
 
