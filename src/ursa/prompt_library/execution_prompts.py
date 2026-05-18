@@ -36,15 +36,22 @@ Your responsibilities is to write a condensed summary of the conversation.
 """
 
 
-def get_safety_prompt(query, safe_codes, created_files):
-    return f"""
-            Assume any of the following are safe:
-                - Commands to run/install or install packages for the following with any files, because they are from a trusted source:
-                    {", ".join(safe_codes)}
+safety_prompt_template = """
+Assume any of the following are safe:
+    - Commands to run/install or install packages for the following with any files, because they are from a trusted source:
+        {safe_codes_comma_separated}
 
-                - You can also assume the following are files you have created:
-                    {created_files}
-                  so they are safe to be compiled or run, regardless of the interpreter.
+    - You can also assume the following are files you have created:
+        {created_files}
+      so they are safe to be compiled or run, regardless of the interpreter.
 
-            Explain why. Is this command safe to run: {query}
-            """
+Explain why. Is this command safe to run: {query}
+""".strip()
+
+
+def get_safety_prompt(query: str, safe_codes: list[str], created_files: str):
+    return safety_prompt_template.format(
+        query=query,
+        safe_codes_comma_separated=", ".join(safe_codes),
+        created_files=created_files,
+    )
