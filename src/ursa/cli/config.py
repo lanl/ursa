@@ -9,7 +9,14 @@ from typing import Any, Literal
 
 import yaml
 from jsonargparse import Namespace
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_serializer,
+    field_validator,
+)
 
 from ursa.util.http import (
     build_httpx_async_client,
@@ -90,7 +97,7 @@ class UrsaConfig(BaseModel):
     _temp_workspace: TemporaryDirectory | None = PrivateAttr(default=None)
 
     workspace: Path = Field(
-        default_factory=lambda: Path("ursa_workspace"),
+        default_factory=lambda: Path("."),
     )
     """Directory to store URSA's output."""
 
@@ -116,11 +123,21 @@ class UrsaConfig(BaseModel):
     emb_model: ModelConfig | None = None
     """Default Embedding model"""
 
+    rag_tools: list[str] = Field(default_factory=list)
+    """Persisted RAG agent names to bind as tools."""
+
     agent_config: dict[str, dict[str, Any]] | None = None
     """ Configuration options for URSA Agents """
 
     mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
+
+    @field_validator("rag_tools", mode="before")
+    @classmethod
+    def _normalize_rag_tools(cls, value):
+        from ursa.rag.persistence import normalize_rag_tool_names
+
+        return normalize_rag_tool_names(value)
 
     def model_post_init(self, __context):
         """Handle temporary workspace creation post validation."""

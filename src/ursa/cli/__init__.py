@@ -30,6 +30,11 @@ from ursa.cli.groups import (
     show_group,
     update_group,
 )
+from ursa.cli.rag_management import (
+    RAG_COMMANDS,
+    add_rag_subcommands,
+    handle_rag_command,
+)
 from ursa.util.http import inject_truststore_into_ssl
 
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
@@ -61,7 +66,13 @@ def build_parser() -> ArgumentParser:
     parser.add_class_arguments(
         UrsaConfig,
         help="URSA configuration",
-        skip={"agent_name"},
+        skip={"agent_name", "rag_tools"},
+    )
+    parser.add_argument(
+        "--rag-tools",
+        dest="rag_tools",
+        default=None,
+        help="Comma-separated persisted RAG agent names to bind as tools.",
     )
     parser.add_argument(
         "--use-web",
@@ -93,7 +104,23 @@ def build_parser() -> ArgumentParser:
     # Agent management commands
     add_agent_management_subcommands(subparsers)
 
+    # Persistent RAG management commands
+    add_rag_subcommands(subparsers)
+
     return parser
+
+
+def _config_path_from_namespace(cfg) -> Path | None:
+    """Return a root or subcommand-local config path from parsed CLI args."""
+    config_path = getattr(cfg, "config", None)
+    subcommand = cfg.get("subcommand", None)
+    if subcommand is not None:
+        cmd_cfg = cfg.get(subcommand, None)
+        cmd_config_path = (
+            getattr(cmd_cfg, "config", None) if cmd_cfg is not None else None
+        )
+        config_path = cmd_config_path or config_path
+    return config_path
 
 
 def resolve_config(cfg) -> UrsaConfig:
@@ -111,7 +138,7 @@ def resolve_config(cfg) -> UrsaConfig:
         cfg_dict.pop("name", None)
 
     cli_config = UrsaConfig.model_validate(cfg_dict, extra="ignore")
-    config_path = getattr(cfg, "config", None)
+    config_path = _config_path_from_namespace(cfg)
     if not config_path:
         return cli_config
 
@@ -189,6 +216,11 @@ def main(args=None):
             import_agent(
                 cmd_config.archive_file, cmd_config.group, cmd_config.name
             )
+            return
+
+    if subcommand in RAG_COMMANDS:
+        ursa_config = resolve_config(cfg)
+        if handle_rag_command(cfg, ursa_config):
             return
 
     ursa_config = resolve_config(cfg)

@@ -36,6 +36,7 @@ from typing import (
 )
 
 from langchain.chat_models import BaseChatModel
+from langchain.embeddings import Embeddings
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
 from langchain_core.messages import (
@@ -90,6 +91,15 @@ class AgentContext:
 
     tool_character_limit: int = 30000
     """ Suggested limit on tool call responses """
+
+    rag_tools: tuple[str, ...] = ()
+    """Persisted URSA RAG collections bound to this agent as tools."""
+
+    rag_tool_group: str | None = None
+    """Group used to resolve persisted RAG tool collections."""
+
+    rag_tool_return_k: int = 10
+    """Number of chunks retrieved by persisted RAG tools."""
 
 
 def _to_snake(s: str) -> str:
@@ -188,6 +198,10 @@ class BaseAgent(Generic[TState], ABC):
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         max_single_tool_message_tokens: int = 100000,
+        rag_tools: str | Sequence[str] | None = None,
+        rag_tool_group: str | None = None,
+        rag_tool_embedding: Embeddings | None = None,
+        rag_tool_return_k: int = 10,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -201,12 +215,18 @@ class BaseAgent(Generic[TState], ABC):
                        provided.
         """
         self.llm: BaseChatModel = llm
-        self.workspace = Path(workspace or "ursa_workspace")
+        self.workspace = Path(workspace or ".")
         self.agent_name = agent_name
         self.group = group
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
         self.max_single_tool_message_tokens = max_single_tool_message_tokens
+        from ursa.rag.persistence import normalize_rag_tool_names
+
+        self.rag_tools = tuple(normalize_rag_tool_names(rag_tools))
+        self.rag_tool_group = rag_tool_group
+        self.rag_tool_embedding = rag_tool_embedding
+        self.rag_tool_return_k = rag_tool_return_k
         enforce_model_group_policy(self.llm, self.group)
         if (
             not (Path.home() / ".cache/ursa_agents" / group).exists()
@@ -266,6 +286,9 @@ class BaseAgent(Generic[TState], ABC):
             agent_name=self.agent_name,
             group=self.group,
             den=self.den,
+            rag_tools=self.rag_tools,
+            rag_tool_group=self.rag_tool_group,
+            rag_tool_return_k=self.rag_tool_return_k,
         )
 
     def add_node(
@@ -1235,6 +1258,21 @@ class AgentWithTools:
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
+
+        if getattr(self, "rag_tools", ()):
+            from ursa.rag.tools import build_rag_tools
+
+            rag_tools = build_rag_tools(
+                names=self.rag_tools,
+                group=self.rag_tool_group or self.group or "default",
+                llm=self.llm,
+                embedding=getattr(self, "rag_tool_embedding", None),
+                return_k=self.rag_tool_return_k,
+            )
+            if rag_tools:
+                merged = dict(self._tools)
+                merged.update({tool.name: tool for tool in rag_tools})
+                self._apply_tools(merged, rebuild_graph=False)
 
     def __post_init__(self):
         super().__post_init__()
