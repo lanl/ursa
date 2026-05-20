@@ -78,7 +78,12 @@ class RAGAgent(BaseAgent[RAGState]):
         enforce_model_group_policy(self.embedding, self.group)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.database_path = database_path
+        database_root = Path(database_path)
+        self.database_path = (
+            database_root
+            if database_root.is_absolute()
+            else self.den / database_root
+        )
         self.summaries_path = self.den / summaries_path
         self.vectorstore_path = self.den / vectorstore_path
 
@@ -156,10 +161,11 @@ class RAGAgent(BaseAgent[RAGState]):
             )
         ]
 
-        base_dir = Path(self.database_path)
+        base_path = Path(self.database_path)
         ingestible_paths: list[Path] = []
 
-        for p in base_dir.rglob("*"):
+        paths = [base_path] if base_path.is_file() else base_path.rglob("*")
+        for p in paths:
             if not p.is_file():
                 continue
 

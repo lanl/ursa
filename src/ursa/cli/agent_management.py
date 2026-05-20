@@ -7,7 +7,8 @@ from pathlib import Path
 
 from jsonargparse import ArgumentParser
 
-AGENT_GROUPS_DIR = Path("~/.cache/ursa_agents").expanduser()
+from ursa.security import AGENT_GROUPS_DIR
+
 _AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 

@@ -3,8 +3,7 @@ from pathlib import Path
 
 import yaml
 
-AGENT_GROUPS_DIR = Path("~/.cache/ursa_agents").expanduser()
-GROUP_CONFIG_FILENAME = "group.yaml"
+from ursa.security import AGENT_GROUPS_DIR, GROUP_CONFIG_FILENAME
 
 
 def add_group_subcommands(subparsers) -> None:

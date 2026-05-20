@@ -151,19 +151,28 @@ class HITL:
                             f"Model base url ({model_base_url}) and config ({base_url}) do not match"
                         )
 
+        rag_tool_config = {
+            "rag_tools": self.config.rag_tools,
+            "rag_tool_embedding": self.embedding,
+        }
+
         self.agents: dict[str, AgentHITL] = {}
         self.agents["chat"] = AgentHITL(
             agent_class=agents.ChatAgent,
-            config={"use_web": self.config.use_web},
+            config={"use_web": self.config.use_web, **rag_tool_config},
         )
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
         if has_optional_dep_group("dsi"):
-            self.agents["dsi"] = AgentHITL(agent_class=agents.DSIAgent)
+            self.agents["dsi"] = AgentHITL(
+                agent_class=agents.DSIAgent,
+                config=dict(rag_tool_config),
+            )
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
             config={
                 "agent_memory": self.memory,
                 "use_web": self.config.use_web,
+                **rag_tool_config,
             },
         )
         self.agents["hypothesize"] = AgentHITL(

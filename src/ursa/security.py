@@ -6,7 +6,8 @@ from urllib.parse import urlsplit
 import yaml
 from langchain.chat_models import BaseChatModel
 
-from ursa.cli.groups import AGENT_GROUPS_DIR, GROUP_CONFIG_FILENAME
+AGENT_GROUPS_DIR = Path("~/.cache/ursa_agents").expanduser()
+GROUP_CONFIG_FILENAME = "group.yaml"
 
 
 class GroupBaseURLPolicyError(ValueError):
@@ -134,4 +135,5 @@ def enforce_group_base_url_policy(
 def enforce_model_group_policy(
     model: BaseChatModel | object, group: str | None
 ) -> None:
+    print(f"DEBUG: {get_model_base_url(model)} and {group}")
     enforce_group_base_url_policy(get_model_base_url(model), group)
