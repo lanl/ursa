@@ -74,6 +74,21 @@ class MCPSettings(BaseModel):
         return v
 
 
+class ToolSettings(BaseModel):
+    """Dashboard-level tools attached to new tool-capable agent runs."""
+
+    rag_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("rag_tools", mode="before")
+    @classmethod
+    def _normalize_rag_tools(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        from ursa.rag.persistence import normalize_rag_tool_names
+
+        return normalize_rag_tool_names(v)
+
+
 class UISettings(BaseModel):
     theme: str = "system"  # e.g. dark/light mode
     stdout_buffer_lines: int = Field(default=20_000, ge=5_000, le=100_000_000)
@@ -86,6 +101,7 @@ class GlobalSettings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
+    tools: ToolSettings = Field(default_factory=ToolSettings)
     ui: UISettings = Field(default_factory=UISettings)
 
 

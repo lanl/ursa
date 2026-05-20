@@ -135,5 +135,4 @@ def enforce_group_base_url_policy(
 def enforce_model_group_policy(
     model: BaseChatModel | object, group: str | None
 ) -> None:
-    print(f"DEBUG: {get_model_base_url(model)} and {group}")
     enforce_group_base_url_policy(get_model_base_url(model), group)
