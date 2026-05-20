@@ -49,6 +49,11 @@ from ursa.cli.agent_management import (
 from ursa.cli.agent_management import (
     save_agent as cli_save_agent,
 )
+from ursa.rag.persistence import (
+    list_rag_agent_names,
+    normalize_rag_tool_names,
+    rag_agent_dir,
+)
 from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
 
 from .api_models import (
@@ -171,6 +176,11 @@ def create_app() -> FastAPI:
         "planning_executor_workflow",
         "prompting_agent",
     }
+    rag_tool_agent_ids = {
+        "chat_agent",
+        "execution_agent",
+        "planning_executor_workflow",
+    }
 
     def _agent_init_with_dashboard_defaults(
         agent_id: str, agent_init: dict[str, Any] | None
@@ -178,6 +188,16 @@ def create_app() -> FastAPI:
         out = dict(agent_init or {})
         if agent_id in web_opt_in_agent_ids:
             out.setdefault("use_web", dashboard_use_web)
+        if agent_id in rag_tool_agent_ids:
+            settings_tools = settings_store.load().tools
+            configured = list(settings_tools.rag_tools or [])
+            explicit = out.get("rag_tools", None)
+            if explicit is None:
+                out["rag_tools"] = configured
+            else:
+                merged = normalize_rag_tool_names(explicit) + configured
+                out["rag_tools"] = list(dict.fromkeys(merged))
+            out.setdefault("rag_tool_group", dashboard_group)
         return out
 
     @app.on_event("startup")
@@ -261,6 +281,21 @@ def create_app() -> FastAPI:
     def patch_settings(req: SettingsPatchRequest) -> SettingsResponse:
         s = settings_store.patch(req.patch)
         return SettingsResponse(settings=s.model_dump(mode="json"))
+
+    @app.get(
+        "/rag-tools",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_rag_tools() -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        try:
+            names = list_rag_agent_names(dashboard_group)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        for name in names:
+            path = rag_agent_dir(dashboard_group, name)
+            items.append({"name": name, "path": str(path)})
+        return {"group": dashboard_group, "rag_agents": items}
 
     # ----------------------------
     # Sessions (multi-turn chat)
@@ -3473,6 +3508,91 @@ def create_app() -> FastAPI:
     renderMcpServers();
   }
 
+  function setRagToolStatus(msg) {
+    const el = $('#ragToolStatus');
+    if (el) el.textContent = msg || '';
+  }
+
+  function renderRagTools() {
+    const available = $('#ragAvailableList');
+    const selected = $('#ragSelectedList');
+    if (!available || !selected) return;
+
+    const chosen = new Set(state._ragTools || []);
+    const agents = state._availableRagAgents || [];
+    available.innerHTML = '';
+    selected.innerHTML = '';
+
+    const groupLabel = $('#ragToolsGroupLabel');
+    if (groupLabel) groupLabel.textContent = 'Group: ' + (state._ragToolsGroup || state.dashboardGroup || 'default');
+
+    const availableAgents = agents.filter(item => !chosen.has(item.name));
+    if (!availableAgents.length) {
+      available.innerHTML = '<div class="muted small">No unselected persisted RAG agents found for this group.</div>';
+    } else {
+      for (const item of availableAgents) {
+        const row = document.createElement('div');
+        row.className = 'row ragToolRow';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '8px';
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(item.name)}</div><div class="muted small">${escHtml(item.path || '')}</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn';
+        btn.textContent = 'Add';
+        btn.onclick = () => {
+          state._ragTools = Array.from(new Set([...(state._ragTools || []), item.name])).sort();
+          setRagToolStatus('Added ' + item.name + ' (staged). Click Save to persist.');
+          renderRagTools();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+        available.appendChild(row);
+      }
+    }
+
+    const selectedNames = Array.from(chosen).sort();
+    if (!selectedNames.length) {
+      selected.innerHTML = '<div class="muted small">No RAG tools selected.</div>';
+    } else {
+      for (const name of selectedNames) {
+        const item = agents.find(x => x.name === name) || { name, path: '' };
+        const row = document.createElement('div');
+        row.className = 'row ragToolRow';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '8px';
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(name)}</div><div class="muted small">${escHtml(item.path || 'Not found in current group')}</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn danger';
+        btn.textContent = 'Remove';
+        btn.onclick = () => {
+          state._ragTools = (state._ragTools || []).filter(x => x !== name);
+          setRagToolStatus('Removed ' + name + ' (staged). Click Save to persist.');
+          renderRagTools();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+        selected.appendChild(row);
+      }
+    }
+  }
+
+  async function refreshRagTools() {
+    try {
+      const res = await api('GET', '/rag-tools');
+      state._availableRagAgents = res.rag_agents || [];
+      state._ragToolsGroup = res.group || state.dashboardGroup || 'default';
+      renderRagTools();
+    } catch (e) {
+      state._availableRagAgents = [];
+      renderRagTools();
+      setRagToolStatus('Failed to load RAG agents: ' + e.message);
+    }
+  }
+
   function applyTheme(theme) {
     const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     let resolved = 'light';
@@ -3491,6 +3611,7 @@ def create_app() -> FastAPI:
     const llm = state.settings.llm || {};
     const runner = state.settings.runner || {};
     const mcp = state.settings.mcp || {};
+    const tools = state.settings.tools || {};
 
     // Settings-related entries
     const ui = state.settings.ui || {};
@@ -3509,6 +3630,10 @@ def create_app() -> FastAPI:
     state._mcpEditKey = null;
     clearMcpEditor();
     renderMcpServers();
+
+    // Persisted RAG tools
+    state._ragTools = Array.from(new Set(tools.rag_tools || [])).sort();
+    await refreshRagTools();
 
     const groupLabel = $('#agentMgmtGroupLabel');
     if (groupLabel) groupLabel.textContent = 'Group: ' + (state.dashboardGroup || 'default');
@@ -3607,11 +3732,14 @@ def create_app() -> FastAPI:
       },
       mcp: {
         servers: (state._mcpServers || {}),
+      },
+      tools: {
+        rag_tools: Array.from(new Set(state._ragTools || [])).sort(),
       }
     };
 
     // remove nulls to avoid overwriting with null unless explicitly intended
-    // (but preserve empty objects where we need to allow clearing settings, e.g. mcp.servers).
+    // (but preserve empty objects/arrays where we need to allow clearing settings, e.g. mcp.servers and tools.rag_tools).
     function compact(o, path='') {
       if (!o || typeof o !== 'object') return o;
       const out = Array.isArray(o) ? [] : {};
@@ -3622,6 +3750,8 @@ def create_app() -> FastAPI:
           const c = compact(v, p);
           const empty = c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0;
           if (!empty || p === 'mcp.servers') out[k] = c;
+        } else if (Array.isArray(v)) {
+          if (v.length || p === 'tools.rag_tools') out[k] = v;
         } else out[k] = v;
       }
       return out;
@@ -3784,6 +3914,8 @@ def create_app() -> FastAPI:
     if (mRem) mRem.onclick = removeMcpServerFromEditor;
     const mClr = $('#mcpClearBtn');
     if (mClr) mClr.onclick = clearMcpEditor;
+    const ragRefresh = $('#ragRefreshBtn');
+    if (ragRefresh) ragRefresh.onclick = refreshRagTools;
 
     $('#saveSettingsBtn').onclick = saveSettings;
   }
@@ -4410,6 +4542,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
         <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
         <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
+        <button class="settingsNavBtn" data-settings-section="tools" type="button">Agent tools</button>
         <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
         <button class="settingsNavBtn" data-settings-section="agents" type="button">Agent management</button>
       </div>
@@ -4461,6 +4594,37 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">Runner</div>
             <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="tools">
+          <div class="section">
+            <div class="sectionHead">Agent tools</div>
+            <div class="muted small" style="margin: 2px 0 10px">
+              Select persisted RAG agents to attach as tools to new Chat, Execution, and Planning + Execution runs. Create or update collections with <code>ursa rag-ingest</code>; this dashboard only selects existing persisted collections.
+            </div>
+            <div class="muted small" id="ragToolsGroupLabel" style="margin-bottom:8px"></div>
+
+            <div class="fieldRow">
+              <div class="label">Selected RAG tools</div>
+              <div>
+                <div id="ragSelectedList"></div>
+                <div class="muted small" style="margin-top:6px">These tools are staged until you click Save.</div>
+              </div>
+            </div>
+
+            <div class="fieldRow">
+              <div class="label">Available RAG agents</div>
+              <div>
+                <div id="ragAvailableList"></div>
+                <div class="muted small" style="margin-top:6px">Only persisted RAG agents in the active dashboard group are shown.</div>
+              </div>
+            </div>
+
+            <div class="row" style="justify-content:flex-start; gap: 10px">
+              <button class="btn" id="ragRefreshBtn" type="button">Refresh RAG agents</button>
+              <div class="muted small" id="ragToolStatus"></div>
+            </div>
           </div>
         </div>
 
