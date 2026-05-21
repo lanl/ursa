@@ -117,7 +117,6 @@ def _stub_hitl_dependencies(monkeypatch):
         "hypothesize",
         "plan",
         "web",
-        "recall",
     ]
     + ["dsi"]
     if has_optional_dep_group("dsi")
@@ -284,7 +283,7 @@ async def test_chat(ursa_config):
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "agent",
-    ["chat", "execute", "hypothesize", "plan", "web", "recall"],
+    ["chat", "execute", "hypothesize", "plan", "web"],
 )
 def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
     if agent == "plan":
@@ -330,9 +329,7 @@ async def test_mcp_smoke(mcp_server: Client):
     await mcp_server.list_prompts()
 
 
-@pytest.mark.parametrize(
-    "agent,query", [("chat", "Who are you?"), ("recall", "Who am I?")]
-)
+@pytest.mark.parametrize("agent,query", [("chat", "Who are you?")])
 async def test_mcp_agents(mcp_server: Client, agent: str, query: str):
     response = await mcp_server.call_tool(agent, {"prompt": query})
     assert isinstance(response.structured_content["result"], str)
