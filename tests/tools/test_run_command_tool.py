@@ -6,7 +6,11 @@ from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 from pydantic import ValidationError
 
-from tests.tools.utils import make_runtime
+from tests.tools.utils import (
+    invoke_with_event_recorder,
+    invoke_with_parent_run,
+    make_runtime,
+)
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
 from ursa.util.types import AsciiStr
 
@@ -52,7 +56,6 @@ def test_run_command_invokes_subprocess_in_workspace(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     recorded = {}
-    events = []
     _patch_safety_result(monkeypatch, chat_model, is_safe=True)
 
     def fake_run(*args, **kwargs):
@@ -61,25 +64,18 @@ def test_run_command_invokes_subprocess_in_workspace(
         return SimpleNamespace(stdout="output", stderr="", returncode=0)
 
     monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        lambda event_name, payload, config: events.append((
-            event_name,
-            payload,
-            config,
-        )),
-    )
 
-    runtime = make_runtime(
-        tmp_path,
-        llm=chat_model,
-        thread_id="run-thread",
-        tool_call_id="run-call",
-    )
-    result = run_command.func(
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
         "echo hi",
-        runtime=runtime,
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            thread_id="run-thread",
+            tool_call_id="run-call",
+        ),
     )
+    events = recorder.events
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
     assert recorded["kwargs"]["cwd"] == tmp_path
@@ -96,7 +92,6 @@ def test_run_command_invokes_subprocess_in_workspace(
             "safe": True,
             "reason": "Evaluated in test",
         },
-        runtime.config,
     )
     assert events[1] == (
         "ursa_agent_progress",
@@ -109,11 +104,9 @@ def test_run_command_invokes_subprocess_in_workspace(
             "phase": "start",
             "query": "echo hi",
         },
-        runtime.config,
     )
-    event_name, payload, config = events[2]
+    event_name, payload = events[2]
     assert event_name == "ursa_agent_progress"
-    assert config == runtime.config
     assert payload["tool"] == "run_command"
     assert payload["tool_call_id"] == "run-call"
     assert payload["stage"] == "execute"
@@ -143,15 +136,18 @@ def test_run_command_truncates_output(
         ),
     )
 
-    result = run_command.func(
-        "noop",
-        runtime=make_runtime(
-            tmp_path,
-            llm=chat_model,
-            limit=64,
-            tool_call_id="truncate",
-            thread_id="run-thread",
-        ),
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "noop",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                limit=64,
+                tool_call_id="truncate",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
     )
 
     stdout_part, stderr_part = result.split("STDERR:\n", maxsplit=1)
@@ -176,14 +172,17 @@ def test_run_command_handles_keyboard_interrupt(
         "ursa.tools.run_command_tool.subprocess.run", raise_interrupt
     )
 
-    result = run_command.func(
-        "sleep 1",
-        runtime=make_runtime(
-            tmp_path,
-            llm=chat_model,
-            tool_call_id="interrupt",
-            thread_id="run-thread",
-        ),
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "sleep 1",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                tool_call_id="interrupt",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
     )
 
     assert "KeyboardInterrupt:" in result
@@ -221,20 +220,11 @@ def test_run_command_blocks_commands_that_fail_safety_check(
     captured = _patch_safety_result(
         monkeypatch, chat_model, is_safe=False, reason="Not safe in test"
     )
-    events = []
     monkeypatch.setattr(
         "ursa.tools.run_command_tool.subprocess.run",
         lambda *args, **kwargs: pytest.fail(
             "subprocess.run should not be called for unsafe commands"
         ),
-    )
-    monkeypatch.setattr(
-        "ursa.util.events.dispatch_custom_event",
-        lambda event_name, payload, config: events.append((
-            event_name,
-            payload,
-            config,
-        )),
     )
 
     store = InMemoryStore()
@@ -252,16 +242,16 @@ def test_run_command_blocks_commands_that_fail_safety_check(
 
     monkeypatch.setattr(InMemoryStore, "search", tracked_search)
 
-    runtime = make_runtime(
-        tmp_path,
-        llm=chat_model,
-        store=store,
-        tool_call_id="unsafe",
-        thread_id="run-thread",
-    )
-    result = run_command.func(
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
         "rm -rf important_files",
-        runtime=runtime,
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            store=store,
+            tool_call_id="unsafe",
+            thread_id="run-thread",
+        ),
     )
 
     assert result.startswith(
@@ -275,7 +265,7 @@ def test_run_command_blocks_commands_that_fail_safety_check(
         (("workspace", "file_edit"), 1000),
         (("workspace", "safe_codes"), 1000),
     ]
-    assert events == [
+    assert recorder.events == [
         (
             "ursa_agent_progress",
             {
@@ -288,6 +278,5 @@ def test_run_command_blocks_commands_that_fail_safety_check(
                 "safe": False,
                 "reason": "Not safe in test",
             },
-            runtime.config,
         )
     ]
