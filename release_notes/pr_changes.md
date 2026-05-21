@@ -44,24 +44,28 @@
 - Make an "ursa" agent that has reviewed the code usage and can act as an oracle for Q/A
 - Need to actually package into the git repo (and figure the best way to do so)
 
+## RAG integration:
+- Easier to couple in RAG as a tool 
+  - Smooth CLI interface for making new persistent RAG agents and coupling them in the web dashboard,
+    CLI, and python. Can easily ingest new documents, make new agents and couple multiple RAG agents to 
+    a production agent for their use.
+
+### TODO:
+- Persistent agents should be able to use RAG on their history in some way
+  - Maybe theres a way to resuscitate the old AgentMemory structure here
+
 # Things to implement in a future PR:
 
 # Choosing the right agents:
 - A BotBearian:
   - A RAG agent that gets access to each persisted agent's memory in a group and can help the user select which persisted agent
     would be the best for a given task.
-
-## RAG integration:
-- Persistent agents should be able to use RAG on their history in some way
-  - Maybe theres a way to resuscitate the old AgentMemory structure here
-- Easier to couple in RAG as a tool 
-  - Maybe be able to give the agents a list of paths to data to RAG?
-  - There is probably a clever way to do this
 - A RAGbearian:
   - An agent that can search documentation on what each RAG database has and can pipe user requests to the most
     relevant RAG Agent
   - Like the BotBearian, but of the RAG databases. 
     - Perhaps centralizing RAG agents like other agents is all that needs to happen here?
+
 
 ## Agent interaction environments
 - Maybe this moves out to a separate one but seems useful here.
