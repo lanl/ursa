@@ -1,10 +1,14 @@
+import logging
 import os
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AgentMemory:
@@ -27,7 +31,7 @@ class AgentMemory:
     """
 
     @classmethod
-    def get_db_path(cls, path: Optional[str | Path]) -> Path:
+    def get_db_path(cls, path: str | Path | None) -> Path:
         match path:
             case None:
                 return Path.home() / ".cache" / "ursa" / "rag" / "db"
@@ -44,7 +48,7 @@ class AgentMemory:
     def __init__(
         self,
         embedding_model,
-        path: Optional[str | Path] = None,
+        path: str | Path | None = None,
         collection_name: str = "agent_memory",
     ) -> None:
         self.path = self.get_db_path(path)
@@ -53,7 +57,7 @@ class AgentMemory:
         self.embeddings = embedding_model
 
         # If a DB already exists, load it; otherwise defer creation until `build_index`.
-        self.vectorstore: Optional[Chroma] = None
+        self.vectorstore: Chroma | None = None
         if any(self.path.iterdir()):
             self.vectorstore = Chroma(
                 collection_name=self.collection_name,
@@ -67,7 +71,7 @@ class AgentMemory:
     def build_index(
         self,
         chunks: Sequence[str],
-        metadatas: Optional[Sequence[dict[str, Any]]] = None,
+        metadatas: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         """
         Create a fresh vector store from ``chunks``.  Existing data (if any)
@@ -101,7 +105,7 @@ class AgentMemory:
     def add_memories(
         self,
         new_chunks: Sequence[str],
-        metadatas: Optional[Sequence[dict[str, Any]]] = None,
+        metadatas: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         """
         Append new text chunks to the existing store (must call `build_index`
@@ -114,7 +118,7 @@ class AgentMemory:
         """
         if self.vectorstore is None:
             self.build_index(new_chunks, metadatas)
-            print("----- Vector store initialised -----")
+            LOGGER.info("Vector store initialized")
 
         docs = []
         for i, text in enumerate(new_chunks):
@@ -165,7 +169,7 @@ class AgentMemory:
         return self.vectorstore.similarity_search(query, k=k, **search_kwargs)
 
 
-def delete_database(path: Optional[str | Path] = None):
+def delete_database(path: str | Path | None = None):
     """
     Simple wrapper around a persistent Chroma vector-store for agent-conversation memory.
 
@@ -178,6 +182,6 @@ def delete_database(path: Optional[str | Path] = None):
     db_path = AgentMemory.get_db_path(path)
     if os.path.exists(db_path):
         shutil.rmtree(db_path)
-        print(f"Database: {db_path} has been deleted.")
+        LOGGER.info("Database deleted: %s", db_path)
     else:
-        print("No database found to delete.")
+        LOGGER.info("No database found to delete: %s", db_path)

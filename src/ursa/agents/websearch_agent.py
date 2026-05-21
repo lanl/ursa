@@ -1,5 +1,6 @@
 # from langchain_community.tools    import TavilySearchResults
 # from langchain_core.runnables.graph import MermaidDrawMethod
+import logging
 from typing import Annotated, Any, TypedDict
 
 import requests
@@ -20,6 +21,8 @@ from ursa.prompt_library.websearch_prompts import (
 )
 
 from .base import BaseAgent
+
+LOGGER = logging.getLogger(__name__)
 
 
 class WebSearchState(TypedDict):
@@ -142,7 +145,9 @@ class WebSearchAgentLegacy(BaseAgent):
 
 
 def process_content(
-    url: str, context: str, state: Annotated[dict, InjectedState]
+    url: str,
+    context: str,
+    state: Annotated[dict, InjectedState],
 ) -> str:
     """
     Processes content from a given webpage.
@@ -151,7 +156,7 @@ def process_content(
         url: string with the url to obtain text content from.
         context: string summary of the information the agent wants from the url for summarizing salient information.
     """
-    print("Parsing information from ", url)
+    LOGGER.info("Parsing web content: %s", url)
     response = requests.get(url)
     soup = BeautifulSoup(response.content, "html.parser")
 

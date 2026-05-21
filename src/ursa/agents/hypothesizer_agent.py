@@ -410,22 +410,6 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # It must include the overall solution in full, not summarized, but reformatted for appropriate
         # LaTeX. The summarization is for the other steps.
 
-        # all_visited_sites = list(state["visited_sites"])
-        # (Optional) remove duplicates by converting to a set, then back to a list
-        # visited_sites_unique = list(set(all_visited_sites))
-        # if visited_sites_unique:
-        #     websites_latex = "\\section*{Websites Visited}\\begin{itemize}\n"
-        #     for url in visited_sites_unique:
-        #         print(f"We visited: {url}")
-        #         # Use \url{} to handle special characters in URLs
-        #         websites_latex += f"\\item \\url{{{url}}}\n"
-        #     websites_latex += "\\end{itemize}\n\n"
-        # else:
-        #     # If no sites visited, or the list is empty
-        #     websites_latex = (
-        #         "\\section*{Websites Visited}\nNo sites were visited.\n\n"
-        #     )
-        # print(websites_latex)
         websites_latex = ""
 
         # Ask the LLM to produce *only* LaTeX content
@@ -502,45 +486,3 @@ def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
     else:
         return "continue"
 
-
-# def compile_summary_to_pdf(state: AgentState) -> AgentState:
-#     """
-#     Takes the LaTeX in state["summary_report"] and tries to compile it to a PDF
-#     named with the model and timestamp, e.g.:
-#     summary_report_gpt-5-mini_Mar_15_2025_8:59am.pdf
-#     """
-#     print(f"[DEBUG] Entering compile_summary_to_pdf.")
-
-#     llm_model = state["llm_model"]
-
-
-#     latex_code = state.get("summary_report", "")
-#     if not latex_code:
-#         print("[DEBUG] No LaTeX code found in summary_report.")
-#         return state
-
-#     # Create a dynamic filename using the LLM model name & a timestamp
-#     # e.g. "summary_report_gpt-5-mini_Mar_15_2025_08:59AM.pdf"
-#     # timestamp_str = datetime.now().strftime("%b_%d_%Y_%I:%M%p")
-#     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-#     pdf_filename = f"summary_report_{llm_model}_{timestamp_str}.pdf"
-
-#     tex_filename = "summary_report.tex"
-#     with open(tex_filename, "w", encoding="utf-8") as f:
-#         f.write(latex_code)
-
-#     try:
-#         subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_filename], check=True)
-#         subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_filename], check=True)
-#     except subprocess.CalledProcessError as e:
-#         print("Error compiling LaTeX:", e)
-
-#     if os.path.exists("summary_report.pdf"):
-#         os.rename("summary_report.pdf", pdf_filename)
-#         print(f"[DEBUG] Successfully compiled PDF -> {pdf_filename}")
-#     else:
-#         print("[DEBUG] PDF compilation failed; no summary_report.pdf found.")
-
-#     print("[DEBUG] Exiting compile_summary_to_pdf.")
-#     return state

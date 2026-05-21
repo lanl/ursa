@@ -59,6 +59,9 @@ class HITLLogEventHandler(AsyncCallbackHandler):
     def _agent_key(self, value: Any) -> str:
         raw = self._clean(value).lower().replace("_", "").replace(" ", "")
         return {
+            "arxivagent": "acquisition",
+            "chatagent": "chat",
+            "dsiagent": "dsi",
             "planningagent": "planner",
             "plan": "planner",
             "planner": "planner",
@@ -70,14 +73,27 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             "executor": "executor",
             "executionagent": "executor",
             "execution": "executor",
+            "lammpsagent": "lammps",
+            "lammps": "lammps",
+            "ostiaagent": "acquisition",
+            "ragagent": "rag",
+            "rag": "rag",
+            "recallagent": "recall",
+            "recall": "recall",
+            "websearchagent": "acquisition",
         }.get(raw, raw)
 
     def _agent_title(self, agent: str) -> str:
         return {
+            "chat": "Chat",
             "planner": "Plan",
             "hypothesizer": "Hypothesize",
             "acquisition": "Acquire",
+            "dsi": "DSI",
             "executor": "Execute",
+            "lammps": "LAMMPS",
+            "rag": "RAG",
+            "recall": "Recall",
         }.get(agent, agent or "Progress")
 
     def _agent_icon(self, agent: str, stage: str, data: dict[str, Any]) -> str:
@@ -103,8 +119,33 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             }.get(stage, "💡")
         if agent == "acquisition":
             return "📚"
+        if agent == "chat":
+            return "💬"
+        if agent == "dsi":
+            return "🗄️"
         if agent == "executor":
             return "⚙️"
+        if agent == "lammps":
+            if stage == "run":
+                return "✔" if data.get("returncode") == 0 else "✖"
+            return {
+                "copy_data": "📁",
+                "entry": "⚙️",
+                "find_potentials": "🔎",
+                "read_data": "📄",
+                "summarize_results": "📝",
+            }.get(stage, "⚛️")
+        if agent == "rag":
+            return {
+                "ingest_docs": "📥",
+                "read_docs": "📖",
+                "retrieve": "🔎",
+                "retrieve_error": "✖",
+                "retrieve_result": "📊",
+                "summarize": "📝",
+            }.get(stage, "🧠")
+        if agent == "recall":
+            return "🧠"
         return "🔹"
 
     def _tool_icon(
@@ -209,6 +250,26 @@ class HITLLogEventHandler(AsyncCallbackHandler):
             self.console.print(f"[dim]  {line}[/]")
         if output_path := self._display_path(data.get("output_path")):
             self.console.print(f"[dim]  {output_path}[/]")
+        if agent == "lammps":
+            parts: list[str] = []
+            if isinstance(data.get("returncode"), int):
+                parts.append(f"exit {data['returncode']}")
+            if isinstance(data.get("stdout_chars"), int):
+                parts.append(f"stdout {data['stdout_chars']} chars")
+            if isinstance(data.get("stderr_chars"), int):
+                parts.append(f"stderr {data['stderr_chars']} chars")
+            if parts:
+                self.console.print(f"[dim]  {', '.join(parts)}[/]")
+        if agent == "rag":
+            parts = []
+            if isinstance(data.get("document_count"), int):
+                parts.append(f"{data['document_count']} docs")
+            if isinstance(data.get("chunk_count"), int):
+                parts.append(f"{data['chunk_count']} chunks")
+            if isinstance(data.get("result_count"), int):
+                parts.append(f"{data['result_count']} results")
+            if parts:
+                self.console.print(f"[dim]  {', '.join(parts)}[/]")
 
     def _print_tool_event(self, data: dict[str, Any]) -> None:
         tool = self._clean(data.get("tool"))
