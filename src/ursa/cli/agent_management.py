@@ -7,7 +7,7 @@ from pathlib import Path
 
 from jsonargparse import ArgumentParser
 
-from ursa.security import AGENT_GROUPS_DIR
+from ursa.security import AGENT_GROUPS_DIR, DEFAULT_GROUP_NAME
 
 _AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -165,7 +165,10 @@ def ensure_group_dir(group_name: str) -> Path:
     AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
     group_dir = AGENT_GROUPS_DIR / group_name
     if not group_dir.exists():
-        raise FileNotFoundError(f"Group does not exist: {group_name}")
+        if group_name == DEFAULT_GROUP_NAME:
+            group_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raise FileNotFoundError(f"Group does not exist: {group_name}")
     if not group_dir.is_dir():
         raise ValueError(f"Group path is not a directory: {group_dir}")
     return group_dir
