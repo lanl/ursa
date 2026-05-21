@@ -60,10 +60,74 @@ from langchain_core.callbacks.manager import (
 from langchain_core.runnables import RunnableConfig
 
 DEFAULT_EVENT_NAME = "ursa_agent_progress"
-_MISSING_PARENT_RUN_ERROR = (
-    "Unable to dispatch an adhoc event without a parent run id."
-)
 LOGGER = logging.getLogger(__name__)
+
+
+class EventConsoleFormatter(logging.Formatter):
+    """Render URSA progress events as compact console messages."""
+
+    DETAIL_KEYS = (
+        "path",
+        "filename",
+        "query",
+        "output_path",
+        "returncode",
+        "stdout_chars",
+        "stderr_chars",
+        "result_chars",
+        "error",
+    )
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = getattr(record, "ursa_event_payload", None)
+        if not isinstance(payload, dict):
+            return super().format(record)
+
+        source = (
+            payload.get("agent")
+            or payload.get("tool")
+            or payload.get("name")
+            or "ursa"
+        )
+        stage = payload.get("stage")
+        phase = payload.get("phase")
+        message = payload.get("message") or record.getMessage()
+
+        label = str(source)
+        if stage:
+            label += f" {stage}"
+        if phase:
+            label += f"/{phase}"
+
+        details = [
+            f"{key}={payload[key]}"
+            for key in self.DETAIL_KEYS
+            if payload.get(key) not in (None, "")
+        ]
+        suffix = f" ({', '.join(details)})" if details else ""
+        return f"[ursa] {label}: {message}{suffix}"
+
+
+def configure_event_logging(
+    *,
+    level: int = logging.INFO,
+    formatter: logging.Formatter | None = None,
+) -> None:
+    """Enable console logging for URSA progress events.
+
+    Examples call this helper so the default event logging callback installed
+    by ``BaseAgent`` is visible without requiring users to configure Python
+    logging manually.
+    """
+    formatter = formatter or EventConsoleFormatter()
+    LOGGER.setLevel(level)
+    LOGGER.propagate = False
+    LOGGER.handlers.clear()
+
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    LOGGER.addHandler(handler)
 
 
 class EventLoggingHandler(BaseCallbackHandler):
@@ -174,11 +238,7 @@ class ProgressEvents:
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
-        try:
-            dispatch_custom_event(self.event_name, body, config=self.config)
-        except RuntimeError as exc:
-            if _MISSING_PARENT_RUN_ERROR not in str(exc):
-                raise
+        dispatch_custom_event(self.event_name, body, config=self.config)
         return body
 
     async def aemit(
@@ -192,15 +252,11 @@ class ProgressEvents:
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
-        try:
-            await adispatch_custom_event(
-                self.event_name,
-                body,
-                config=self.config,
-            )
-        except RuntimeError as exc:
-            if _MISSING_PARENT_RUN_ERROR not in str(exc):
-                raise
+        await adispatch_custom_event(
+            self.event_name,
+            body,
+            config=self.config,
+        )
         return body
 
     def range(
@@ -402,8 +458,10 @@ __all__ = [
     "DEFAULT_EVENT_LOGGING_HANDLER",
     "DEFAULT_EVENT_NAME",
     "AgentEvents",
+    "EventConsoleFormatter",
     "EventLoggingHandler",
     "EventRange",
     "ProgressEvents",
     "ToolEvents",
+    "configure_event_logging",
 ]

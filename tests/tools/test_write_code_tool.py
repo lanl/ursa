@@ -23,6 +23,14 @@ def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def stub_event_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda *args, **kwargs: None,
+    )
+
+
 def test_write_code_records_store_entry(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):

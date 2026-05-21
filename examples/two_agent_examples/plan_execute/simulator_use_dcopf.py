@@ -3,6 +3,9 @@ from langchain.chat_models import init_chat_model
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.workflows import SimulationUseWorkflow
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 # Define the workspace
 workspace = "example_dcopf_use"

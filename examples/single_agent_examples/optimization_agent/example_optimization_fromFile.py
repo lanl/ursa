@@ -4,6 +4,9 @@ import pprint
 from langchain_openai import ChatOpenAI
 
 from ursa.agents.optimization_agent import OptimizationAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 model = ChatOpenAI(
     model="gpt-5-mini", max_tokens=10000, timeout=None, max_retries=2

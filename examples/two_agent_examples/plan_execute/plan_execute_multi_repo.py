@@ -29,6 +29,9 @@ from ursa.util.plan_execute_utils import (
     setup_llm,
     timed_input_with_countdown,
 )
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 console = get_console()
 

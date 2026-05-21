@@ -3,6 +3,9 @@ import asyncio
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import WebSearchAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 ##### Run a simple example of a WebSearch Agent.
 

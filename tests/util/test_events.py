@@ -1,4 +1,5 @@
 import logging
+from io import StringIO
 from pathlib import Path
 from uuid import uuid4
 
@@ -6,7 +7,14 @@ import pytest
 from langchain.tools import ToolRuntime
 
 from ursa.agents.base import AgentContext
-from ursa.util.events import AgentEvents, EventLoggingHandler, ToolEvents
+from ursa.util.events import (
+    LOGGER,
+    AgentEvents,
+    EventConsoleFormatter,
+    EventLoggingHandler,
+    ToolEvents,
+    configure_event_logging,
+)
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
 
@@ -69,30 +77,22 @@ def test_emit_is_noop_without_config(
     assert called is False
 
 
-def test_emit_tolerates_missing_parent_run(
+def test_emit_propagates_dispatch_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_dispatch(*args, **kwargs) -> None:
-        raise RuntimeError(
-            "Unable to dispatch an adhoc event without a parent run id."
-        )
+        raise RuntimeError("dispatch failed")
 
     monkeypatch.setattr(
         "ursa.util.events.dispatch_custom_event",
         fake_dispatch,
     )
 
-    payload = AgentEvents(
-        agent="planner",
-        config={"metadata": {"thread_id": "thread-2"}},
-    ).emit("Drafting plan", stage="generate")
-
-    assert payload == {
-        "agent": "planner",
-        "stage": "generate",
-        "message": "Drafting plan",
-        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
-    }
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        AgentEvents(
+            agent="planner",
+            config={"metadata": {"thread_id": "thread-2"}},
+        ).emit("Drafting plan", stage="generate")
 
 
 def test_event_logging_handler_logs_structured_payload(
@@ -118,6 +118,60 @@ def test_event_logging_handler_logs_structured_payload(
         'stage="generate" message="Drafting plan" '
         'data={"monotonic_timestamp_ns": 123456789, "step_count": 2}'
     ]
+
+
+def test_configure_event_logging_sets_console_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_handlers = list(LOGGER.handlers)
+    original_level = LOGGER.level
+    original_propagate = LOGGER.propagate
+    monkeypatch.setattr(LOGGER, "handlers", [])
+
+    try:
+        configure_event_logging()
+
+        assert len(LOGGER.handlers) == 1
+        assert isinstance(LOGGER.handlers[0].formatter, EventConsoleFormatter)
+        assert LOGGER.level == logging.INFO
+        assert LOGGER.propagate is False
+    finally:
+        LOGGER.handlers = original_handlers
+        LOGGER.setLevel(original_level)
+        LOGGER.propagate = original_propagate
+
+
+def test_event_console_formatter_renders_readable_event() -> None:
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(EventConsoleFormatter())
+    logger = logging.getLogger("test.ursa.events.console")
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    try:
+        logger.info(
+            "raw event message",
+            extra={
+                "ursa_event_payload": {
+                    "tool": "write_code",
+                    "stage": "write",
+                    "phase": "end",
+                    "message": "File written",
+                    "path": "workspace/sample.py",
+                    "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+                }
+            },
+        )
+
+        assert stream.getvalue().strip() == (
+            "[ursa] write_code write/end: File written "
+            "(path=workspace/sample.py)"
+        )
+    finally:
+        logger.handlers = []
+        logger.propagate = True
 
 
 def test_tool_events_emit_tool_payload_from_runtime(

@@ -2,6 +2,9 @@ from langchain.chat_models import init_chat_model
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.workflows import PlanningExecutorWorkflow
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 problem = """
 Design, run and visualize the effects of the counter-rotating states in the quantum Rabi model using the QuTiP

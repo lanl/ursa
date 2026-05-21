@@ -4,6 +4,9 @@ from langchain_core.messages import HumanMessage
 
 from ursa.agents import ExecutionAgent
 from ursa.util.memory_logger import AgentMemory
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 ### Run a simple example of an Execution Agent.
 

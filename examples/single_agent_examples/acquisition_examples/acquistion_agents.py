@@ -5,6 +5,9 @@ from rich import print as rprint
 from rich.panel import Panel
 
 from ursa.agents import ArxivAgent, ArxivAgentLegacy, OSTIAgent, WebSearchAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 
 def print_summary(summary: str, title: str):

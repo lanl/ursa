@@ -31,6 +31,9 @@ from ursa.util.plan_execute_utils import (
     timed_input_with_countdown,
 )
 from ursa.util.plan_renderer import render_plan_steps_rich
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 console = get_console()  # always returns the same instance
 

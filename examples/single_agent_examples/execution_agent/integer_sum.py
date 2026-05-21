@@ -16,6 +16,9 @@ from rich.panel import Panel
 
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 console = get_console()  # always returns the same instance
 
