@@ -26,6 +26,7 @@ Entry points:
 """
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import (
@@ -387,9 +388,14 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 review_messages,
                 config=self.build_config(tags=["review"]),
             )
+            if not isinstance(review_result, Mapping):
+                raise ValueError(
+                    "Review step returned no structured assessment."
+                )
         except Exception as e:
             # Avoid trapping the graph in an infinite review loop if the review model
-            # call fails. The recap will still surface the work completed so far.
+            # call fails or returns an unusable structured-output payload. The recap
+            # will still surface the work completed so far.
             review_result = {
                 "is_complete": True,
                 "reason": f"Review step failed with error: {e}. Proceeding to recap.",
