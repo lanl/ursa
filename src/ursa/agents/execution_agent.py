@@ -276,7 +276,20 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["messages"][1:]
         )
 
+        if len([x for x in new_state["messages"] if isinstance(x,SystemMessage)]) > 1:
+            kept_one = False
+            for msg in new_state["messages"]:
+                if isinstance(msg, SystemMessage) and kept_one:
+                    msg = HumanMessage(content=msg.content)
+                    summarized = True
+                elif isinstance(msg, SystemMessage):
+                    kept_one = True
         if tokens_before_summarize > self.tokens_before_summarize:
+            for msg in new_state["messages"][1:]:
+                if count_tokens_approximately([msg]) > 100000:
+                    trunc_message = "Message too long - truncated."
+                    msg.content = trunc_message
+                    summarized = True
             # Start from 1 to skip system message.
             conversation_to_summarize = new_state["messages"][
                 1 : -self.messages_to_keep

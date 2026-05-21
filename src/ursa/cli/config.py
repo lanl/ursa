@@ -99,7 +99,6 @@ class UrsaConfig(BaseModel):
     llm_model: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
             model="openai:gpt-5.2",
-            max_completion_tokens=5000,
         )
     )
     """Default LLM"""

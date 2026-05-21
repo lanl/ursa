@@ -3,6 +3,7 @@ import mimetypes
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
@@ -125,6 +126,12 @@ def read_image(
             pass  # PIL not available, skip dimensions
         except Exception:
             pass  # Error reading dimensions, skip
+
+        tok = count_tokens_approximately(str(result))
+        if tok > 100000:
+            result["base64_data"] = None
+            result["error"] = f"Image would be approximately {tok} tokens. Too many to ingest properly."
+            return result
 
         result["success"] = True
 
