@@ -8,6 +8,9 @@ import html
 import json
 import mimetypes
 import os
+import platform
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -49,6 +52,7 @@ from .api_models import (
     SessionMessageResponse,
     SessionPatchRequest,
     SessionWorkspaceListResponse,
+    SessionWorkspaceSetRequest,
     SettingsPatchRequest,
     SettingsResponse,
     WorkspaceAllFilesResponse,
@@ -360,10 +364,8 @@ def create_app() -> FastAPI:
         agent_init = dict(req.agent_init or {})
 
         # Use a shared per-session workspace directory so artifacts persist across turns.
-        sp = session_paths(rm.workspace_root, session_id)
-        workspace_dir_rel = sp.workspace_dir.relative_to(
-            rm.workspace_root
-        ).as_posix()
+        workspace_dir = _session_workspace_dir(session_id, sess)
+        workspace_dir.mkdir(parents=True, exist_ok=True)
 
         run = await rm.create_run(
             agent_id=agent_id,
@@ -374,7 +376,7 @@ def create_app() -> FastAPI:
             extra={
                 "session_id": session_id,
                 "session_user_message_id": user_msg.get("message_id"),
-                "workspace_dir": workspace_dir_rel,
+                "workspace_dir": str(workspace_dir),
                 "mcp": mcp,
             },
         )
@@ -1104,9 +1106,43 @@ def create_app() -> FastAPI:
     # Session workspace (shared across turns)
     # ----------------------------
 
-    def _session_workspace_dir(session_id: str) -> Path:
+    def _session_default_workspace_dir(session_id: str) -> Path:
         sp = session_paths(rm.workspace_root, session_id)
         return sp.workspace_dir.resolve()
+
+    def _session_workspace_dir(
+        session_id: str, sess: dict[str, Any] | None = None
+    ) -> Path:
+        if sess is None:
+            sess = session_read_session(rm.workspace_root, session_id)
+        custom = str(sess.get("workspace_path") or "").strip()
+        if custom:
+            p = Path(custom).expanduser()
+            if not p.is_absolute():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Session workspace path is not absolute",
+                )
+            return p.resolve()
+        return _session_default_workspace_dir(session_id)
+
+    def _workspace_response(
+        session_id: str, sess: dict[str, Any], files: list[dict[str, Any]]
+    ) -> SessionWorkspaceListResponse:
+        ws = _session_workspace_dir(session_id, sess)
+        data = {
+            "session_id": session_id,
+            "agent_id": str(sess.get("agent_id") or ""),
+            "files": files,
+            "workspace_path": str(ws),
+            "default_workspace_path": str(
+                _session_default_workspace_dir(session_id)
+            ),
+            "is_default_workspace": not bool(
+                str(sess.get("workspace_path") or "").strip()
+            ),
+        }
+        return SessionWorkspaceListResponse(**data)
 
     @app.get(
         "/sessions/{session_id}/workspace",
@@ -1121,13 +1157,221 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
-        return SessionWorkspaceListResponse(
-            session_id=session_id,
-            agent_id=str(sess.get("agent_id") or ""),
-            files=files,
+        return _workspace_response(session_id, sess, files)
+
+    @app.patch(
+        "/sessions/{session_id}/workspace",
+        response_model=SessionWorkspaceListResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def set_session_workspace(
+        session_id: str, req: SessionWorkspaceSetRequest
+    ) -> SessionWorkspaceListResponse:
+        try:
+            sess = session_read_session(rm.workspace_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+
+        if sess.get("active_run_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the workspace while this session has an active run",
+            )
+
+        raw = "" if req.path is None else str(req.path).strip()
+        patch: dict[str, Any]
+        if not raw:
+            patch = {"workspace_path": None}
+        else:
+            p = Path(raw).expanduser()
+            if not p.is_absolute():
+                raise HTTPException(
+                    status_code=400, detail="Workspace path must be absolute"
+                )
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Could not create or access workspace folder: {e}",
+                )
+            if not p.is_dir():
+                raise HTTPException(
+                    status_code=400, detail="Workspace path is not a directory"
+                )
+            patch = {"workspace_path": str(p.resolve())}
+
+        sess2 = session_update_session(rm.workspace_root, session_id, patch)
+        ws = _session_workspace_dir(session_id, sess2)
+        files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
+        return _workspace_response(session_id, sess2, files)
+
+    def _choose_folder_with_tk(initial_dir: str | None = None) -> str | None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except Exception as e:
+            raise RuntimeError(f"tkinter is not available: {e}") from e
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            selected = filedialog.askdirectory(
+                title="Select URSA workspace folder",
+                initialdir=initial_dir or str(Path.home()),
+                mustexist=False,
+            )
+            return selected or None
+        finally:
+            root.destroy()
+
+    def _choose_folder_with_osascript(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        prompt = "Choose an URSA workspace folder"
+        script = (
+            f'set chosenFolder to choose folder with prompt "{prompt}"\n'
+            "POSIX path of chosenFolder"
         )
+        env = dict(os.environ)
+        if initial_dir:
+            env["PWD"] = initial_dir
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            text=True,
+            capture_output=True,
+            timeout=300,
+            env=env,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            if "User canceled" in err or "-128" in err:
+                return None
+            raise RuntimeError(err or "osascript folder chooser failed")
+        selected = proc.stdout.strip()
+        return selected or None
+
+    def _choose_folder_with_zenity(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        cmd = [
+            "zenity",
+            "--file-selection",
+            "--directory",
+            "--title",
+            "Select URSA workspace folder",
+        ]
+        if initial_dir:
+            cmd.extend([
+                "--filename",
+                str(Path(initial_dir).expanduser()) + os.sep,
+            ])
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=300)
+        if proc.returncode != 0:
+            if proc.returncode == 1:
+                return None
+            raise RuntimeError(
+                (
+                    proc.stderr or proc.stdout or "zenity folder chooser failed"
+                ).strip()
+            )
+        selected = proc.stdout.strip()
+        return selected or None
+
+    def _choose_workspace_folder(initial_dir: str | None = None) -> str | None:
+        system = platform.system().lower()
+        errors: list[str] = []
+
+        if system == "darwin" and shutil.which("osascript"):
+            try:
+                return _choose_folder_with_osascript(initial_dir)
+            except Exception as e:
+                errors.append(f"osascript: {e}")
+
+        if system == "linux" and shutil.which("zenity"):
+            try:
+                return _choose_folder_with_zenity(initial_dir)
+            except Exception as e:
+                errors.append(f"zenity: {e}")
+
+        try:
+            return _choose_folder_with_tk(initial_dir)
+        except Exception as e:
+            errors.append(f"tkinter: {e}")
+
+        msg = (
+            "; ".join(errors)
+            if errors
+            else "no native folder chooser is available"
+        )
+        raise RuntimeError(msg)
+
+    @app.post(
+        "/sessions/{session_id}/workspace/choose",
+        response_model=SessionWorkspaceListResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def choose_session_workspace(
+        session_id: str,
+    ) -> SessionWorkspaceListResponse:
+        try:
+            sess = session_read_session(rm.workspace_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+
+        if sess.get("active_run_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the workspace while this session has an active run",
+            )
+
+        current = _session_workspace_dir(session_id, sess)
+        try:
+            selected = await asyncio.to_thread(
+                _choose_workspace_folder, str(current)
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Could not open a native folder chooser on the dashboard host. "
+                    "If the dashboard is running remotely or headlessly, enter the path manually. "
+                    f"Details: {e}"
+                ),
+            )
+
+        if not selected:
+            files = scan_artifacts(current, exclude_dirs={"__pycache__"})
+            return _workspace_response(session_id, sess, files)
+
+        p = Path(selected).expanduser()
+        if not p.is_absolute():
+            raise HTTPException(
+                status_code=400,
+                detail="Selected workspace path is not absolute",
+            )
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not create or access selected workspace folder: {e}",
+            )
+        if not p.is_dir():
+            raise HTTPException(
+                status_code=400,
+                detail="Selected workspace path is not a directory",
+            )
+
+        sess2 = session_update_session(
+            rm.workspace_root, session_id, {"workspace_path": str(p.resolve())}
+        )
+        ws = _session_workspace_dir(session_id, sess2)
+        files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
+        return _workspace_response(session_id, sess2, files)
 
     async def _save_upload(
         upload: UploadFile, dest: Path, *, max_bytes: int
@@ -1179,7 +1423,7 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
 
         MAX_FILE_BYTES = 100 * 1024 * 1024  # 100MB per file
         saved: list[dict[str, Any]] = []
@@ -1228,11 +1472,11 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> SessionFileMetaResponse:
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.workspace_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1264,7 +1508,7 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1397,11 +1641,11 @@ def create_app() -> FastAPI:
         ),
     ):
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.workspace_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1594,6 +1838,7 @@ def create_app() -> FastAPI:
     viewRunKind: 'none', // 'none' | 'static' | 'stream'
     es: null,
     logs: { stdout: '', stderr: '' },
+    workspaceInfo: null,
 
     // Panel visibility (left sidebar is always shown)
     showChat: true,
@@ -2497,6 +2742,20 @@ def create_app() -> FastAPI:
     }
   }
 
+  function renderWorkspacePath() {
+    const el = $('#workspacePath');
+    if (!el) return;
+    const info = state.workspaceInfo || {};
+    if (!state.activeSessionId || !info.workspace_path) {
+      el.textContent = '';
+      el.title = '';
+      return;
+    }
+    const prefix = info.is_default_workspace ? 'Default workspace' : 'Workspace';
+    el.textContent = `${prefix}: ${info.workspace_path}`;
+    el.title = info.workspace_path;
+  }
+
   function renderActiveSession() {
     const title = $('#activeSessionTitle');
     const meta = $('#activeSessionMeta');
@@ -2518,6 +2777,8 @@ def create_app() -> FastAPI:
 
         setStatus('');
         state.viewSessionId = null;
+        state.workspaceInfo = null;
+        renderWorkspacePath();
         clearRunView();
         return;
     }
@@ -2528,7 +2789,7 @@ def create_app() -> FastAPI:
     if (title) title.textContent = s.title || 'Session';
     if (meta) meta.textContent = `${agentName} \u00b7 created ${fmtTime(s.created_at)}`;
 
-    if (wsTitle) wsTitle.textContent = `Artifacts \u00b7 ${s.session_id}`;
+    if (wsTitle) wsTitle.textContent = `Artifacts`;
 
     const activeRunId = s.active_run_id || null;
     const lastRunId = s.last_run_id || null;
@@ -2638,7 +2899,7 @@ def create_app() -> FastAPI:
       alert('Cannot delete a session with an active run');
       return;
     }
-    if (!confirm('Delete this session? This will remove its messages and workspace files.')) return;
+    if (!confirm('Delete this session? This will remove its messages and dashboard-managed session folder. Custom external workspace folders are not deleted.')) return;
 
     await api('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
 
@@ -2707,6 +2968,7 @@ def create_app() -> FastAPI:
     const hint = $('#workspaceHint');
     if (!list) return;
     list.innerHTML = '';
+    renderWorkspacePath();
 
     if (!state.activeSessionId) {
       if (hint) hint.textContent = 'Select a session to view its workspace.';
@@ -2744,15 +3006,65 @@ def create_app() -> FastAPI:
 
   async function refreshWorkspace() {
     if (!state.activeSessionId) {
+      state.workspaceInfo = null;
       renderWorkspace([]);
       return;
     }
     try {
       const res = await api('GET', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`);
+      state.workspaceInfo = res;
       renderWorkspace(res.files || []);
     } catch (e) {
       const list = $('#workspaceFiles');
       if (list) list.innerHTML = `<div class="muted">Failed to load workspace: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function setSessionWorkspace(path) {
+    if (!state.activeSessionId) return;
+    const res = await api('PATCH', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`, { path });
+    state.workspaceInfo = res;
+    renderWorkspace(res.files || []);
+    await refreshSessions();
+  }
+
+  async function chooseWorkspaceFolder() {
+    if (!state.activeSessionId) {
+      alert('Select a session first');
+      return;
+    }
+    try {
+      const res = await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace/choose`);
+      state.workspaceInfo = res;
+      renderWorkspace(res.files || []);
+      await refreshSessions();
+      return;
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      const useManual = confirm(`${msg}\n\nOpen the manual path entry fallback instead?`);
+      if (!useManual) return;
+    }
+
+    const cur = state.workspaceInfo?.workspace_path || '';
+    const next = prompt('Workspace folder path\n\nEnter an absolute folder path. The folder will be created if needed. Leave blank to reset to the dashboard-managed default workspace.', cur);
+    if (next === null) return;
+    try {
+      await setSessionWorkspace(next);
+    } catch (e) {
+      alert(String(e && e.message ? e.message : e));
+    }
+  }
+
+  async function resetWorkspaceFolder() {
+    if (!state.activeSessionId) {
+      alert('Select a session first');
+      return;
+    }
+    if (!confirm('Reset this session to its dashboard-managed default workspace? Existing files in the current folder will not be moved or deleted.')) return;
+    try {
+      await setSessionWorkspace('');
+    } catch (e) {
+      alert(String(e && e.message ? e.message : e));
     }
   }
 
@@ -3044,6 +3356,7 @@ def create_app() -> FastAPI:
 
     $('#refreshSessionsBtn').onclick = async () => { await refreshSessions(); };
     $('#refreshFilesBtn').onclick = async () => { await refreshWorkspace(); };
+    $('#setWorkspaceBtn').onclick = async () => { await chooseWorkspaceFolder(); };
 
     // Upload files into the active session workspace
     const uploadBtn = $('#uploadFilesBtn');
@@ -3456,6 +3769,7 @@ textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; borde
 .fileDl:hover { border-color: #bbb; }
 
 #filesDetails { flex: 0 0 auto; }
+#workspacePath { max-width: 100%; overflow-wrap: anywhere; }
 #workspaceFiles { max-height: 32vh; overflow:auto; padding-right: 4px; }
 
 iframe { width: 100%; flex: 1 1 auto; min-height: 320px; border: 1px solid var(--border); border-radius: 12px; background:#fff; }
@@ -3710,9 +4024,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     <div class="topbar">
       <div>
         <div class="title" id="workspaceTitle">Session artifacts</div>
+        <div class="muted small" id="workspacePath"></div>
         <div class="muted small" id="workspaceHint">Select a session to view its workspace.</div>
       </div>
       <div class="row" style="justify-content:flex-end">
+        <button class="btn" id="setWorkspaceBtn" type="button">Set folder</button>
         <button class="btn" id="refreshFilesBtn" type="button">Refresh</button>
         <button class="btn" id="uploadFilesBtn" type="button">Upload</button>
       </div>

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import platform
 import threading
 from cmd import Cmd
 from dataclasses import dataclass, field
@@ -69,15 +68,18 @@ class AgentHITL:
         return self._agent.__doc__
 
     async def __call__(
-        self, prompt: str, last_agent_result: str | None = None
+        self,
+        prompt: str,
+        last_agent_result: str | None = None,
+        last_agent: Any | None = None,
     ) -> str:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
 
         # Inject the previous agent's response into the query
-        if last_agent_result is not None:
+        if (last_agent_result is not None) and (last_agent != agent):
             prompt = "\n".join([
-                f"The last agent output was: {last_agent_result}",
+                f"The last agent output was: {last_agent_result}\n\n",
                 f"The user stated: {prompt}",
             ])
 
@@ -180,6 +182,7 @@ class HITL:
             )
 
         self.last_agent_result = None
+        self.last_agent = None
 
     async def _get_checkpointer(
         self, name: str = "checkpoint"
@@ -209,9 +212,14 @@ class HITL:
     async def run_agent(self, name: str, prompt: str) -> str:
         assert name in self.agents, f"Unknown agent {name}"
         agent = await self.get_agent(name)
-        msg = await agent(prompt, last_agent_result=self.last_agent_result)
+        msg = await agent(
+            prompt,
+            last_agent_result=self.last_agent_result,
+            last_agent=self.last_agent,
+        )
         assert isinstance(msg, str)
         self.last_agent_result = msg
+        self.last_agent = agent._agent
         return msg
 
     def as_mcp_server(self, **kwargs):
@@ -258,7 +266,6 @@ class AsyncLoopThread:
 
 class UrsaRepl(Cmd):
     exit_message: str = "[dim]Exiting ursa..."
-    _help_message: str = "[dim]For help, type: ? or help. Exit with Ctrl+d."
     prompt: str = "ursa> "
 
     def __init__(self, hitl: HITL, **kwargs):
@@ -322,6 +329,22 @@ class UrsaRepl(Cmd):
 
         return super().__getattribute__(name)
 
+    @staticmethod
+    def help_message():
+        if os.name == "nt":
+            exit_shortcut = "Crtl+Z"
+        elif os.name == "posix":
+            exit_shortcut = "Crtl+D"
+        else:
+            exit_shortcut = None
+
+        msg = "[dim]For help, type: ? or help."
+        if exit_shortcut is None:
+            msg += " Exit by typing 'exit'."
+        else:
+            msg += f" Exit with {exit_shortcut} or by typing exit."
+        return msg
+
     def get_names(self) -> list[str]:
         names = super().get_names()
         for name in self.hitl.agents.keys():
@@ -360,7 +383,7 @@ class UrsaRepl(Cmd):
 
     def do_clear(self, _: str):
         """Clear the screen. Same as pressing Ctrl+L."""
-        os.system("cls" if platform.system() == "Windows" else "clear")
+        os.system("cls" if os.name == "nt" else "clear")
 
     def emptyline(self):
         """Do nothing when an empty line is entered"""
@@ -373,7 +396,7 @@ class UrsaRepl(Cmd):
         self.show(self.llm_model_panel, markdown=False, highlight=False)
         if self.emb_model_panel:
             self.show(self.emb_model_panel, markdown=False, highlight=False)
-        self.show(self._help_message, markdown=False)
+        self.show(self.help_message(), markdown=False)
 
         while True:
             try:

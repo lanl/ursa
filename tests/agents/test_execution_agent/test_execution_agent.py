@@ -1,11 +1,12 @@
+from collections.abc import Iterator
 from math import sqrt
 from pathlib import Path
-from typing import Iterator
+from types import SimpleNamespace
 
 import pytest
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ursa.agents import ExecutionAgent
 
@@ -68,9 +69,35 @@ class ToolReadyFakeChatModel(GenericFakeChatModel):
         return self
 
 
+class SplitBehaviorFakeChatModel(GenericFakeChatModel):
+    """Emit plain responses; bind_tools() returns a separate tool-calling fake model."""
+
+    def bind_tools(self, tools, **kwargs):
+        return ToolCallingFakeChatModel(messages=_tool_call_message_stream())
+
+
+class ToolCallingFakeChatModel(GenericFakeChatModel):
+    pass
+
+
 def _message_stream(content: str) -> Iterator[AIMessage]:
     while True:
         yield AIMessage(content=content)
+
+
+def _tool_call_message_stream() -> Iterator[AIMessage]:
+    while True:
+        yield AIMessage(
+            content="tool-bound-response",
+            tool_calls=[
+                {
+                    "name": "fake_run_command",
+                    "args": {"query": "pwd"},
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
+        )
 
 
 @pytest.fixture
@@ -149,6 +176,48 @@ async def test_execution_agent_invokes_extra_tool(chat_model, tmpdir: Path):
         isinstance(execution_agent.workspace, Path)
         and execution_agent.workspace.exists()
     )
+
+
+def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
+    tmpdir: Path,
+):
+    execution_agent = ExecutionAgent(
+        llm=SplitBehaviorFakeChatModel(
+            messages=_message_stream("base-response")
+        ),
+        workspace=tmpdir,
+        tokens_before_summarize=1,
+        messages_to_keep=1,
+    )
+    _ = execution_agent.compiled_graph
+
+    summarized_state, summarized = execution_agent._summarize_context({
+        "messages": [
+            SystemMessage(content="system"),
+            HumanMessage(content="x" * 200),
+            HumanMessage(content="keep me"),
+        ],
+        "symlinkdir": {},
+    })
+    assert summarized is True
+    assert not summarized_state["messages"][1].tool_calls
+
+    execution_agent.tokens_before_summarize = 99999
+    recap_result = execution_agent.recap({
+        "messages": [
+            SystemMessage(content="system"),
+            HumanMessage(content="hi"),
+        ],
+        "symlinkdir": {},
+    })
+    assert not recap_result["messages"][1].tool_calls
+
+    query_result = execution_agent.query_executor(
+        {"messages": [HumanMessage(content="hi")], "symlinkdir": {}},
+        runtime=SimpleNamespace(context=execution_agent.context),
+    )
+    assert query_result["messages"].tool_calls
+    assert query_result["messages"].tool_calls[0]["name"] == "fake_run_command"
 
 
 def test_safe_codes_in_store(chat_model, tmpdir):

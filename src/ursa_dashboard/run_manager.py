@@ -465,13 +465,18 @@ class RunManager:
             timeout = float(runner_cfg["timeout_seconds"])
 
         # Spawn worker subprocess
-        workspace_dir_rel = rec.get("workspace_dir")
+        workspace_dir_value = rec.get("workspace_dir")
         agent_workspace_dir = paths.run_dir
-        if workspace_dir_rel:
+        if workspace_dir_value:
             try:
-                agent_workspace_dir = safe_join(
-                    self.workspace_root, str(workspace_dir_rel)
-                )
+                raw_workspace_dir = Path(str(workspace_dir_value)).expanduser()
+                if raw_workspace_dir.is_absolute():
+                    agent_workspace_dir = raw_workspace_dir.resolve()
+                else:
+                    agent_workspace_dir = safe_join(
+                        self.workspace_root, str(workspace_dir_value)
+                    )
+                agent_workspace_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
                 # Fall back to per-run directory if misconfigured.
                 agent_workspace_dir = paths.run_dir

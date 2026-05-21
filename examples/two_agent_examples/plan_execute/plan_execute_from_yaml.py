@@ -773,17 +773,29 @@ def run_substeps(
                 "Execute this sub-step and report the results fully—no placeholders."
             )
 
-            sub_result = executor.invoke(
-                {
+            # Check if the graph has a the symlinkdir information already.
+            #     if not, set from the yaml. If so, it will inherit from the
+            #     checkpoint.
+            config = {
+                "configurable": {
+                    "thread_id": executor.thread_id,
+                    "recursion_limit": 999_999,
+                }
+            }
+            if executor.compiled_graph.get_state(config).values.get(
+                "symlinkdir", None
+            ):
+                agent_input = {
+                    "messages": [HumanMessage(content=sub_exec_prompt)]
+                }
+            else:
+                agent_input = {
                     "messages": [HumanMessage(content=sub_exec_prompt)],
                     "workspace": executor.workspace,
                     "symlinkdir": symlinkdict,
-                },
-                config={
-                    "recursion_limit": 999_999,
-                    "configurable": {"thread_id": executor.thread_id},
-                },
-            )
+                }
+
+            sub_result = executor.invoke(agent_input, config=config)
 
             last_sub_summary = sub_result["messages"][-1].text
             last_ran_summary = last_sub_summary  # <—
