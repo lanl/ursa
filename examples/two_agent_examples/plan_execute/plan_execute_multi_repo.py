@@ -18,6 +18,7 @@ from rich.text import Text
 
 from ursa.agents import WebSearchAgent, make_git_agent
 from ursa.prompt_library.planning_prompts import reflection_prompt
+from ursa.util.events import configure_event_logging
 from ursa.util.github_research import gather_github_context
 from ursa.util.plan_execute_utils import (
     fmt_elapsed,
@@ -29,7 +30,6 @@ from ursa.util.plan_execute_utils import (
     setup_llm,
     timed_input_with_countdown,
 )
-from ursa.util.events import configure_event_logging
 
 configure_event_logging()
 

@@ -8,6 +8,9 @@ import html
 import json
 import mimetypes
 import os
+import platform
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -49,6 +52,7 @@ from .api_models import (
     SessionMessageResponse,
     SessionPatchRequest,
     SessionWorkspaceListResponse,
+    SessionWorkspaceSetRequest,
     SettingsPatchRequest,
     SettingsResponse,
     WorkspaceAllFilesResponse,
@@ -186,6 +190,43 @@ def create_app() -> FastAPI:
     # Settings (apply to new runs)
     # ----------------------------
 
+    def _deep_merge_dicts(*dicts: dict[str, Any] | None) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        for obj in dicts:
+            if not isinstance(obj, dict):
+                continue
+            for key, value in obj.items():
+                if isinstance(value, dict) and isinstance(
+                    merged.get(key), dict
+                ):
+                    merged[key] = _deep_merge_dicts(merged[key], value)
+                else:
+                    merged[key] = value
+        return merged
+
+    def _session_settings_patch(req: SessionPatchRequest) -> dict[str, Any]:
+        patch: dict[str, Any] = {}
+        if req.title is not None:
+            title = req.title.strip()
+            if not title:
+                raise HTTPException(
+                    status_code=400, detail="Title cannot be empty"
+                )
+            patch["title"] = title
+        if req.llm is not None:
+            if not isinstance(req.llm, dict):
+                raise HTTPException(
+                    status_code=400, detail="llm must be an object"
+                )
+            patch["llm"] = req.llm
+        if req.runner is not None:
+            if not isinstance(req.runner, dict):
+                raise HTTPException(
+                    status_code=400, detail="runner must be an object"
+                )
+            patch["runner"] = req.runner
+        return patch
+
     @app.get(
         "/settings",
         response_model=SettingsResponse,
@@ -229,8 +270,17 @@ def create_app() -> FastAPI:
             req.agent_id.startswith("demo_") and not _include_demo_agents()
         ):
             raise HTTPException(status_code=404, detail="Unknown agent_id")
+        settings_snapshot = settings_store.load().model_dump(mode="json")
         sess = session_create_session(
             rm.workspace_root, agent_id=req.agent_id, title=req.title
+        )
+        sess = session_update_session(
+            rm.workspace_root,
+            sess["session_id"],
+            {
+                "llm": settings_snapshot.get("llm") or {},
+                "runner": settings_snapshot.get("runner") or {},
+            },
         )
         return SessionDetail(session=sess, messages=[])
 
@@ -261,18 +311,33 @@ def create_app() -> FastAPI:
     ) -> SessionDetail:
         try:
             # Handle unknown session ID by trying to read and failing gracefully
-            _ = session_read_session(rm.workspace_root, session_id)
+            existing_session = session_read_session(
+                rm.workspace_root, session_id
+            )
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        # Only allow renaming for now.
-        title = str(req.title).strip()
-        if not title:
-            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        patch = _session_settings_patch(req)
+        if not patch:
+            raise HTTPException(
+                status_code=400, detail="No session changes provided"
+            )
+        if "llm" in patch:
+            llm_patch = patch["llm"] or {}
+            merged_llm = _deep_merge_dicts(
+                existing_session.get("llm") or {}, llm_patch
+            )
+            if isinstance(llm_patch, dict) and "model_kwargs" in llm_patch:
+                # Treat model_kwargs as a replace-on-write object so users can
+                # remove keys from the JSON editor instead of keeping stale keys.
+                merged_llm["model_kwargs"] = llm_patch.get("model_kwargs") or {}
+            patch["llm"] = merged_llm
+        if "runner" in patch:
+            patch["runner"] = _deep_merge_dicts(
+                existing_session.get("runner") or {}, patch["runner"] or {}
+            )
 
-        sess2 = session_update_session(
-            rm.workspace_root, session_id, {"title": title}
-        )
+        sess2 = session_update_session(rm.workspace_root, session_id, patch)
         msgs = session_read_messages(rm.workspace_root, session_id, limit=200)
         return SessionDetail(session=sess2, messages=msgs)
 
@@ -344,10 +409,14 @@ def create_app() -> FastAPI:
             text=req.text,
         )
 
-        # Merge global defaults (apply only if caller didn't provide)
+        # Merge global defaults, then per-session settings, then per-message overrides.
         s = settings_store.load().model_dump(mode="json")
-        llm = {**(s.get("llm") or {}), **(req.llm or {})}
-        runner = {**(s.get("runner") or {}), **(req.runner or {})}
+        llm = _deep_merge_dicts(
+            s.get("llm") or {}, sess.get("llm") or {}, req.llm or {}
+        )
+        runner = _deep_merge_dicts(
+            s.get("runner") or {}, sess.get("runner") or {}, req.runner or {}
+        )
         mcp = s.get("mcp") or {}
 
         # Demo agents should work without external credentials.
@@ -360,10 +429,8 @@ def create_app() -> FastAPI:
         agent_init = dict(req.agent_init or {})
 
         # Use a shared per-session workspace directory so artifacts persist across turns.
-        sp = session_paths(rm.workspace_root, session_id)
-        workspace_dir_rel = sp.workspace_dir.relative_to(
-            rm.workspace_root
-        ).as_posix()
+        workspace_dir = _session_workspace_dir(session_id, sess)
+        workspace_dir.mkdir(parents=True, exist_ok=True)
 
         run = await rm.create_run(
             agent_id=agent_id,
@@ -374,7 +441,7 @@ def create_app() -> FastAPI:
             extra={
                 "session_id": session_id,
                 "session_user_message_id": user_msg.get("message_id"),
-                "workspace_dir": workspace_dir_rel,
+                "workspace_dir": str(workspace_dir),
                 "mcp": mcp,
             },
         )
@@ -403,8 +470,8 @@ def create_app() -> FastAPI:
 
         # Merge with global defaults (apply only if caller didn't provide)
         s = settings_store.load().model_dump(mode="json")
-        llm = {**(s.get("llm") or {}), **(req.llm or {})}
-        runner = {**(s.get("runner") or {}), **(req.runner or {})}
+        llm = _deep_merge_dicts(s.get("llm") or {}, req.llm or {})
+        runner = _deep_merge_dicts(s.get("runner") or {}, req.runner or {})
         mcp = s.get("mcp") or {}
 
         # Demo agents should work without external credentials.
@@ -1104,9 +1171,43 @@ def create_app() -> FastAPI:
     # Session workspace (shared across turns)
     # ----------------------------
 
-    def _session_workspace_dir(session_id: str) -> Path:
+    def _session_default_workspace_dir(session_id: str) -> Path:
         sp = session_paths(rm.workspace_root, session_id)
         return sp.workspace_dir.resolve()
+
+    def _session_workspace_dir(
+        session_id: str, sess: dict[str, Any] | None = None
+    ) -> Path:
+        if sess is None:
+            sess = session_read_session(rm.workspace_root, session_id)
+        custom = str(sess.get("workspace_path") or "").strip()
+        if custom:
+            p = Path(custom).expanduser()
+            if not p.is_absolute():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Session workspace path is not absolute",
+                )
+            return p.resolve()
+        return _session_default_workspace_dir(session_id)
+
+    def _workspace_response(
+        session_id: str, sess: dict[str, Any], files: list[dict[str, Any]]
+    ) -> SessionWorkspaceListResponse:
+        ws = _session_workspace_dir(session_id, sess)
+        data = {
+            "session_id": session_id,
+            "agent_id": str(sess.get("agent_id") or ""),
+            "files": files,
+            "workspace_path": str(ws),
+            "default_workspace_path": str(
+                _session_default_workspace_dir(session_id)
+            ),
+            "is_default_workspace": not bool(
+                str(sess.get("workspace_path") or "").strip()
+            ),
+        }
+        return SessionWorkspaceListResponse(**data)
 
     @app.get(
         "/sessions/{session_id}/workspace",
@@ -1121,13 +1222,221 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
-        return SessionWorkspaceListResponse(
-            session_id=session_id,
-            agent_id=str(sess.get("agent_id") or ""),
-            files=files,
+        return _workspace_response(session_id, sess, files)
+
+    @app.patch(
+        "/sessions/{session_id}/workspace",
+        response_model=SessionWorkspaceListResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def set_session_workspace(
+        session_id: str, req: SessionWorkspaceSetRequest
+    ) -> SessionWorkspaceListResponse:
+        try:
+            sess = session_read_session(rm.workspace_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+
+        if sess.get("active_run_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the workspace while this session has an active run",
+            )
+
+        raw = "" if req.path is None else str(req.path).strip()
+        patch: dict[str, Any]
+        if not raw:
+            patch = {"workspace_path": None}
+        else:
+            p = Path(raw).expanduser()
+            if not p.is_absolute():
+                raise HTTPException(
+                    status_code=400, detail="Workspace path must be absolute"
+                )
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Could not create or access workspace folder: {e}",
+                )
+            if not p.is_dir():
+                raise HTTPException(
+                    status_code=400, detail="Workspace path is not a directory"
+                )
+            patch = {"workspace_path": str(p.resolve())}
+
+        sess2 = session_update_session(rm.workspace_root, session_id, patch)
+        ws = _session_workspace_dir(session_id, sess2)
+        files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
+        return _workspace_response(session_id, sess2, files)
+
+    def _choose_folder_with_tk(initial_dir: str | None = None) -> str | None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except Exception as e:
+            raise RuntimeError(f"tkinter is not available: {e}") from e
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            selected = filedialog.askdirectory(
+                title="Select URSA workspace folder",
+                initialdir=initial_dir or str(Path.home()),
+                mustexist=False,
+            )
+            return selected or None
+        finally:
+            root.destroy()
+
+    def _choose_folder_with_osascript(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        prompt = "Choose an URSA workspace folder"
+        script = (
+            f'set chosenFolder to choose folder with prompt "{prompt}"\n'
+            "POSIX path of chosenFolder"
         )
+        env = dict(os.environ)
+        if initial_dir:
+            env["PWD"] = initial_dir
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            text=True,
+            capture_output=True,
+            timeout=300,
+            env=env,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            if "User canceled" in err or "-128" in err:
+                return None
+            raise RuntimeError(err or "osascript folder chooser failed")
+        selected = proc.stdout.strip()
+        return selected or None
+
+    def _choose_folder_with_zenity(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        cmd = [
+            "zenity",
+            "--file-selection",
+            "--directory",
+            "--title",
+            "Select URSA workspace folder",
+        ]
+        if initial_dir:
+            cmd.extend([
+                "--filename",
+                str(Path(initial_dir).expanduser()) + os.sep,
+            ])
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=300)
+        if proc.returncode != 0:
+            if proc.returncode == 1:
+                return None
+            raise RuntimeError(
+                (
+                    proc.stderr or proc.stdout or "zenity folder chooser failed"
+                ).strip()
+            )
+        selected = proc.stdout.strip()
+        return selected or None
+
+    def _choose_workspace_folder(initial_dir: str | None = None) -> str | None:
+        system = platform.system().lower()
+        errors: list[str] = []
+
+        if system == "darwin" and shutil.which("osascript"):
+            try:
+                return _choose_folder_with_osascript(initial_dir)
+            except Exception as e:
+                errors.append(f"osascript: {e}")
+
+        if system == "linux" and shutil.which("zenity"):
+            try:
+                return _choose_folder_with_zenity(initial_dir)
+            except Exception as e:
+                errors.append(f"zenity: {e}")
+
+        try:
+            return _choose_folder_with_tk(initial_dir)
+        except Exception as e:
+            errors.append(f"tkinter: {e}")
+
+        msg = (
+            "; ".join(errors)
+            if errors
+            else "no native folder chooser is available"
+        )
+        raise RuntimeError(msg)
+
+    @app.post(
+        "/sessions/{session_id}/workspace/choose",
+        response_model=SessionWorkspaceListResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def choose_session_workspace(
+        session_id: str,
+    ) -> SessionWorkspaceListResponse:
+        try:
+            sess = session_read_session(rm.workspace_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+
+        if sess.get("active_run_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the workspace while this session has an active run",
+            )
+
+        current = _session_workspace_dir(session_id, sess)
+        try:
+            selected = await asyncio.to_thread(
+                _choose_workspace_folder, str(current)
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Could not open a native folder chooser on the dashboard host. "
+                    "If the dashboard is running remotely or headlessly, enter the path manually. "
+                    f"Details: {e}"
+                ),
+            )
+
+        if not selected:
+            files = scan_artifacts(current, exclude_dirs={"__pycache__"})
+            return _workspace_response(session_id, sess, files)
+
+        p = Path(selected).expanduser()
+        if not p.is_absolute():
+            raise HTTPException(
+                status_code=400,
+                detail="Selected workspace path is not absolute",
+            )
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not create or access selected workspace folder: {e}",
+            )
+        if not p.is_dir():
+            raise HTTPException(
+                status_code=400,
+                detail="Selected workspace path is not a directory",
+            )
+
+        sess2 = session_update_session(
+            rm.workspace_root, session_id, {"workspace_path": str(p.resolve())}
+        )
+        ws = _session_workspace_dir(session_id, sess2)
+        files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
+        return _workspace_response(session_id, sess2, files)
 
     async def _save_upload(
         upload: UploadFile, dest: Path, *, max_bytes: int
@@ -1179,7 +1488,7 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
 
         MAX_FILE_BYTES = 100 * 1024 * 1024  # 100MB per file
         saved: list[dict[str, Any]] = []
@@ -1228,11 +1537,11 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> SessionFileMetaResponse:
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.workspace_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1264,7 +1573,7 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1397,11 +1706,11 @@ def create_app() -> FastAPI:
         ),
     ):
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.workspace_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1594,6 +1903,7 @@ def create_app() -> FastAPI:
     viewRunKind: 'none', // 'none' | 'static' | 'stream'
     es: null,
     logs: { stdout: '', stderr: '' },
+    workspaceInfo: null,
 
     // Panel visibility (left sidebar is always shown)
     showChat: true,
@@ -1601,6 +1911,10 @@ def create_app() -> FastAPI:
     showArtifacts: true,
 
     settings: null,
+    _settingsMode: 'global',
+    _settingsSessionId: null,
+    _settingsSessionTitle: '',
+    _openSessionMenu: null,
     _renderTimers: { stdout: null, stderr: null },
     _logToken: 0,
     _followLogs: { stdout: true, stderr: true },
@@ -2460,41 +2774,97 @@ def create_app() -> FastAPI:
         btn.appendChild(title);
         btn.appendChild(meta);
 
+        const gearWrap = document.createElement('div');
+        gearWrap.className = 'sessionMenuWrap';
+
+        const gearBtn = document.createElement('button');
+        gearBtn.type = 'button';
+        gearBtn.className = 'sessActBtn gear';
+        gearBtn.textContent = '⚙';
+        gearBtn.title = 'Session menu';
+        gearBtn.setAttribute('aria-label', 'Session menu');
+        gearBtn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = state._openSessionMenu === s.session_id ? null : s.session_id;
+          renderSessions();
+        };
+
+        const menu = document.createElement('div');
+        menu.className = 'sessionMenu' + (state._openSessionMenu === s.session_id ? ' open' : '');
+
+        const llmInfo = document.createElement('div');
+        llmInfo.className = 'sessionMenuInfo';
+        llmInfo.textContent = sessionLlmSummary(s);
+        menu.appendChild(llmInfo);
+
+        const settingsBtn = document.createElement('button');
+        settingsBtn.type = 'button';
+        settingsBtn.textContent = 'Session settings';
+        settingsBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = null;
+          const detail = await api('GET', `/sessions/${encodeURIComponent(s.session_id)}`);
+          const modal = $('#settingsModal');
+          modal.classList.add('open');
+          await loadSettings({ mode: 'session', session: detail.session });
+          renderSessions();
+        };
+        menu.appendChild(settingsBtn);
+
         const renameBtn = document.createElement('button');
         renameBtn.type = 'button';
-        renameBtn.className = 'sessActBtn';
         renameBtn.textContent = 'Rename';
-        renameBtn.title = 'Rename session';
         renameBtn.onclick = async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const cur = s.title || '';
-        const next = prompt('Rename session', cur);
-        if (next === null) return;
-        await renameSession(s.session_id, next);
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = null;
+          const cur = s.title || '';
+          const next = prompt('Rename session', cur);
+          if (next === null) return;
+          await renameSession(s.session_id, next);
         };
+        menu.appendChild(renameBtn);
 
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
-        delBtn.className = 'sessActBtn danger';
-        delBtn.textContent = 'Delete';
-        delBtn.title = s.active_run_id ? 'Cannot delete while a run is active' : 'Delete session';
+        delBtn.className = 'danger';
+        delBtn.textContent = s.active_run_id ? 'Delete (disabled while running)' : 'Delete';
         delBtn.disabled = !!s.active_run_id;
         delBtn.onclick = async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        await deleteSessionUI(s.session_id);
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = null;
+          await deleteSessionUI(s.session_id);
         };
+        menu.appendChild(delBtn);
+
+        gearWrap.appendChild(gearBtn);
+        gearWrap.appendChild(menu);
 
         row.appendChild(btn);
-        row.appendChild(renameBtn);
-        row.appendChild(delBtn);
+        row.appendChild(gearWrap);
         list.appendChild(row);
     }
 
     if (!state.sessions.length) {
         list.innerHTML = '<div class="muted">No sessions yet. Start one from the Agents list.</div>';
     }
+  }
+
+  function renderWorkspacePath() {
+    const el = $('#workspacePath');
+    if (!el) return;
+    const info = state.workspaceInfo || {};
+    if (!state.activeSessionId || !info.workspace_path) {
+      el.textContent = '';
+      el.title = '';
+      return;
+    }
+    const prefix = info.is_default_workspace ? 'Default workspace' : 'Workspace';
+    el.textContent = `${prefix}: ${info.workspace_path}`;
+    el.title = info.workspace_path;
   }
 
   function renderActiveSession() {
@@ -2518,6 +2888,8 @@ def create_app() -> FastAPI:
 
         setStatus('');
         state.viewSessionId = null;
+        state.workspaceInfo = null;
+        renderWorkspacePath();
         clearRunView();
         return;
     }
@@ -2528,7 +2900,7 @@ def create_app() -> FastAPI:
     if (title) title.textContent = s.title || 'Session';
     if (meta) meta.textContent = `${agentName} \u00b7 created ${fmtTime(s.created_at)}`;
 
-    if (wsTitle) wsTitle.textContent = `Artifacts \u00b7 ${s.session_id}`;
+    if (wsTitle) wsTitle.textContent = `Artifacts`;
 
     const activeRunId = s.active_run_id || null;
     const lastRunId = s.last_run_id || null;
@@ -2638,7 +3010,7 @@ def create_app() -> FastAPI:
       alert('Cannot delete a session with an active run');
       return;
     }
-    if (!confirm('Delete this session? This will remove its messages and workspace files.')) return;
+    if (!confirm('Delete this session? This will remove its messages and dashboard-managed session folder. Custom external workspace folders are not deleted.')) return;
 
     await api('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
 
@@ -2655,12 +3027,28 @@ def create_app() -> FastAPI:
   }
 
   async function loadSession(sessionId) {
+    const previousSessionId = state.activeSessionId;
+    if (previousSessionId !== sessionId) clearArtifactPreview();
     state.activeSessionId = sessionId;
     savePref('ursa.ui.activeSessionId', sessionId);
     state.activeSession = await api('GET', `/sessions/${encodeURIComponent(sessionId)}`);
     renderSessions();
     renderActiveSession();
     await refreshWorkspace();
+  }
+
+  function clearArtifactPreview() {
+    $$('#workspaceFiles .fileItem').forEach(x => x.classList.remove('selected'));
+    const iframe = $('#previewFrame');
+    const txt = $('#artifactTextPreview');
+    if (iframe) {
+      iframe.src = 'about:blank';
+      iframe.style.display = '';
+    }
+    if (txt) {
+      txt.innerHTML = '';
+      txt.style.display = 'none';
+    }
   }
 
   function isMdFile(path) {
@@ -2707,6 +3095,7 @@ def create_app() -> FastAPI:
     const hint = $('#workspaceHint');
     if (!list) return;
     list.innerHTML = '';
+    renderWorkspacePath();
 
     if (!state.activeSessionId) {
       if (hint) hint.textContent = 'Select a session to view its workspace.';
@@ -2744,15 +3133,65 @@ def create_app() -> FastAPI:
 
   async function refreshWorkspace() {
     if (!state.activeSessionId) {
+      state.workspaceInfo = null;
       renderWorkspace([]);
       return;
     }
     try {
       const res = await api('GET', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`);
+      state.workspaceInfo = res;
       renderWorkspace(res.files || []);
     } catch (e) {
       const list = $('#workspaceFiles');
       if (list) list.innerHTML = `<div class="muted">Failed to load workspace: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function setSessionWorkspace(path) {
+    if (!state.activeSessionId) return;
+    const res = await api('PATCH', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`, { path });
+    state.workspaceInfo = res;
+    renderWorkspace(res.files || []);
+    await refreshSessions();
+  }
+
+  async function chooseWorkspaceFolder() {
+    if (!state.activeSessionId) {
+      alert('Select a session first');
+      return;
+    }
+    try {
+      const res = await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace/choose`);
+      state.workspaceInfo = res;
+      renderWorkspace(res.files || []);
+      await refreshSessions();
+      return;
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      const useManual = confirm(`${msg}\n\nOpen the manual path entry fallback instead?`);
+      if (!useManual) return;
+    }
+
+    const cur = state.workspaceInfo?.workspace_path || '';
+    const next = prompt('Workspace folder path\n\nEnter an absolute folder path. The folder will be created if needed. Leave blank to reset to the dashboard-managed default workspace.', cur);
+    if (next === null) return;
+    try {
+      await setSessionWorkspace(next);
+    } catch (e) {
+      alert(String(e && e.message ? e.message : e));
+    }
+  }
+
+  async function resetWorkspaceFolder() {
+    if (!state.activeSessionId) {
+      alert('Select a session first');
+      return;
+    }
+    if (!confirm('Reset this session to its dashboard-managed default workspace? Existing files in the current folder will not be moved or deleted.')) return;
+    try {
+      await setSessionWorkspace('');
+    } catch (e) {
+      alert(String(e && e.message ? e.message : e));
     }
   }
 
@@ -2789,6 +3228,72 @@ def create_app() -> FastAPI:
 
   function _cloneJson(obj) {
     return JSON.parse(JSON.stringify(obj || {}));
+  }
+
+  function _deepMergeObjects(...objs) {
+    const out = {};
+    for (const obj of objs) {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) continue;
+      for (const [k, v] of Object.entries(obj)) {
+        if (v && typeof v === 'object' && !Array.isArray(v) && out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) {
+          out[k] = _deepMergeObjects(out[k], v);
+        } else {
+          out[k] = v;
+        }
+      }
+    }
+    return out;
+  }
+
+  function _jsonObjectFromTextarea(sel, label, allowEmpty=true) {
+    const el = $(sel);
+    const txt = (el?.value || '').trim();
+    if (!txt) return allowEmpty ? {} : null;
+    let parsed;
+    try {
+      parsed = JSON.parse(txt);
+    } catch (e) {
+      throw new Error(`${label} must be valid JSON: ${e && e.message ? e.message : String(e)}`);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed;
+  }
+
+  function sessionEffectiveLlm(session) {
+    const globalLlm = state.settings?.llm || {};
+    return _deepMergeObjects(globalLlm, session?.llm || {});
+  }
+
+  function sessionLlmSummary(session) {
+    const llm = sessionEffectiveLlm(session);
+    const model = llm.model || '(model unset)';
+    const base = llm.base_url || '(default endpoint)';
+    return `${model} @ ${base}`;
+  }
+
+  function setSettingsModalMode(mode, session=null) {
+    state._settingsMode = mode;
+    state._settingsSessionId = session?.session_id || null;
+    state._settingsSessionTitle = session?.title || '';
+    const title = $('#settingsModalTitle');
+    const sub = $('#settingsModalSubtitle');
+    const uiBtn = document.querySelector('.settingsNavBtn[data-settings-section="ui"]');
+    const mcpBtn = document.querySelector('.settingsNavBtn[data-settings-section="mcp"]');
+    if (mode === 'session') {
+      if (title) title.textContent = 'Session settings';
+      if (sub) sub.textContent = `Applies to this session only: ${session?.title || session?.session_id || ''}`;
+      if (uiBtn) uiBtn.style.display = 'none';
+      if (mcpBtn) mcpBtn.style.display = 'none';
+      setSettingsSection('llm');
+    } else {
+      if (title) title.textContent = 'Settings';
+      if (sub) sub.textContent = 'Global defaults for new sessions and runs.';
+      if (uiBtn) uiBtn.style.display = '';
+      if (mcpBtn) mcpBtn.style.display = '';
+      setSettingsSection('ui');
+    }
   }
 
   function setMcpStatus(msg) {
@@ -2906,12 +3411,18 @@ def create_app() -> FastAPI:
     document.documentElement.setAttribute('data-theme', resolved);
   }
 
-  async function loadSettings() {
+  async function loadSettings(opts={}) {
+    const mode = opts.mode || state._settingsMode || 'global';
+    const session = opts.session || null;
     const res = await api('GET', '/settings');
     state.settings = res.settings || {};
     applyTheme(state.settings?.ui?.theme || 'system');
-    const llm = state.settings.llm || {};
-    const runner = state.settings.runner || {};
+    setSettingsModalMode(mode, session);
+
+    const globalLlm = state.settings.llm || {};
+    const globalRunner = state.settings.runner || {};
+    const llm = mode === 'session' ? _deepMergeObjects(globalLlm, session?.llm || {}) : globalLlm;
+    const runner = mode === 'session' ? _deepMergeObjects(globalRunner, session?.runner || {}) : globalRunner;
     const mcp = state.settings.mcp || {};
 
     // Settings-related entries
@@ -2924,34 +3435,49 @@ def create_app() -> FastAPI:
     $('#set_api_key_env_var').value = llm.api_key_env_var || '';
     $('#set_max_tokens').value = llm.max_tokens ?? '';
     $('#set_temperature').value = llm.temperature ?? '';
+    const modelKwargs = llm.model_kwargs || {};
+    $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
     $('#set_timeout').value = runner.timeout_seconds ?? '';
 
-    // MCP
+    // MCP is global-only.
     state._mcpServers = _cloneJson(mcp.servers || {});
     state._mcpEditKey = null;
     clearMcpEditor();
     renderMcpServers();
 
     const upd = $('#settingsUpdated');
-    if (upd) upd.textContent = 'Loaded.';
+    if (upd) upd.textContent = mode === 'session' ? 'Loaded session settings.' : 'Loaded.';
   }
 
   async function saveSettings() {
-    const patch = {
-      ui: {
-        theme: ($('#set_theme').value || 'system'),
-        stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
-      },
+    let modelKwargs;
+    try {
+      modelKwargs = _jsonObjectFromTextarea('#set_model_kwargs', 'Model kwargs');
+    } catch (e) {
+      alert(e.message || String(e));
+      return;
+    }
+
+    const common = {
       llm: {
         base_url: ($('#set_base_url').value || '').trim() || null,
         model: ($('#set_model').value || '').trim() || null,
         api_key_env_var: ($('#set_api_key_env_var').value || '').trim() || null,
         max_tokens: ($('#set_max_tokens').value === '' ? null : Number($('#set_max_tokens').value)),
         temperature: ($('#set_temperature').value === '' ? null : Number($('#set_temperature').value)),
+        model_kwargs: modelKwargs,
       },
       runner: {
         timeout_seconds: ($('#set_timeout').value === '' ? null : Number($('#set_timeout').value)),
       },
+    };
+
+    const patch = state._settingsMode === 'session' ? common : {
+      ui: {
+        theme: ($('#set_theme').value || 'system'),
+        stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
+      },
+      ...common,
       mcp: {
         servers: (state._mcpServers || {}),
       }
@@ -2968,16 +3494,25 @@ def create_app() -> FastAPI:
         if (typeof v === 'object' && !Array.isArray(v)) {
           const c = compact(v, p);
           const empty = c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0;
-          if (!empty || p === 'mcp.servers') out[k] = c;
+          if (!empty || p === 'mcp.servers' || p === 'llm.model_kwargs') out[k] = c;
         } else out[k] = v;
       }
       return out;
     }
 
-    const payload = { patch: compact(patch) };
-    const res = await api('PATCH', '/settings', payload);
-    state.settings = res.settings || {};
-    applyTheme(state.settings?.ui?.theme || 'system');
+    const cleaned = compact(patch);
+    if (state._settingsMode === 'session') {
+      if (!state._settingsSessionId) return;
+      const res = await api('PATCH', `/sessions/${encodeURIComponent(state._settingsSessionId)}`, cleaned);
+      state.activeSession = res;
+      await refreshSessions();
+      if (state.activeSessionId === state._settingsSessionId) await loadSession(state._settingsSessionId);
+    } else {
+      const res = await api('PATCH', '/settings', { patch: cleaned });
+      state.settings = res.settings || {};
+      applyTheme(state.settings?.ui?.theme || 'system');
+      await refreshSessions();
+    }
 
     const saved = $('#settingsSaved');
     if (saved) {
@@ -3044,6 +3579,7 @@ def create_app() -> FastAPI:
 
     $('#refreshSessionsBtn').onclick = async () => { await refreshSessions(); };
     $('#refreshFilesBtn').onclick = async () => { await refreshWorkspace(); };
+    $('#setWorkspaceBtn').onclick = async () => { await chooseWorkspaceFolder(); };
 
     // Upload files into the active session workspace
     const uploadBtn = $('#uploadFilesBtn');
@@ -3119,7 +3655,7 @@ def create_app() -> FastAPI:
     setupSettingsNav();
     $('#openSettingsBtn').onclick = async () => {
       modal.classList.add('open');
-      await loadSettings();
+      await loadSettings({ mode: 'global' });
     };
     $('#closeSettingsBtn').onclick = () => modal.classList.remove('open');
     $('#settingsBackdrop').onclick = () => modal.classList.remove('open');
@@ -3132,6 +3668,13 @@ def create_app() -> FastAPI:
     if (mClr) mClr.onclick = clearMcpEditor;
 
     $('#saveSettingsBtn').onclick = saveSettings;
+
+    document.addEventListener('click', (e) => {
+      if (!state._openSessionMenu) return;
+      if (e.target && e.target.closest && e.target.closest('.sessionMenuWrap')) return;
+      state._openSessionMenu = null;
+      renderSessions();
+    });
   }
 
   async function init() {
@@ -3401,12 +3944,19 @@ body::before {
 .histItem.selected.idle { box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
 @keyframes sessionPulse { 0%, 100% { transform: translateY(0.5px) scale(1); opacity: 1; } 50% { transform: translateY(0.5px) scale(1.35); opacity: 0.65; } }
 
-.sessionRow { display:flex; gap: 8px; align-items: stretch; margin-bottom: 10px; }
-.sessionRow .histItem { margin-bottom: 0; flex: 1 1 auto; }
-.sessionRow .sessActBtn { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 12px; }
+.sessionRow { display:flex; gap: 8px; align-items: stretch; margin-bottom: 10px; position: relative; }
+.sessionRow .histItem { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.sessionRow .sessActBtn { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 14px; }
 .sessionRow .sessActBtn:hover { border-color: #bbb; }
-.sessionRow .sessActBtn.danger { border-color: #cc3a3a; color: #cc3a3a; }
-.sessionRow .sessActBtn.danger:hover { background: rgba(204,58,58,0.06); }
+.sessionMenuWrap { position: relative; flex: 0 0 auto; display: flex; align-items: stretch; }
+.sessionMenuWrap .gear { min-width: 38px; }
+.sessionMenu { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 80; min-width: 230px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); box-shadow: 0 14px 40px rgba(0,0,0,0.16); }
+.sessionMenu.open { display: block; }
+.sessionMenuInfo { padding: 8px 9px 10px; margin-bottom: 5px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.35; word-break: break-word; }
+.sessionMenu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); border-radius: 8px; padding: 8px 9px; cursor: pointer; }
+.sessionMenu button:hover { background: rgba(11,87,208,0.08); }
+.sessionMenu button.danger { color: #cc3a3a; }
+.sessionMenu button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .histItem { width: 100%; text-align:left; border: 1px solid var(--border); background: #fff; padding: 10px; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
 .histItem.selected { border-color: #0b57d0; box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
@@ -3456,6 +4006,7 @@ textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; borde
 .fileDl:hover { border-color: #bbb; }
 
 #filesDetails { flex: 0 0 auto; }
+#workspacePath { max-width: 100%; overflow-wrap: anywhere; }
 #workspaceFiles { max-height: 32vh; overflow:auto; padding-right: 4px; }
 
 iframe { width: 100%; flex: 1 1 auto; min-height: 320px; border: 1px solid var(--border); border-radius: 12px; background:#fff; }
@@ -3710,9 +4261,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     <div class="topbar">
       <div>
         <div class="title" id="workspaceTitle">Session artifacts</div>
+        <div class="muted small" id="workspacePath"></div>
         <div class="muted small" id="workspaceHint">Select a session to view its workspace.</div>
       </div>
       <div class="row" style="justify-content:flex-end">
+        <button class="btn" id="setWorkspaceBtn" type="button">Set folder</button>
         <button class="btn" id="refreshFilesBtn" type="button">Refresh</button>
         <button class="btn" id="uploadFilesBtn" type="button">Upload</button>
       </div>
@@ -3736,8 +4289,8 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   <div class="modalCard">
     <div class="topbar">
       <div>
-        <div class="title">Settings</div>
-        <div class="muted small">Applies to new runs only.</div>
+        <div class="title" id="settingsModalTitle">Settings</div>
+        <div class="muted small" id="settingsModalSubtitle">Global defaults for new sessions and runs.</div>
       </div>
       <button class="btn" id="closeSettingsBtn" type="button">Close</button>
     </div>
@@ -3788,8 +4341,10 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
             <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
-            <div class="fieldRow"><div class="label">Max tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
+            <div class="fieldRow"><div class="label">Max completion tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
             <div class="fieldRow"><div class="label">Temperature</div><input class="input" id="set_temperature" type="number" step="0.1" min="0" max="2" /></div>
+            <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
+            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model, max tokens, and temperature.</div>
           </div>
         </div>
 

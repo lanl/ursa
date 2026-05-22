@@ -485,4 +485,3 @@ def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
         return "finish"
     else:
         return "continue"
-

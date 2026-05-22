@@ -478,16 +478,23 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
-        except Exception as e:  # noqa: BLE001
-            response_content = f"Response error {e}"
-            response = AIMessage(content=response_content)
-            events.emit(
-                "Recap failed",
-                stage="recap_error",
-                error_type=type(e).__name__,
-                error=str(e),
-                latest_message=new_state["messages"][-1].text[:2000],
-            )
+        except Exception:
+            try:
+                response = self.tool_llm.invoke(
+                    input=new_state["messages"],
+                    config=self.build_config(tags=["recap"]),
+                )
+                response_content = response.text
+            except Exception as e:
+                response_content = f"Response error {e}"
+                response = AIMessage(content=response_content)
+                events.emit(
+                    "Recap failed",
+                    stage="recap_error",
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    latest_message=new_state["messages"][-1].text[:2000],
+                )
 
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:

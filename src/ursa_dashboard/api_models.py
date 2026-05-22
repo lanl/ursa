@@ -101,7 +101,9 @@ class SessionCreateRequest(BaseModel):
 
 
 class SessionPatchRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    llm: dict[str, Any] | None = None
+    runner: dict[str, Any] | None = None
 
 
 class SessionMessageRequest(BaseModel):
@@ -111,6 +113,12 @@ class SessionMessageRequest(BaseModel):
     agent_init: dict[str, Any] = Field(default_factory=dict)
     llm: dict[str, Any] = Field(default_factory=dict)
     runner: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionWorkspaceSetRequest(BaseModel):
+    # Absolute path to use as this session's workspace. Pass null or an empty
+    # string to reset to the dashboard-managed default session workspace.
+    path: str | None = None
 
 
 class SessionMessage(BaseModel):
@@ -152,6 +160,9 @@ class SessionWorkspaceListResponse(BaseModel):
     session_id: str
     agent_id: str
     files: list[dict[str, Any]]
+    workspace_path: str | None = None
+    default_workspace_path: str | None = None
+    is_default_workspace: bool = True
 
 
 class SessionFileMetaResponse(BaseModel):

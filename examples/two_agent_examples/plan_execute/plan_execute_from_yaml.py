@@ -18,6 +18,7 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
 from ursa.util.logo_generator import kickoff_logo
 from ursa.util.plan_execute_utils import (
     generate_workspace_name,
@@ -31,7 +32,6 @@ from ursa.util.plan_execute_utils import (
     timed_input_with_countdown,
 )
 from ursa.util.plan_renderer import render_plan_steps_rich
-from ursa.util.events import configure_event_logging
 
 configure_event_logging()
 

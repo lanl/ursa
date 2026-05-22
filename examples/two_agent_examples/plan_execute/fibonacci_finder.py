@@ -14,8 +14,8 @@ from rich import get_console
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer
-from ursa.workflows import PlanningExecutorWorkflow
 from ursa.util.events import configure_event_logging
+from ursa.workflows import PlanningExecutorWorkflow
 
 configure_event_logging()
 

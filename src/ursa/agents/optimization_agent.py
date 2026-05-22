@@ -274,6 +274,7 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
         )
         self.graph.add_edge("Explainer", END)
 
+
 @tool
 def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
     """
