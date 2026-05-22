@@ -50,7 +50,11 @@ def _init_llm(llm_cfg: dict[str, Any]):
 
     model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5-mini"))
 
-    kwargs: dict[str, Any] = {"model": model}
+    model_kwargs = llm_cfg.get("model_kwargs") or {}
+    if not isinstance(model_kwargs, dict):
+        raise ValueError("llm.model_kwargs must be a JSON object")
+
+    kwargs: dict[str, Any] = {**model_kwargs, "model": model}
     if llm_cfg.get("max_tokens") is not None:
         kwargs["max_completion_tokens"] = int(llm_cfg["max_tokens"])
     if llm_cfg.get("temperature") is not None:
