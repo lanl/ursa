@@ -102,7 +102,9 @@ class SessionCreateRequest(BaseModel):
 
 
 class SessionPatchRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    llm: dict[str, Any] | None = None
+    runner: dict[str, Any] | None = None
 
 
 class SessionMessageRequest(BaseModel):

@@ -24,6 +24,19 @@ class LLMSettings(BaseModel):
 
     max_tokens: int = 25000
     temperature: float = 0.2
+    model_kwargs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional keyword arguments passed to langchain.chat_models.init_chat_model.",
+    )
+
+    @field_validator("model_kwargs")
+    @classmethod
+    def _validate_model_kwargs(cls, v: Any) -> dict[str, Any]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("llm.model_kwargs must be a JSON object")
+        return v
 
     @field_validator("api_key_env_var")
     @classmethod
@@ -133,7 +146,7 @@ class SettingsStore:
         #
         # Example: the UI sends the full desired `mcp.servers` mapping.
         # If we deep-merge, removed servers will never be deleted from disk.
-        REPLACE_PATHS = {"mcp.servers"}
+        REPLACE_PATHS = {"mcp.servers", "llm.model_kwargs"}
 
         def deep_merge(
             dst: dict[str, Any], src: dict[str, Any], path: str = ""

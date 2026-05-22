@@ -1,5 +1,6 @@
 import re
 import shutil
+import sqlite3
 import tarfile
 import tempfile
 from datetime import datetime
@@ -134,7 +135,7 @@ def add_agent_management_subcommands(subparsers) -> None:
     import_agent_parser.add_argument(
         "archive_file",
         type=Path,
-        help="Path to the shared agent tar.gz archive",
+        help="Path to a shared agent tar.gz archive or SQLite checkpoint .db file",
     )
     import_agent_parser.add_argument(
         "--name",
@@ -151,7 +152,7 @@ def add_agent_management_subcommands(subparsers) -> None:
     subparsers.add_subcommand(
         "import-agent",
         import_agent_parser,
-        help="Import a shared agent archive into a group",
+        help="Import a shared agent archive or SQLite checkpoint database into a group",
         dest="subcommand",
     )
 
@@ -214,6 +215,75 @@ def _safe_extract_tar(tar: tarfile.TarFile, path: Path) -> None:
         if not member_path.is_relative_to(destination):
             raise ValueError("Archive contains unsafe paths")
     tar.extractall(destination)
+
+
+def _normalize_checkpoint_threads(db_path: Path) -> None:
+    """Rewrite imported checkpoint threads to URSA's default thread id."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        missing = {"checkpoints", "writes"} - tables
+        if missing:
+            raise ValueError(
+                "Checkpoint database is missing required table(s): "
+                + ", ".join(sorted(missing))
+            )
+
+        for table in ("checkpoints", "writes"):
+            columns = {
+                row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+            }
+            if "thread_id" not in columns:
+                raise ValueError(
+                    f"Checkpoint database table '{table}' is missing thread_id column"
+                )
+
+        conn.execute("UPDATE checkpoints SET thread_id = ?", ("ursa",))
+        conn.execute("UPDATE writes SET thread_id = ?", ("ursa",))
+        conn.commit()
+    except sqlite3.DatabaseError as e:
+        raise ValueError(f"Invalid checkpoint database: {db_path}") from e
+    finally:
+        conn.close()
+
+
+def _import_checkpoint_db(
+    db_file: Path, dst_group: Path, group_name: str, agent_name: str | None
+) -> None:
+    if agent_name is None:
+        raise ValueError(
+            "Importing a checkpoint database requires --name to set the new agent name"
+        )
+
+    final_name = validate_agent_name(agent_name)
+    dst = dst_group / final_name
+    if dst.exists():
+        raise FileExistsError(
+            f"Destination agent already exists: {final_name} in group {group_name}"
+        )
+
+    checkpoint_dir = dst / "db"
+    checkpoint_path = checkpoint_dir / "checkpointer.db"
+    dst.mkdir(parents=False, exist_ok=False)
+    try:
+        checkpoint_dir.mkdir(parents=True, exist_ok=False)
+        shutil.copy2(db_file, checkpoint_path)
+        _normalize_checkpoint_threads(checkpoint_path)
+    except Exception:
+        shutil.rmtree(dst, ignore_errors=True)
+        raise
+
+    print(
+        f"Imported checkpoint database as agent '{final_name}' into group '{group_name}'"
+    )
+    print(f"Source database: {db_file}")
+    print(f"Destination: {dst}")
+    print(f"Checkpoint: {checkpoint_path}")
 
 
 def list_agents(group_name: str = "default") -> None:
@@ -345,6 +415,10 @@ def import_agent(
         raise FileNotFoundError(f"Archive file not found: {archive_file}")
 
     dst_group = ensure_group_dir(group_name)
+
+    if archive_file.suffix.lower() == ".db":
+        _import_checkpoint_db(archive_file, dst_group, group_name, agent_name)
+        return
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_root = Path(tmpdir)
