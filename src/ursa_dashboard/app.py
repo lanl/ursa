@@ -3027,12 +3027,28 @@ def create_app() -> FastAPI:
   }
 
   async function loadSession(sessionId) {
+    const previousSessionId = state.activeSessionId;
+    if (previousSessionId !== sessionId) clearArtifactPreview();
     state.activeSessionId = sessionId;
     savePref('ursa.ui.activeSessionId', sessionId);
     state.activeSession = await api('GET', `/sessions/${encodeURIComponent(sessionId)}`);
     renderSessions();
     renderActiveSession();
     await refreshWorkspace();
+  }
+
+  function clearArtifactPreview() {
+    $$('#workspaceFiles .fileItem').forEach(x => x.classList.remove('selected'));
+    const iframe = $('#previewFrame');
+    const txt = $('#artifactTextPreview');
+    if (iframe) {
+      iframe.src = 'about:blank';
+      iframe.style.display = '';
+    }
+    if (txt) {
+      txt.innerHTML = '';
+      txt.style.display = 'none';
+    }
   }
 
   function isMdFile(path) {
