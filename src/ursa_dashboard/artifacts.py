@@ -62,6 +62,10 @@ def scan_artifacts(
     (not necessarily an `artifacts/` subdir), so this scan can include the whole
     run directory.
 
+    Hidden files and directories are omitted from the artifact list so workspace
+    internals such as `.git`, `.venv`, and dotfiles do not appear in the
+    dashboard Files tab.
+
     `exclude_dirs` should contain directory names (not paths) to skip.
     """
     if not base_dir.exists():
@@ -71,10 +75,15 @@ def scan_artifacts(
 
     entries: list[ArtifactEntry] = []
     for root, dirs, files in os.walk(base_dir):
-        # prune excluded dirs
-        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        # Prune excluded and hidden dirs in-place so os.walk never descends
+        # into entries such as .git or .venv.
+        dirs[:] = [
+            d for d in dirs if d not in exclude_dirs and not d.startswith(".")
+        ]
 
         for fn in files:
+            if fn.startswith("."):
+                continue
             p = Path(root) / fn
             if not p.is_file():
                 continue
