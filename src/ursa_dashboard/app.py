@@ -4341,7 +4341,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
             <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
-            <div class="fieldRow"><div class="label">Max tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
+            <div class="fieldRow"><div class="label">Max completion tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
             <div class="fieldRow"><div class="label">Temperature</div><input class="input" id="set_temperature" type="number" step="0.1" min="0" max="2" /></div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model, max tokens, and temperature.</div>
