@@ -483,10 +483,17 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
-        except Exception as e:
-            response_content = f"Response error {e}"
-            response = AIMessage(content=response_content)
-            print("Error: ", e, " ", new_state["messages"][-1].text)
+        except Exception:
+            try:
+                response = self.tool_llm.invoke(
+                    input=new_state["messages"],
+                    config=self.build_config(tags=["recap"]),
+                )
+                response_content = response.text
+            except Exception as e:
+                response_content = f"Response error {e}"
+                response = AIMessage(content=response_content)
+                print("Error: ", e, " ", new_state["messages"][-1].text)
 
         console.print(
             Panel(
