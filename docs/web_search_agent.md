@@ -16,7 +16,9 @@ model = ChatOpenAI(model="gpt-5-mini", max_completion_tokens=10000)
 websearcher = WebSearchAgent(llm=model)
 
 # Run a web search query
-result = websearcher.invoke("Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?")
+result = websearcher.invoke(
+    "Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?"
+)
 
 # Access the web search results
 sources = result["urls_visited"]
@@ -66,13 +68,13 @@ from ursa.agents import WebSearchAgent
 # Initialize with custom parameters
 websearcher = WebSearchAgent(
     llm=init_chat_model("openai:gpt-5-mini"),
-    url="https://www.example.com"  # Custom URL for internet connectivity check
+    url="https://www.example.com",  # Custom URL for internet connectivity check
 )
 
 # Run with higher recursion limit for complex topics
 result = websearcher.invoke(
     "What are the latest developments in quantum computing? Summarize in markdown format.",
-    recursion_limit=200
+    recursion_limit=200,
 )
 ```
 

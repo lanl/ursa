@@ -34,12 +34,12 @@ installation, but can be installed via `pip install 'ursa[lammps]'` or `uv add
 from ursa.agents import LammpsAgent
 from langchain_openai import ChatOpenAI
 
-agent = LammpsAgent(llm = ChatOpenAI(model='gpt-5'))
+agent = LammpsAgent(llm=ChatOpenAI(model="gpt-5"))
 
 result = agent.invoke({
     "simulation_task": "Carry out a LAMMPS simulation of Cu to determine its equation of state.",
     "elements": ["Cu"],
-    "template": "No template provided."  #Template for the input file
+    "template": "No template provided.",  # Template for the input file
 })
 ```
 

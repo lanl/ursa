@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable

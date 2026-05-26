@@ -4,7 +4,7 @@ import os
 import threading
 from cmd import Cmd
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import aiosqlite
 from fastmcp import FastMCP
@@ -132,7 +132,7 @@ class HITL:
             if self.embedding
             else None
         )
-        if base_url := getattr(self.config.llm_model, "base_url"):
+        if base_url := self.config.llm_model.base_url:
             if model_base_url := get_base_url(self.model):
                 if base_url != model_base_url:
                     logging.error(
@@ -140,7 +140,7 @@ class HITL:
                     )
 
         if self.embedding:
-            if base_url := getattr(self.config.emb_model, "base_url"):
+            if base_url := self.config.emb_model.base_url:
                 if model_base_url := get_base_url(self.model):
                     if base_url != model_base_url:
                         logging.error(
@@ -387,7 +387,6 @@ class UrsaRepl(Cmd):
 
     def emptyline(self):
         """Do nothing when an empty line is entered"""
-        pass
 
     def run(self):
         """Handle Ctrl+C to avoid quitting the program"""
@@ -441,7 +440,7 @@ class UrsaRepl(Cmd):
                 self.console.print(name + ": {}")
 
 
-def get_provider_and_model(model_str: Optional[str]):
+def get_provider_and_model(model_str: str | None):
     if model_str is None:
         return "none", "none"
 

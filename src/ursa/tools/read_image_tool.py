@@ -130,7 +130,9 @@ def read_image(
         tok = count_tokens_approximately(str(result))
         if tok > 100000:
             result["base64_data"] = None
-            result["error"] = f"Image would be approximately {tok} tokens. Too many to ingest properly."
+            result["error"] = (
+                f"Image would be approximately {tok} tokens. Too many to ingest properly."
+            )
             return result
 
         result["success"] = True
@@ -138,7 +140,7 @@ def read_image(
     except PermissionError:
         result["error"] = f"Permission denied reading file: {image_path}"
     except Exception as e:
-        result["error"] = f"Error reading image: {str(e)}"
+        result["error"] = f"Error reading image: {e!s}"
 
     return result
 

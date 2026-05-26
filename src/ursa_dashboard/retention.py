@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .storage import read_json
@@ -66,7 +66,7 @@ def enforce_retention(
     deleted = 0
 
     # Age-based deletion
-    cutoff = datetime.now(timezone.utc) - timedelta(days=policy.max_age_days)
+    cutoff = datetime.now(UTC) - timedelta(days=policy.max_age_days)
     for agent_id, created, meta_path, rec in sorted(runs, key=lambda x: x[1]):
         if created >= cutoff:
             continue

@@ -650,7 +650,7 @@ def read_pdf(path: str | Path) -> str:
                 # Any other OCR-related failure: keep original extraction
                 print(f"[OCR Error]: {e}")
 
-        return text  # noqa: TRY300
+        return text
 
     except subprocess.CalledProcessError as e:
         # OCR failed; return whatever we got from normal extraction

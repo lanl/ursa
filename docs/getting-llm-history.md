@@ -27,9 +27,7 @@ llm = TracedChatOpenAI(
 # llm TracedChatOllama(model="nemotron-mini:4b")
 
 executor = ExecutionAgent(llm=llm)
-executor.invoke(
-    "Write a python script to print the first 10 positive integer."
-)
+executor.invoke("Write a python script to print the first 10 positive integer.")
 # Save messages to json. Omit indent arg for minified json
 llm.save_messages(Path("messages.json"), indent=2)
 ```
@@ -45,7 +43,7 @@ from ursa.util.traced import TracedChatOpenAI
 from ursa.workflows import PlanningExecutorWorkflow
 
 llm = TracedChatOpenAI(
-  model="gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
+    model="gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
 )
 
 workspace = Path(tempfile.mkdtemp())

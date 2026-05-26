@@ -15,10 +15,9 @@ integration capabilities while only needing to implement the core _invoke method
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import (
     Any,
-    Mapping,
-    Optional,
     final,
 )
 
@@ -70,10 +69,10 @@ class BaseWorkflow(ABC):
     @final
     def invoke(
         self,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         /,
         *,
-        config: Optional[dict] = None,
+        config: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Executes the agent with the provided inputs and configuration.

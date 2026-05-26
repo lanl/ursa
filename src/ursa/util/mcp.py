@@ -34,11 +34,10 @@ def validate_server_parameters(config: dict):
                 return candidate(**payload)
             except ValidationError:
                 continue
-        else:
-            raise ValueError(
-                f"Unable to determine transport for MCP server '{config}'. "
-                "Provide 'transport' with one of: stdio, sse, streamable_http."
-            )
+        raise ValueError(
+            f"Unable to determine transport for MCP server '{config}'. "
+            "Provide 'transport' with one of: stdio, sse, streamable_http."
+        )
     else:
         raise ValueError(
             f"Unsupported MCP transport '{transport_hint}' for server '{config}'."

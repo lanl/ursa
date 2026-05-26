@@ -17,9 +17,7 @@ agent = GitGoAgent(
 )
 
 # Run a request
-result = agent.invoke(
-    "Run tests, lint the code, and commit any fixes."
-)
+result = agent.invoke("Run tests, lint the code, and commit any fixes.")
 print(result["messages"][-1].text)
 ```
 
@@ -116,9 +114,7 @@ The linter supports:
 
 ### 1. Build and Test Validation
 ```python
-agent.invoke(
-    "Build the module, run all tests, and report any failures."
-)
+agent.invoke("Build the module, run all tests, and report any failures.")
 ```
 
 ### 2. Code Quality Check and Fix
