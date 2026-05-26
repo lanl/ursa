@@ -69,6 +69,7 @@ class ModelConfig(BaseModel):
             kwargs["http_async_client"] = build_httpx_async_client(
                 verify=ssl_verify
             )
+            kwargs.setdefault("use_responses_api", True)
         elif provider == "ollama":
             self._merge_provider_kwargs(
                 kwargs,
@@ -100,7 +101,6 @@ class UrsaConfig(BaseModel):
         default_factory=lambda: ModelConfig(
             model="openai:gpt-5.2",
             max_completion_tokens=5000,
-            use_responses_api=True,
         )
     )
     """Default LLM"""
