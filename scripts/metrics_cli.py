@@ -281,7 +281,7 @@ def run_all(
                     f"    ! error on run {getattr(r, 'run_id', None) or r.path}: {e}"
                 )
 
-        print()  # blank line between threads
+        print("")  # blank line between threads
 
     print("All charts generated.")
     return 0
@@ -356,11 +356,11 @@ def _aggregate_super_across_dirs(
 
             # tokens per thread
             t_totals, t_samples, t_ctx = extract_thread_token_stats(runs)
-            for k in token_totals_all:
+            for k in token_totals_all.keys():
                 token_totals_all[k] += int(t_totals.get(k, 0) or 0)
 
             # MERGE samples category-by-category
-            for k in token_samples_all:
+            for k in token_samples_all.keys():
                 token_samples_all[k].extend(list(t_samples.get(k, []) or []))
 
             # widen context window

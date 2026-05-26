@@ -32,6 +32,7 @@ from typing import (
     Annotated,
     Any,
     Literal,
+    Optional,
     TypedDict,
 )
 
@@ -192,12 +193,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Any | AgentMemory | None = None,
+        agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
-        extra_tools: list[BaseTool] | None = None,
+        extra_tools: Optional[list[BaseTool] | None] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        safe_codes: list[str] | None = None,
+        safe_codes: Optional[list[str]] = None,
         **kwargs,
     ):
         default_tools = [
@@ -277,12 +278,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state["messages"][1:]
         )
 
-        if (
-            len([
-                x for x in new_state["messages"] if isinstance(x, SystemMessage)
-            ])
-            > 1
-        ):
+        if len([x for x in new_state["messages"] if isinstance(x,SystemMessage)]) > 1:
             kept_one = False
             for msg in new_state["messages"]:
                 if isinstance(msg, SystemMessage) and kept_one:
@@ -331,6 +327,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 print(
                     f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
                 )
+                pass
 
             summarize_prompt = f"""
             Your only tasks is to provide a detailed, comprehensive summary of the following
@@ -527,7 +524,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             # Collect human/system/tool message content; for AI tool calls, store args.
             for msg in new_state["messages"]:
                 msg_content = msg.text
-                if not isinstance(msg, AIMessage) or not msg.tool_calls:
+                if not isinstance(msg, AIMessage):
+                    memories.append(msg_content)
+                elif not msg.tool_calls:
                     memories.append(msg_content)
                 else:
                     tool_strings = []
@@ -535,8 +534,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                         tool_strings.append("Tool Name: " + tool["name"])
                         for arg_name in tool["args"]:
                             tool_strings.append(
-                                f"Arg: {arg_name!s}\nValue: "
-                                f"{tool['args'][arg_name]!s}"
+                                f"Arg: {str(arg_name)}\nValue: "
+                                f"{str(tool['args'][arg_name])}"
                             )
                     memories.append("\n".join(tool_strings))
             memories.append(response_content)

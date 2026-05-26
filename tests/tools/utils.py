@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 from langchain.chat_models import BaseChatModel
 from langchain.tools import ToolRuntime
@@ -14,7 +15,7 @@ def make_runtime(
     tool_call_id: str = "tool-call",
     thread_id: str = "thread",
     limit: int = 3000,
-    store: BaseStore | None = None,
+    store: Optional[BaseStore] = None,
 ) -> ToolRuntime[AgentContext]:
     """Construct a minimal ToolRuntime populated with AgentContext."""
     return ToolRuntime(

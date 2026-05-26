@@ -98,7 +98,7 @@ def _fmt_iso_pretty(ts: str) -> str:
         return ""
     try:
         dt = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        dt = dt.astimezone(_dt.UTC)
+        dt = dt.astimezone(_dt.timezone.utc)
         return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
     except Exception:
         return ts
@@ -446,7 +446,7 @@ def extract_llm_token_stats(
         "cached_tokens": 0,
         "total_tokens": 0,
     }
-    samples = {k: [] for k in totals}
+    samples = {k: [] for k in totals.keys()}
 
     for ev in events:
         m = (ev.get("metrics") or {}).get("usage_rollup") or {}

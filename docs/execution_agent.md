@@ -11,9 +11,7 @@ from ursa.agents import ExecutionAgent
 agent = ExecutionAgent()
 
 # Run a prompt
-result = agent(
-    "Write and execute a python script to print the first 10 integers."
-)
+result = agent("Write and execute a python script to print the first 10 integers.")
 
 # Access the final response
 print(result["messages"][-1].text)
@@ -35,9 +33,7 @@ When initializing `ExecutionAgent`, you can customize its behavior with these pa
 The agent can safely execute shell commands in a controlled environment:
 
 ```python
-result = agent(
-    "Install numpy and create a script that uses it to calculate the mean of [1, 2, 3, 4, 5]"
-)
+result = agent("Install numpy and create a script that uses it to calculate the mean of [1, 2, 3, 4, 5]")
 ```
 
 ### Code Writing
@@ -68,7 +64,7 @@ For complex tasks, you may need to adjust the recursion limit:
 ```python
 result = agent.invoke(
     "Create a complex project with multiple files and tests",
-    recursion_limit=2000,
+    recursion_limit=2000
 )
 ```
 
@@ -89,7 +85,6 @@ The agent includes built-in safety checks for shell commands:
        ```py
        from langchain.tools import tool
 
-
        @tool
        def do_magic(a: int, b: int) -> float:
            """Do magic with integers a and b.
@@ -99,7 +94,6 @@ The agent includes built-in safety checks for shell commands:
                b: second integer
            """
            return sqrt(a**2 + b**2)
-
 
        agent = ExecutionAgent(extra_tools=[do_magic])
        ```

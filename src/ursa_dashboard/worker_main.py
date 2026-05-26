@@ -163,7 +163,7 @@ def main() -> int:
 
                 for tgt in targets:
                     # Keep a reference so the client stays alive for the run.
-                    tgt._ursa_dashboard_mcp_client = client
+                    setattr(tgt, "_ursa_dashboard_mcp_client", client)
                     await tgt.add_mcp_tools(client)
 
             # Install hook if the adapter supports it.

@@ -5,7 +5,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import matplotlib
 
@@ -45,7 +45,9 @@ def _parse_iso(ts: str | None) -> datetime | None:
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ISO_RE.sub("+00:00", ts)).astimezone(UTC)
+        return datetime.fromisoformat(ISO_RE.sub("+00:00", ts)).astimezone(
+            timezone.utc
+        )
     except Exception:
         return None
 
@@ -126,7 +128,7 @@ def list_threads_summary(
 
 def _abbrev_agent(agent: str) -> str:
     # Common cleanup: drop trailing 'Agent', trim to a tidy length
-    base = agent.removesuffix("Agent")
+    base = agent[:-5] if agent.endswith("Agent") else agent
     base = base.strip()
     return base if len(base) <= 10 else (base[:9] + "…")
 
@@ -372,8 +374,8 @@ def aggregate_thread_context(runs: list[RunRecord]) -> dict:
     """Build a context dict for charts at the thread level."""
     if not runs:
         return {}
-    t0 = min(r.started_at for r in runs).astimezone(UTC)
-    t1 = max(r.ended_at for r in runs).astimezone(UTC)
+    t0 = min(r.started_at for r in runs).astimezone(timezone.utc)
+    t1 = max(r.ended_at for r in runs).astimezone(timezone.utc)
     thread_id = runs[0].thread_id
     # We intentionally set agent="Thread" so chart headers read "Thread : <id>"
     return {
@@ -423,7 +425,7 @@ def extract_thread_token_stats(
         "cached_tokens": 0,
         "total_tokens": 0,
     }
-    samples = {k: [] for k in totals}
+    samples = {k: [] for k in totals.keys()}
 
     for r in runs:
         payload = load_metrics(r.path)
@@ -452,8 +454,8 @@ def compute_thread_time_bases(runs: list[RunRecord]) -> tuple[float, float]:
         payload = load_metrics(r.path)
         att = compute_attribution(payload)
         llm += float(att.get("llm_total_s", 0.0) or 0.0)
-    start = min(r.started_at for r in runs).astimezone(UTC)
-    end = max(r.ended_at for r in runs).astimezone(UTC)
+    start = min(r.started_at for r in runs).astimezone(timezone.utc)
+    end = max(r.ended_at for r in runs).astimezone(timezone.utc)
     elapsed = max(0.0, (end - start).total_seconds())
     return (llm, elapsed)
 

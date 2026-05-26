@@ -163,7 +163,7 @@ class AuthConfig(BaseModel):
     cors_origins: list[str] = Field(default_factory=list)
 
     @classmethod
-    def from_env(cls) -> AuthConfig:
+    def from_env(cls) -> "AuthConfig":
         mode = os.environ.get("URSA_DASHBOARD_MODE")
         if not mode:
             mode = (

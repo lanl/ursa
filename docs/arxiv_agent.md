@@ -12,8 +12,8 @@ agent = ArxivAgent()
 
 # Run a query
 result = agent.invoke(
-    arxiv_search_query="Experimental Constraints on neutron star radius",
-    context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?",
+    arxiv_search_query="Experimental Constraints on neutron star radius", 
+    context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?"
 )
 
 # Print the summary
@@ -45,9 +45,9 @@ from ursa.agents import ArxivAgent
 
 agent = ArxivAgent(
     llm=init_chat_model("openai:gpt-5-mini"),  # Use a more powerful model
-    max_results=5,  # Fetch more papers
+    max_results=5,       # Fetch more papers
     process_images=False,  # Skip image processing to save time
-    download=False,  # Use only papers already in database_path
+    download=False  # Use only papers already in database_path
 )
 ```
 
@@ -56,14 +56,14 @@ agent = ArxivAgent(
 ```python
 # First query
 result1 = agent.invoke(
-    arxiv_search_query="quantum computing error correction",
-    context="Summarize recent advances in quantum error correction techniques",
+    arxiv_search_query="quantum computing error correction", 
+    context="Summarize recent advances in quantum error correction techniques"
 )
 
 # Second query (will reuse downloaded papers if applicable)
 result2 = agent.invoke(
-    arxiv_search_query="quantum computing algorithms",
-    context="What are the most promising quantum algorithms for near-term devices?",
+    arxiv_search_query="quantum computing algorithms", 
+    context="What are the most promising quantum algorithms for near-term devices?"
 )
 ```
 

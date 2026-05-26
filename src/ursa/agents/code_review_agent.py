@@ -304,7 +304,7 @@ def write_file(
         return f"File {filename} written successfully."
 
     except Exception as e:
-        print(f"Error generating code: {e!s}")
+        print(f"Error generating code: {str(e)}")
         # Return minimal code that prints the error
         return f"Failed to write {filename} successfully."
 

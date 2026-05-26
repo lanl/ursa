@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,9 +22,9 @@ class RunRecord(BaseModel):
     run_id: str
     agent_id: str
     status: str
-    created_at: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
     params: dict[str, Any] = Field(default_factory=dict)
     agent_init: dict[str, Any] = Field(default_factory=dict)
     llm: dict[str, Any] = Field(default_factory=dict)

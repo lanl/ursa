@@ -53,12 +53,10 @@ You can adjust how many reflection iterations the agent performs:
 # Initialize with custom reflection steps
 initial_state = {
     "messages": [HumanMessage(content="Your complex problem here")],
-    "reflection_steps": 5,  # Default is 3
+    "reflection_steps": 5  # Default is 3
 }
 
-result = agent.invoke(
-    initial_state, {"configurable": {"thread_id": agent.thread_id}}
-)
+result = agent.invoke(initial_state, {"configurable": {"thread_id": agent.thread_id}})
 ```
 
 ### Streaming Results
@@ -68,7 +66,7 @@ You can stream the agent's thinking process:
 ```python
 for event in agent.stream(
     {"messages": [HumanMessage(content="Your problem here")]},
-    {"configurable": {"thread_id": agent.thread_id}},
+    {"configurable": {"thread_id": agent.thread_id}}
 ):
     print(event[list(event.keys())[0]]["messages"][-1].text)
 ```
@@ -79,8 +77,8 @@ For complex planning tasks, you may need to adjust the recursion limit:
 
 ```python
 result = agent.invoke(
-    "Solve this complex problem...",
-    recursion_limit=200,  # Default is 100
+    "Solve this complex problem...", 
+    recursion_limit=200  # Default is 100
 )
 ```
 

@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .storage import append_jsonl, read_json, utc_now, write_json
 from .ulid import new_ulid

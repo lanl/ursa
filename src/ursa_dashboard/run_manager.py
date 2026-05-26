@@ -7,7 +7,7 @@ import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from .artifacts import scan_artifacts
 from .events import make_event
@@ -374,8 +374,7 @@ class RunManager:
             with events_path.open("rb") as f:
                 f.seek(-min(8192, events_path.stat().st_size), os.SEEK_END)
                 tail = (
-                    f
-                    .read()
+                    f.read()
                     .decode("utf-8", errors="ignore")
                     .strip()
                     .splitlines()
@@ -593,7 +592,7 @@ class RunManager:
                 await asyncio.wait_for(proc.wait(), timeout=timeout)
             else:
                 await proc.wait()
-        except TimeoutError:
+        except asyncio.TimeoutError:
             # Timeout: terminate then kill.
             async with self._lock:
                 rec = self._read_run(run_id)
@@ -606,7 +605,7 @@ class RunManager:
                 proc.send_signal(signal.SIGTERM)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 with contextlib.suppress(ProcessLookupError):
                     proc.kill()
                 await proc.wait()
@@ -748,7 +747,7 @@ class RunManager:
         run_id: str,
         agent_id: str,
         stream_name: str,
-        stream: asyncio.StreamReader | None,
+        stream: Optional[asyncio.StreamReader],
         log_path: Path,
         cap_bytes: int,
     ) -> None:
@@ -838,4 +837,4 @@ class RunManager:
 
 
 # Missing import fix: contextlib is only used in cancel/timeout sections.
-import contextlib
+import contextlib  # noqa: E402

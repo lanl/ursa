@@ -12,7 +12,8 @@ agent = HypothesizerAgent()
 
 # Run the agent with a question
 solution = agent.invoke(
-    prompt="Find a city with at least 10 vowels in its name.", max_iter=3
+    prompt="Find a city with at least 10 vowels in its name.",
+    max_iter=3
 )
 
 # Print the final solution
@@ -77,7 +78,7 @@ agent = HypothesizerAgent(llm=init_chat_model("openai:gpt-5-mini"))
 # Run with 5 iterations
 result = agent.invoke(
     prompt="What strategies could a small local bookstore use to compete with large online retailers?",
-    max_iter=5,
+    max_iter=5
 )
 
 print(result)

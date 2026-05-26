@@ -11,10 +11,9 @@ import os
 import platform
 import shutil
 import subprocess
-from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 from urllib.parse import quote
 
 from fastapi import (
@@ -582,7 +581,7 @@ def create_app() -> FastAPI:
             # Provide id for resume + retry hint.
             return (
                 f"id: {seq}\nevent: {etype}\nretry: 1500\ndata: {data}\n\n"
-            ).encode()
+            ).encode("utf-8")
 
         cursor_seq = after_seq
         offset = 0
@@ -737,7 +736,7 @@ def create_app() -> FastAPI:
         # Accept "...Z" or explicit offsets.
         if ts.endswith("Z"):
             ts = ts[:-1] + "+00:00"
-        return datetime.fromisoformat(ts).astimezone(UTC)
+        return datetime.fromisoformat(ts).astimezone(timezone.utc)
 
     @app.get("/workspace/runs", dependencies=[Depends(require_auth)])
     async def list_workspace_by_run(
@@ -1444,7 +1443,7 @@ def create_app() -> FastAPI:
     ) -> int:
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(
-            dest.name + f".tmp_upload_{datetime.now(UTC).timestamp()}"
+            dest.name + f".tmp_upload_{datetime.now(timezone.utc).timestamp()}"
         )
 
         total = 0

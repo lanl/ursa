@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .events import Event
 
@@ -61,7 +60,7 @@ class BaseAgentInProcessAdapter:
 
         self._setup_hook = hook
 
-    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:
+    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:  # noqa: ARG002
         agent = self._agent_factory(ctx.workspace_dir, inputs)
         if self._setup_hook is not None:
             r = self._setup_hook(agent, ctx, inputs)
@@ -101,7 +100,7 @@ class DirectInvokeAdapter:
 
         self._setup_hook = hook
 
-    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:
+    def invoke(self, *, ctx: RunContext, inputs: Any, sink: EventSink) -> str:  # noqa: ARG002
         agent = self._agent_factory(ctx.workspace_dir, inputs)
         if self._setup_hook is not None:
             r = self._setup_hook(agent, ctx, inputs)

@@ -1052,7 +1052,7 @@ async def _ainvoke_with_heartbeat(
         else:
             result = await coro
         return result
-    except TimeoutError:
+    except asyncio.TimeoutError:
         console.log(
             f"[bold red]{repo_name}[/bold red] step [bold]{step_name}[/bold] "
             f"timed out after {fmt_elapsed(timeout_sec)}"
@@ -1233,7 +1233,7 @@ async def _run_repo_steps(
                 progress_state=progress_state,
                 progress_lock=progress_lock,
             )
-        except TimeoutError:
+        except asyncio.TimeoutError:
             timeout_tokens = await _accumulate_tokens(
                 agent, progress_state, repo["name"], progress_lock
             )
@@ -1579,7 +1579,7 @@ async def _run_parallel(
                     stop_event.wait(), timeout=status_interval_sec
                 )
                 break
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             try:
                 await _emit_progress(
@@ -1748,7 +1748,7 @@ async def _run_parallel(
         reporter.cancel()
         try:
             await asyncio.wait_for(reporter, timeout=3)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             console.log(
                 "[bold yellow]status reporter did not stop within 3s; "
                 "continuing shutdown[/bold yellow]"

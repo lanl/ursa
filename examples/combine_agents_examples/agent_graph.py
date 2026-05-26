@@ -177,7 +177,9 @@ class CombinedAgent(AgentWithTools, BaseAgent):
         memories: list[str] = []
         # Handle looping through the messages
         for x in state["messages"]:
-            if not isinstance(x, AIMessage) or not x.tool_calls:
+            if not isinstance(x, AIMessage):
+                memories.append(x.text)
+            elif not x.tool_calls:
                 memories.append(x.text)
             else:
                 tool_strings = []
@@ -186,7 +188,7 @@ class CombinedAgent(AgentWithTools, BaseAgent):
                     tool_strings.append(tool_name)
                     for y in tool["args"]:
                         tool_strings.append(
-                            f"Arg: {y!s}\nValue: {tool['args'][y]!s}"
+                            f"Arg: {str(y)}\nValue: {str(tool['args'][y])}"
                         )
                 memories.append("\n".join(tool_strings))
         memories.append(response.text)
