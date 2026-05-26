@@ -12,7 +12,10 @@ from pydantic import BaseModel
 
 from tests.tools.utils import make_runtime
 from ursa.cli.config import ModelConfig
-from ursa.tools.read_image_tool import image_block_from_file, read_image_tool
+from ursa.tools.read_image_tool import (
+    image_block_from_file,
+    read_image_tool,
+)
 
 
 class DigitAnswer(BaseModel):
@@ -97,6 +100,18 @@ def test_image_block_from_file_returns_base64_image_block(tmp_path: Path):
     assert result["type"] == "image"
     assert result["mime_type"] == "image/png"
     assert base64.b64decode(result["base64"]).startswith(b"\x89PNG")
+
+
+def test_image_block_from_file_rejects_large_images(tmp_path: Path):
+    target = tmp_path / "large.png"
+    max_image_mb = 2
+    max_image_bytes = max_image_mb * 1024 * 1024
+    with target.open("wb") as image_file:
+        image_file.seek(max_image_bytes)
+        image_file.write(b"\0")
+
+    with pytest.raises(ValueError, match="File too large"):
+        image_block_from_file(target, max_size_mb=max_image_mb)
 
 
 def test_read_image_tool_reads_from_runtime_workspace(

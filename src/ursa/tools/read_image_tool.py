@@ -38,8 +38,17 @@ def read_image_tool(
 
 
 def image_block_from_file(
-    filename: Path, workspace: Path | None = None
+    filename: Path,
+    workspace: Path | None = None,
+    max_size_mb: float = 20,
 ) -> ImageContentBlock:
+    file_size = filename.stat().st_size
+    if file_size > (max_size_mb * 1024 * 1024):
+        raise ValueError(
+            f"File too large: {file_size / 1024 / 1024:.2f}MB "
+            f"(max: {max_size_mb:0.1f}MB)"
+        )
+
     mime_type, _ = mimetypes.guess_type(filename)
     assert mime_type is not None
     data = base64.b64encode(filename.read_bytes()).decode("utf-8")
