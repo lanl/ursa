@@ -3,7 +3,6 @@ import mimetypes
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
-from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
@@ -15,7 +14,12 @@ def read_image_tool(
 ) -> dict:
     """Read an image from disk to ingest into the workflow"""
     image_path = runtime.context.workspace.joinpath(image_path)
-    return read_image(image_path)
+    result = read_image(str(image_path))
+    if not result["success"]:
+        return f"Error reading image: {result['error']}"
+
+    runtime.context.pending_images.append(result)
+    return f"Image loaded: {image_path}\nIt will be included in the next message to the model"
 
 
 def read_image(
@@ -126,12 +130,6 @@ def read_image(
             pass  # PIL not available, skip dimensions
         except Exception:
             pass  # Error reading dimensions, skip
-
-        tok = count_tokens_approximately(str(result))
-        if tok > 100000:
-            result["base64_data"] = None
-            result["error"] = f"Image would be approximately {tok} tokens. Too many to ingest properly."
-            return result
 
         result["success"] = True
 
