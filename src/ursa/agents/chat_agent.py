@@ -4,8 +4,9 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END
 from langgraph.graph.message import add_messages
+from langgraph.runtime import Runtime
 
-from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 from ursa.tools import (
     edit_code,
@@ -35,8 +36,14 @@ class BasicChatAgent(BaseAgent[ChatState]):
 
     state_type = ChatState
 
-    def _response_node(self, state: ChatState) -> ChatState:
+    def _response_node(
+        self, state: ChatState, runtime: Runtime[AgentContext]
+    ) -> ChatState:
         new_state, full_overwrite = self.prepare_messages_context(state)
+        image_fns, image_message = self.check_for_images(runtime.context)
+        if image_message:
+            new_state["messages"].append(image_message)
+            full_overwrite = True
         res = self.llm.invoke(new_state["messages"])
         return self.messages_update(
             new_state, [res], full_overwrite=full_overwrite

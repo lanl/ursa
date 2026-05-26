@@ -324,6 +324,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             messages = [SystemMessage(content=self.executor_prompt)] + messages
 
+        image_fns, image_message = self.check_for_images(runtime.context)
+        if image_message:
+            messages = messages + [image_message]
+
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.tool_llm.invoke(
@@ -340,12 +344,15 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
         if full_overwrite:
+            if image_fns:
+                new_state["messages"].insert(-2, image_message)
             return {
                 "messages": Overwrite(new_state["messages"]),
                 "symlinkdir": new_state["symlinkdir"],
             }
         else:
-            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
+            resp = [image_message, response] if image_fns else response
+            return {"messages": resp, "symlinkdir": new_state["symlinkdir"]}
 
     def _get_original_user_request(self, state: ExecutionState) -> str:
         """Return the first human message as the original user request."""

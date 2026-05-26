@@ -20,7 +20,7 @@ import re
 import sqlite3
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import (
@@ -100,6 +100,9 @@ class AgentContext:
 
     rag_tool_return_k: int = 10
     """Number of chunks retrieved by persisted RAG tools."""
+
+    pending_images: list = field(default_factory=list)
+    """ List of images to be ingested from tool """
 
 
 def _to_snake(s: str) -> str:
@@ -611,6 +614,29 @@ class BaseAgent(Generic[TState], ABC):
             for call in getattr(msg, "tool_calls", []) or []
             if "id" in call
         ]
+
+    def check_for_images(self, context):
+        image_fns = []
+        image_message = None
+        if len(context.pending_images) > 0:
+            content = []
+
+            for img in context.pending_images:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{img['mime_type']};base64,{img['base64_data']}"
+                    },
+                })
+                image_fns.append(img["path"])
+            context.pending_images.clear()
+            image_text = (
+                "This is the result of the prior image reading tool calls: "
+                "The images in order are: " + ";".join(image_fns)
+            )
+            content.append({"type": "text", "text": image_text})
+            image_message = HumanMessage(content=content)
+        return image_fns, image_message
 
     def _patch_dangling(
         self,

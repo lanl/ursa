@@ -14,7 +14,12 @@ def read_image_tool(
 ) -> dict:
     """Read an image from disk to ingest into the workflow"""
     image_path = runtime.context.workspace.joinpath(image_path)
-    return read_image(image_path)
+    result = read_image(str(image_path))
+    if not result["success"]:
+        return f"Error reading image: {result['error']}"
+
+    runtime.context.pending_images.append(result)
+    return f"Image loaded: {image_path}\nIt will be included in the next message to the model"
 
 
 def read_image(
