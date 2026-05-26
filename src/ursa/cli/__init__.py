@@ -51,19 +51,27 @@ def build_parser() -> ArgumentParser:
         dest="subcommand",
     )
 
+    exec_parser = ArgumentParser()
+    exec_parser.add_argument("prompt", type=str)
+    subparsers.add_subcommand(
+        "exec",
+        exec_parser,
+        help="Run Ursa non-interactively",
+    )
+
     return parser
 
 
 def resolve_config(cfg) -> UrsaConfig:
     """Produce the effective UrsaConfig from the parsed arguments."""
     cli_config = UrsaConfig.from_namespace(cfg)
-    config_path = getattr(cfg, "config", None)
-    if not config_path:
-        return cli_config
-
     defaults = UrsaConfig().model_dump()
     cli_data = cli_config.model_dump()
     cli_overrides = dict_diff(defaults, cli_data)
+    config_path = getattr(cfg, "config", None)
+    if not config_path:
+        merged_data = deep_merge_dicts(defaults, cli_overrides)
+        return UrsaConfig.model_validate(merged_data)
 
     file_config = UrsaConfig.from_file(config_path)
     file_data = file_config.model_dump(mode="python")
@@ -94,6 +102,13 @@ def main(args=None):
 
             hitl = HITL(ursa_config)
             UrsaRepl(hitl).run()
+
+        case "exec":
+            from ursa.cli.hitl import HITL, UrsaRepl
+
+            hitl = HITL(ursa_config)
+            UrsaRepl(hitl).run_prompt(cmd_config.prompt)
+
         case "mcp-server":
             from ursa.cli.hitl import HITL
 

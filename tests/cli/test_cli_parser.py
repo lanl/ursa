@@ -31,6 +31,19 @@ def test_print_config_flag_sets_bool_and_preserves_defaults():
     assert config.model_dump() == UrsaConfig().model_dump()
 
 
+def test_cli_preserves_default_model_config_extra_fields():
+    parser = build_parser()
+    args = parser.parse_args([])
+
+    defaults = UrsaConfig()
+    config = resolve_config(args)
+
+    assert defaults.llm_model.model_extra
+    assert config.llm_model.model_extra == defaults.llm_model.model_extra
+    for key, value in defaults.llm_model.model_extra.items():
+        assert config.llm_model.kwargs[key] == value
+
+
 def test_print_config_yaml_round_trip(tmp_path):
     parser = build_parser()
     args = parser.parse_args([

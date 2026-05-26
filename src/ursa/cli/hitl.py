@@ -361,6 +361,12 @@ class UrsaRepl(Cmd):
         assert isinstance(result, str)
         self.show(result)
 
+    def run_prompt(self, prompt: str):
+        """Respond to a single prompt"""
+        prompt = self.precmd(prompt)
+        stop = self.onecmd(prompt)
+        return self.postcmd(stop, prompt)
+
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)
 
