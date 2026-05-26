@@ -117,6 +117,11 @@ class PlanningAgent(BaseAgent[PlanningState]):
 
         structured_llm = self.llm.with_structured_output(Plan)
         plan = cast(Plan, structured_llm.invoke(messages))
+        events.emit(
+            "Drafted plan",
+            stage="generate_result",
+            steps=[step.model_dump() for step in plan.steps],
+        )
 
         return {
             "plan": plan,
@@ -152,13 +157,11 @@ class PlanningAgent(BaseAgent[PlanningState]):
             res = "[APPROVED]"
 
         approved = "[APPROVED]" in res
-        reason = " ".join(res.strip().split())
         events.emit(
             "Plan approved" if approved else "Plan needs another pass",
             stage="reflect_result",
             approved=approved,
-            reason=reason,
-            preview=reason,
+            reason=res,
         )
         return {
             "plan": state["plan"],
