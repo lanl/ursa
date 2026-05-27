@@ -21,9 +21,16 @@ FILE_TOOL_NAMES = {
     "write_code_with_repo",
 }
 
+SEARCH_TOOL_NAMES = {
+    "run_arxiv_search",
+    "run_web_search",
+    "run_osti_search",
+}
+
 TOOL_STYLES = {
     "edit_code": "green",
     "read_file": "green",
+    "run_command": "green",
     "write_code": "green",
     "write_code_with_repo": "green",
 }
@@ -258,6 +265,13 @@ class CallbackRenderingMixin:
     def _is_file_tool(self, tool_name: str | None) -> bool:
         return str(tool_name or "") in FILE_TOOL_NAMES
 
+    def _is_rendered_tool(self, tool_name: str | None) -> bool:
+        return (
+            self._is_file_tool(tool_name)
+            or str(tool_name or "") == "run_command"
+            or str(tool_name or "") in SEARCH_TOOL_NAMES
+        )
+
     def _tool_path(self, data: dict[str, Any]) -> str | None:
         return self._display_path(data.get("path") or data.get("filename"))
 
@@ -445,7 +459,7 @@ class CallbackRenderingMixin:
 
     def _print_tool_event(self, data: dict[str, Any]) -> None:
         tool = self._clean(data.get("tool"))
-        if not self._is_file_tool(tool):
+        if not self._is_rendered_tool(tool):
             return
 
         message = self._clean(data.get("message"))
@@ -453,9 +467,22 @@ class CallbackRenderingMixin:
             return
 
         phase = self._clean(data.get("phase")) or None
-        detail = self._tool_path(data)
+        if tool in SEARCH_TOOL_NAMES or tool == "run_command":
+            detail = self._clean(data.get("query"))
+        else:
+            detail = self._tool_path(data)
         style = "error" if phase == "error" else "success"
         icon = "📖" if tool == "read_file" else "✏️"
+        if tool in SEARCH_TOOL_NAMES:
+            icon = "🔎"
+            style = (
+                "success"
+                if self._clean(data.get("stage")) == "search_result"
+                else "blue"
+            )
+        elif tool == "run_command":
+            icon = "▶" if phase != "end" else "✔"
+            style = "success" if phase == "end" else "blue"
         if phase == "end" and tool in {
             "edit_code",
             "write_code",
@@ -478,11 +505,98 @@ class CallbackRenderingMixin:
         elif reason := data.get("reason"):
             for line in self._display_lines(reason):
                 self.console.print(f"[dim]  {line}[/]")
-        if tool == "edit_code":
+        if (
+            tool == "run_command"
+            and self._clean(data.get("stage")) == "execute"
+            and phase == "end"
+        ):
+            parts: list[str] = []
+            if isinstance(data.get("returncode"), int):
+                parts.append(f"exit {data['returncode']}")
+            if isinstance(data.get("stdout_chars"), int):
+                parts.append(f"stdout {data['stdout_chars']} chars")
+            if isinstance(data.get("stderr_chars"), int):
+                parts.append(f"stderr {data['stderr_chars']} chars")
+            if parts:
+                self.console.print(f"[dim]  {', '.join(parts)}[/]")
+        elif tool in SEARCH_TOOL_NAMES and isinstance(
+            data.get("result_chars"), int
+        ):
+            self.console.print(f"[dim]  {data['result_chars']} chars[/]")
+        elif tool == "edit_code":
             self._print_edit_diff(
                 filename=data.get("path") or data.get("filename"),
                 old_code=data.get("old_code"),
                 new_code=data.get("new_code"),
+            )
+
+    def _coerce_run_command_payload(self, payload: Any) -> dict[str, Any]:
+        if isinstance(payload, str):
+            if payload.startswith("STDOUT:\n") and "\nSTDERR:\n" in payload:
+                stdout, stderr = payload[len("STDOUT:\n") :].split(
+                    "\nSTDERR:\n", 1
+                )
+                return {"stdout": stdout, "stderr": stderr}
+            return {"result": payload}
+        if isinstance(payload, dict):
+            return payload
+        return {"result": payload}
+
+    def _print_run_command_start(self, query: str | None) -> None:
+        query_text = self._clean(query)
+        self.console.print(
+            f"[blue]▶ Running command:[/] {query_text}"
+            if query_text
+            else "[blue]▶ Running command[/]"
+        )
+        self.emitted_any = True
+
+    def _print_run_command_end(
+        self,
+        payload: Any,
+        *,
+        query: str | None,
+        success: bool,
+    ) -> None:
+        query_text = self._clean(query)
+        result = self._coerce_run_command_payload(payload)
+        raw_result = self._clean(result.get("result"))
+        if raw_result.startswith("[UNSAFE]"):
+            self.console.print(
+                f"[warn]⚠ Command blocked:[/] {query_text}"
+                if query_text
+                else "[warn]⚠ Command blocked[/]"
+            )
+            for line in self._display_lines(raw_result):
+                self.console.print(f"[dim]  {line}[/]")
+            self.emitted_any = True
+            return
+
+        if success:
+            self.console.print(
+                f"[success]✔ Command finished:[/] {query_text}"
+                if query_text
+                else "[success]✔ Command finished[/]"
+            )
+        else:
+            self.console.print(
+                f"[error]✖ Command failed:[/] {query_text}"
+                if query_text
+                else "[error]✖ Command failed[/]"
+            )
+        self.emitted_any = True
+
+        if stdout := result.get("stdout"):
+            self._print_panel(
+                self._render_value(stdout),
+                title="stdout",
+                border_style=self._tool_style("run_command"),
+            )
+        if stderr := result.get("stderr"):
+            self._print_panel(
+                self._render_value(stderr),
+                title="stderr",
+                border_style="red",
             )
 
 
@@ -544,7 +658,9 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
             "name": tool_name,
             "input": payload,
         }
-        if tool_name == "read_file":
+        if tool_name == "run_command":
+            self._print_run_command_start(payload.get("query"))
+        elif tool_name == "read_file":
             self._print_read_file_start(
                 payload.get("path") or payload.get("filename")
             )
@@ -579,7 +695,13 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
             if isinstance(output, ToolMessage)
             else True
         )
-        if tool_name == "read_file":
+        if tool_name == "run_command":
+            self._print_run_command_end(
+                payload,
+                query=tool_info.get("input", {}).get("query"),
+                success=success,
+            )
+        elif tool_name == "read_file":
             self._print_read_file_end(
                 payload,
                 path=tool_info.get("input", {}).get("path")
@@ -612,7 +734,7 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
     ) -> None:
         tool_info = self._inflight_tools.pop(run_id, {})
         tool_name = tool_info.get("name", "tool")
-        if not self._is_file_tool(tool_name):
+        if not self._is_file_tool(tool_name) and tool_name != "run_command":
             return
         self.console.print(f"[error]✖ {tool_name} failed.[/]")
         self.emitted_any = True
@@ -635,7 +757,9 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
             self._print_agent_event(data)
         elif "tool" in data:
             tool = self._clean(data.get("tool"))
-            if not self._is_file_tool(tool):
+            if tool == "run_command":
+                return
+            if not self._is_rendered_tool(tool):
                 return
             if tool == "read_file" and self._has_inflight_tool("read_file"):
                 return
