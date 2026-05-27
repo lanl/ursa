@@ -5,13 +5,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
 from tests.tools.utils import make_runtime
-from ursa.cli.config import ModelConfig
+from ursa.cli.config import ChatModelConfig
 from ursa.tools.read_image_tool import (
     image_block_from_file,
     read_image_tool,
@@ -77,7 +77,7 @@ def _require_ollama_model(model: str) -> None:
             },
             id="openai-gpt-5.2",
         ),
-        # Add other ModelConfig for local testing here
+        # Add other ChatModelConfig values for local testing here
     ]
 )
 def vision_chat_model(request, monkeypatch) -> BaseChatModel:
@@ -88,7 +88,7 @@ def vision_chat_model(request, monkeypatch) -> BaseChatModel:
     elif model.startswith("ollama:"):
         _require_ollama_model(model.split(":", 1)[1])
 
-    return init_chat_model(**ModelConfig(**kwargs).kwargs)
+    return ChatModelConfig(**kwargs).init_chat_model()
 
 
 def test_image_block_from_file_returns_base64_image_block(tmp_path: Path):

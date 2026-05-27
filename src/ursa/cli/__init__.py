@@ -8,8 +8,6 @@ from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
-    deep_merge_dicts,
-    dict_diff,
 )
 from ursa.util.http import inject_truststore_into_ssl
 
@@ -65,18 +63,11 @@ def build_parser() -> ArgumentParser:
 def resolve_config(cfg) -> UrsaConfig:
     """Produce the effective UrsaConfig from the parsed arguments."""
     cli_config = UrsaConfig.from_namespace(cfg)
-    defaults = UrsaConfig().model_dump()
-    cli_data = cli_config.model_dump()
-    cli_overrides = dict_diff(defaults, cli_data)
+    config = UrsaConfig()
     config_path = getattr(cfg, "config", None)
-    if not config_path:
-        merged_data = deep_merge_dicts(defaults, cli_overrides)
-        return UrsaConfig.model_validate(merged_data)
-
-    file_config = UrsaConfig.from_file(config_path)
-    file_data = file_config.model_dump(mode="python")
-    merged_data = deep_merge_dicts(file_data, cli_overrides)
-    return UrsaConfig.model_validate(merged_data)
+    if config_path:
+        config.update(UrsaConfig.from_file(config_path))
+    return config.update(cli_config)
 
 
 def main(args=None):
