@@ -223,7 +223,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.log_state = log_state
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
-        self.tool_llm = llm
+        self.tool_llm = llm.copy()
 
     def _patch_dangling(
         self, state: ExecutionState, summarized: bool
