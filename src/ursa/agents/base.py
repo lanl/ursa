@@ -939,6 +939,7 @@ class AgentWithTools:
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
+        self.tool_llm = self.llm.model_copy()
 
     def __post_init__(self):
         super().__post_init__()
