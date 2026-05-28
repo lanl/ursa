@@ -361,6 +361,10 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
 
     rendered = output.getvalue()
 
+    repo_app_string = str(
+        Path("repo") / "app.py"
+    )  # Rendering OS specific path string
+
     print(80 * "=")
     print(80 * "=")
     print(rendered)
@@ -372,10 +376,10 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     assert "Running command: uname -s" in rendered
     assert "Command finished: uname -s" in rendered
     assert "Darwin" in rendered
-    assert "Writing file: repo/app.py" in rendered
-    assert "File written: repo/app.py" in rendered
-    assert "Editing file: repo/app.py" in rendered
-    assert "No changes made: repo/app.py" in rendered
+    assert f"Writing file: {repo_app_string}" in rendered
+    assert f"File written: {repo_app_string}" in rendered
+    assert f"Editing file: {repo_app_string}" in rendered
+    assert f"No changes made: {repo_app_string}" in rendered
     assert "'old_code' not found in file." in rendered
     assert "Searching Web: ursa events" in rendered
     assert "Web search complete: ursa events" in rendered
