@@ -154,7 +154,7 @@ def _dashboard_console() -> Console:
         file=sys.stdout,
         force_terminal=False,
         force_interactive=False,
-        color_system=None,
+        color_system="standard",
         width=120,
     )
 

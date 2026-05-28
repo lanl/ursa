@@ -15,7 +15,7 @@ from rich.console import Console as RealConsole
 
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import EmbModelConfig, ModelConfig, UrsaConfig
+from ursa.cli.config import EmbModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
@@ -177,7 +177,7 @@ async def test_hitl_run_agent_forwards_callbacks(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     hitl = HITL(config)
     captured = {}
@@ -380,7 +380,7 @@ def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     hitl = HITL(config)
     shell = UrsaRepl(hitl, stdout=io.StringIO())
