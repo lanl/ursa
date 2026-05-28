@@ -379,29 +379,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             summarized = True
         return new_state, summarized
 
-    def check_for_images(self, context):
-        image_fns = []
-        image_message = None
-        if len(context.pending_images) > 0:
-            content = []
-
-            for img in context.pending_images:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{img['mime_type']};base64,{img['base64_data']}"
-                    },
-                })
-                image_fns.append(img["path"])
-            context.pending_images.clear()
-            image_text = (
-                "This is the result of the prior image reading tool calls: "
-                "The images in order are: " + ";".join(image_fns)
-            )
-            content.append({"type": "text", "text": image_text})
-            image_message = HumanMessage(content=content)
-        return image_fns, image_message
-
     # Define the function that calls the model
     def query_executor(
         self, state: ExecutionState, runtime: Runtime[AgentContext]
@@ -467,10 +444,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             messages = [SystemMessage(content=self.executor_prompt)] + messages
 
-        image_fns, image_message = self.check_for_images(runtime.context)
-        if image_message:
-            messages = messages + [image_message]
-
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.tool_llm.invoke(
@@ -487,15 +460,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
         if full_overwrite:
-            if image_fns:
-                new_state["messages"].insert(-2, image_message)
             return {
                 "messages": Overwrite(new_state["messages"]),
                 "symlinkdir": new_state["symlinkdir"],
             }
         else:
-            resp = [image_message, response] if image_fns else response
-            return {"messages": resp, "symlinkdir": new_state["symlinkdir"]}
+            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
     def recap(self, state: ExecutionState) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
