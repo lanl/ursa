@@ -33,7 +33,8 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         self.planner.checkpointer = InMemorySaver()
         self.executor.checkpointer = InMemorySaver()
 
-    def _invoke(self, task: str, **kw):
+    def _invoke(self, task: str, *, config: dict | None = None, **kw):
+        invoke_config = dict(config or {})
         with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
             spinner="point",
@@ -42,7 +43,10 @@ class PlanningExecutorWorkflow(BaseWorkflow):
             planner_prompt = (
                 f"Break this down into one step per technique:\n{task}"
             )
-            planning_output = self.planner.invoke(planner_prompt)
+            planning_output = self.planner.invoke(
+                planner_prompt,
+                config=invoke_config,
+            )
 
             render_plan_steps_rich(planning_output["plan"].steps)
 
@@ -71,7 +75,10 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                 )
             )
 
-            result = self.executor.invoke(step_prompt)
+            result = self.executor.invoke(
+                step_prompt,
+                config=invoke_config,
+            )
 
             last_step_summary = result["messages"][-1].text
 

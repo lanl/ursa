@@ -3,6 +3,9 @@ from pathlib import Path
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import GitGoAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 
 def main():

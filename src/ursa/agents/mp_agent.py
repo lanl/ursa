@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +12,8 @@ from mp_api.client import MPRester
 from tqdm import tqdm
 
 from .base import BaseAgent
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PaperMetadata(TypedDict):
@@ -165,4 +168,4 @@ if __name__ == "__main__":
         mp_query="LiFePO4",
         context="What is its band gap and stability, and any synthesis challenges?",
     )
-    print(resp)
+    LOGGER.info("%s", resp)

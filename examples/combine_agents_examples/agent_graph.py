@@ -20,7 +20,10 @@ from ursa.agents import (
 from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.agents.execution_agent import ExecutionState
 from ursa.prompt_library.execution_prompts import recap_prompt
+from ursa.util.events import configure_event_logging
 from ursa.util.memory_logger import AgentMemory
+
+configure_event_logging()
 
 # --- ANSI color codes ---
 GREEN = "\033[92m"

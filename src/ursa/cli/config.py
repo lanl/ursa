@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from typing import Any, Literal
 
 import yaml
 from jsonargparse import Namespace
+from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.embeddings import Embeddings, init_embeddings
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -31,6 +34,8 @@ LoggingLevel = Literal[
 
 
 class ModelConfig(BaseModel):
+    """Configuration manager for LangChain's `init_*` factories."""
+
     model_config = ConfigDict(extra="allow")
 
     model: str
@@ -42,9 +47,6 @@ class ModelConfig(BaseModel):
 
     api_key_env: str | None = None
     """Environmental variable containing the API key for this session"""
-
-    max_completion_tokens: int | None = None
-    """Maximum tokens for LLM to output"""
 
     ssl_verify: bool = True
     """Flag for verifying SSL certs. during API access"""
@@ -83,8 +85,41 @@ class ModelConfig(BaseModel):
                 {"verify": httpx_verify_value(verify=ssl_verify)},
             )
         if api_key_env := kwargs.pop("api_key_env", None):
-            kwargs["api_key"] = environ.get(api_key_env, None)
+            try:
+                kwargs["api_key"] = environ[api_key_env]
+            except KeyError:
+                logging.exception(
+                    f"Env variable '{api_key_env}' for {self.model}'s API key was not set"
+                )
+                raise
         return kwargs
+
+
+class ChatModelConfig(ModelConfig):
+    """Configuration for instantiating a chat model"""
+
+    max_completion_tokens: int | None = None
+    """Maximum tokens for LLM to output"""
+
+    @property
+    def kwargs(self) -> dict:
+        kwargs = super().kwargs
+        if self.max_completion_tokens is not None:
+            kwargs["max_completion_tokens"] = self.max_completion_tokens
+        match self._provider():
+            case "openai" | "azure_openai":
+                kwargs.setdefault("use_responses_api", True)
+        return kwargs
+
+    def init_chat_model(self) -> BaseChatModel:
+        return init_chat_model(**self.kwargs)
+
+
+class EmbModelConfig(ModelConfig):
+    """Configuration for instantiating an embeddings model"""
+
+    def init_embedding(self) -> Embeddings:
+        return init_embeddings(**self.kwargs)
 
 
 class UrsaConfig(BaseModel):
@@ -113,14 +148,14 @@ class UrsaConfig(BaseModel):
     use_web: bool = False
     """Enable web-search tools for ChatAgent and ExecutionAgent."""
 
-    llm_model: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(
+    llm_model: ChatModelConfig = Field(
+        default_factory=lambda: ChatModelConfig(
             model="openai:gpt-5.4",
         )
     )
     """Default LLM"""
 
-    emb_model: ModelConfig | None = None
+    emb_model: EmbModelConfig | None = None
     """Default Embedding model"""
 
     rag_tools: list[str] = Field(default_factory=list)
@@ -145,6 +180,25 @@ class UrsaConfig(BaseModel):
             temp_workspace = TemporaryDirectory(prefix="ursa")
             self.workspace = Path(temp_workspace.name)
             self._temp_workspace = temp_workspace
+
+    def update(self, other: "UrsaConfig") -> "UrsaConfig":
+        """Merge non-default values from another config into this config."""
+        defaults = type(self)().model_dump(mode="python")
+        updates = dict_diff(defaults, other.model_dump(mode="python"))
+        merged = deep_merge_dicts(self.model_dump(mode="python"), updates)
+        updated = type(self).model_validate(merged)
+
+        for field_name in type(self).model_fields:
+            setattr(self, field_name, getattr(updated, field_name))
+
+        if other._temp_workspace and other.workspace == self.workspace:
+            self._temp_workspace = other._temp_workspace
+        elif (
+            self._temp_workspace
+            and Path(self._temp_workspace.name) != self.workspace
+        ):
+            self._temp_workspace = None
+        return self
 
     @classmethod
     def from_namespace(cls, cfg: Namespace):

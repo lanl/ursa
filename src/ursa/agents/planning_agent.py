@@ -4,6 +4,7 @@ from typing import Annotated, TypedDict, cast
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
@@ -97,13 +98,17 @@ class PlanningAgent(BaseAgent[PlanningState]):
     def format_result(self, state: PlanningState) -> str:
         return str(state["plan"])
 
-    def generation_node(self, state: PlanningState) -> PlanningState:
+    def generation_node(
+        self,
+        state: PlanningState,
+        config: RunnableConfig | None = None,
+    ) -> PlanningState:
         """
         Plan generation with structured output. Produces a JSON string in messages
         and a parsed list of steps in state["plan_steps"].
         """
-
-        print("PlanningAgent: generating . . .")
+        events = self.events(config)
+        events.emit("Drafting plan", stage="generate")
         messages = cast(list, state.get("messages"))
         if isinstance(messages[0], SystemMessage):
             messages[0] = SystemMessage(content=self.planner_prompt)
@@ -112,6 +117,11 @@ class PlanningAgent(BaseAgent[PlanningState]):
 
         structured_llm = self.llm.with_structured_output(Plan)
         plan = cast(Plan, structured_llm.invoke(messages))
+        events.emit(
+            "Drafted plan",
+            stage="generate_result",
+            steps=[step.model_dump() for step in plan.steps],
+        )
 
         return {
             "plan": plan,
@@ -121,9 +131,13 @@ class PlanningAgent(BaseAgent[PlanningState]):
             ),
         }
 
-    def reflection_node(self, state: PlanningState) -> PlanningState:
-        print("PlanningAgent: reflecting . . .")
-
+    def reflection_node(
+        self,
+        state: PlanningState,
+        config: RunnableConfig | None = None,
+    ) -> PlanningState:
+        events = self.events(config)
+        events.emit("Reviewing plan", stage="reflect")
         cls_map = {"ai": HumanMessage, "human": AIMessage}
         translated = [state["messages"][0]] + [
             cls_map[msg.type](content=msg.content)
@@ -136,10 +150,19 @@ class PlanningAgent(BaseAgent[PlanningState]):
                 self.build_config(tags=["planner", "reflect"]),
             )
         )
+
         if not res.strip():
             # Some providers can return an empty reflection message; treat that as
             # "no objections" so we do not regenerate from an empty human turn.
             res = "[APPROVED]"
+
+        approved = "[APPROVED]" in res
+        events.emit(
+            "Plan approved" if approved else "Plan needs another pass",
+            stage="reflect_result",
+            approved=approved,
+            reason=res,
+        )
         return {
             "plan": state["plan"],
             "messages": [HumanMessage(content=res)],
@@ -170,27 +193,15 @@ def _should_reflect(state: PlanningState):
     # Hit the reflection cap?
     if state["reflection_steps"] > 0:
         return "reflect"
-
-    print("PlanningAgent: Reached reflection limit")
     return "END"
 
 
 def _should_regenerate(state: PlanningState):
-    reviewMaxLength = 0  # 0 = no limit, else some character limit like 300 (only used for console printing)
-
     # Latest reviewer output (if present)
     last_content = state["messages"][-1].text if state.get("messages") else ""
 
     # Approved?
     if "[APPROVED]" in last_content:
-        print("PlanningAgent: Plan APPROVED")
         return "END"
 
-    # Not approved — print a concise reason before another cycle
-    reason = " ".join(last_content.strip().split())  # collapse whitespace
-    if reviewMaxLength > 0 and len(reason) > reviewMaxLength:
-        reason = reason[:reviewMaxLength] + ". . ."
-    print(
-        f"PlanningAgent: not approved — iterating again. Reviewer notes: {reason}"
-    )
     return "generate"

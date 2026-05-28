@@ -5,6 +5,9 @@ from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 
 async def main():

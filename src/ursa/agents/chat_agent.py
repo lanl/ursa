@@ -40,10 +40,6 @@ class BasicChatAgent(BaseAgent[ChatState]):
         self, state: ChatState, runtime: Runtime[AgentContext]
     ) -> ChatState:
         new_state, full_overwrite = self.prepare_messages_context(state)
-        image_fns, image_message = self.check_for_images(runtime.context)
-        if image_message:
-            new_state["messages"].append(image_message)
-            full_overwrite = True
         res = self.llm.invoke(new_state["messages"])
         return self.messages_update(
             new_state, [res], full_overwrite=full_overwrite

@@ -11,6 +11,7 @@ from langchain.embeddings import Embeddings, init_embeddings
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
@@ -118,7 +119,7 @@ class RAGAgent(BaseAgent[RAGState]):
             col = self.vectorstore._collection
             res = col.get(where={"id": doc_id}, limit=1)
             return len(res.get("ids", [])) > 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             if not self.manifest_exists:
                 return False
             with open(self.manifest_path, "r") as f:
@@ -146,8 +147,17 @@ class RAGAgent(BaseAgent[RAGState]):
             search_kwargs={"k": k}
         )
 
-    def _read_docs_node(self, state: RAGState) -> RAGState:
-        print("[RAG Agent] Reading Documents....")
+    def _read_docs_node(
+        self,
+        state: RAGState,
+        config: RunnableConfig | None = None,
+    ) -> RAGState:
+        events = self.events(config)
+        events.emit(
+            "Reading documents",
+            stage="read_docs",
+            database_path=str(self.database_path),
+        )
         new_state = state.copy()
 
         custom_extensions = [
@@ -203,7 +213,12 @@ class RAGAgent(BaseAgent[RAGState]):
 
         return new_state
 
-    def _ingest_docs_node(self, state: RAGState) -> RAGState:
+    def _ingest_docs_node(
+        self,
+        state: RAGState,
+        config: RunnableConfig | None = None,
+    ) -> RAGState:
+        events = self.events(config)
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
         )
@@ -230,7 +245,12 @@ class RAGAgent(BaseAgent[RAGState]):
             batch_ids.extend(ids)
 
         if state["doc_texts"]:
-            print("[RAG Agent] Ingesting Documents Into RAG Database....")
+            events.emit(
+                "Ingesting documents into RAG database",
+                stage="ingest_docs",
+                document_count=len(state["doc_texts"]),
+                chunk_count=len(batch_docs),
+            )
             with self._vs_lock:
                 for i in range(0, len(batch_docs), MAX_BATCH_SIZE):
                     chunk_docs = batch_docs[i : i + MAX_BATCH_SIZE]
@@ -245,9 +265,15 @@ class RAGAgent(BaseAgent[RAGState]):
 
         return state
 
-    def _retrieve_and_summarize_node(self, state: RAGState) -> RAGState:
-        print(
-            "[RAG Agent] Retrieving Contextually Relevant Information From Database..."
+    def _retrieve_and_summarize_node(
+        self,
+        state: RAGState,
+        config: RunnableConfig | None = None,
+    ) -> RAGState:
+        events = self.events(config)
+        events.emit(
+            "Retrieving contextually relevant information",
+            stage="retrieve",
         )
         prompt = ChatPromptTemplate.from_template("""
         You are a scientific assistant responsible for summarizing extracts from research papers, in the context of the following task: {context}
@@ -269,8 +295,13 @@ class RAGAgent(BaseAgent[RAGState]):
             )
 
             relevance_scores = [score for _, score in results]
-        except Exception as e:
-            print(f"RAG failed due to: {e}")
+        except Exception as e:  # noqa: BLE001
+            events.emit(
+                "RAG retrieval failed",
+                stage="retrieve_error",
+                error_type=type(e).__name__,
+                error=str(e),
+            )
             return {**state, "summary": ""}
 
         source_ids_list = []
@@ -286,7 +317,12 @@ class RAGAgent(BaseAgent[RAGState]):
             else ""
         )
 
-        print("[RAG Agent] Summarizing Retrieved Information From Database...")
+        events.emit(
+            "Summarizing retrieved information",
+            stage="summarize",
+            result_count=len(results),
+            source_ids=source_ids_list,
+        )
         # 3) One summary based on retrieved chunks
         rag_summary = chain.invoke({
             "retrieved_content": retrieved_content,
@@ -302,13 +338,20 @@ class RAGAgent(BaseAgent[RAGState]):
 
         # Diagnostics
         if relevance_scores:
-            print(f"\nMax Relevance Score: {max(relevance_scores):.4f}")
-            print(f"Min Relevance Score: {min(relevance_scores):.4f}")
-            print(
-                f"Median Relevance Score: {statistics.median(relevance_scores):.4f}\n"
+            events.emit(
+                "RAG retrieval scores ready",
+                stage="retrieve_result",
+                result_count=len(results),
+                max_relevance_score=max(relevance_scores),
+                min_relevance_score=min(relevance_scores),
+                median_relevance_score=statistics.median(relevance_scores),
             )
         else:
-            print("\nNo RAG results retrieved (score list empty).\n")
+            events.emit(
+                "No RAG results retrieved",
+                stage="retrieve_result",
+                result_count=0,
+            )
 
         # Return a single-element list by default (preferred)
         return {

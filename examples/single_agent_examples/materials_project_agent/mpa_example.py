@@ -1,4 +1,7 @@
 from ursa.agents import MaterialsProjectAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 # make sure your MP_API_KEY is set in env or pass it here
 agent = MaterialsProjectAgent(

@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import random
 from contextlib import redirect_stderr, redirect_stdout
@@ -36,6 +37,7 @@ from ursa.tools.write_code_tool import (
 from .base import AgentWithTools, BaseAgent
 
 _NULL = io.StringIO()  # Hides DSI outout
+LOGGER = logging.getLogger(__name__)
 
 
 ########################################################################
@@ -232,7 +234,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         """
 
         if master_database == "":
-            print("No DSI database provided. Please load one")
+            LOGGER.error("No DSI database provided. Please load one")
             return
 
         _master_database_path, _master_db_folder = _get_db_abs_path(
@@ -251,7 +253,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             self.master_db_folder = _master_db_folder
 
         else:
-            print("No valid DSI database provided. Please load one")
+            LOGGER.error("No valid DSI database provided. Please load one")
             # sys.exit(1)
 
     # __call__ from my agent
@@ -391,11 +393,8 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
         formatted_result = self.format_result(result, start)
 
-        # I would like to add those
-        # if self.output_mode == "console":
-        #     print(formatted_result)
-
-        # elif self.output_mode == "jupyter":
+        # I would like to add this
+        # if self.output_mode == "jupyter":
         #     from IPython.display import Markdown, display
         #     display(Markdown(formatted_result))
 

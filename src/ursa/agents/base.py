@@ -20,7 +20,7 @@ import re
 import sqlite3
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import (
@@ -46,7 +46,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.runnables.config import merge_configs
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import (
@@ -65,6 +66,7 @@ from ursa.observability.timing import (
 )
 from ursa.security import enforce_model_group_policy
 from ursa.util import Checkpointer
+from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
@@ -100,9 +102,6 @@ class AgentContext:
 
     rag_tool_return_k: int = 10
     """Number of chunks retrieved by persisted RAG tools."""
-
-    pending_images: list = field(default_factory=list)
-    """ List of images to be ingested from tool """
 
 
 def _to_snake(s: str) -> str:
@@ -294,6 +293,23 @@ class BaseAgent(Generic[TState], ABC):
             rag_tool_return_k=self.rag_tool_return_k,
         )
 
+    @staticmethod
+    def _dedupe_callbacks(callbacks: list[Any]) -> list[Any]:
+        """Preserve callback order while removing duplicate handler instances."""
+        deduped: list[Any] = []
+        seen: set[int] = set()
+        for callback in callbacks:
+            marker = id(callback)
+            if marker in seen:
+                continue
+            deduped.append(callback)
+            seen.add(marker)
+        return deduped
+
+    def events(self, config: RunnableConfig | None = None) -> AgentEvents:
+        """Return a helper for emitting structured agent progress events."""
+        return AgentEvents(agent=self.name, config=config)
+
     def add_node(
         self,
         f: Callable[..., Mapping[str, Any]],
@@ -359,7 +375,10 @@ class BaseAgent(Generic[TState], ABC):
                 "telemetry_run_id": self.telemetry.context.get("run_id"),
             },
             "tags": [self.name],
-            "callbacks": self.telemetry.callbacks,
+            "callbacks": [
+                *self.telemetry.callbacks,
+                DEFAULT_EVENT_LOGGING_HANDLER,
+            ],
         }
 
         # Try to determine the model name from either direct or nested attributes
@@ -387,6 +406,15 @@ class BaseAgent(Generic[TState], ABC):
                 t for t in overrides.pop("tags") if t not in base["tags"]
             ]
 
+        if "callbacks" in overrides:
+            callbacks = merge_configs(
+                {"callbacks": base["callbacks"]},
+                {"callbacks": overrides.pop("callbacks")},
+            ).get("callbacks")
+            if isinstance(callbacks, list):
+                callbacks = self._dedupe_callbacks(callbacks)
+            base["callbacks"] = callbacks
+
         # Apply any remaining overrides directly to the base configuration
         base.update(overrides)
 
@@ -408,6 +436,7 @@ class BaseAgent(Generic[TState], ABC):
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
+        invoke_config = dict(config or {})
 
         try:
             # Start telemetry tracking for the top-level invocation
@@ -447,7 +476,7 @@ class BaseAgent(Generic[TState], ABC):
 
             # Delegate to the subclass implementation with the normalized inputs
             # and any control parameters
-            return invoke_method(normalized, config=config, **kwargs)
+            return invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
             # Clean up the invocation depth tracking
@@ -615,33 +644,11 @@ class BaseAgent(Generic[TState], ABC):
             if "id" in call
         ]
 
-    def check_for_images(self, context):
-        image_fns = []
-        image_message = None
-        if len(context.pending_images) > 0:
-            content = []
-
-            for img in context.pending_images:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{img['mime_type']};base64,{img['base64_data']}"
-                    },
-                })
-                image_fns.append(img["path"])
-            context.pending_images.clear()
-            image_text = (
-                "This is the result of the prior image reading tool calls: "
-                "The images in order are: " + ";".join(image_fns)
-            )
-            content.append({"type": "text", "text": image_text})
-            image_message = HumanMessage(content=content)
-        return image_fns, image_message
-
     def _patch_dangling(
         self,
         state: Mapping[str, Any],
         summarized: bool = False,
+        config: RunnableConfig | None = None,
     ) -> tuple[Mapping[str, Any], bool]:
         """Patch missing tool responses in a LangGraph message state.
 
@@ -716,6 +723,7 @@ class BaseAgent(Generic[TState], ABC):
         *,
         system_prompt: str | None = None,
         summary_prompt: str | None = None,
+        config: RunnableConfig | None = None,
     ) -> tuple[Mapping[str, Any], bool]:
         """Summarize long ``state['messages']`` histories.
 
@@ -1096,7 +1104,8 @@ class BaseAgent(Generic[TState], ABC):
 
             # Normalize inputs and delegate to the actual streaming implementation
             normalized = self._normalize_inputs(inputs)
-            yield from self._stream(normalized, config=config, **kwargs)
+            stream_config = dict(config or {})
+            yield from self._stream(normalized, **stream_config, **kwargs)
 
         finally:
             # Decrement invocation depth when exiting
@@ -1284,6 +1293,7 @@ class AgentWithTools:
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
+        self.tool_llm = self.llm.model_copy()
 
         if getattr(self, "rag_tools", ()):
             from ursa.rag.tools import build_rag_tools

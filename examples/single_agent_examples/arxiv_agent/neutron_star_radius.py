@@ -4,6 +4,9 @@ from pathlib import Path
 from langchain_openai import ChatOpenAI
 
 from ursa.agents import ArxivAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 
 async def main():
