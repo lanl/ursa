@@ -39,7 +39,8 @@ from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
 from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.runnables.config import merge_configs
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import (
@@ -55,6 +56,7 @@ from langgraph.store.sqlite import SqliteStore
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
+from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
@@ -199,6 +201,23 @@ class BaseAgent(Generic[TState], ABC):
         """Immutable run-scoped information provided to the Agent's graph"""
         return AgentContext(llm=self.llm, workspace=self.workspace)
 
+    @staticmethod
+    def _dedupe_callbacks(callbacks: list[Any]) -> list[Any]:
+        """Preserve callback order while removing duplicate handler instances."""
+        deduped: list[Any] = []
+        seen: set[int] = set()
+        for callback in callbacks:
+            marker = id(callback)
+            if marker in seen:
+                continue
+            deduped.append(callback)
+            seen.add(marker)
+        return deduped
+
+    def events(self, config: RunnableConfig | None = None) -> AgentEvents:
+        """Return a helper for emitting structured agent progress events."""
+        return AgentEvents(agent=self.name, config=config)
+
     def add_node(
         self,
         f: Callable[..., Mapping[str, Any]],
@@ -264,7 +283,10 @@ class BaseAgent(Generic[TState], ABC):
                 "telemetry_run_id": self.telemetry.context.get("run_id"),
             },
             "tags": [self.name],
-            "callbacks": self.telemetry.callbacks,
+            "callbacks": [
+                *self.telemetry.callbacks,
+                DEFAULT_EVENT_LOGGING_HANDLER,
+            ],
         }
 
         # Try to determine the model name from either direct or nested attributes
@@ -292,6 +314,15 @@ class BaseAgent(Generic[TState], ABC):
                 t for t in overrides.pop("tags") if t not in base["tags"]
             ]
 
+        if "callbacks" in overrides:
+            callbacks = merge_configs(
+                {"callbacks": base["callbacks"]},
+                {"callbacks": overrides.pop("callbacks")},
+            ).get("callbacks")
+            if isinstance(callbacks, list):
+                callbacks = self._dedupe_callbacks(callbacks)
+            base["callbacks"] = callbacks
+
         # Apply any remaining overrides directly to the base configuration
         base.update(overrides)
 
@@ -313,6 +344,7 @@ class BaseAgent(Generic[TState], ABC):
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
+        invoke_config = dict(config or {})
 
         try:
             # Start telemetry tracking for the top-level invocation
@@ -352,7 +384,7 @@ class BaseAgent(Generic[TState], ABC):
 
             # Delegate to the subclass implementation with the normalized inputs
             # and any control parameters
-            return invoke_method(normalized, config=config, **kwargs)
+            return invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
             # Clean up the invocation depth tracking
@@ -751,7 +783,8 @@ class BaseAgent(Generic[TState], ABC):
 
             # Normalize inputs and delegate to the actual streaming implementation
             normalized = self._normalize_inputs(inputs)
-            yield from self._stream(normalized, config=config, **kwargs)
+            stream_config = dict(config or {})
+            yield from self._stream(normalized, **stream_config, **kwargs)
 
         finally:
             # Decrement invocation depth when exiting

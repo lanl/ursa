@@ -6,6 +6,7 @@ from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from ursa.agents.base import AgentContext
+from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_from_file
 from ursa.util.types import AsciiStr
 
@@ -25,8 +26,11 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
         Extracted text content.
     """
     full_filename = runtime.context.workspace.joinpath(filename)
-
-    print("[READING]:", full_filename)
+    ToolEvents.from_runtime("read_file", runtime).emit(
+        "Reading file",
+        stage="read",
+        path=str(full_filename),
+    )
     # Move all the reading to a function in the parse util
     text = read_text_from_file(full_filename)
     return text

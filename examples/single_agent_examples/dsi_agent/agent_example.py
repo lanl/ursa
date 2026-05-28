@@ -5,6 +5,9 @@ from langchain_openai import ChatOpenAI
 
 from ursa.agents import DSIAgent
 from ursa.util import Checkpointer
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 # Get the data
 current_file = Path(__file__).resolve()

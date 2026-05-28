@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import pytest
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from ursa.agents import ExecutionAgent
 
@@ -234,3 +239,51 @@ def test_safe_codes_in_store(chat_model, tmpdir):
         for item in store.search(("workspace", "safe_codes"), limit=1000)
     ]
     assert set(safe_codes) == set(execution_agent.safe_codes)
+
+
+def test_patch_dangling_tool_calls_emits_events(
+    chat_model,
+    monkeypatch,
+    capsys,
+    tmpdir,
+):
+    events = []
+
+    def capture_event(event_name, payload, config=None):
+        events.append((event_name, payload))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        capture_event,
+    )
+
+    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    state = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "fake_tool",
+                        "args": {},
+                        "id": "call-1",
+                    }
+                ],
+            )
+        ],
+        "symlinkdir": {},
+    }
+
+    new_state, summarized = execution_agent._patch_dangling(
+        state,
+        summarized=False,
+        config={"callbacks": []},
+    )
+
+    assert summarized is True
+    assert any(isinstance(msg, ToolMessage) for msg in new_state["messages"])
+    assert events
+    assert events[0][1]["agent"] == "ExecutionAgent"
+    assert events[0][1]["stage"] == "dangling_tool_calls"
+    assert events[0][1]["tool_call_ids"] == ["call-1"]
+    assert "[Dangling Tool Call Warning]" not in capsys.readouterr().out

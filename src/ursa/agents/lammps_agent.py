@@ -1,5 +1,6 @@
 import difflib
 import json
+import logging
 import os
 import subprocess
 from typing import Any, Optional, TypedDict
@@ -9,15 +10,14 @@ from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END
-from rich.console import Console
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.syntax import Syntax
 
 from ursa.agents.execution_agent import ExecutionAgent
 
 from .base import BaseAgent
+
+LOGGER = logging.getLogger(__name__)
 
 working = True
 try:
@@ -100,8 +100,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.tiktoken_model = tiktoken_model
         self.max_tokens = max_tokens
         self.summarize_results = summarize_results
-
-        self.console = Console()
 
         self.pair_styles = [
             "eam",
@@ -198,12 +196,10 @@ class LammpsAgent(BaseAgent[LammpsState]):
         )
 
     def _section(self, title: str):
-        self.console.print(Rule(f"[bold cyan]{title}[/bold cyan]"))
+        LOGGER.info("%s", title)
 
     def _panel(self, title: str, body: str, style: str = "cyan"):
-        self.console.print(
-            Panel(body, title=f"[bold]{title}[/bold]", border_style=style)
-        )
+        LOGGER.info("%s\n%s", title, body)
 
     def _code_panel(
         self,
@@ -212,12 +208,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         language: str = "bash",
         style: str = "magenta",
     ):
-        syn = Syntax(
-            code, language, theme="monokai", line_numbers=True, word_wrap=True
-        )
-        self.console.print(
-            Panel(syn, title=f"[bold]{title}[/bold]", border_style=style)
-        )
+        LOGGER.info("%s\n%s", title, code)
 
     def _diff_panel(self, old: str, new: str, title: str = "LAMMPS input diff"):
         diff = "\n".join(
@@ -231,12 +222,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         )
         if not diff.strip():
             diff = "(no changes)"
-        syn = Syntax(
-            diff, "diff", theme="monokai", line_numbers=False, word_wrap=True
-        )
-        self.console.print(
-            Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan")
-        )
+        LOGGER.info("%s\n%s", title, diff)
 
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
@@ -248,22 +234,35 @@ class LammpsAgent(BaseAgent[LammpsState]):
                 s = s[i + 1 :].strip()
         return json.loads(s)
 
-    def _read_and_trim_data_file(self, data_file_path: str) -> str:
+    def _read_and_trim_data_file(
+        self,
+        data_file_path: str,
+        config: RunnableConfig | None = None,
+    ) -> str:
         """Read LAMMPS data file and trim to token limit for LLM context."""
+        events = self.events(config)
         if os.path.exists(data_file_path):
             with open(data_file_path, "r") as f:
                 content = f.read()
             lines = content.splitlines()
             if len(lines) > self.data_max_lines:
                 content = "\n".join(lines[: self.data_max_lines])
-                print(
-                    f"Data file trimmed from {len(lines)} to {self.data_max_lines} lines"
+                events.emit(
+                    "Data file trimmed",
+                    stage="read_data",
+                    path=data_file_path,
+                    original_lines=len(lines),
+                    retained_lines=self.data_max_lines,
                 )
             return content
         else:
             return "Could not read data file."
 
-    def _copy_data_file(self, data_file_path: str) -> str:
+    def _copy_data_file(
+        self,
+        data_file_path: str,
+        config: RunnableConfig | None = None,
+    ) -> str:
         """Copy data file to workspace and return new path."""
         if not os.path.exists(data_file_path):
             raise FileNotFoundError(f"Data file not found: {data_file_path}")
@@ -271,12 +270,23 @@ class LammpsAgent(BaseAgent[LammpsState]):
         filename = os.path.basename(data_file_path)
         dest_path = os.path.join(self.workspace, filename)
         os.system(f"cp {data_file_path} {dest_path}")
-        print(f"Data file copied to workspace: {dest_path}")
+        self.events(config).emit(
+            "Data file copied to workspace",
+            stage="copy_data",
+            path=dest_path,
+        )
         return dest_path
 
-    def _copy_user_potential_files(self):
+    def _copy_user_potential_files(
+        self,
+        config: RunnableConfig | None = None,
+    ):
         """Copy user-provided potential files to workspace."""
-        print("Copying user-provided potential files to workspace...")
+        events = self.events(config)
+        events.emit(
+            "Copying user-provided potential files",
+            stage="copy_potentials",
+        )
         for pot_file in self.user_potential_files:
             if not os.path.exists(pot_file):
                 raise FileNotFoundError(f"Potential file not found: {pot_file}")
@@ -286,14 +296,22 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
             try:
                 os.system(f"cp {pot_file} {dest_path}")
-                print(f"Potential files copied to workspace: {dest_path}")
-            except Exception as e:
-                print(f"Error copying {filename}: {e}")
+                events.emit(
+                    "Potential file copied to workspace",
+                    stage="copy_potentials",
+                    path=dest_path,
+                )
+            except Exception:
+                LOGGER.exception("Error copying %s", filename)
                 raise
 
-    def _create_user_potential_wrapper(self, state: LammpsState) -> LammpsState:
+    def _create_user_potential_wrapper(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
         """Create a wrapper object for user-provided potential to match atomman interface."""
-        self._copy_user_potential_files()
+        self._copy_user_potential_files(config)
 
         # Create a simple object that mimics the atomman potential interface
         class UserPotential:
@@ -339,14 +357,22 @@ class LammpsAgent(BaseAgent[LammpsState]):
             pass
         return text
 
-    def _entry_router(self, state: LammpsState) -> dict:
+    def _entry_router(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> dict:
+        events = self.events(config)
         # Check if using user-provided potential
         if self.use_user_potential:
             if self.find_potential_only:
                 raise Exception(
                     "Cannot set find_potential_only=True when providing your own potential!"
                 )
-            print("Using user-provided potential files")
+            events.emit(
+                "Using user-provided potential files",
+                stage="entry",
+            )
 
         if self.find_potential_only and state.get("chosen_potential"):
             raise Exception(
@@ -355,9 +381,9 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         if self.data_file:
             try:
-                self._copy_data_file(self.data_file)
+                self._copy_data_file(self.data_file, config)
             except Exception as e:
-                print(f"Warning: Could not process data file: {e}")
+                LOGGER.warning("Could not process data file: %s", e)
 
         if not state.get("chosen_potential"):
             self.potential_summaries_dir = os.path.join(
@@ -382,11 +408,18 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "run_history": [],
         }
 
-    def _should_summarize(self, state: LammpsState) -> str:
+    def _should_summarize(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> str:
         matches = state.get("matches", [])
         i = state.get("idx", 0)
         if not matches:
-            print("No potentials found in NIST for this task. Exiting....")
+            self.events(config).emit(
+                "No potentials found in NIST for this task",
+                stage="find_potentials",
+            )
             return "done_no_matches"
         if i < min(self.max_potentials, len(matches)):
             return "summarize_one"
@@ -466,7 +499,11 @@ class LammpsAgent(BaseAgent[LammpsState]):
             return "Exit"
         return "continue_author"
 
-    def _author(self, state: LammpsState) -> LammpsState:
+    def _author(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
         self._section("First attempt at writing LAMMPS input file")
 
         if not self.use_user_potential:
@@ -475,7 +512,10 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         data_content = ""
         if self.data_file:
-            data_content = self._read_and_trim_data_file(self.data_file)
+            data_content = self._read_and_trim_data_file(
+                self.data_file,
+                config,
+            )
 
         authored_json = self.author_chain.invoke({
             "simulation_task": state["simulation_task"],
@@ -496,7 +536,11 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         return {**state, "input_script": input_script}
 
-    def _run_lammps(self, state: LammpsState) -> LammpsState:
+    def _run_lammps(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
         self._section("Running LAMMPS")
 
         if self.ngpus >= 0:
@@ -527,7 +571,13 @@ class LammpsAgent(BaseAgent[LammpsState]):
                 text=True,
                 check=False,
             )
-            print(result)
+            self.events(config).emit(
+                "LAMMPS command finished",
+                stage="run",
+                returncode=result.returncode,
+                stdout_chars=len(result.stdout or ""),
+                stderr_chars=len(result.stderr or ""),
+            )
         else:
             result = subprocess.run(
                 [
@@ -591,7 +641,11 @@ class LammpsAgent(BaseAgent[LammpsState]):
         )
         return "done_failed"
 
-    def _fix(self, state: LammpsState) -> LammpsState:
+    def _fix(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
         pair_info = state["chosen_potential"].pair_info()
 
         hist = state.get("run_history", [])
@@ -618,7 +672,10 @@ class LammpsAgent(BaseAgent[LammpsState]):
 
         data_content = ""
         if self.data_file:
-            data_content = self._read_and_trim_data_file(self.data_file)
+            data_content = self._read_and_trim_data_file(
+                self.data_file,
+                config,
+            )
 
         fixed_json = self.fix_chain.invoke({
             "simulation_task": state["simulation_task"],
@@ -643,7 +700,11 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "fix_attempts": state.get("fix_attempts", 0) + 1,
         }
 
-    def _summarize(self, state: LammpsState) -> LammpsState:
+    def _summarize(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
         self._section(
             "Now handing things off to execution agent for summarization/visualization"
         )
@@ -662,7 +723,11 @@ class LammpsAgent(BaseAgent[LammpsState]):
         })
 
         for x in exe_results["messages"]:
-            print(x.content)
+            self.events(config).emit(
+                "Execution summary message received",
+                stage="summarize_results",
+                result_chars=len(str(x.content)),
+            )
 
         return state
 

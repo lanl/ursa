@@ -1,16 +1,17 @@
 import ast
-from datetime import datetime
+from datetime import UTC, datetime
 from operator import add, or_
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 
 try:
     from ddgs import DDGS  # pip install duckduckgo-search
-except Exception:
+except ImportError:
     DDGS = None
 
 
@@ -22,12 +23,6 @@ from ursa.prompt_library.hypothesizer_prompts import (
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from .base import BaseAgent
-
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
 
 
 # Define our state schema
@@ -52,7 +47,7 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         self.hypothesizer_prompt = hypothesizer_prompt
         self.critic_prompt = critic_prompt
         self.competitor_prompt = competitor_prompt
-        self.search_tool = DDGS()
+        self.search_tool = DDGS() if DDGS is not None else None
         self.strllm = self.llm | StrOutputParser()
         self.max_iterations = max_iterations
 
@@ -70,33 +65,75 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             "solution", "Hypothesizer failed to return a solution"
         )
 
+    def _normalize_search_query(self, query: str | None) -> str:
+        return " ".join(str(query or "").replace("\n", " ").split()).strip(
+            " \"'"
+        )
+
+    def _normalize_search_results(self, results: Any) -> list[dict[str, Any]]:
+        if results is None:
+            return []
+        if isinstance(results, dict):
+            raw_results = [results]
+        elif isinstance(results, list):
+            raw_results = results
+        else:
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            link = (
+                entry.get("link")
+                or entry.get("href")
+                or entry.get("url")
+                or entry.get("source")
+            )
+            if link and "link" not in entry:
+                entry["link"] = link
+            normalized.append(entry)
+        return normalized
+
     def parse_visited_sites(self, raw_search_results) -> set[str]:
         visited_sites = set()
         try:
             if isinstance(raw_search_results, str):
                 results_list = ast.literal_eval(raw_search_results)
             else:
-                results_list = raw_search_results
+                results_list = self._normalize_search_results(
+                    raw_search_results
+                )
             # Each item typically might have "link", "title", "snippet"
             for item in results_list:
-                link = item.get("link")
+                link = (
+                    item.get("link")
+                    or item.get("href")
+                    or item.get("url")
+                    or item.get("source")
+                )
                 if link:
                     visited_sites.add(link)
         except (ValueError, SyntaxError, TypeError):
-            # If it's not valid Python syntax or something else goes wrong
-            print("[DEBUG] Could not parse search results as Python list.")
-            print("[DEBUG] raw_search_results:", raw_search_results)
+            return visited_sites
 
         return visited_sites
 
     def agent1_generate_solution(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """Agent 1: Hypothesizer."""
-        print(
-            f"[iteration {state['current_iteration'] + 1}] Entering agent1_generate_solution. Iteration: {state['current_iteration'] + 1}"
+        iteration = state["current_iteration"] + 1
+        events = self.events(config)
+        events.emit(
+            f"Hypothesis pass {iteration}/{state['max_iterations']}",
+            stage="generate",
+            iteration=iteration,
+            max_iterations=state["max_iterations"],
         )
-
         current_iter = state["current_iteration"]
         user_content = f"Question: {state['question']}\n"
 
@@ -120,11 +157,13 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         search_query = self.strllm.invoke(
             f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
         )
-        if '"' in search_query:
-            search_query = search_query.split('"')[1]
-        raw_search_results = self.search_tool.text(
-            search_query or state["question"]
-        )
+        normalized_query = self._normalize_search_query(search_query)
+        if self.search_tool is None:
+            raw_search_results = []
+        else:
+            raw_search_results = self.search_tool.text(
+                normalized_query or state["question"]
+            )
         user_content += f"\nSearch results: {raw_search_results}"
 
         # Parse the results if possible, so we can collect URLs
@@ -136,22 +175,28 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             HumanMessage(content=user_content),
         ]
         solution = self.strllm.invoke(messages)
-
-        # Print the entire solution in green
-        print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
-        print(
-            f"[iteration {state['current_iteration'] + 1}] Exiting agent1_generate_solution."
+        events.emit(
+            "Drafted hypothesis",
+            stage="generate_result",
+            preview=solution,
         )
         return {
             "agent1_solution": [solution],
-            "question_search_query": search_query,
+            "question_search_query": normalized_query,
             "visited_sites": visited_sites,
         }
 
-    def agent2_critique(self, state: HypothesizerState) -> HypothesizerState:
+    def agent2_critique(
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
+    ) -> HypothesizerState:
         """Agent 2: Critic."""
-        print(
-            f"[iteration {state['current_iteration'] + 1}] Entering agent2_critique."
+        events = self.events(config)
+        events.emit(
+            "Critiquing hypothesis",
+            stage="critique",
+            iteration=state["current_iteration"] + 1,
         )
 
         solution = state["agent1_solution"][-1]
@@ -162,8 +207,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         )
 
         fact_check_query = f"fact check {state['question_search_query']} solution effectiveness"
-
-        fact_check_results = self.search_tool.text(fact_check_query)
+        if self.search_tool is None:
+            fact_check_results = []
+        else:
+            fact_check_results = self.search_tool.text(fact_check_query)
         visited_sites = self.parse_visited_sites(fact_check_results)
         user_content += f"\nFact check results: {fact_check_results}"
 
@@ -172,11 +219,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             HumanMessage(content=user_content),
         ]
         critique = self.strllm.invoke(messages)
-
-        # Print the entire critique in blue
-        print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
-        print(
-            f"[iteration {state['current_iteration'] + 1}] Exiting agent2_critique."
+        events.emit(
+            "Critique ready",
+            stage="critique_result",
+            preview=critique,
         )
         return {
             "agent2_critiques": [critique],
@@ -184,11 +230,16 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         }
 
     def agent3_competitor_perspective(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """Agent 3: Competitor/Stakeholder Simulator."""
-        print(
-            f"[iteration {state['current_iteration'] + 1}] Entering agent3_competitor_perspective."
+        events = self.events(config)
+        events.emit(
+            "Checking competitor and stakeholder perspective",
+            stage="competitor",
+            iteration=state["current_iteration"] + 1,
         )
 
         solution = state["agent1_solution"][-1]
@@ -204,8 +255,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         competitor_search_query = (
             f"competitor responses to {state['question_search_query']}"
         )
-
-        competitor_info = self.search_tool.text(competitor_search_query)
+        if self.search_tool is None:
+            competitor_info = []
+        else:
+            competitor_info = self.search_tool.text(competitor_search_query)
         visited_sites = self.parse_visited_sites(competitor_info)
         user_content += f"\nCompetitor information: {competitor_info}"
 
@@ -214,13 +267,10 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             HumanMessage(content=user_content),
         ]
         perspective = self.strllm.invoke(messages)
-
-        # Print the entire perspective in red
-        print(
-            f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
-        )
-        print(
-            f"[iteration {state['current_iteration'] + 1}] Exiting agent3_competitor_perspective."
+        events.emit(
+            "Stakeholder perspective ready",
+            stage="competitor_result",
+            preview=perspective,
         )
         return {
             "agent3_perspectives": [perspective],
@@ -233,10 +283,17 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         current_iteration = state["current_iteration"] + 1
         return {"current_iteration": current_iteration}
 
-    def generate_solution(self, state: HypothesizerState) -> HypothesizerState:
+    def generate_solution(
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
+    ) -> HypothesizerState:
         """Generate the overall, refined solution based on all iterations."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering generate_solution."
+        events = self.events(config)
+        events.emit(
+            "Synthesizing final hypothesis",
+            stage="finalize",
+            iteration=state["current_iteration"],
         )
         prompt = f"Original question: {state['question']}\n\n"
         prompt += "Evolution of solutions:\n"
@@ -255,41 +312,36 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
             prompt += f"Competitor perspective: {perspective_text}\n"
 
         prompt += "\nBased on this iterative process, provide the overall, refined solution."
-
-        print(
-            f"[iteration {state['current_iteration']}] Generating overall solution with LLM..."
-        )
         solution = self.strllm.invoke(prompt)
-        print(
-            f"[iteration {state['current_iteration']}] Overall solution obtained. Preview:",
-            solution[:200],
-            "...",
-        )
-
-        print(
-            f"[iteration {state['current_iteration']}] Exiting generate_solution."
+        events.emit(
+            "Final hypothesis ready",
+            stage="finalize_result",
+            preview=solution,
         )
         return {"solution": solution}
 
     def print_visited_sites(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
-        new_state = state.copy()
-        # all_sites = list(new_state["visited_sites"])
-        # print("[DEBUG] Visited Sites:")
-        # for s in all_sites:
-        #     print("  ", s)
-        return new_state
+        return state.copy()
 
     def summarize_process_as_latex(
-        self, state: HypothesizerState
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
     ) -> HypothesizerState:
         """
         Summarize how the solution changed over time, referencing
         each iteration's critique and competitor perspective,
         then produce a final LaTeX document.
         """
-        print("Entering summarize_process_as_latex.")
+        events = self.events(config)
+        events.emit(
+            "Writing LaTeX report",
+            stage="summarize",
+        )
         # Build a single string describing the entire iterative process
         iteration_details = ""
         for i, (sol, crit, comp) in enumerate(
@@ -310,15 +362,13 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # -----------------------------
         # Write iteration_details to disk as .txt
         # -----------------------------
-        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp_str = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S")
         txt_filename = Path(
             self.workspace,
             f"iteration_details_{timestamp_str}_chat_history.txt",
         )
         with open(txt_filename, "w", encoding="utf-8") as f:
             f.write(iteration_details)
-
-        print(f"Wrote iteration details to {txt_filename}.")
 
         # Prompt the LLM to produce a LaTeX doc
         # We'll just pass it as a single string to the LLM;
@@ -360,22 +410,6 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
         # It must include the overall solution in full, not summarized, but reformatted for appropriate
         # LaTeX. The summarization is for the other steps.
 
-        # all_visited_sites = list(state["visited_sites"])
-        # (Optional) remove duplicates by converting to a set, then back to a list
-        # visited_sites_unique = list(set(all_visited_sites))
-        # if visited_sites_unique:
-        #     websites_latex = "\\section*{Websites Visited}\\begin{itemize}\n"
-        #     for url in visited_sites_unique:
-        #         print(f"We visited: {url}")
-        #         # Use \url{} to handle special characters in URLs
-        #         websites_latex += f"\\item \\url{{{url}}}\n"
-        #     websites_latex += "\\end{itemize}\n\n"
-        # else:
-        #     # If no sites visited, or the list is empty
-        #     websites_latex = (
-        #         "\\section*{Websites Visited}\nNo sites were visited.\n\n"
-        #     )
-        # print(websites_latex)
         websites_latex = ""
 
         # Ask the LLM to produce *only* LaTeX content
@@ -404,13 +438,11 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
                 )
 
         final_latex = inject_into_latex(latex_doc, websites_latex)
-
-        print(
-            f"[iteration {state['current_iteration']}] Received LaTeX from LLM. Preview:"
-        )
-        print(latex_response[:300], "...")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting summarize_process_as_latex."
+        events.emit(
+            "Report ready",
+            stage="summarize_result",
+            preview=latex_response,
+            output_path=str(txt_filename),
         )
         return {"summary_report": final_latex}
 
@@ -450,96 +482,6 @@ class HypothesizerAgent(BaseAgent[HypothesizerState]):
 
 def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
     if state["current_iteration"] >= state["max_iterations"]:
-        print(
-            f"[iteration {state['current_iteration']}] Reached max_iterations; finishing."
-        )
         return "finish"
     else:
-        print(
-            f"[iteration {state['current_iteration']}] Still under max_iterations; continuing."
-        )
         return "continue"
-
-
-# def compile_summary_to_pdf(state: AgentState) -> AgentState:
-#     """
-#     Takes the LaTeX in state["summary_report"] and tries to compile it to a PDF
-#     named with the model and timestamp, e.g.:
-#     summary_report_gpt-5-mini_Mar_15_2025_8:59am.pdf
-#     """
-#     print(f"[DEBUG] Entering compile_summary_to_pdf.")
-
-#     llm_model = state["llm_model"]
-
-
-#     latex_code = state.get("summary_report", "")
-#     if not latex_code:
-#         print("[DEBUG] No LaTeX code found in summary_report.")
-#         return state
-
-#     # Create a dynamic filename using the LLM model name & a timestamp
-#     # e.g. "summary_report_gpt-5-mini_Mar_15_2025_08:59AM.pdf"
-#     # timestamp_str = datetime.now().strftime("%b_%d_%Y_%I:%M%p")
-#     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-#     pdf_filename = f"summary_report_{llm_model}_{timestamp_str}.pdf"
-
-#     tex_filename = "summary_report.tex"
-#     with open(tex_filename, "w", encoding="utf-8") as f:
-#         f.write(latex_code)
-
-#     try:
-#         subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_filename], check=True)
-#         subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_filename], check=True)
-#     except subprocess.CalledProcessError as e:
-#         print("Error compiling LaTeX:", e)
-
-#     if os.path.exists("summary_report.pdf"):
-#         os.rename("summary_report.pdf", pdf_filename)
-#         print(f"[DEBUG] Successfully compiled PDF -> {pdf_filename}")
-#     else:
-#         print("[DEBUG] PDF compilation failed; no summary_report.pdf found.")
-
-#     print("[DEBUG] Exiting compile_summary_to_pdf.")
-#     return state
-
-
-if __name__ == "__main__":
-    # Create the graph
-    hypothesizer_agent = HypothesizerAgent()
-
-    question = "Find a city with as least 10 vowels in its name."
-
-    # Initialize the state
-    initial_state: HypothesizerState = {
-        "question": question,
-        "question_search_query": "",
-        "current_iteration": 0,
-        "max_iterations": 1,
-        "agent1_solution": [],
-        "agent2_critiques": [],
-        "agent3_perspectives": [],
-        "solution": "",
-        "summary_report": "",
-        "visited_sites": [],
-    }
-
-    print("Invoking the graph...")
-    # Run the graph
-    result = hypothesizer_agent.invoke(
-        initial_state,
-        {
-            "recursion_limit": 999999,
-            "configurable": {"thread_id": 42},
-        },
-    )
-    summary_text = result["summary_report"]
-
-    print("Graph invocation complete.")
-
-    # Print the overall solution
-    print("Overall Solution:")
-    print(result["solution"])
-
-    # print("Summarized Report:")
-    # print(summary_text)
