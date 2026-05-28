@@ -82,7 +82,8 @@ class SplitBehaviorFakeChatModel(GenericFakeChatModel):
 
 
 class ToolCallingFakeChatModel(GenericFakeChatModel):
-    pass
+    def bind_tools(self, tools, **kwargs):
+        return self
 
 
 def _message_stream(content: str) -> Iterator[AIMessage]:
@@ -194,6 +195,7 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
         tokens_before_summarize=1,
         messages_to_keep=1,
     )
+
     _ = execution_agent.compiled_graph
 
     summarized_state, summarized = execution_agent._summarize_context({

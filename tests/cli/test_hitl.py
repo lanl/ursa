@@ -15,7 +15,7 @@ from rich.console import Console as RealConsole
 
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import ModelConfig, UrsaConfig
+from ursa.cli.config import EmbModelConfig, ModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
@@ -104,9 +104,9 @@ async def test_agents_use_configured_workspace(ursa_config, tmp_path):
 def _stub_hitl_dependencies(monkeypatch):
     fake_llm = MagicMock(name="llm")
     fake_embedding = MagicMock(name="embedding")
-    monkeypatch.setattr("ursa.cli.hitl.init_chat_model", lambda **_: fake_llm)
+    monkeypatch.setattr("ursa.cli.config.init_chat_model", lambda **_: fake_llm)
     monkeypatch.setattr(
-        "ursa.cli.hitl.init_embeddings", lambda **_: fake_embedding
+        "ursa.cli.config.init_embeddings", lambda **_: fake_embedding
     )
     monkeypatch.setattr("ursa.cli.hitl.start_mcp_client", lambda servers: None)
     return fake_llm, fake_embedding
@@ -135,7 +135,7 @@ async def test_agents_apply_agent_config_overrides(
 
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
 
     overrides = {}
@@ -161,7 +161,7 @@ async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
         thread_id="custom-thread",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
 
     hitl = HITL(config)
@@ -410,7 +410,7 @@ def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     config.agent_config = {
         "ghost": {"workspace": tmp_path / "ghost-workspace"},
@@ -424,7 +424,7 @@ def test_agent_config_none_value_errors(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     with pytest.raises(ValidationError):
         config.agent_config = {"chat": None}
@@ -435,7 +435,7 @@ async def test_agent_config_unknown_option_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     config.agent_config = {"chat": {"nonexistent_option": True}}
 

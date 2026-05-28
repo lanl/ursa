@@ -19,7 +19,7 @@ import asyncio
 import re
 import sqlite3
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import (
@@ -74,9 +74,6 @@ class AgentContext:
 
     tool_character_limit: int = 30000
     """ Suggested limit on tool call responses """
-
-    pending_images: list = field(default_factory=list)
-    """ List of images to be ingested from tool """
 
 
 def _to_snake(s: str) -> str:
@@ -975,6 +972,7 @@ class AgentWithTools:
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
+        self.tool_llm = self.llm.model_copy()
 
     def __post_init__(self):
         super().__post_init__()

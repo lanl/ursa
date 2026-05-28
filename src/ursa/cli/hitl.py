@@ -9,8 +9,7 @@ from typing import Any, Optional
 
 import aiosqlite
 from fastmcp import FastMCP
-from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.embeddings import init_embeddings
+from langchain.chat_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
@@ -121,11 +120,9 @@ class HITL:
         agent_overrides = dict(config.agent_config or {})
         memory_overrides = agent_overrides.pop("memory", None)
 
-        self.model: BaseChatModel = init_chat_model(
-            **self.config.llm_model.kwargs
-        )
+        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         self.embedding = (
-            init_embeddings(**self.config.emb_model.kwargs)
+            self.config.emb_model.init_embedding()
             if self.config.emb_model
             else None
         )
@@ -378,6 +375,12 @@ class UrsaRepl(Cmd):
         if handler.emitted_any:
             self.console.print()
         self.show(result)
+
+    def run_prompt(self, prompt: str):
+        """Respond to a single prompt"""
+        prompt = self.precmd(prompt)
+        stop = self.onecmd(prompt)
+        return self.postcmd(stop, prompt)
 
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)
