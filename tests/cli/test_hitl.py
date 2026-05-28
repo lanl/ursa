@@ -360,6 +360,12 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     )
 
     rendered = output.getvalue()
+
+    print(80 * "=")
+    print(80 * "=")
+    print(rendered)
+    print(80 * "=")
+    print(80 * "=")
     assert "Plan" in rendered
     assert "Plan needs another pass" in rendered
     assert "Need one more concrete step." in rendered
