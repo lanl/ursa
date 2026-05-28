@@ -594,7 +594,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # Keep self.llm unbound for summary/recap calls. The executor loop uses a
         # separate tool-bound model so provider-specific tool transcripts cannot
         # leak into summarization history.
-        self.tool_llm = self.llm.bind_tools(self.tools.values())
+        self.tool_llm = self.tool_llm.bind_tools(self.tools.values())
 
         # Register nodes:
         # - "agent": LLM planning/execution step
