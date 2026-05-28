@@ -214,6 +214,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if extra_tools:
             default_tools.extend(extra_tools)
 
+        self.tool_llm = llm.copy()
         super().__init__(llm=llm, tools=default_tools, **kwargs)
         self.agent_memory = agent_memory
         self.safe_codes = set(safe_codes or ["python", "julia"])
@@ -223,7 +224,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.log_state = log_state
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
-        self.tool_llm = llm.copy()
 
     def _patch_dangling(
         self, state: ExecutionState, summarized: bool
