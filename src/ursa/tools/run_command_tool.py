@@ -55,11 +55,20 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
     llm = runtime.context.llm
     events = ToolEvents.from_runtime("run_command", runtime)
-    safety_result = llm.with_structured_output(SafetyAssessment).invoke(
-        get_safety_prompt(
-            query, safe_codes, edited_files, prompt_level=prompt_level
+    try:
+        safety_result = llm.with_structured_output(SafetyAssessment).invoke(
+            get_safety_prompt(
+                query, safe_codes, edited_files, prompt_level=prompt_level
+            )
         )
-    )
+    except Exception:
+        safety_result = llm.with_structured_output(
+            SafetyAssessment, method="function_calling"
+        ).invoke(
+            get_safety_prompt(
+                query, safe_codes, edited_files, prompt_level=prompt_level
+            )
+        )
 
     if not safety_result["is_safe"]:
         tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result['reason']}"
