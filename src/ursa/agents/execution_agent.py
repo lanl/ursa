@@ -214,7 +214,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if extra_tools:
             default_tools.extend(extra_tools)
 
-        self.tool_llm = llm.copy()
         super().__init__(llm=llm, tools=default_tools, **kwargs)
         self.agent_memory = agent_memory
         self.safe_codes = set(safe_codes or ["python", "julia"])
