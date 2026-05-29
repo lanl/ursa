@@ -672,6 +672,7 @@ class BaseAgent(Generic[TState], ABC):
             return state, summarized
 
         new_state = deepcopy(state)
+        events = self.events(config)
         dangling_response = (
             "Response Not Found from tool. "
             "May have timed out or been forgotten due to summarization."
@@ -699,9 +700,10 @@ class BaseAgent(Generic[TState], ABC):
 
         if pending_tool_ids:
             summarized = True
-            print(
-                f"[Dangling Tool Call Warning] The following tool IDs "
-                f"were dangling:\n{pending_tool_ids}\nReplies of missing response applied."
+            events.emit(
+                "Dangling tool calls patched",
+                stage="dangling_tool_calls",
+                tool_call_ids=list(pending_tool_ids),
             )
             for tool_id in pending_tool_ids:
                 for msg_ind, msg in enumerate(new_state["messages"]):
@@ -740,6 +742,7 @@ class BaseAgent(Generic[TState], ABC):
             return state, False
 
         new_state = deepcopy(state)
+        events = self.events(config)
         messages = list(new_state.get("messages") or [])
         if len(messages) <= 1:
             return new_state, False
@@ -748,6 +751,10 @@ class BaseAgent(Generic[TState], ABC):
         if tokens_before <= self.tokens_before_summarize:
             return new_state, False
 
+        events.emit(
+            message=f"Summarizing ~{tokens_before} token history to compress context",
+            stage="summarize_context",
+        )
         keep_count = max(0, int(self.messages_to_keep or 0))
         body_messages = messages[1:]
         if keep_count == 0:
@@ -770,8 +777,10 @@ class BaseAgent(Generic[TState], ABC):
                     pass
 
         if tool_ids:
-            print(
-                f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
+            events.emit(
+                "Preserving tool responses during summarization",
+                stage="summarize_context",
+                tool_call_ids=list(tool_ids),
             )
             keep_copy = list(conversation_to_keep)
             for msg in keep_copy:
@@ -784,25 +793,30 @@ class BaseAgent(Generic[TState], ABC):
                     tool_ids.remove(msg.tool_call_id)
 
         if tool_ids:
-            print(
-                f"Tool ID '{tool_ids}' was in the messages to summarize, but was not "
-                "found in the responses. Could be dangling tool call."
+            events.emit(
+                "Dangling tool calls found during summarization",
+                stage="summarize_context",
+                tool_call_ids=list(tool_ids),
             )
 
-        summarize_prompt = (
-            summary_prompt
-            or f"""
-        Your only task is to provide a detailed, comprehensive summary of the following
+        summarize_system_message = SystemMessage(
+            content="""
+        Your only tasks is to provide a detailed, comprehensive summary of the following
         conversation.
 
         Your summary will be the only information retained from the conversation, so ensure
         it contains all details that need to be remembered to meet the goals of the work.
 
-        Conversation to summarize:
-        {conversation_to_summarize}
+        The conversation to summarize is:
         """
         )
-        summary = self.llm.invoke(summarize_prompt)
+        to_summarize = [summarize_system_message] + conversation_to_summarize
+        to_summarize += [
+            HumanMessage(
+                content="Summarize that conversation per your instruction."
+            )
+        ]
+        summary = self.tool_llm.invoke(to_summarize)
 
         first_message = messages[0]
         if system_prompt is not None:
