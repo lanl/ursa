@@ -92,12 +92,20 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            ProblemSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.math_formulator_prompt),
-            HumanMessage(content=state["problem"]),
-        ])
+        try:
+            llm_out = self.llm.with_structured_output(
+                ProblemSpec, include_raw=True
+            ).invoke([
+                SystemMessage(content=self.math_formulator_prompt),
+                HumanMessage(content=state["problem"]),
+            ])
+        except Exception:
+            llm_out = self.llm.with_structured_output(
+                ProblemSpec, include_raw=True, method="function_calling"
+            ).invoke([
+                SystemMessage(content=self.math_formulator_prompt),
+                HumanMessage(content=state["problem"]),
+            ])
         new_state["problem_spec"] = llm_out["parsed"]
         new_state["problem_diagnostic"].extend(
             extract_tool_calls(llm_out["raw"])
@@ -117,12 +125,20 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            ProblemSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.discretizer_prompt),
-            HumanMessage(content=state["problem"]),
-        ])
+        try:
+            llm_out = self.llm.with_structured_output(
+                ProblemSpec, include_raw=True
+            ).invoke([
+                SystemMessage(content=self.discretizer_prompt),
+                HumanMessage(content=state["problem"]),
+            ])
+        except Exception:
+            llm_out = self.llm.with_structured_output(
+                ProblemSpec, include_raw=True, method="function_calling"
+            ).invoke([
+                SystemMessage(content=self.discretizer_prompt),
+                HumanMessage(content=state["problem"]),
+            ])
         new_state["problem_spec"] = llm_out["parsed"]
         new_state["problem_diagnostic"].extend(
             extract_tool_calls(llm_out["raw"])
@@ -165,12 +181,20 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            SolverSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.solver_selector_prompt),
-            HumanMessage(content=str(state["problem_spec"])),
-        ])
+        try:
+            llm_out = self.llm.with_structured_output(
+                SolverSpec, include_raw=True
+            ).invoke([
+                SystemMessage(content=self.solver_selector_prompt),
+                HumanMessage(content=str(state["problem_spec"])),
+            ])
+        except Exception:
+            llm_out = self.llm.with_structured_output(
+                SolverSpec, include_raw=True, method="function_calling"
+            ).invoke([
+                SystemMessage(content=self.solver_selector_prompt),
+                HumanMessage(content=str(state["problem_spec"])),
+            ])
         new_state["solver"] = llm_out["parsed"]
 
         self.events(config).emit("Selected solver", stage="select_solver")
@@ -204,12 +228,24 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            ProblemSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.verifier_prompt),
-            HumanMessage(content=str(state["problem_spec"]) + state["code"]),
-        ])
+        try:
+            llm_out = self.llm.with_structured_output(
+                ProblemSpec, include_raw=True
+            ).invoke([
+                SystemMessage(content=self.verifier_prompt),
+                HumanMessage(
+                    content=str(state["problem_spec"]) + state["code"]
+                ),
+            ])
+        except Exception:
+            llm_out = self.llm.with_structured_output(
+                ProblemSpec, include_raw=True, method="function_calling"
+            ).invoke([
+                SystemMessage(content=self.verifier_prompt),
+                HumanMessage(
+                    content=str(state["problem_spec"]) + state["code"]
+                ),
+            ])
         new_state["problem_spec"] = llm_out["parsed"]
         if hasattr(llm_out, "tool_calls"):
             tool_log = run_tool_calls(llm_out, self.tool_maps)
