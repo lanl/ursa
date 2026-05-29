@@ -288,6 +288,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 elif isinstance(msg, SystemMessage):
                     kept_one = True
         if tokens_before_summarize > self.tokens_before_summarize:
+            events.emit(
+                message=f"Summarizing ~{tokens_before_summarize} token history to compress context",
+                stage="summarize_context",
+            )
             for msg in new_state["messages"][1:]:
                 if count_tokens_approximately([msg]) > 100000:
                     trunc_message = "Message too long - truncated."
@@ -333,17 +337,26 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                     tool_call_ids=list(tool_ids),
                 )
 
-            summarize_prompt = f"""
+            summarize_system_message = SystemMessage(
+                content="""
             Your only tasks is to provide a detailed, comprehensive summary of the following
             conversation.
 
             Your summary will be the only information retained from the conversation, so ensure
             it contains all details that need to be remembered to meet the goals of the work.
 
-            Conversation to summarize:
-            {conversation_to_summarize}
+            The conversation to summarize is:
             """
-            summary = self.llm.invoke(summarize_prompt)
+            )
+            to_summarize = [
+                summarize_system_message
+            ] + conversation_to_summarize
+            to_summarize += [
+                HumanMessage(
+                    content="Summarize that conversation per your instruction."
+                )
+            ]
+            summary = self.tool_llm.invoke(to_summarize)
             summarized_messages = [
                 SystemMessage(content=self.executor_prompt),
                 summary,

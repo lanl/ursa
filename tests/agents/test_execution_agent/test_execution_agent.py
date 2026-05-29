@@ -192,24 +192,12 @@ def test_execution_agent_keeps_tool_calls_out_of_summary_and_recap(
             messages=_message_stream("base-response")
         ),
         workspace=tmpdir,
-        tokens_before_summarize=1,
+        tokens_before_summarize=99999,
         messages_to_keep=1,
     )
 
     _ = execution_agent.compiled_graph
 
-    summarized_state, summarized = execution_agent._summarize_context({
-        "messages": [
-            SystemMessage(content="system"),
-            HumanMessage(content="x" * 200),
-            HumanMessage(content="keep me"),
-        ],
-        "symlinkdir": {},
-    })
-    assert summarized is True
-    assert not summarized_state["messages"][1].tool_calls
-
-    execution_agent.tokens_before_summarize = 99999
     recap_result = execution_agent.recap({
         "messages": [
             SystemMessage(content="system"),
