@@ -1,76 +1,49 @@
 ---
-title: 'Gala: A Python package for galactic dynamics'
+title: 'URSA: The Universal Research and Scientific Agent'
 tags:
   - Python
-  - astronomy
-  - dynamics
-  - galactic dynamics
-  - milky way
+  - Agentic AI
 authors:
-  - name: Adrian M. Price-Whelan
-    orcid: 0000-0000-0000-0000
+  - name: Michael Grosskopf
+    orcid: 0000-0002-7838-3609
     equal-contrib: true
-    affiliation: "1, 2" # (Multiple affiliations must be quoted)
-  - name: Author Without ORCID
-    equal-contrib: true # (This is how you can denote equal contributions between multiple authors)
-    affiliation: 2
-  - name: Author with no affiliation
-    corresponding: true # (This is how to denote the corresponding author)
-    affiliation: 3
-  - given-names: Ludwig
-    dropping-particle: van
-    surname: Beethoven
-    affiliation: 3
+    affiliation: 1 
+  - name: Nathan Debardeleben
+    equal-contrib: true 
+    affiliation: 1
 affiliations:
- - name: Lyman Spitzer, Jr. Fellow, Princeton University, United States
+ - name: Los Alamos National Laboratory, Los Alamos, New Mexico, United States
    index: 1
-   ror: 00hx57361
- - name: Institution Name, Country
-   index: 2
- - name: Independent Researcher, Country
-   index: 3
-date: 13 August 2017
+date: 28 May 2026
 bibliography: paper.bib
 
-# Optional fields if submitting to a AAS journal too, see this blog post:
-# https://blog.joss.theoj.org/2018/12/a-new-collaboration-with-aas-publishing
-aas-doi: 10.3847/xxxxx <- update this with the DOI from AAS once you know it.
-aas-journal: Astrophysical Journal <- The name of the AAS journal.
 ---
 
 # Summary
 
-The forces on stars, galaxies, and dark matter under external gravitational
-fields lead to the dynamical evolution of structures in the universe. The orbits
-of these bodies are therefore key to understanding the formation, history, and
-future state of galaxies. The field of "galactic dynamics," which aims to model
-the gravitating components of galaxies to study their structure and evolution,
-is now well-established, commonly taught, and frequently used in astronomy.
-Aside from toy problems and demonstrations, the majority of problems require
-efficient numerical tools, many of which require the same base code (e.g., for
-performing numerical orbit integration).
+In recent years, Large Language Models (LLMs) have progressed beyond their traditional role as chatbots, finding application in the automation and acceleration of a wide range of tasks. Through the use of agentic frameworks and tool integration, LLMs are increasingly being employed for software engineering, code generation, information retrieval, and complex decision-making workflows. In parallel, the application of AI agents to scientific research is receiving growing attention, with the potential to assist researchers in activities such as hypothesis generation, experimental planning, code development, data analysis, and result validation. 
+
+Here,  we present `URSA` (Universal Research and Scientific Agent), an open-source ecosystem of modular, extensible, and configurable AI agents designed specifically for scientific workflows. URSA provides a flexible framework for constructing and employing research-oriented agents that can integrate domain knowledge, computational tools, and large language models. By emphasizing modularity and adaptability, `URSA` enables researchers to develop, evaluate, and deploy agent-based systems across a broad range of scientific applications.
 
 # Statement of need
 
-`Gala` is an Astropy-affiliated Python package for galactic dynamics. Python
-enables wrapping low-level languages (e.g., C) for speed without losing
-flexibility or ease-of-use in the user-interface. The API for `Gala` was
-designed to provide a class-based and user-friendly interface to fast (C or
-Cython-optimized) implementations of common operations such as gravitational
-potential and force evaluation, orbit integration, dynamical transformations,
-and chaos indicators for nonlinear dynamics. `Gala` also relies heavily on and
-interfaces well with the implementations of physical units and astronomical
-coordinate systems in the `Astropy` package [@astropy] (`astropy.units` and
-`astropy.coordinates`).
+Modern scientific research workflows involve a sequence of complex and interconnected tasks, including hypothesis generation, literature review, research planning, experiment execution, data analysis, and result validation. Depending on the scientific domain, these workflows may also require specialized capabilities such as large-scale numerical simulations, software development, code execution, and interaction with external scientific tools and databases.
 
-`Gala` was designed to be used by both astronomical researchers and by
-students in courses on gravitational dynamics or astronomy. It has already been
-used in a number of scientific publications [@Pearson:2017] and has also been
-used in graduate courses on Galactic dynamics to, e.g., provide interactive
-visualizations of textbook material [@Binney:2008]. The combination of speed,
-design, and support for Astropy functionality in `Gala` will enable exciting
-scientific explorations of forthcoming data releases from the *Gaia* mission
-[@gaia] by students and experts alike.
+URSA has been designed to support this broad range of activities through a composable system of collaborating agents. A central goal of the project is to provide a unified framework that can support as much of the scientific research lifecycle as possible while remaining sufficiently flexible to accommodate domain-specific requirements. For a given scientific problem, URSA can:
+
+* Decompose a high-level objective into a sequence of executable tasks, refining the resulting plan through interactions among specialized agents.
+* Execute individual tasks using agents that interact with external tools and services, typically through the Model Context Protocol (MCP).
+* Validate and refine intermediate and final results through agents that perform literature reviews and retrieve information from arXiv and other web-based resources.
+
+Many scientific workflows additionally require domain-specific capabilities, such as running simulation codes on high-performance computing (HPC) resources. URSA's modular architecture enables the construction of specialized agents by composing its core planning, execution, and validation components. The current codebase includes several examples of such agents, including:
+
+* Agents for interacting with scientific simulation codes using user-provided documentation and domain-specific knowledge.
+* Agents specialized for molecular dynamics simulations that aid in the design of novel materials.
+* Agents for optimization and inverse-design problems.
+
+In addition to the agents provided with the framework, users can create their own specialized agents by composing existing URSA components with domain-specific tools, knowledge sources, and workflows. This extensibility enables URSA to be adapted to new scientific domains and emerging research applications without requiring modifications to the core framework.
+
+By combining general-purpose scientific reasoning agents with domain-specific tools and workflows, URSA aims to provide a comprehensive yet extensible framework for AI-assisted scientific research.
 
 # State of the field                                                                                                                  
 
