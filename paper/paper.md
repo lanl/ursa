@@ -84,11 +84,11 @@ Finally, URSA allows for the construction of highly domain-specific agents that 
 
 URSA is seeing growing usage in the scientific community, averaging ~1500 downloads a month on PyPI. While primarily developed at Los Alamos National Laboratory for its research activities, our vision is that it evolves beyond this core through contributions from the wider scientific community.
 
-URSA is being actively used in various scientific applications. As an example, Fig.\autoref{fig:helios} shows the application of URSA for the design of a capsule that can be employed in an Inertial Confinement Fusion experiment. This workflow involved the planning agent, equipped with the o3-mini model as the backend LLM and the execution agent, equipped with the o3 model. More details about this worflow can be found in `@grosskopf2025ursa`
+URSA is being actively used in various scientific applications. As an example, \autoref{fig:helios} shows the application of URSA for the design of a capsule that can be employed in an Inertial Confinement Fusion experiment. This workflow involved the planning agent, equipped with the o3-mini model as the backend LLM and the execution agent, equipped with the o3 model. More details about this worflow can be found in @grosskopf2025ursa
 
-![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from `@grosskopf2025ursa`.\label{fig:helios}](helios.png)
+![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from @grosskopf2025ursa.\label{fig:helios}](helios.png)
 
-As another example, Fig.\autoref{fig:lammps} shows the results of atomistic calculations performed by the LAMMPS agent, when tasked with calculating the elastic constants of a certain high entropy alloy. Calculations such as these are crucial for the design of novel materials. More details of the LAMMPS agent can be found in its dedicated paper `[@author:2001]`.
+As another example, \autoref{fig:lammps} shows the results of atomistic calculations performed by the LAMMPS agent, when tasked with calculating the elastic constants of a certain high entropy alloy. Calculations such as these are crucial for the design of novel materials. More details of the LAMMPS agent can be found in its dedicated paper [@author:2001].
 
 ![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](lammps.png)
 
