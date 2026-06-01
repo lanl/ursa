@@ -6,15 +6,66 @@ tags:
 authors:
   - name: Michael Grosskopf
     orcid: 0000-0002-7838-3609
-    equal-contrib: true
-    affiliation: 1 
-  - name: Nathan Debardeleben
-    equal-contrib: true 
     affiliation: 1
+    
+  - name: Nathan Debardeleben
+    orcid: 0000-0002-5593-9205
+    affiliation: 1
+
+  - name: Russell Bent
+    orcid: 0000-0002-7300-151X
+    affiliation: 1
+
+  - name: Rahul Somasundaram
+    orcid: 0000-0003-0427-3893
+    affiliation: 1
+
+  - name: Isaac Michaud
+    orcid: 0000-0003-3349-0467
+    affiliation: 1
+
+  - name: Arthur Lui
+    orcid: 0000-0002-3652-0599
+    affiliation: 1
+
+  - name: Alexius Wadell
+    orcid: 0000-0001-7589-1870
+    affiliation: 1
+
+  - name: Warren D. Graham
+    orcid: 0009-0002-7517-3275
+    affiliation: 1
+
+  - name: Golo A Wimmer
+    orcid: 0000-0002-7871-1748
+    affiliation: 1
+
+  - name: Sachin Shivakumar
+    orcid: 0000-0003-1353-2834
+    affiliation: 1
+
+  - name: Joan Vendrell Gallart
+    orcid: 0000-0002-3645-8692
+    affiliation: 1
+
+  - name: Harsha Nagarajan
+    orcid: 0000-0003-4550-1100
+    affiliation: 1
+
+  - name: Jamal Mohd-Yusof
+    orcid: 0000-0002-9844-689X
+    affiliation: 1
+
+  - name: Earl Lawrence
+    orcid: 0000-0002-6473-1887
+    affiliation: 1
+    
 affiliations:
  - name: Los Alamos National Laboratory, Los Alamos, New Mexico, United States
    index: 1
-date: 28 May 2026
+   
+date: 01 June 2026
+
 bibliography: paper.bib
 
 ---
