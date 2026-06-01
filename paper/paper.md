@@ -84,32 +84,14 @@ Finally, URSA allows for the construction of highly domain-specific agents that 
 
 URSA is seeing growing usage in the scientific community, averaging ~1500 downloads a month on PyPI. While primarily developed at Los Alamos National Laboratory for its research activities, our vision is that it evolves beyond this core through contributions from the wider scientific community.
 
-URSA is being actively used 
+URSA is being actively used in various scientific applications. As an example, Fig.\autoref{fig:helios} shows the application of URSA for the design of a capsule that can be employed in an Inertial Confinement Fusion experiment. This workflow involved the planning agent, equipped with the o3-mini model as the backend LLM and the execution agent, equipped with the o3 model. More details about this worflow can be found in `@grosskopf2025ursa`
 
-![Caption for example figure.\label{fig:example}](helios.png)
+![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from `@grosskopf2025ursa`.\label{fig:helios}](helios.png)
 
-# Citations
+As another example, Fig.\autoref{fig:lammps} shows the results of atomistic calculations performed by the LAMMPS agent, when tasked with calculating the elastic constants of a certain high entropy alloy. Calculations such as these are crucial for the design of novel materials. More details of the LAMMPS agent can be found in its dedicated paper `[@author:2001]`.
 
-Citations to entries in paper.bib should be in
-[rMarkdown](http://rmarkdown.rstudio.com/authoring_bibliographies_and_citations.html)
-format.
+![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](lammps.png)
 
-If you want to cite a software repository URL (e.g. something on GitHub without a preferred
-citation) then you can do it with the example BibTeX entry below for @fidgit.
-
-For a quick reference, the following citation commands can be used:
-- `@author:2001`  ->  "Author et al. (2001)"
-- `[@author:2001]` -> "(Author et al., 2001)"
-- `[@author1:2001; @author2:2001]` -> "(Author1 et al., 2001; Author2 et al., 2002)"
-
-# Figures
-
-Figures can be included like this:
-![Caption for example figure.\label{fig:example}](figure.png)
-and referenced from text using \autoref{fig:example}.
-
-Figure sizes can be customized by adding an optional second parameter:
-![Caption for example figure.](figure.png){ width=20% }
 
 # AI usage disclosure
 
@@ -118,7 +100,6 @@ of this manuscript, or the preparation of supporting materials.
 
 # Acknowledgements
 
-We acknowledge contributions from Brigitta Sipocz, Syrtis Major, and Semyeong
-Oh, and support from Kathryn Johnston during the genesis of this project.
+We acknowledge ....
 
 # References
