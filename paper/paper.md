@@ -23,17 +23,17 @@ bibliography: paper.bib
 
 In recent years, Large Language Models (LLMs) have progressed beyond their traditional role as chatbots, finding application in the automation and acceleration of a wide range of tasks. Through the use of agentic frameworks and tool integration, LLMs are increasingly being employed for software engineering, code generation, information retrieval, and complex decision-making workflows. In parallel, the application of AI agents to scientific research is receiving growing attention, with the potential to assist researchers in activities such as hypothesis generation, experimental planning, code development, data analysis, and result validation. 
 
-Here,  we present `URSA` (Universal Research and Scientific Agent), an open-source ecosystem of modular, extensible, and configurable AI agents designed specifically for scientific workflows. URSA provides a flexible framework for constructing and employing research-oriented agents that can integrate domain knowledge, computational tools, and large language models. By emphasizing modularity and adaptability, `URSA` enables researchers to develop, evaluate, and deploy agent-based systems across a broad range of scientific applications.
+Here, we present URSA (Universal Research and Scientific Agent), an open-source ecosystem of modular and extensible AI agents designed for scientific workflows. URSA provides a framework for constructing and deploying research-oriented agents that integrate domain knowledge, computational tools, and large language models. The framework supports both general-purpose scientific reasoning and the development of specialized agents tailored to domain-specific research tasks.
 
 # Statement of need
 
 Modern scientific research workflows involve a sequence of complex and interconnected tasks, including hypothesis generation, literature review, research planning, experiment execution, data analysis, and result validation. Depending on the scientific domain, these workflows may also require specialized capabilities such as large-scale numerical simulations, software development, code execution, and interaction with external scientific tools and databases.
 
-URSA has been designed to support this broad range of activities through a composable system of collaborating agents. A central goal of the project is to provide a unified framework that can support as much of the scientific research lifecycle as possible while remaining sufficiently flexible to accommodate domain-specific requirements. For a given scientific problem, URSA can:
+URSA has been designed to support this broad range of activities through a composable system of collaborating agents. A central goal of the project is to provide a unified framework that can support as much of the scientific research lifecycle as possible while remaining flexible enough to accommodate domain-specific requirements. For a given scientific problem, URSA can:
 
-* Decompose a high-level objective into a sequence of executable tasks, refining the resulting plan through interactions among specialized agents.
-* Execute individual tasks using agents that interact with external tools and services, typically through the Model Context Protocol (MCP).
-* Validate and refine intermediate and final results through agents that perform literature reviews and retrieve information from arXiv and other web-based resources.
+* Decompose high-level objectives into executable tasks.
+* Execute those tasks through interactions with external tools and services.
+* Validate and refine results using scientific literature and external knowledge sources.
 
 Many scientific workflows additionally require domain-specific capabilities, such as running simulation codes on high-performance computing (HPC) resources. URSA's modular architecture enables the construction of specialized agents by composing its core planning, execution, and validation components. The current codebase includes several examples of such agents, including:
 
@@ -41,100 +41,52 @@ Many scientific workflows additionally require domain-specific capabilities, suc
 * Agents specialized for molecular dynamics simulations that aid in the design of novel materials.
 * Agents for optimization and inverse-design problems.
 
-In addition to the agents provided with the framework, users can create their own specialized agents by composing existing URSA components with domain-specific tools, knowledge sources, and workflows. This extensibility enables URSA to be adapted to new scientific domains and emerging research applications without requiring modifications to the core framework.
-
-By combining general-purpose scientific reasoning agents with domain-specific tools and workflows, URSA aims to provide a comprehensive yet extensible framework for AI-assisted scientific research.
+In addition to the agents provided with the framework, users can create their own specialized agents by composing existing URSA components with domain-specific tools, knowledge sources, and workflows. By combining scientific reasoning, tool use, and domain-specific workflows within a common architecture, URSA aims to provide a comprehensive yet extensible framework for AI-assisted scientific research.
 
 # State of the field                                                                                                                  
 
-Several tools exist for galactic dynamics computations:                                                     
-`galpy` [@Bovy:2015] is a Python package with similar goals,
-providing orbit integration and potential classes for galactic dynamics.                                                              
-`NEMO` [@Teuben:1995] is a well-established, comprehensive stellar dynamics                                                           
-toolbox written primarily in C, offering extensive functionality but with a                                                           
-steeper learning curve and less integration with modern Python workflows.                                                             
-Other tools like `GalPot` provide specific Milky Way potential models but lack                                                        
-the broader dynamical analysis capabilities.                                                                                          
-                                                                                                                                        
-`Gala` was built rather than contributing to existing projects for several                                                            
-reasons. First, `Gala` was designed from the ground up to integrate seamlessly                                                        
-with the Astropy ecosystem, using `astropy.units` and `astropy.coordinates`                                                           
-as core dependencies rather than optional features. This tight integration                                                            
-enables natural workflows for astronomers already using Astropy. Second,                                                              
-`Gala`'s object-oriented API with consistent interfaces across subpackages                                                            
-(potentials, integrators, dynamics) provides a more modular and extensible                                                            
-design than alternatives available at the time. Third, `Gala` fills a specific                                                        
-niche between simple demonstration codes and full N-body simulation packages                                                          
-like `Gadget` [@Springel:2005] – it focuses on the common tasks in galactic                                                             
-dynamics research (orbit integration, potential evaluation, coordinate                                                                
-transformations) while maintaining both performance through C implementations                                                         
-and usability through its Python interface.  
+Some of the most widely used agentic systems include Claude Code and Codex. These coding-focused agents have demonstrated the ability of LLM-based systems to support software engineering workflows, including repository exploration, code generation, debugging, code execution, and iterative software development. By combining language models with tool use and execution environments, these systems have shown that AI agents can autonomously perform complex multi-step tasks that traditionally required significant human effort. However, while such systems are highly effective for software engineering tasks, scientific research often requires additional capabilities, including literature review, domain-specific reasoning, interaction with scientific software, large-scale simulations, and specialized validation procedures.
+
+Several agentic systems have also been developed specifically for scientific research, including Sakana AI's AI Scientist, Google's Co-Scientist, SciAgents, Agent Laboratory, Aviary, and OpenAI's Deep Research. While these systems demonstrate the potential of AI-assisted scientific discovery, many are designed as end-to-end research assistants or focus on specific research tasks. In contrast, URSA emphasizes extensibility and composition, enabling users to construct customized scientific workflows and specialized agents that integrate domain knowledge, scientific software, simulation codes, and computational resources.
 
 # Software design
 
-`Gala`'s design philosophy is based on three core principles: (1) to provide a
-user-friendly, modular, object-oriented API, (2) to use community tools and
-standards (e.g., Astropy for coordinates and units handling), and (3) to use
-low-level code (C/C++/Cython) for performance while keeping the user interface
-in Python. Within each of the main subpackages in `gala` (`gala.potential`,
-`gala.dynamics`, `gala.integrate`, etc.), we try to maintain a consistent API
-for classes and functions. For example, all potential classes share a common
-base class and implement methods for computing the potential, forces, density,
-and other derived quantities at given positions. This also works for
-compositions of potentials (i.e., multi-component potential models), which
-share the potential base class but also act as a dictionary-like container for
-different potential components. As another example, all integrators implement a
-common interface for numerically integrating orbits. The integrators and core
-potential functions are all implemented in C without support for units, but the
-Python layer handles unit conversions and prepares data to dispatch to the C
-layer appropriately.Within the coordinates subpackage, we extend Astropy's
-coordinate classes to add more specialized coordinate frames and
-transformations that are relevant for Galactic dynamics and Milky Way research.
+URSA is built on top of LangGraph and is agnostic to the underlying large language model. The framework is organized around a collection of core agents that support general scientific workflows and serve as building blocks for the construction of domain-specific agents. This design enables the same architectural components to be reused across a wide range of scientific applications.
+
+## Core Agents
+
+URSA's core agents include, but are not limited to, the following:
+
+* Planning Agent: This agent decomposes a user-specified scientific problem into a sequence of executable tasks. Implemented as a LangGraph workflow, it consists of three LLM-driven nodes: a planner node that generates an initial research plan, a reviewer node that evaluates and iteratively refines the plan, and a formalizer node that converts the approved plan into a structured JSON representation. This structured output can then be passed to downstream agents, such as the Execution Agent.
+
+* Execution Agent: This agent carries out research tasks specified either in natural language or in the structured JSON format produced by the Planning Agent. It interacts with tools through LangGraph tool calls and through the Model Context Protocol (MCP), allowing virtually any user-provided executable to be incorporated into agent workflows. The Execution Agent also includes built-in tools for code generation and execution, file reading and writing, and system command execution. To improve safety, proposed system commands are screened by an LLM-driven safety node before execution.
+
+* ArXiv Agent: This agent supports literature-review by searching, downloading, and analyzing papers from the arXiv repository. Given a user query, it uses the arXiv search API to identify relevant papers and constructs a retrieval-augmented generation (RAG) database for each paper using a user-specified embedding model. LLM-backed nodes then generate summaries of the individual papers. When the underlying LLM supports multimodal input, the agent can summarize both textual content and figures from the papers. A final aggregator node synthesizes the individual summaries into a report tailored to the user's query.
+
+## Simulation Agent
+
+The Simulation Agent supports a key aspect of many scientific workflows: the use of computationally intensive simulation codes on high-performance computing (HPC) resources. The agent is capable of interacting with user-specified simulation codes, including their compilation, execution, debugging, and analysis.
+
+The Simulation Agent also illustrates URSA's compositional design philosophy. Rather than implementing simulation-specific functionality from scratch, it is constructed by orchestrating multiple instances of the core Execution Agent within a LangGraph workflow. One execution agent is responsible for documentation and knowledge acquisition, while another is responsible for simulation setup, execution, debugging, and analysis. The documentation stage gathers information from user-provided manuals, web resources, scientific literature, and RAG-based knowledge bases to construct a task-specific user guide. This guide is then passed to the simulation stage, which uses it to configure and execute simulation campaigns, analyze outputs, and iteratively resolve execution failures. A final summarization stage synthesizes the results of the workflow.
+
+This architecture demonstrates how URSA's core agents can be composed into domain-specific agents that incorporate specialized knowledge and tools while reusing common execution and reasoning capabilities.
+
+
+## Extended Domain-Specific Agents
+
+Finally, URSA allows for the construction of highly domain-specific agents that can fit into the bigger URSA ecosystem in a natural manner. As examples, we discuss two specific agents
+
+* LAMMPS Agent: The LAMMPS Agent is a domain-specific agent for atomistic simulations built on top of the URSA framework. The agent is capable of autonomously orchestrating the full lifecycle of a molecular dynamics simulation, including interatomic potential selection, generation of LAMMPS input scripts, simulation execution, iterative error recovery, and post-processing of results. The agent can operate in a highly autonomous mode requiring only a natural-language description of the desired simulation, or in an expert mode where users can provide simulation templates, interatomic potentials, and other domain-specific inputs. A key feature of the agent is its ability to iteratively refine simulation inputs in response to execution failures and to leverage other agents within the URSA ecosystem for tasks such as visualization, literature review, and validation against published results.
+
+* Optimization Agent: The Optimization Agent is a self-contained LangGraph workflow for formulating and solving optimization and inverse-design problems from natural-language input. The agent first extracts the optimization problem, converts it into a structured mathematical representation, and optionally discretizes the problem when infinite-dimensional variables or constraints are detected. It then selects an appropriate solver, generates executable optimization code, runs feasibility checks using a dedicated tool, verifies the resulting formulation, and produces a final explanation of the solution. If verification fails, the workflow loops back to the problem-extraction stage, allowing the agent to iteratively revise the formulation. Unlike the Simulation Agent, the Optimization Agent is not built by composing multiple URSA agents, but it follows the same graph-based design philosophy and can be incorporated into larger URSA workflows.
 
 # Research impact statement
 
-`Gala` has demonstrated significant research impact and grown both its user base
-and contributor community since its initial release. The package has evolved
-through contributions from over 18 developers beyond the original core developer
-(@adrn), with community members adding new features, reporting bugs, and
-suggesting new features.
+URSA is seeing growing usage in the scientific community, averaging ~1500 downloads a month on PyPI. While primarily developed at Los Alamos National Laboratory for its research activities, our vision is that it evolves beyond this core through contributions from the wider scientific community.
 
-While `Gala` started as a tool primarily to support the core developer's
-research, it has expanded organically to support a range of applications across
-domains in astrophysics related to Milky Way and galactic dynamics. The package
-has been used in over 400 publications (according to Google Scholar) spanning
-topics in galactic dynamics such as modeling stellar streams [@Pearson:2017],
-Milky Way mass modeling, and interpreting kinematic and stellar population
-trends in the Galaxy. `Gala` is integrated within the Astropy ecosystem as an
-affiliated package and has built functionality that extends the widely-used
-`astropy.units` and `astropy.coordinates` subpackages. `Gala`'s impact extends
-beyond citations in research: Because of its focus on usability and user
-interface design, `Gala` has also been incorporated into graduate-level galactic
-dynamics curricula at multiple institutions.
+URSA is being actively used 
 
-`Gala` has been downloaded over 100,000 times from PyPI and conda-forge yearly
-(or ~2,000 downloads per week) over the past few years, demonstrating a broad
-and active user community. Users span career stages from graduate students to
-faculty and other established researchers and represent institutions around the
-world. This broad adoption and active participation validate `Gala`'s role as
-core community infrastructure for galactic dynamics research.
-
-# Mathematics
-
-Single dollars ($) are required for inline mathematics e.g. $f(x) = e^{\pi/x}$
-
-Double dollars make self-standing equations:
-
-$$\Theta(x) = \left\{\begin{array}{l}
-0\textrm{ if } x < 0\cr
-1\textrm{ else}
-\end{array}\right.$$
-
-You can also use plain \LaTeX for equations
-\begin{equation}\label{eq:fourier}
-\hat f(\omega) = \int_{-\infty}^{\infty} f(x) e^{i\omega x} dx
-\end{equation}
-and refer to \autoref{eq:fourier} from text.
+![Caption for example figure.\label{fig:example}](helios.png)
 
 # Citations
 
