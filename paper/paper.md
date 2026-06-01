@@ -82,16 +82,17 @@ Finally, URSA allows for the construction of highly domain-specific agents that 
 
 # Research impact statement
 
-URSA is seeing growing usage in the scientific community, averaging ~1500 downloads a month on PyPI. While primarily developed at Los Alamos National Laboratory for its research activities, our vision is that it evolves beyond this core through contributions from the wider scientific community.
+URSA is actively used in a growing number of scientific research applications, averaging ~1500 downloads a month on PyPI. While the framework was initially developed at Los Alamos National Laboratory, it is distributed as open-source software and is intended to support contributions and adoption by the broader scientific community.
 
-URSA is being actively used in various scientific applications. As an example, \autoref{fig:helios} shows the application of URSA for the design of a capsule that can be employed in an Inertial Confinement Fusion experiment. This workflow involved the planning agent, equipped with the o3-mini model as the backend LLM and the execution agent, equipped with the o3 model. More details about this worflow can be found in @grosskopf2025ursa
+As one example, \autoref{fig} shows the use of URSA in the design of inertial confinement fusion (ICF) capsules. In this workflow, URSA's planning and execution agents were used to autonomously explore candidate designs and optimize neutron yield. More details of this application can be found in @grosskopf2025ursa.
 
 ![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from @grosskopf2025ursa.\label{fig:helios}](helios.png)
 
-As another example, \autoref{fig:lammps} shows the results of atomistic calculations performed by the LAMMPS agent, when tasked with calculating the elastic constants of a certain high entropy alloy. Calculations such as these are crucial for the design of novel materials. More details of the LAMMPS agent can be found in its dedicated paper [@author:2001].
+As a second example, \autoref{fig} shows atomistic calculations performed by URSA's LAMMPS Agent for a high-entropy alloy. Such calculations are commonly employed in computational materials science to predict material properties and guide the design of novel materials. More details of the LAMMPS Agent can be found in [@author:2001].
 
 ![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](lammps.png)
 
+These examples illustrate the breadth of scientific domains in which URSA can be applied, ranging from optimization-driven design problems to large-scale simulation and materials modeling workflows.
 
 # AI usage disclosure
 
