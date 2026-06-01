@@ -3,7 +3,10 @@ from langchain.embeddings import init_embeddings
 from langchain_core.messages import HumanMessage
 
 from ursa.agents import ExecutionAgent
+from ursa.util.events import configure_event_logging
 from ursa.util.memory_logger import AgentMemory
+
+configure_event_logging()
 
 ### Run a simple example of an Execution Agent.
 

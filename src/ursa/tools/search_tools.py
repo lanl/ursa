@@ -2,12 +2,9 @@ import asyncio
 from pathlib import Path
 
 from langchain.tools import ToolRuntime, tool
-from rich import get_console
-from rich.panel import Panel
 
 from ursa.agents import ArxivAgent, OSTIAgent, WebSearchAgent
-
-console = get_console()
+from ursa.util.events import ToolEvents
 
 
 @tool
@@ -27,6 +24,7 @@ def run_arxiv_search(
             integer number of papers to return (defaults 3). Request fewer if searching for something
             very specific or a larger number if broadly searching for information. Do not exceeed 10.
     """
+    events = ToolEvents.from_runtime("run_arxiv_search", runtime)
     try:
         agent = ArxivAgent(
             llm=runtime.context.llm,
@@ -39,7 +37,12 @@ def run_arxiv_search(
             summaries_path=Path("./arxiv_summaries"),
             download=True,
         )
-        console.print(f"[bold cyan]Searching ArXiv for: [default]{query}")
+        events.emit(
+            "Searching ArXiv",
+            stage="search",
+            query=query,
+            max_results=max_results,
+        )
         assert isinstance(query, str)
 
         arxiv_result = asyncio.run(
@@ -49,16 +52,22 @@ def run_arxiv_search(
             )
         )["final_summary"]
 
-        console.print(
-            Panel(
-                f"{arxiv_result}",
-                title=f"[bold cyan on black]ArXiv summary for {query}",
-                border_style="cyan on black",
-                style="cyan on black",
-            )
+        events.emit(
+            "ArXiv search complete",
+            stage="search_result",
+            query=query,
+            result_chars=len(arxiv_result),
         )
         return f"[ArXiv Agent Output]:\n {arxiv_result}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
+        events.emit(
+            "ArXiv search failed",
+            stage="search",
+            phase="error",
+            query=query,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
         return f"Unexpected error while running ArxivAgent: {e}"
 
 
@@ -82,6 +91,7 @@ def run_web_search(
             integer number of pages to return (defaults 3). Request fewer if searching for something
             very specific or a larger number if broadly searching for information. Do not exceeed 10.
     """
+    events = ToolEvents.from_runtime("run_web_search", runtime)
     try:
         agent = WebSearchAgent(
             llm=runtime.context.llm,
@@ -94,7 +104,12 @@ def run_web_search(
             summaries_path=Path("./web_summaries"),
             download=True,
         )
-        console.print(f"[bold cyan]Searching Web for: [default]{query}")
+        events.emit(
+            "Searching Web",
+            stage="search",
+            query=query,
+            max_results=max_results,
+        )
         assert isinstance(query, str)
 
         web_result = asyncio.run(
@@ -104,16 +119,22 @@ def run_web_search(
             )
         )["final_summary"]
 
-        console.print(
-            Panel(
-                f"{web_result}",
-                title=f"[bold cyan on black]Web summary for {query}",
-                border_style="cyan on black",
-                style="cyan on black",
-            )
+        events.emit(
+            "Web search complete",
+            stage="search_result",
+            query=query,
+            result_chars=len(web_result),
         )
         return f"[Web Search Agent Output]:\n {web_result}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
+        events.emit(
+            "Web search failed",
+            stage="search",
+            phase="error",
+            query=query,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
         return f"Unexpected error while running WebSearchAgent: {e}"
 
 
@@ -137,7 +158,7 @@ def run_osti_search(
             integer number of papers to return (defaults 3). Request fewer if searching for something
             very specific or a larger number if broadly searching for information. Do not exceeed 10.
     """
-    max_results
+    events = ToolEvents.from_runtime("run_osti_search", runtime)
     try:
         agent = OSTIAgent(
             llm=runtime.context.llm,
@@ -151,7 +172,12 @@ def run_osti_search(
             vectorstore_path=Path("./osti_vectorstores"),
             download=True,
         )
-        console.print(f"[bold cyan]Searching OSTI.gov for: [default]{query}")
+        events.emit(
+            "Searching OSTI.gov",
+            stage="search",
+            query=query,
+            max_results=max_results,
+        )
         assert isinstance(query, str)
 
         osti_result = asyncio.run(
@@ -161,14 +187,20 @@ def run_osti_search(
             )
         )["final_summary"]
 
-        console.print(
-            Panel(
-                f"[cyan on black]{osti_result}",
-                title=f"[bold cyan on black]OSTI.gov summary for {query}",
-                border_style="cyan on black",
-                style="cyan on black",
-            )
+        events.emit(
+            "OSTI.gov search complete",
+            stage="search_result",
+            query=query,
+            result_chars=len(osti_result),
         )
         return f"[OSTI Agent Output]:\n {osti_result}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
+        events.emit(
+            "OSTI.gov search failed",
+            stage="search",
+            phase="error",
+            query=query,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
         return f"Unexpected error while running OSTIAgent: {e}"

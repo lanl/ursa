@@ -2,6 +2,9 @@ from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 
 from ursa.agents.rag_agent import RAGAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 # Initialize agent
 llm = init_chat_model("openai:gpt-5.2")

@@ -15,6 +15,14 @@ from ursa.tools.write_code_tool import (
 )
 
 
+@pytest.fixture(autouse=True)
+def stub_event_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda *args, **kwargs: None,
+    )
+
+
 @pytest.fixture
 def mock_runtime():
     """Create a mock ToolRuntime with AgentContext."""

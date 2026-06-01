@@ -133,6 +133,16 @@ def _stub_model_init(monkeypatch):
         "ursa.cli.hitl.init_embeddings", fake_init_embeddings, raising=False
     )
     monkeypatch.setattr(
+        "ursa.cli.config.init_chat_model",
+        fake_init_chat_model,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "ursa.cli.config.init_embeddings",
+        fake_init_embeddings,
+        raising=False,
+    )
+    monkeypatch.setattr(
         "ursa.agents.rag_agent.init_embeddings",
         fake_init_embeddings,
         raising=False,

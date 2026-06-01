@@ -6,7 +6,7 @@ instructions by invoking LLM tool calls and coordinating a controlled workflow.
 Key features:
 - Workspace management with optional symlinking for external sources.
 - Safety-checked shell execution via run_command with output size budgeting.
-- Code authoring and edits through write_code and edit_code with rich previews.
+- Code authoring and edits through write_code and edit_code.
 - Web search capability through DuckDuckGoSearchResults.
 - Summarization of the session and optional memory logging.
 - Configurable graph with nodes for agent, action, and summarize.
@@ -34,7 +34,6 @@ from typing import (
     Any,
     Literal,
     NotRequired,
-    Optional,
     TypedDict,
 )
 
@@ -47,14 +46,10 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite
-
-# Rich
-from rich import get_console
-from rich.markdown import Markdown
-from rich.panel import Panel
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
@@ -79,15 +74,6 @@ from ursa.tools.search_tools import (
     run_web_search,
 )
 from ursa.util.memory_logger import AgentMemory
-
-console = get_console()  # always returns the same instance
-
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
 
 
 # Classes for typing
@@ -221,13 +207,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Optional[Any | AgentMemory] = None,
+        agent_memory: Any | AgentMemory | None = None,
         log_state: bool = False,
-        extra_tools: Optional[list[BaseTool] | None] = None,
+        extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        safe_codes: Optional[list[str]] = None,
         use_web: bool = False,
+        safe_codes: list[str] | None = None,
         **kwargs,
     ):
         default_tools = [
@@ -259,11 +245,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.log_state = log_state
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
-        self.tool_llm = llm
 
     # Define the function that calls the model
     def query_executor(
-        self, state: ExecutionState, runtime: Runtime[AgentContext]
+        self,
+        state: ExecutionState,
+        runtime: Runtime[AgentContext],
+        config: RunnableConfig | None = None,
     ) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
@@ -286,6 +274,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
+        events = self.events(config)
         new_state.setdefault("symlinkdir", {})
 
         full_overwrite = False
@@ -313,7 +302,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
             # Create the symlink (tell pathlib if the target is a directory).
             dst.symlink_to(src, target_is_directory=src.is_dir())
-            print(f"{RED}Symlinked:{RESET} {src} (source) --> {dst} (dest)")
+            events.emit(
+                "Workspace symlink created",
+                stage="workspace_symlink",
+                source=str(src),
+                destination=str(dst),
+            )
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
@@ -324,35 +318,34 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             messages = [SystemMessage(content=self.executor_prompt)] + messages
 
-        image_fns, image_message = self.check_for_images(runtime.context)
-        if image_message:
-            messages = messages + [image_message]
-
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.tool_llm.invoke(
                 messages, self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             response = AIMessage(content=f"Response error {e}")
             msg = new_state["messages"][-1].text
-            print("Error: ", e, " ", msg)
+            events.emit(
+                "Executor response failed",
+                stage="executor_error",
+                error_type=type(e).__name__,
+                error=str(e),
+                latest_message=msg[:2000],
+            )
             new_state["messages"].append(response)
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
         if self.log_state:
             self.write_state("execution_agent.json", new_state)
         if full_overwrite:
-            if image_fns:
-                new_state["messages"].insert(-2, image_message)
             return {
                 "messages": Overwrite(new_state["messages"]),
                 "symlinkdir": new_state["symlinkdir"],
             }
         else:
-            resp = [image_message, response] if image_fns else response
-            return {"messages": resp, "symlinkdir": new_state["symlinkdir"]}
+            return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
     def _get_original_user_request(self, state: ExecutionState) -> str:
         """Return the first human message as the original user request."""
@@ -367,7 +360,9 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             )
         return ""
 
-    def review_work(self, state: ExecutionState) -> ExecutionState:
+    def review_work(
+        self, state: ExecutionState, config: RunnableConfig | None = None
+    ) -> ExecutionState:
         """Review whether the completed work adequately addresses the request.
 
         This node runs after the executor emits an ordinary assistant response without
@@ -378,6 +373,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         to recap.
         """
         new_state = deepcopy(state)
+        events = self.events(config)
         full_overwrite = False
 
         new_state, full_overwrite = self.prepare_messages_context(
@@ -416,17 +412,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             "reason": reason,
         }
 
-        console.print(
-            Panel(
-                Markdown(reason or "No review reason provided."),
-                title=(
-                    "[bold green]Execution Review: Complete[/bold green]"
-                    if is_complete
-                    else "[bold yellow]Execution Review: Continue[/bold yellow]"
-                ),
-                border_style="green" if is_complete else "yellow",
-                expand=False,
-            )
+        events.emit(
+            "Execution Review: Complete"
+            if is_complete
+            else "Execution Review: Continue",
+            stage="review_work",
+            approved=is_complete,
+            reason=reason,
         )
 
         if is_complete:
@@ -456,7 +448,11 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             },
         )
 
-    def recap(self, state: ExecutionState) -> ExecutionState:
+    def recap(
+        self,
+        state: ExecutionState,
+        config: RunnableConfig | None = None,
+    ) -> ExecutionState:
         """Produce a concise summary of the conversation and optionally persist memory.
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
@@ -471,6 +467,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 the recap.
         """
         new_state = deepcopy(state)
+        events = self.events(config)
         full_overwrite = False
 
         # 0) Check message history length, summarize, and patch dangling tool calls.
@@ -499,17 +496,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             except Exception as e:
                 response_content = f"Response error {e}"
                 response = AIMessage(content=response_content)
-                print("Error: ", e, " ", new_state["messages"][-1].text)
-
-        console.print(
-            Panel(
-                Markdown(response_content),
-                title="[bold grey85 on black]Recap of Work",
-                border_style="grey85 on black",
-                style="grey85 on black",
-                expand=False,  # Make panel fit content width
-            )
-        )
+                events.emit(
+                    "Recap failed",
+                    stage="recap_error",
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    latest_message=new_state["messages"][-1].text[:2000],
+                )
 
         # 3) Optionally persist salient details to the memory backend.
         if self.agent_memory:
@@ -517,9 +510,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             # Collect human/system/tool message content; for AI tool calls, store args.
             for msg in new_state["messages"]:
                 msg_content = msg.text
-                if not isinstance(msg, AIMessage):
-                    memories.append(msg_content)
-                elif not msg.tool_calls:
+                if not isinstance(msg, AIMessage) or not msg.tool_calls:
                     memories.append(msg_content)
                 else:
                     tool_strings = []
@@ -527,8 +518,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                         tool_strings.append("Tool Name: " + tool["name"])
                         for arg_name in tool["args"]:
                             tool_strings.append(
-                                f"Arg: {str(arg_name)}\nValue: "
-                                f"{str(tool['args'][arg_name])}"
+                                f"Arg: {arg_name!s}\nValue: "
+                                f"{tool['args'][arg_name]!s}"
                             )
                     memories.append("\n".join(tool_strings))
             memories.append(response_content)
@@ -552,7 +543,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # Keep self.llm unbound for summary/recap calls. The executor loop uses a
         # separate tool-bound model so provider-specific tool transcripts cannot
         # leak into summarization history.
-        self.tool_llm = self.llm.bind_tools(self.tools.values())
+        self.tool_llm = self.tool_llm.bind_tools(self.tools.values())
 
         # Register nodes:
         # - "agent": LLM planning/execution step

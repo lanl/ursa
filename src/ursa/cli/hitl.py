@@ -3,14 +3,14 @@ import logging
 import os
 import threading
 from cmd import Cmd
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import aiosqlite
 from fastmcp import FastMCP
-from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.embeddings import init_embeddings
+from langchain.chat_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
@@ -22,6 +22,7 @@ from rich.theme import Theme
 from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
+from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
 from ursa.security import (
     enforce_group_base_url_policy,
@@ -76,6 +77,7 @@ class AgentHITL:
         prompt: str,
         last_agent_result: str | None = None,
         last_agent: Any | None = None,
+        callbacks: Sequence[Any] | None = None,
     ) -> str:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
@@ -91,7 +93,11 @@ class AgentHITL:
         # then invoke the agent and extract a final message from it's new state
         query = agent.format_query(prompt, state=self.state)
 
-        new_state = await agent.ainvoke(query)
+        invoke_config = None
+        if callbacks:
+            invoke_config = {"callbacks": list(callbacks)}
+
+        new_state = await agent.ainvoke(query, config=invoke_config)
         msg = agent.format_result(new_state)
         self.state = new_state
 
@@ -123,17 +129,19 @@ class HITL:
         enforce_group_base_url_policy(
             self.config.llm_model.base_url, self.group
         )
-        self.model: BaseChatModel = init_chat_model(
-            **self.config.llm_model.kwargs
-        )
+        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
-        self.embedding = None
         if self.config.emb_model:
             enforce_group_base_url_policy(
                 self.config.emb_model.base_url, self.group
             )
-            self.embedding = init_embeddings(**self.config.emb_model.kwargs)
-            enforce_model_group_policy(self.embedding, self.group)
+        self.embedding = (
+            self.config.emb_model.init_embedding()
+            if self.config.emb_model
+            else None
+        )
+        enforce_model_group_policy(self.embedding, self.group)
+
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
         self.memory = None
         if base_url := getattr(self.config.llm_model, "base_url"):
@@ -235,13 +243,19 @@ class HITL:
         assert agent._agent is not None
         return agent
 
-    async def run_agent(self, name: str, prompt: str) -> str:
+    async def run_agent(
+        self,
+        name: str,
+        prompt: str,
+        callbacks: Sequence[Any] | None = None,
+    ) -> str:
         assert name in self.agents, f"Unknown agent {name}"
         agent = await self.get_agent(name)
         msg = await agent(
             prompt,
             last_agent_result=self.last_agent_result,
             last_agent=self.last_agent,
+            callbacks=callbacks,
         )
         assert isinstance(msg, str)
         self.last_agent_result = msg
@@ -380,12 +394,23 @@ class UrsaRepl(Cmd):
     def run_agent(self, name: str, prompt: str | None = None):
         if not prompt:
             prompt = input(f"{name}: ")
-        with self.console.status("Generating response\n"):
-            result = self.hitl.run_agent(name, prompt)
-            result = self.ursa_loop.submit(result)
+        handler = HITLLogEventHandler(
+            console=self.console,
+            workspace=self.hitl.workspace,
+        )
+        result = self.hitl.run_agent(name, prompt, callbacks=[handler])
+        result = self.ursa_loop.submit(result)
 
         assert isinstance(result, str)
+        if handler.emitted_any:
+            self.console.print()
         self.show(result)
+
+    def run_prompt(self, prompt: str):
+        """Respond to a single prompt"""
+        prompt = self.precmd(prompt)
+        stop = self.onecmd(prompt)
+        return self.postcmd(stop, prompt)
 
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)

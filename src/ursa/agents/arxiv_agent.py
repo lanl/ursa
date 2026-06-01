@@ -1,4 +1,5 @@
 import base64
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,12 +14,15 @@ from langchain.chat_models import BaseChatModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from PIL import Image
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
 from ursa.util.http import build_httpx_client
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PaperMetadata(TypedDict):
@@ -38,7 +42,7 @@ def describe_image(image: Image.Image) -> str:
     try:
         from openai import OpenAI
     except ImportError:
-        print(
+        LOGGER.warning(
             "Vision transformer for summarizing images currently only implemented for OpenAI API."
         )
         return ""
@@ -142,30 +146,37 @@ class ArxivAgentLegacy(BaseAgent):
         self.database_path.mkdir(exist_ok=True, parents=True)
         self.summaries_path.mkdir(exist_ok=True, parents=True)
 
-    def _fetch_papers(self, query: str) -> list[PaperMetadata]:
+    def _fetch_papers(
+        self,
+        query: str,
+        config: RunnableConfig | None = None,
+    ) -> list[PaperMetadata]:
+        events = self.events(config)
         if self.download_papers:
             encoded_query = quote(query)
             url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results={self.max_results}"
-            #            print(f"URL is {url}") # if verbose
             entries = []
             try:
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
 
                 feed = feedparser.parse(response.content)
-                #                print(f"parsed response status is {feed.status}") # if verbose
                 entries = feed.entries
                 if feed.bozo:
                     raise Exception("Feed from arXiv looks like garbage =(")
             except requests.exceptions.Timeout:
-                print("Request timed out while fetching papers.")
+                LOGGER.warning("Request timed out while fetching papers.")
             except requests.exceptions.RequestException as e:
-                print(f"Request error encountered while fetching papers: {e}")
+                LOGGER.warning(
+                    "Request error encountered while fetching papers: %s", e
+                )
             except ValueError as ve:
-                print(f"Value error occurred while fetching papers: {ve}")
-            except Exception as e:
-                print(
-                    f"An unexpected error occurred while fetching papers: {e}"
+                LOGGER.warning(
+                    "Value error occurred while fetching papers: %s", ve
+                )
+            except Exception:
+                LOGGER.exception(
+                    "An unexpected error occurred while fetching papers"
                 )
 
             for i, entry in enumerate(entries):
@@ -179,11 +190,21 @@ class ArxivAgentLegacy(BaseAgent):
                 )
 
                 if os.path.exists(pdf_filename):
-                    print(
-                        f"Paper # {i + 1}, Title: {title}, already exists in database"
+                    events.emit(
+                        "Paper already exists in database",
+                        stage="download",
+                        paper_index=i + 1,
+                        title=title,
+                        path=pdf_filename,
                     )
                 else:
-                    print(f"Downloading paper # {i + 1}, Title: {title}")
+                    events.emit(
+                        "Downloading paper",
+                        stage="download",
+                        paper_index=i + 1,
+                        title=title,
+                        path=pdf_filename,
+                    )
                     response = requests.get(pdf_url)
                     with open(pdf_filename, "wb") as f:
                         f.write(response.content)
@@ -226,8 +247,12 @@ class ArxivAgentLegacy(BaseAgent):
 
         return papers
 
-    def _fetch_node(self, state: PaperState) -> PaperState:
-        papers = self._fetch_papers(state["query"])
+    def _fetch_node(
+        self,
+        state: PaperState,
+        config: RunnableConfig | None = None,
+    ) -> PaperState:
+        papers = self._fetch_papers(state["query"], config)
         return {**state, "papers": papers}
 
     def _summarize_node(self, state: PaperState) -> PaperState:
@@ -270,7 +295,7 @@ class ArxivAgentLegacy(BaseAgent):
             return i, summary
 
         if "papers" not in state or len(state["papers"]) == 0:
-            print(
+            LOGGER.warning(
                 "No papers retrieved - bad query or network connection to ArXiv?"
             )
             return {**state, "summaries": None}

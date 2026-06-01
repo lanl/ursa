@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 from typing import Annotated, Literal, TypedDict
@@ -5,6 +6,7 @@ from typing import Annotated, Literal, TypedDict
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.graph import END, START
 from langgraph.graph.message import add_messages
@@ -19,12 +21,7 @@ from ursa.prompt_library.execution_prompts import recap_prompt
 # from langchain_core.runnables.graph import MermaidDrawMethod
 from .base import BaseAgent
 
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
+LOGGER = logging.getLogger(__name__)
 
 code_extensions = [
     ".py",
@@ -56,8 +53,7 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
 
     def __init__(self, llm: BaseChatModel, **kwargs):
         super().__init__(llm, **kwargs)
-        print("### WORK IN PROGRESS ###")
-        print(
+        LOGGER.warning(
             "CODE REVIEW AGENT NOT YET FULLY IMPLEMENTED AND TESTED. BE AWARE THAT IT WILL LIKELY NOT WORK AS INTENDED YET."
         )
         self.recap_prompt = recap_prompt
@@ -112,19 +108,31 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
         )
         return {"messages": [response]}
 
-    def increment(self, state: CodeReviewState) -> CodeReviewState:
+    def increment(
+        self,
+        state: CodeReviewState,
+        config: RunnableConfig | None = None,
+    ) -> CodeReviewState:
         new_state = state.copy()
         new_state["iteration"] += 1
         if new_state["iteration"] >= len(new_state["code_files"]):
             new_state["iteration"] = -1
-        print(
-            f"On to file {new_state['iteration'] + 1} out of {len(new_state['code_files'])}"
+        self.events(config).emit(
+            "Advancing code review file",
+            stage="increment",
+            file_index=new_state["iteration"] + 1,
+            file_count=len(new_state["code_files"]),
         )
         return new_state
 
     # Define the function that calls the model
-    def safety_check(self, state: CodeReviewState) -> CodeReviewState:
+    def safety_check(
+        self,
+        state: CodeReviewState,
+        config: RunnableConfig | None = None,
+    ) -> CodeReviewState:
         new_state = state.copy()
+        events = self.events(config)
         if state["messages"][-1].tool_calls[0]["name"] == "run_cmd":
             query = state["messages"][-1].tool_calls[0]["args"]["query"]
             safety_check = StrOutputParser().invoke(
@@ -139,14 +147,11 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
                 )
             )
             if "[NO]" in safety_check:
-                print(f"{RED}{BOLD} [WARNING] {RESET}")
-                print(
-                    f"{RED}{BOLD} [WARNING] That command deemed unsafe and cannot be run: {RESET}",
+                LOGGER.warning(
+                    "Command deemed unsafe and cannot be run: %s --- %s",
                     query,
-                    " --- ",
                     safety_check,
                 )
-                print(f"{RED}{BOLD} [WARNING] {RESET}")
                 return {
                     "messages": [
                         "[UNSAFE] That command deemed unsafe and cannot be run: "
@@ -154,7 +159,11 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
                     ]
                 }
 
-            print(f"{GREEN}[PASSED] the safety check: {RESET}" + query)
+            events.emit(
+                "Command passed safety check",
+                stage="safety_check",
+                query=query,
+            )
         elif state["messages"][-1].tool_calls[0]["name"] == "write_code":
             fn = (
                 state["messages"][-1]
@@ -231,8 +240,7 @@ class CodeReviewAgent(BaseAgent[CodeReviewState]):
 def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
     """Run command from commandline"""
     workspace_dir = state["workspace"]
-
-    print("RUNNING: ", query)
+    LOGGER.info("Running command: %s", query)
     process = subprocess.Popen(
         query.split(" "),
         stdout=subprocess.PIPE,
@@ -243,8 +251,12 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
 
     stdout, stderr = process.communicate(timeout=600)
 
-    print("STDOUT: ", stdout)
-    print("STDERR: ", stderr)
+    LOGGER.info(
+        "Command finished: returncode=%s stdout_chars=%s stderr_chars=%s",
+        process.returncode,
+        len(stdout or ""),
+        len(stderr or ""),
+    )
 
     return f"STDOUT: {stdout} and STDERR: {stderr}"
 
@@ -260,7 +272,7 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]):
     workspace_dir = state["workspace"]
     full_filename = os.path.join(workspace_dir, filename)
 
-    print("[READING]: ", full_filename)
+    LOGGER.info("Reading file: %s", full_filename)
     with open(full_filename, "r") as file:
         file_contents = file.read()
     return file_contents
@@ -268,7 +280,9 @@ def read_file(filename: str, state: Annotated[dict, InjectedState]):
 
 @tool
 def write_file(
-    code: str, filename: str, state: Annotated[dict, InjectedState]
+    code: str,
+    filename: str,
+    state: Annotated[dict, InjectedState],
 ) -> str:
     """
     Writes text to a file in the given workspace as requested.
@@ -282,8 +296,8 @@ def write_file(
     """
     workspace_dir = state["workspace"]
 
-    print("[WRITING]: ", filename)
     try:
+        LOGGER.info("Writing file: %s", filename)
         # Extract code if wrapped in markdown code blocks
         if "```" in code:
             code_parts = code.split("```")
@@ -299,12 +313,12 @@ def write_file(
 
         with open(code_file, "w") as f:
             f.write(code)
-        print(f"Written code to file: {code_file}")
+        LOGGER.info("File written: %s", code_file)
 
         return f"File {filename} written successfully."
 
-    except Exception as e:
-        print(f"Error generating code: {str(e)}")
+    except Exception:
+        LOGGER.exception("Error generating code for %s", filename)
         # Return minimal code that prints the error
         return f"Failed to write {filename} successfully."
 
