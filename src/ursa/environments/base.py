@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from langchain.chat_models import BaseChatModel
 
+from ursa.security import group_environments_dir, validate_group_name
 from ursa.workflows.base_workflow import BaseWorkflow, InputLike
 
 from .config import EnvironmentMemberConfig, load_object, make_llm
@@ -16,8 +17,8 @@ class BaseEnvironment(BaseWorkflow):
     Environments compose agents and/or other environments while exposing the same
     simple ``invoke`` surface used by workflows. They deliberately keep persistent
     configuration separate from agent graph checkpoints: environment definitions live
-    under environment-specific cache roots, while member agents can still use the
-    existing ``~/.cache/ursa_agents/<group>/<agent_name>`` persistence mechanism.
+    under ``~/.cache/ursa/<group>/environments/``, while member agents use the
+    shared ``~/.cache/ursa/<group>/agents/<agent_name>`` persistence mechanism.
     """
 
     def __init__(
@@ -33,8 +34,11 @@ class BaseEnvironment(BaseWorkflow):
         super().__init__(**kwargs)
         self.llm = llm
         self.name = name
-        self.group = group
-        self.workspace = Path(workspace or f"ursa_{name}_workspace")
+        self.group = validate_group_name(group)
+        self.workspace = Path(
+            workspace
+            or group_environments_dir(self.group) / "workspaces" / name
+        )
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.persist_members = persist_members
 

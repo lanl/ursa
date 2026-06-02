@@ -9,9 +9,7 @@ import yaml
 from langchain.chat_models import BaseChatModel, init_chat_model
 
 from ursa.cli.config import ModelConfig, deep_interp_env
-
-_TEAM_CACHE_ROOT = Path.home() / ".cache" / "agent_teams"
-_SYMPOSIUM_CACHE_ROOT = Path.home() / ".cache" / "agent_symposiums"
+from ursa.security import group_environments_dir
 
 
 @dataclass(frozen=True)
@@ -124,18 +122,18 @@ def load_symposium_config(path: str | Path) -> AgentSymposiumConfig:
 
 def team_cache_dir(group: str, name: str) -> Path:
     """Return the persistent configuration directory for a named team."""
-    return _TEAM_CACHE_ROOT / group / name
+    return group_environments_dir(group) / "agent_teams" / name
 
 
 def symposium_cache_dir(group: str, name: str) -> Path:
     """Return the persistent configuration directory for a named symposium."""
-    return _SYMPOSIUM_CACHE_ROOT / group / name
+    return group_environments_dir(group) / "agent_symposiums" / name
 
 
 def save_team_config(
     config: AgentTeamConfig, path: str | Path | None = None
 ) -> Path:
-    """Persist a team configuration under ~/.cache/agent_teams by default."""
+    """Persist a team configuration under ~/.cache/ursa/<group>/environments by default."""
     target = (
         Path(path).expanduser()
         if path
@@ -152,7 +150,7 @@ def save_team_config(
 def save_symposium_config(
     config: AgentSymposiumConfig, path: str | Path | None = None
 ) -> Path:
-    """Persist a symposium configuration under ~/.cache/agent_symposiums by default."""
+    """Persist a symposium configuration under ~/.cache/ursa/<group>/environments by default."""
     target = (
         Path(path).expanduser()
         if path

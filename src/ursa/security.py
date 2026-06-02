@@ -9,8 +9,8 @@ from langchain.chat_models import BaseChatModel
 URSA_CACHE_DIR = Path("~/.cache/ursa").expanduser()
 # Backwards-compatible name used by existing modules/tests for the root that
 # contains group directories. In the hierarchical layout, each group lives at
-# ``AGENT_GROUPS_DIR / <group>`` and contains ``agents/``, ``rag/``, and
-# ``dashboard/`` subdirectories.
+# ``AGENT_GROUPS_DIR / <group>`` and contains ``agents/``, ``rag/``,
+# ``dashboard/``, and ``environments/`` subdirectories.
 AGENT_GROUPS_DIR = URSA_CACHE_DIR
 GROUP_CONFIG_FILENAME = "group.yaml"
 
@@ -45,6 +45,10 @@ def group_rag_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
 
 def group_dashboard_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
     return group_root_dir(group) / "dashboard"
+
+
+def group_environments_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return group_root_dir(group) / "environments"
 
 
 def group_config_file(group: str | None = DEFAULT_GROUP_NAME) -> Path:

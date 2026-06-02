@@ -2,16 +2,23 @@ from __future__ import annotations
 
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from ursa import security
 from ursa.environments import (
     AgentSymposiumConfig,
     AgentSymposiumEnvironment,
+    AgentTeamConfig,
     AgentTeamEnvironment,
     load_team_config,
     save_symposium_config,
     save_team_config,
 )
 from ursa.environments.base import result_to_text
-from ursa.environments.config import EnvironmentMemberConfig, load_object
+from ursa.environments.config import (
+    EnvironmentMemberConfig,
+    load_object,
+    symposium_cache_dir,
+    team_cache_dir,
+)
 
 
 class RecordingMember:
@@ -83,6 +90,40 @@ def fake_llm():
 def test_load_object_resolves_environment_short_names():
     assert load_object("AgentTeamEnvironment") is AgentTeamEnvironment
     assert load_object("AgentSymposiumEnvironment") is AgentSymposiumEnvironment
+
+
+def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):
+    cache_root = tmp_path / "ursa"
+    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", cache_root)
+
+    team = AgentTeamEnvironment(
+        llm=fake_llm(),
+        name="workspace_team",
+        group="science",
+        pi={
+            "name": "pi",
+            "agent": "tests.environments.test_environments.RecordingPI",
+        },
+        members=[
+            {
+                "name": "analyst",
+                "agent": "tests.environments.test_environments.RecordingMember",
+            }
+        ],
+        persist_members=True,
+    )
+
+    expected_workspace = (
+        cache_root
+        / "science"
+        / "environments"
+        / "workspaces"
+        / "workspace_team"
+    )
+    assert team.workspace == expected_workspace
+    assert team.workspace.is_dir()
+    assert team.pi.workspace == expected_workspace
+    assert team.members["analyst"].workspace == expected_workspace
 
 
 def test_team_pi_receives_member_delegation_tool_and_invokes_member(
@@ -212,6 +253,45 @@ members:
     )
     saved_symposium = save_symposium_config(
         symposium, tmp_path / "saved_symposium.yaml"
+    )
+    assert saved_symposium.exists()
+
+
+def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
+    cache_root = tmp_path / "ursa"
+    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", cache_root)
+
+    team = AgentTeamConfig(
+        name="science_team",
+        group="science",
+        pi=EnvironmentMemberConfig(name="pi"),
+        members=[EnvironmentMemberConfig(name="analyst")],
+    )
+    symposium = AgentSymposiumConfig(
+        name="science_symposium",
+        group="science",
+        organizer=EnvironmentMemberConfig(name="organizer"),
+        members=[EnvironmentMemberConfig(name="reviewer")],
+    )
+
+    assert team_cache_dir("science", "science_team") == (
+        cache_root / "science" / "environments" / "agent_teams" / "science_team"
+    )
+    assert symposium_cache_dir("science", "science_symposium") == (
+        cache_root
+        / "science"
+        / "environments"
+        / "agent_symposiums"
+        / "science_symposium"
+    )
+
+    saved_team = save_team_config(team)
+    saved_symposium = save_symposium_config(symposium)
+
+    assert saved_team == team_cache_dir("science", "science_team") / "team.yaml"
+    assert saved_team.exists()
+    assert saved_symposium == (
+        symposium_cache_dir("science", "science_symposium") / "symposium.yaml"
     )
     assert saved_symposium.exists()
 

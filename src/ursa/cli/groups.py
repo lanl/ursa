@@ -24,7 +24,7 @@ def _group_config_file(group_name: str) -> Path:
 
 def _ensure_group_subdirs(group_name: str) -> None:
     group_dir = _group_root_dir(group_name)
-    for subdir in ("agents", "rag", "dashboard"):
+    for subdir in ("agents", "rag", "dashboard", "environments"):
         (group_dir / subdir).mkdir(parents=True, exist_ok=True)
 
 
