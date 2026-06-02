@@ -13,7 +13,10 @@ from langchain.embeddings import Embeddings
 
 from ursa.security import AGENT_GROUPS_DIR, GROUP_CONFIG_FILENAME
 
-RAG_AGENTS_DIR = Path("~/.cache/ursa_rag").expanduser()
+# Backwards-compatible name for tests/imports. In the hierarchical layout this
+# is the root containing group directories; RAG agents live under
+# ``RAG_AGENTS_DIR / <group> / "rag"``.
+RAG_AGENTS_DIR = AGENT_GROUPS_DIR
 _RAG_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -54,7 +57,7 @@ def validate_rag_group_name(group_name: str | None) -> str:
 
 
 def rag_group_dir(group_name: str = "default") -> Path:
-    return RAG_AGENTS_DIR / validate_rag_group_name(group_name)
+    return RAG_AGENTS_DIR / validate_rag_group_name(group_name) / "rag"
 
 
 def _missing_group_error(group_name: str) -> ValueError:
@@ -71,34 +74,32 @@ def regular_agent_group_dir(group_name: str = "default") -> Path:
 
 
 def sync_rag_group_from_agent_group(group_name: str = "default") -> Path:
-    """Ensure a RAG group exists and mirrors the regular agent group policy.
+    """Ensure the group's RAG directory exists.
 
-    Non-default RAG groups are only valid if the corresponding regular URSA
-    agent group exists under ``~/.cache/ursa_agents/<group>``. When creating a
-    RAG group for the first time, copy that group's ``group.yaml`` into the RAG
-    cache so RAG collections preserve the same whitelist context.
+    In the hierarchical cache layout, a group has one shared root at
+    ``~/.cache/ursa/<group>``. Named agents live below ``agents/`` and RAG
+    collections live below ``rag/``. Non-default RAG groups are only valid if the
+    group root exists and contains the shared ``group.yaml`` policy file.
     """
     group = validate_rag_group_name(group_name)
+    group_dir = regular_agent_group_dir(group)
     target_dir = rag_group_dir(group)
 
     if group == "default":
+        group_dir.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=True)
         return target_dir
 
-    source_dir = regular_agent_group_dir(group)
-    if not source_dir.exists() or not source_dir.is_dir():
+    if not group_dir.exists() or not group_dir.is_dir():
         raise _missing_group_error(group)
 
-    source_config = source_dir / GROUP_CONFIG_FILENAME
+    source_config = group_dir / GROUP_CONFIG_FILENAME
     if not source_config.exists() or not source_config.is_file():
         raise FileNotFoundError(
             f"Group '{group}' is missing required config file '{GROUP_CONFIG_FILENAME}'."
         )
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_config = target_dir / GROUP_CONFIG_FILENAME
-    if not target_config.exists():
-        shutil.copy2(source_config, target_config)
     return target_dir
 
 
@@ -162,7 +163,7 @@ def build_persistent_rag_agent(
     database_path: str | Path | None = None,
     **kwargs: Any,
 ):
-    """Instantiate a RAGAgent backed by ~/.cache/ursa_rag/<group>/<name>.
+    """Instantiate a RAGAgent backed by ~/.cache/ursa/<group>/rag/<name>.
 
     Args:
         database_path: Optional source file/directory to scan for ingestion.

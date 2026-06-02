@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--group",
         default=os.environ.get("URSA_DASHBOARD_GROUP", "default"),
-        help="Agent group to use from ~/.cache/ursa_agents/<group>",
+        help="Agent group to use from ~/.cache/ursa/<group>",
     )
     ap.add_argument(
         "--config",

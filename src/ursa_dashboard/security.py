@@ -3,14 +3,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ursa.security import DEFAULT_GROUP_NAME, group_dashboard_dir
+
 
 class WorkspaceJailError(Exception):
     pass
 
 
-def workspace_root_from_env(
-    default: str | Path = Path.home() / ".cache/ursa_dashboard_workspace",
-) -> Path:
+def workspace_root_from_env(default: str | Path | None = None) -> Path:
     root = os.environ.get("URSA_DASHBOARD_WORKSPACE_ROOT")
     if root:
         p = Path(root)
@@ -19,7 +19,18 @@ def workspace_root_from_env(
                 "URSA_DASHBOARD_WORKSPACE_ROOT must be an absolute path"
             )
         return p
-    return Path(default).resolve()
+
+    if default is not None:
+        return Path(default).expanduser().resolve()
+
+    group = (
+        str(
+            os.environ.get("URSA_DASHBOARD_GROUP", DEFAULT_GROUP_NAME)
+            or DEFAULT_GROUP_NAME
+        ).strip()
+        or DEFAULT_GROUP_NAME
+    )
+    return group_dashboard_dir(group).resolve()
 
 
 def safe_join(root: Path, rel_path: str) -> Path:

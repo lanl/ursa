@@ -1,3 +1,6 @@
+import threading
+import time
+import webbrowser
 from pathlib import Path
 
 import typer
@@ -35,6 +38,13 @@ def main(
             os.environ["URSA_DASHBOARD_CONFIG"] = str(config)
         else:
             os.environ.pop("URSA_DASHBOARD_CONFIG", None)
+        if host in ["127.0.0.1", "localhost"]:
+
+            def open_browser():
+                time.sleep(1.5)
+                webbrowser.open(f"http://{host}:{port}")
+
+            threading.Thread(target=open_browser, daemon=True).start()
         uvicorn.run(
             "ursa_dashboard.app:create_app", factory=True, host=host, port=port
         )

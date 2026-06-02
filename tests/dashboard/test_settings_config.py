@@ -66,7 +66,7 @@ def test_apply_dashboard_config_validates_group_before_persisting(
 ):
     import ursa.security as security
 
-    groups_dir = tmp_path / "ursa_agents"
+    groups_dir = tmp_path / "ursa"
     group_dir = groups_dir / "my_safety_group"
     group_dir.mkdir(parents=True)
     (group_dir / "group.yaml").write_text(
