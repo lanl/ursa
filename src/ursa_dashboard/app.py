@@ -108,7 +108,7 @@ from .sessions import (
 from .sessions import (
     update_session as session_update_session,
 )
-from .settings import AuthConfig, SettingsStore
+from .settings import AuthConfig, SettingsStore, apply_dashboard_config
 
 
 def create_app() -> FastAPI:
@@ -162,6 +162,14 @@ def create_app() -> FastAPI:
         ).strip()
         or "default"
     )
+    dashboard_config = str(
+        os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
+    ).strip()
+    if dashboard_config:
+        apply_dashboard_config(
+            settings_store, dashboard_config, group=dashboard_group
+        )
+
     dashboard_use_web = str(
         os.environ.get("URSA_DASHBOARD_USE_WEB", "")
     ).strip().lower() in {
