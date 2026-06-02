@@ -64,7 +64,13 @@ from langgraph.types import Overwrite
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
-from ursa.security import enforce_model_group_policy
+from ursa.security import (
+    DEFAULT_GROUP_NAME,
+    enforce_model_group_policy,
+    group_agents_dir,
+    group_root_dir,
+    validate_group_name,
+)
 from ursa.util import Checkpointer
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
@@ -219,7 +225,7 @@ class BaseAgent(Generic[TState], ABC):
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or ".")
         self.agent_name = agent_name
-        self.group = group
+        self.group = validate_group_name(group)
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
         self.max_single_tool_message_tokens = max_single_tool_message_tokens
@@ -231,13 +237,13 @@ class BaseAgent(Generic[TState], ABC):
         self.rag_tool_return_k = rag_tool_return_k
         enforce_model_group_policy(self.llm, self.group)
         if (
-            not (Path.home() / ".cache/ursa_agents" / group).exists()
-            and group != "default"
+            not group_root_dir(self.group).exists()
+            and self.group != DEFAULT_GROUP_NAME
         ):
             raise ValueError(
                 (
-                    f"Group '{group}' does not exist. "
-                    f"Please use `ursa create-group {group} <group_config_file>` to create"
+                    f"Group '{self.group}' does not exist. "
+                    f"Please use `ursa create-group {self.group} <group_config_file>` to create"
                 )
             )
         set_checkpointer = True if checkpointer else False
@@ -256,8 +262,8 @@ class BaseAgent(Generic[TState], ABC):
                     )
                 self.den = self.workspace
             else:
-                den_name = Path(group) / agent_name
-                self.den = Path.home() / ".cache/ursa_agents" / den_name
+                den_name = Path(self.group) / "agents" / agent_name
+                self.den = group_agents_dir(self.group) / agent_name
                 if not self.den.exists():
                     print(f"[Agent Created]: {den_name}")
                 self.checkpointer = Checkpointer.from_workspace(self.den)

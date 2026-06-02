@@ -3,7 +3,29 @@ from pathlib import Path
 
 import yaml
 
-from ursa.security import AGENT_GROUPS_DIR, GROUP_CONFIG_FILENAME
+from ursa.security import (
+    AGENT_GROUPS_DIR,
+    GROUP_CONFIG_FILENAME,
+    validate_group_name,
+)
+
+
+def _group_root_dir(group_name: str) -> Path:
+    return AGENT_GROUPS_DIR / validate_group_name(group_name)
+
+
+def _group_agents_dir(group_name: str) -> Path:
+    return _group_root_dir(group_name) / "agents"
+
+
+def _group_config_file(group_name: str) -> Path:
+    return _group_root_dir(group_name) / GROUP_CONFIG_FILENAME
+
+
+def _ensure_group_subdirs(group_name: str) -> None:
+    group_dir = _group_root_dir(group_name)
+    for subdir in ("agents", "rag", "dashboard"):
+        (group_dir / subdir).mkdir(parents=True, exist_ok=True)
 
 
 def add_group_subcommands(subparsers) -> None:
@@ -104,30 +126,28 @@ def validate_group_config(config_file: Path) -> dict:
 
 def list_groups() -> None:
     AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-    default_dir = AGENT_GROUPS_DIR / "default"
-    default_dir.mkdir(exist_ok=True)
+    _group_root_dir("default").mkdir(parents=True, exist_ok=True)
+    _ensure_group_subdirs("default")
 
     for path in sorted(p for p in AGENT_GROUPS_DIR.iterdir() if p.is_dir()):
         print(path.name)
 
 
 def create_group(group_name: str, config_file: Path) -> None:
-    if not group_name.strip():
-        raise ValueError("Group name must not be empty")
-    if Path(group_name).name != group_name or group_name in {".", ".."}:
-        raise ValueError("Group name must be a simple directory name")
+    group_name = validate_group_name(group_name)
 
     validate_group_config(config_file)
 
     AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-    default_dir = AGENT_GROUPS_DIR / "default"
-    default_dir.mkdir(exist_ok=True)
+    _group_root_dir("default").mkdir(parents=True, exist_ok=True)
+    _ensure_group_subdirs("default")
 
-    group_dir = AGENT_GROUPS_DIR / group_name
+    group_dir = _group_root_dir(group_name)
     if group_dir.exists():
         raise FileExistsError(f"Group already exists: {group_name}")
 
     group_dir.mkdir()
+    _ensure_group_subdirs(group_name)
     destination = group_dir / GROUP_CONFIG_FILENAME
     shutil.copy2(config_file, destination)
     print(f"Created group '{group_name}' at {group_dir}")
@@ -135,14 +155,11 @@ def create_group(group_name: str, config_file: Path) -> None:
 
 
 def delete_group(group_name: str) -> None:
-    if not group_name.strip():
-        raise ValueError("Group name must not be empty")
-    if Path(group_name).name != group_name or group_name in {".", ".."}:
-        raise ValueError("Group name must be a simple directory name")
+    group_name = validate_group_name(group_name)
     if group_name == "default":
         raise ValueError("The default group cannot be deleted")
 
-    group_dir = AGENT_GROUPS_DIR / group_name
+    group_dir = _group_root_dir(group_name)
     if not group_dir.exists() or not group_dir.is_dir():
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
@@ -151,12 +168,9 @@ def delete_group(group_name: str) -> None:
 
 
 def show_group(group_name: str) -> None:
-    if not group_name.strip():
-        raise ValueError("Group name must not be empty")
-    if Path(group_name).name != group_name or group_name in {".", ".."}:
-        raise ValueError("Group name must be a simple directory name")
+    group_name = validate_group_name(group_name)
 
-    group_dir = AGENT_GROUPS_DIR / group_name
+    group_dir = _group_root_dir(group_name)
     if not group_dir.exists() or not group_dir.is_dir():
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
@@ -173,17 +187,14 @@ def show_group(group_name: str) -> None:
 
 
 def update_group(group_name: str, config_file: Path) -> None:
-    if not group_name.strip():
-        raise ValueError("Group name must not be empty")
-    if Path(group_name).name != group_name or group_name in {".", ".."}:
-        raise ValueError("Group name must be a simple directory name")
+    group_name = validate_group_name(group_name)
 
     validate_group_config(config_file)
 
-    group_dir = AGENT_GROUPS_DIR / group_name
+    group_dir = _group_root_dir(group_name)
     if not group_dir.exists() or not group_dir.is_dir():
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
-    destination = group_dir / GROUP_CONFIG_FILENAME
+    destination = _group_config_file(group_name)
     shutil.copy2(config_file, destination)
     print(f"Updated group '{group_name}' config at {destination}")

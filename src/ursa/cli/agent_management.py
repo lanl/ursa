@@ -8,9 +8,21 @@ from pathlib import Path
 
 from jsonargparse import ArgumentParser
 
-from ursa.security import AGENT_GROUPS_DIR, DEFAULT_GROUP_NAME
+from ursa.security import (
+    AGENT_GROUPS_DIR,
+    DEFAULT_GROUP_NAME,
+    validate_group_name,
+)
 
 _AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _group_root_dir(group_name: str) -> Path:
+    return AGENT_GROUPS_DIR / validate_group_name(group_name)
+
+
+def _group_agents_dir(group_name: str) -> Path:
+    return _group_root_dir(group_name) / "agents"
 
 
 def add_agent_management_subcommands(subparsers) -> None:
@@ -158,21 +170,21 @@ def add_agent_management_subcommands(subparsers) -> None:
 
 
 def ensure_group_dir(group_name: str) -> Path:
-    if not group_name.strip():
-        raise ValueError("Group name must not be empty")
-    if Path(group_name).name != group_name or group_name in {".", ".."}:
-        raise ValueError("Group name must be a simple directory name")
+    group_name = validate_group_name(group_name)
 
     AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-    group_dir = AGENT_GROUPS_DIR / group_name
-    if not group_dir.exists():
+    root_dir = _group_root_dir(group_name)
+    if not root_dir.exists():
         if group_name == DEFAULT_GROUP_NAME:
-            group_dir.mkdir(parents=True, exist_ok=True)
+            root_dir.mkdir(parents=True, exist_ok=True)
         else:
             raise FileNotFoundError(f"Group does not exist: {group_name}")
-    if not group_dir.is_dir():
-        raise ValueError(f"Group path is not a directory: {group_dir}")
-    return group_dir
+    if not root_dir.is_dir():
+        raise ValueError(f"Group path is not a directory: {root_dir}")
+
+    agents_dir = _group_agents_dir(group_name)
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    return agents_dir
 
 
 def validate_agent_name(name: str) -> str:

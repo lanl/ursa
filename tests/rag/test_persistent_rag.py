@@ -108,7 +108,7 @@ def test_resolve_ingest_source_validates_without_copying(tmp_path: Path):
 def test_build_persistent_rag_agent_uses_external_ingest_source(
     monkeypatch, tmp_path: Path
 ):
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa_rag")
+    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa")
     source = tmp_path / "docs"
     source.mkdir()
     captured = {}
@@ -129,7 +129,7 @@ def test_build_persistent_rag_agent_uses_external_ingest_source(
 
     assert (
         Path(captured["workspace"])
-        == tmp_path / "ursa_rag" / "default" / "docs"
+        == tmp_path / "ursa" / "default" / "rag" / "docs"
     )
     assert Path(captured["database_path"]) == source
     assert not any((captured["workspace"] / "database").iterdir())
@@ -142,7 +142,7 @@ def test_rag_ingest_passes_source_path_without_copying(
 
     from ursa.cli.rag_management import handle_rag_command
 
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa_rag")
+    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa")
     source = tmp_path / "source.md"
     source.write_text("hello", encoding="utf-8")
     captured = {}
@@ -183,7 +183,7 @@ def test_rag_ingest_passes_source_path_without_copying(
     assert handle_rag_command(args)
     assert captured["database_path"] == source.resolve()
     assert not any(
-        (tmp_path / "ursa_rag" / "default" / "docs" / "database").iterdir()
+        (tmp_path / "ursa" / "default" / "rag" / "docs" / "database").iterdir()
     )
 
 
@@ -221,47 +221,41 @@ def test_build_rag_tools_wraps_persisted_agent(monkeypatch, capsys):
     )
 
 
-def test_rag_group_copies_regular_agent_group_config(
-    monkeypatch, tmp_path: Path
-):
-    agent_groups = tmp_path / "ursa_agents"
-    rag_groups = tmp_path / "ursa_rag"
-    regular_group = agent_groups / "science"
-    regular_group.mkdir(parents=True)
-    group_config = regular_group / "group.yaml"
+def test_rag_group_uses_shared_group_config(monkeypatch, tmp_path: Path):
+    root = tmp_path / "ursa"
+    group_root = root / "science"
+    group_root.mkdir(parents=True)
+    group_config = group_root / "group.yaml"
     group_config.write_text(
         "allowed_base_urls:\n  - https://models.example.test\n",
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", rag_groups)
-    monkeypatch.setattr(persistence, "AGENT_GROUPS_DIR", agent_groups)
+    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", root)
+    monkeypatch.setattr(persistence, "AGENT_GROUPS_DIR", root)
 
     path = persistence.ensure_rag_agent_dir("science", "docs")
 
-    assert path == rag_groups / "science" / "docs"
-    copied_config = rag_groups / "science" / "group.yaml"
-    assert copied_config.read_text(encoding="utf-8") == group_config.read_text(
-        encoding="utf-8"
-    )
+    assert path == root / "science" / "rag" / "docs"
+    assert group_config.is_file()
+    assert not (root / "science" / "rag" / "group.yaml").exists()
 
 
 def test_rag_group_errors_when_regular_agent_group_is_missing(
     monkeypatch, tmp_path: Path
 ):
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa_rag")
-    monkeypatch.setattr(
-        persistence, "AGENT_GROUPS_DIR", tmp_path / "ursa_agents"
-    )
+    root = tmp_path / "ursa"
+    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", root)
+    monkeypatch.setattr(persistence, "AGENT_GROUPS_DIR", root)
 
     with pytest.raises(ValueError, match="Group 'missing' does not exist"):
         persistence.ensure_rag_agent_dir("missing", "docs")
 
 
-def test_rag_agent_dir_uses_separate_cache_root(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa_rag")
+def test_rag_agent_dir_uses_group_cache_root(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa")
     path = persistence.ensure_rag_agent_dir("default", "docs")
-    assert path == tmp_path / "ursa_rag" / "default" / "docs"
+    assert path == tmp_path / "ursa" / "default" / "rag" / "docs"
     assert (path / "database").is_dir()
     assert (path / "summaries").is_dir()
     assert (path / "vectorstore").is_dir()

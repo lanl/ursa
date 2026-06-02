@@ -6,7 +6,12 @@ from urllib.parse import urlsplit
 import yaml
 from langchain.chat_models import BaseChatModel
 
-AGENT_GROUPS_DIR = Path("~/.cache/ursa_agents").expanduser()
+URSA_CACHE_DIR = Path("~/.cache/ursa").expanduser()
+# Backwards-compatible name used by existing modules/tests for the root that
+# contains group directories. In the hierarchical layout, each group lives at
+# ``AGENT_GROUPS_DIR / <group>`` and contains ``agents/``, ``rag/``, and
+# ``dashboard/`` subdirectories.
+AGENT_GROUPS_DIR = URSA_CACHE_DIR
 GROUP_CONFIG_FILENAME = "group.yaml"
 
 
@@ -15,6 +20,35 @@ class GroupBaseURLPolicyError(ValueError):
 
 
 DEFAULT_GROUP_NAME = "default"
+
+
+def validate_group_name(group: str | None) -> str:
+    value = (group or DEFAULT_GROUP_NAME).strip()
+    if not value:
+        raise ValueError("Group name must not be empty")
+    if Path(value).name != value or value in {".", ".."}:
+        raise ValueError("Group name must be a simple directory name")
+    return value
+
+
+def group_root_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return AGENT_GROUPS_DIR.expanduser() / validate_group_name(group)
+
+
+def group_agents_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return group_root_dir(group) / "agents"
+
+
+def group_rag_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return group_root_dir(group) / "rag"
+
+
+def group_dashboard_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return group_root_dir(group) / "dashboard"
+
+
+def group_config_file(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return group_root_dir(group) / GROUP_CONFIG_FILENAME
 
 
 def normalize_base_url(url: str | None) -> str | None:
@@ -36,7 +70,7 @@ def get_model_base_url(model: object) -> str | None:
 
 
 def _group_dir(group: str) -> Path:
-    return AGENT_GROUPS_DIR.expanduser() / group
+    return group_root_dir(group)
 
 
 def _load_group_allowed_base_urls(group: str) -> list[str] | None:
@@ -49,7 +83,7 @@ def _load_group_allowed_base_urls(group: str) -> list[str] | None:
             f"Group '{group}' does not exist. Please create it before use."
         )
 
-    config_file = group_dir / GROUP_CONFIG_FILENAME
+    config_file = group_config_file(group)
     if not config_file.exists() or not config_file.is_file():
         raise GroupBaseURLPolicyError(
             f"Group '{group}' is missing required config file '{GROUP_CONFIG_FILENAME}'."
@@ -91,7 +125,7 @@ def _same_origin(url_a: str, url_b: str) -> bool:
 
 
 def is_base_url_allowed(base_url: str | None, group: str | None) -> bool:
-    effective_group = group or DEFAULT_GROUP_NAME
+    effective_group = validate_group_name(group)
     if effective_group == DEFAULT_GROUP_NAME:
         return True
 
@@ -110,7 +144,7 @@ def is_base_url_allowed(base_url: str | None, group: str | None) -> bool:
 def enforce_group_base_url_policy(
     base_url: str | None, group: str | None
 ) -> None:
-    effective_group = group or DEFAULT_GROUP_NAME
+    effective_group = validate_group_name(group)
     if effective_group == DEFAULT_GROUP_NAME:
         return
 
