@@ -281,7 +281,7 @@ def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
         cache_root
         / "science"
         / "environments"
-        / "agent_symposiums"
+        / "agent_symposia"
         / "science_symposium"
     )
 
