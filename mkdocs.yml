@@ -16,14 +16,22 @@ plugins:
           options:
             show_source: true  # link back to your code
             show_submodules: true
-   
+
 watch:
   - src
 
 nav:
   - Home: index.md
-  - Setup: 
+  - Installation: install.md
+  - Configuration: config.md
+  - Usage:
+      - Command Line: cli.md
+      - Web Dashboard: wdi.md
+      - Examples: usage.md
+  - Setup:
       - chatOllama: chatollama_setup.md
+  - MCP Server: mcp.md
+  - Sandboxing: sandbox.md
   - Agents:
       - arXiv Agent: arxiv_agent.md
       - DSIAgent: dsi_agent.md
@@ -32,13 +40,23 @@ nav:
       - Hypothesizer Agent: hypothesizer_agent.md
       - Planning Agent: planning_agent.md
       - Web Search Agent: web_search_agent.md
+  - Persistent Agents:
+      - Overview: persistent_agents.md
+      - Persistent named agents: persistence_updates/01_persistent_named_agents.md
+      - Groups and endpoint security: persistence_updates/02_groups_and_security.md
+      - Agent behaviors, tools, ChatAgent, and ExecutionAgent: persistence_updates/03_agent_behaviors_and_tools.md
+      - PromptingAgent guide: persistence_updates/04_prompting_agent.md
+      - Persistent RAG agents and RAG tools: persistence_updates/05_persistent_rag_agents.md
+      - Web dashboard workflow: persistence_updates/06_web_dashboard_workflow.md
+      - Quick command reference: persistence_updates/07_quick_reference.md
   - Tutorials:
      - Combining arXiv agent and execution agent: combining_arxiv_and_execution.md
      - Human in the Loop: humanInTheLoop_example.md
      - Neutron Star: combining_arxiv_and_execution_neutronStar.md
-  - API Reference: 
+  - API Reference:
     - agents: api_reference/agents.md
     - prompt_library: api_reference/prompt_library.md
     - tools: api_reference/tools.md
     - util: api_reference/util.md
+  - Contributing: contributing.md
 
