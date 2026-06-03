@@ -38,7 +38,7 @@ Named configs can also be saved with `save_team_config(...)` and
 `save_symposium_config(...)`; by default they are written under:
 
 - `~/.cache/ursa/<group>/environments/agent_teams/<name>/team.yaml`
-- `~/.cache/ursa/<group>/environments/agent_symposiums/<name>/symposium.yaml`
+- `~/.cache/ursa/<group>/environments/agent_symposia/<name>/symposium.yaml`
 
 Agent checkpoint persistence uses the same group hierarchy under
 `~/.cache/ursa/<group>/agents/<agent_name>`. If no workspace is provided for an

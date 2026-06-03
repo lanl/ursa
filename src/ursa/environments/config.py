@@ -127,7 +127,7 @@ def team_cache_dir(group: str, name: str) -> Path:
 
 def symposium_cache_dir(group: str, name: str) -> Path:
     """Return the persistent configuration directory for a named symposium."""
-    return group_environments_dir(group) / "agent_symposiums" / name
+    return group_environments_dir(group) / "agent_symposia" / name
 
 
 def save_team_config(
