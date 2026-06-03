@@ -2904,6 +2904,42 @@ def create_app() -> FastAPI:
     };
   }
 
+  function chooseNewSessionType() {
+    return new Promise((resolve) => {
+      const modal = $('#newSessionTypeModal');
+      const namedBtn = $('#newSessionNamedBtn');
+      const nonPersistentBtn = $('#newSessionNonPersistentBtn');
+      const closeBtn = $('#closeNewSessionTypeBtn');
+      const backdrop = $('#newSessionTypeBackdrop');
+      if (!modal || !namedBtn || !nonPersistentBtn || !closeBtn || !backdrop) {
+        resolve('nonpersistent');
+        return;
+      }
+
+      const cleanup = (choice) => {
+        modal.classList.remove('open');
+        namedBtn.onclick = null;
+        nonPersistentBtn.onclick = null;
+        closeBtn.onclick = null;
+        backdrop.onclick = null;
+        document.removeEventListener('keydown', onKeydown);
+        resolve(choice);
+      };
+
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+
+      namedBtn.onclick = () => cleanup('named');
+      nonPersistentBtn.onclick = () => cleanup('nonpersistent');
+      closeBtn.onclick = () => cleanup(null);
+      backdrop.onclick = () => cleanup(null);
+      document.addEventListener('keydown', onKeydown);
+      modal.classList.add('open');
+      namedBtn.focus();
+    });
+  }
+
   function renderAgents() {
     const list = $('#agentList');
     if (!list) return;
@@ -2983,8 +3019,9 @@ def create_app() -> FastAPI:
     const createBtn = $('#createUnnamedSessionBtn');
     if (createBtn) {
       createBtn.onclick = async () => {
-        const makeNamed = confirm('Press OK to create a new named agent session. Press Cancel for an unnamed session.');
-        if (!makeNamed) {
+        const sessionType = await chooseNewSessionType();
+        if (sessionType === null) return;
+        if (sessionType === 'nonpersistent') {
           await startSession('', '');
           return;
         }
@@ -4523,6 +4560,20 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   display: flex;
   flex-direction: column;
 }
+.modalCard.smallModalCard {
+  top: 16vh;
+  width: min(520px, 92vw);
+  height: auto;
+  gap: 14px;
+}
+.modalActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .modalActions { grid-template-columns: 1fr; }
+}
 
 .settingsShell {
   flex: 1 1 auto;
@@ -4769,6 +4820,24 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   </div>
 </div>
 
+
+
+<div class="modal" id="newSessionTypeModal" aria-hidden="true">
+  <div class="backdrop" id="newSessionTypeBackdrop"></div>
+  <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="newSessionTypeTitle">
+    <div class="topbar">
+      <div>
+        <div class="title" id="newSessionTypeTitle">Start New Session</div>
+        <div class="muted small">Choose how this session should be created.</div>
+      </div>
+      <button class="btn" id="closeNewSessionTypeBtn" type="button">Close</button>
+    </div>
+    <div class="modalActions">
+      <button class="btn primary" id="newSessionNamedBtn" type="button">New Named Agent Session</button>
+      <button class="btn" id="newSessionNonPersistentBtn" type="button">Non-persistent Session</button>
+    </div>
+  </div>
+</div>
 
 
 <div class="modal" id="settingsModal" aria-hidden="true">

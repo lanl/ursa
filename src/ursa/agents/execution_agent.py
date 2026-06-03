@@ -395,15 +395,27 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 raise ValueError(
                     "Review step returned no structured assessment."
                 )
-        except Exception as e:
-            # Avoid trapping the graph in an infinite review loop if the review model
-            # call fails or returns an unusable structured-output payload. The recap
-            # will still surface the work completed so far.
-            review_result = {
-                "is_complete": True,
-                "reason": f"Review step failed with error: {e}. Proceeding to recap.",
-            }
-            print("Review error: ", e)
+        except Exception:
+            try:
+                review_result = self.llm.with_structured_output(
+                    ReviewAssessment, method="function_calling"
+                ).invoke(
+                    review_messages,
+                    config=self.build_config(tags=["review"]),
+                )
+                if not isinstance(review_result, Mapping):
+                    raise ValueError(
+                        "Review step returned no structured assessment."
+                    )
+            except Exception as e:
+                # Avoid trapping the graph in an infinite review loop if the review model
+                # call fails or returns an unusable structured-output payload. The recap
+                # will still surface the work completed so far.
+                review_result = {
+                    "is_complete": True,
+                    "reason": f"Review step failed with error: {e}. Proceeding to recap.",
+                }
+                print("Review error: ", e)
 
         is_complete = bool(review_result.get("is_complete", False))
         reason = str(review_result.get("reason", ""))
