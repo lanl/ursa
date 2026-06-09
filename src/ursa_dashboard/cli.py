@@ -22,11 +22,6 @@ def main(argv: list[str] | None = None) -> int:
         "--reload", action="store_true", help="Enable auto-reload (dev only)"
     )
     ap.add_argument(
-        "--workspace",
-        default=os.environ.get("URSA_DASHBOARD_WORKSPACE_ROOT"),
-        help="Workspace root directory (overrides URSA_DASHBOARD_WORKSPACE_ROOT)",
-    )
-    ap.add_argument(
         "--group",
         default=os.environ.get("URSA_DASHBOARD_GROUP", "default"),
         help="Agent group to use from ~/.cache/ursa/<group>",
@@ -48,8 +43,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    if args.workspace:
-        os.environ["URSA_DASHBOARD_WORKSPACE_ROOT"] = args.workspace
     os.environ["URSA_DASHBOARD_GROUP"] = str(args.group or "default")
     if args.config:
         config_path = os.path.abspath(os.path.expanduser(str(args.config)))

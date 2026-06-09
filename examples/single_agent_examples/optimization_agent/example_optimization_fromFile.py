@@ -17,7 +17,6 @@ filename = "data/3-infeasible/description.txt"
 filename = "data/2/description.txt"
 abspath = os.path.join(
     os.getcwd(),
-    "examples/single_agent_examples/optimization_agent",
     filename,
 )
 
