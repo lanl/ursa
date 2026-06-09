@@ -3865,8 +3865,6 @@ def create_app() -> FastAPI:
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
     $('#set_api_key_env_var').value = llm.api_key_env_var || '';
-    $('#set_max_tokens').value = llm.max_tokens ?? '';
-    $('#set_temperature').value = llm.temperature ?? '';
     const modelKwargs = llm.model_kwargs || {};
     $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
     $('#set_timeout').value = runner.timeout_seconds ?? '';
@@ -3974,8 +3972,6 @@ def create_app() -> FastAPI:
         base_url: ($('#set_base_url').value || '').trim() || null,
         model: ($('#set_model').value || '').trim() || null,
         api_key_env_var: ($('#set_api_key_env_var').value || '').trim() || null,
-        max_tokens: ($('#set_max_tokens').value === '' ? null : Number($('#set_max_tokens').value)),
-        temperature: ($('#set_temperature').value === '' ? null : Number($('#set_temperature').value)),
         model_kwargs: modelKwargs,
       },
       runner: {
@@ -4900,7 +4896,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
-            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model, max tokens, and temperature.</div>
+            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model and base_url.</div>
           </div>
         </div>
 

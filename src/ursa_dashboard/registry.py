@@ -67,30 +67,6 @@ def _common_llm_params() -> list[AgentParam]:
             source=ParamSource.llm,
             target="model",
         ),
-        AgentParam(
-            name="llm_max_tokens",
-            title="Max Tokens",
-            description="Max tokens for the response.",
-            type="integer",
-            required=False,
-            default=4096,
-            advanced=True,
-            source=ParamSource.llm,
-            target="max_tokens",
-            constraints=ParamConstraint(minimum=1),
-        ),
-        AgentParam(
-            name="llm_temperature",
-            title="Temperature",
-            description="Sampling temperature.",
-            type="number",
-            required=False,
-            default=0.2,
-            advanced=True,
-            source=ParamSource.llm,
-            target="temperature",
-            constraints=ParamConstraint(minimum=0.0, maximum=2.0),
-        ),
     ]
 
 

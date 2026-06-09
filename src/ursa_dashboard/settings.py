@@ -25,8 +25,6 @@ class LLMSettings(BaseModel):
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
     )
 
-    max_tokens: int = 25000
-    temperature: float = 0.2
     model_kwargs: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional keyword arguments passed to langchain.chat_models.init_chat_model.",
