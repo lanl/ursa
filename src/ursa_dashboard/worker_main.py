@@ -56,10 +56,6 @@ def _init_llm(llm_cfg: dict[str, Any]):
         raise ValueError("llm.model_kwargs must be a JSON object")
 
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
-    # if llm_cfg.get("max_tokens") is not None:
-    #    kwargs["max_completion_tokens"] = int(llm_cfg["max_tokens"])
-    if llm_cfg.get("temperature") is not None:
-        kwargs["temperature"] = float(llm_cfg["temperature"])
 
     kwargs["api_key"] = api_key
     kwargs["base_url"] = str(base_url)
