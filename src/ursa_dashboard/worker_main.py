@@ -190,8 +190,8 @@ def main() -> int:
             def emit(self, _event):
                 return None
 
-        final_text = adapter.invoke(
-            ctx=ctx, inputs=inputs_obj, sink=_NoopSink()
+        final_text = asyncio.run(
+            adapter.ainvoke(ctx=ctx, inputs=inputs_obj, sink=_NoopSink())
         )
 
         out = {
