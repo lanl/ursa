@@ -39,6 +39,7 @@ dependencies = [
     "langchain-community>=0.4.1",
     "langchain-openai>=1.0.1",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "aiosqlite>=0.20.0",
     "langchain-anthropic>=1.4",
     "langchain-google-genai>=4.2",
     "langchain-text-splitters>=1.0.0",
