@@ -999,20 +999,6 @@ wheels = [
 ]
 
 [[package]]
-name = "courlan"
-version = "1.3.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "babel" },
-    { name = "tld" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/54/6d6ceeff4bed42e7a10d6064d35ee43a810e7b3e8beb4abeae8cff4713ae/courlan-1.3.2.tar.gz", hash = "sha256:0b66f4db3a9c39a6e22dd247c72cfaa57d68ea660e94bb2c84ec7db8712af190", size = 206382, upload-time = "2024-10-29T16:40:20.994Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/ca/6a667ccbe649856dcd3458bab80b016681b274399d6211187c6ab969fc50/courlan-1.3.2-py3-none-any.whl", hash = "sha256:d0dab52cf5b5b1000ee2839fbc2837e93b2514d3cb5bb61ae158a55b7a04c6be", size = 33848, upload-time = "2024-10-29T16:40:18.325Z" },
-]
-
-[[package]]
 name = "cryptography"
 version = "46.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1170,21 +1156,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/51/da/c5709322a1ddab201d37e2614edb1a90c6b64d5c0f02f9eae70f26847075/DataModelDict-0.9.9.tar.gz", hash = "sha256:0da74146c73ca84bbd3d680c3659464b611228bee48012c3860e320ebf3b5919", size = 16379, upload-time = "2022-02-17T15:57:43.409Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/6b/fe3b022663e3589ee811fc5a499830370170b45244629670cdc99fd3be9e/DataModelDict-0.9.9-py3-none-any.whl", hash = "sha256:0549f80bf8e1d4725397fb737d495da8089828b1af4e5202e31c5d7b03fea852", size = 15040, upload-time = "2022-02-17T15:57:41.227Z" },
-]
-
-[[package]]
-name = "dateparser"
-version = "1.2.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "python-dateutil" },
-    { name = "pytz" },
-    { name = "regex" },
-    { name = "tzlocal" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a9/30/064144f0df1749e7bb5faaa7f52b007d7c2d08ec08fed8411aba87207f68/dateparser-1.2.2.tar.gz", hash = "sha256:986316f17cb8cdc23ea8ce563027c5ef12fc725b6fb1d137c14ca08777c5ecf7", size = 329840, upload-time = "2025-06-26T09:29:23.211Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/22/f020c047ae1346613db9322638186468238bcfa8849b4668a22b97faad65/dateparser-1.2.2-py3-none-any.whl", hash = "sha256:5a5d7211a09013499867547023a2a0c91d5a27d15dd4dbcea676ea9fe66f2482", size = 315453, upload-time = "2025-06-26T09:29:21.412Z" },
 ]
 
 [[package]]
@@ -1933,54 +1904,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/2c/48/71de9ed269fdae9c8057e5a4c0aa7402e8bb16f2c6e90b3aa53327b113f8/hpack-4.1.0.tar.gz", hash = "sha256:ec5eca154f7056aa06f196a557655c5b009b382873ac8d1e66e79e87535f1dca", size = 51276, upload-time = "2025-01-22T21:44:58.347Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/c6/80c95b1b2b94682a72cbdbfb85b81ae2daffa4291fbfa1b1464502ede10d/hpack-4.1.0-py3-none-any.whl", hash = "sha256:157ac792668d995c657d93111f46b4535ed114f0c9c8d672271bbec7eae1b496", size = 34357, upload-time = "2025-01-22T21:44:56.92Z" },
-]
-
-[[package]]
-name = "htmldate"
-version = "1.4.3"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
-    "python_full_version < '3.12' and sys_platform == 'darwin'",
-]
-dependencies = [
-    { name = "charset-normalizer", marker = "sys_platform == 'darwin'" },
-    { name = "dateparser", marker = "sys_platform == 'darwin'" },
-    { name = "lxml", marker = "sys_platform == 'darwin'" },
-    { name = "python-dateutil", marker = "sys_platform == 'darwin'" },
-    { name = "urllib3", marker = "sys_platform == 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b2/19/9457e697df4f3953bbc61b17d6b1119d812c8d893425fa7771bd2e237706/htmldate-1.4.3.tar.gz", hash = "sha256:ec50f084b997fdf6b26f8c31447e5789f4deb71fe69342cda1d7af0c9f91e01b", size = 53406, upload-time = "2023-05-03T09:11:48.264Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/16/769d73b31be20705a390479792fed45eaadda238746dbb1cf2615ad31402/htmldate-1.4.3-py3-none-any.whl", hash = "sha256:d529a319a2fae8329c2beaa54c45af9295d0eca425dfba33b81e4665e8e8a78e", size = 41031, upload-time = "2023-05-03T09:11:44.283Z" },
-]
-
-[[package]]
-name = "htmldate"
-version = "1.6.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'win32'",
-]
-dependencies = [
-    { name = "charset-normalizer", marker = "sys_platform != 'darwin'" },
-    { name = "dateparser", marker = "sys_platform != 'darwin'" },
-    { name = "lxml", marker = "sys_platform != 'darwin'" },
-    { name = "python-dateutil", marker = "sys_platform != 'darwin'" },
-    { name = "urllib3", marker = "sys_platform != 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/24/fb/26213bb6300dd7d17afb131d222b4f7e083d822d0fd72089eb60e3b134c1/htmldate-1.6.0.tar.gz", hash = "sha256:5827c8f626a16800a29e57e8188a3d32d0b08ca4c7bd662537b73bbbf22c45a6", size = 53558, upload-time = "2023-11-21T15:57:23.527Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/04/7441f54565d2da01ecab4220ff6bb0e959dbae648001a3eebbf44f9c77fb/htmldate-1.6.0-py3-none-any.whl", hash = "sha256:6ee374849fe7491b3e6c0b26066e8f6940367b0215e7c4fec88774af065a4dbc", size = 40727, upload-time = "2023-11-21T15:57:20.945Z" },
 ]
 
 [[package]]
@@ -3255,14 +3178,14 @@ html-clean = [
 
 [[package]]
 name = "lxml-html-clean"
-version = "0.4.3"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "lxml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/cb/c9c5bb2a9c47292e236a808dd233a03531f53b626f36259dcd32b49c76da/lxml_html_clean-0.4.3.tar.gz", hash = "sha256:c9df91925b00f836c807beab127aac82575110eacff54d0a75187914f1bd9d8c", size = 21498, upload-time = "2025-10-02T20:49:24.895Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/a4/5c62acfacd69ff4f5db395100f5cfb9b54e7ac8c69a235e4e939fd13f021/lxml_html_clean-0.4.4.tar.gz", hash = "sha256:58f39a9d632711202ed1d6d0b9b47a904e306c85de5761543b90e3e3f736acfb", size = 23899, upload-time = "2026-02-27T09:35:52.911Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/4a/63a9540e3ca73709f4200564a737d63a4c8c9c4dd032bab8535f507c190a/lxml_html_clean-0.4.3-py3-none-any.whl", hash = "sha256:63fd7b0b9c3a2e4176611c2ca5d61c4c07ffca2de76c14059a81a2825833731e", size = 14177, upload-time = "2025-10-02T20:49:23.749Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/76/7ffc1d3005cf7749123bc47cb3ea343cd97b0ac2211bab40f57283577d0e/lxml_html_clean-0.4.4-py3-none-any.whl", hash = "sha256:ce2ef506614ecb85ee1c5fe0a2aa45b06a19514ec7949e9c8f34f06925cfabcb", size = 14565, upload-time = "2026-02-27T09:35:51.86Z" },
 ]
 
 [[package]]
@@ -7042,15 +6965,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tld"
-version = "0.13.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/df/a1/5723b07a70c1841a80afc9ac572fdf53488306848d844cd70519391b0d26/tld-0.13.1.tar.gz", hash = "sha256:75ec00936cbcf564f67361c41713363440b6c4ef0f0c1592b5b0fbe72c17a350", size = 462000, upload-time = "2025-05-21T22:18:29.341Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/70/b2f38360c3fc4bc9b5e8ef429e1fde63749144ac583c2dbdf7e21e27a9ad/tld-0.13.1-py2.py3-none-any.whl", hash = "sha256:a2d35109433ac83486ddf87e3c4539ab2c5c2478230e5d9c060a18af4b03aa7c", size = 274718, upload-time = "2025-05-21T22:18:25.811Z" },
-]
-
-[[package]]
 name = "tokenizers"
 version = "0.22.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7172,58 +7086,6 @@ wheels = [
 ]
 
 [[package]]
-name = "trafilatura"
-version = "1.6.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
-    "python_full_version < '3.12' and sys_platform == 'darwin'",
-]
-dependencies = [
-    { name = "certifi", marker = "sys_platform == 'darwin'" },
-    { name = "charset-normalizer", marker = "sys_platform == 'darwin'" },
-    { name = "courlan", marker = "sys_platform == 'darwin'" },
-    { name = "htmldate", version = "1.4.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "justext", marker = "sys_platform == 'darwin'" },
-    { name = "lxml", marker = "sys_platform == 'darwin'" },
-    { name = "urllib3", marker = "sys_platform == 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/44/d8/e9f20c95d2e1189258a84467956a00d85a68563cbaec19920302b8a414f6/trafilatura-1.6.1.tar.gz", hash = "sha256:a7792b037d624d04ab05fcce556cfe08b771dfc8c1db1494c750879530c9a30c", size = 3853959, upload-time = "2023-06-15T12:59:19.284Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/47/d3523bdbf4e49233a17c2af6964b3dc9d8707c862847c49b324fbd7f9ba4/trafilatura-1.6.1-py3-none-any.whl", hash = "sha256:fe94ed68fb50ec80ae698095010e1a0a7827bee0542ecd33c2cb55ca3e985aa7", size = 1031276, upload-time = "2023-06-15T12:59:12.869Z" },
-]
-
-[[package]]
-name = "trafilatura"
-version = "1.6.3"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'win32'",
-]
-dependencies = [
-    { name = "certifi", marker = "sys_platform != 'darwin'" },
-    { name = "charset-normalizer", marker = "sys_platform != 'darwin'" },
-    { name = "courlan", marker = "sys_platform != 'darwin'" },
-    { name = "htmldate", version = "1.6.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
-    { name = "justext", marker = "sys_platform != 'darwin'" },
-    { name = "lxml", marker = "sys_platform != 'darwin'" },
-    { name = "urllib3", marker = "sys_platform != 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/2d/e91ca57ca6ead5bf72e2c651fc81d47052c4c794a27d729598fba90404b4/trafilatura-1.6.3.tar.gz", hash = "sha256:671dd6e0000e101c4bce8d70f4408bcb79fcbf2275ee25591efe33e2c8a1600d", size = 3865064, upload-time = "2023-11-29T13:42:25.814Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/c3/4c3dc70948b8727dd4dd9634634bf5f985d14201b23cb3eb453a0d98d075/trafilatura-1.6.3-py3-none-any.whl", hash = "sha256:4f879045c6854d71e488cc669c42ee83b97fe584684bd288c752b7e5ae7402cf", size = 1033241, upload-time = "2023-11-29T13:42:16.879Z" },
-]
-
-[[package]]
 name = "traitlets"
 version = "5.14.3"
 source = { registry = "https://pypi.org/simple" }
@@ -7335,18 +7197,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tzlocal"
-version = "5.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd1773c6be938f89e5735a1f11a9f184ac3639b93cef35d5/tzlocal-5.3.1.tar.gz", hash = "sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd", size = 30761, upload-time = "2025-03-05T21:17:41.549Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/14/e2a54fabd4f08cd7af1c07030603c3356b74da07f7cc056e600436edfa17/tzlocal-5.3.1-py3-none-any.whl", hash = "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d", size = 18026, upload-time = "2025-03-05T21:17:39.857Z" },
-]
-
-[[package]]
 name = "uncalled-for"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7401,6 +7251,7 @@ dependencies = [
     { name = "ddgs" },
     { name = "fastmcp" },
     { name = "jsonargparse" },
+    { name = "justext" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
     { name = "langchain-chroma" },
@@ -7422,8 +7273,6 @@ dependencies = [
     { name = "randomname" },
     { name = "rich" },
     { name = "selectolax" },
-    { name = "trafilatura", version = "1.6.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "trafilatura", version = "1.6.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
     { name = "truststore" },
     { name = "typer" },
 ]
@@ -7485,6 +7334,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.120.0" },
     { name = "fastmcp", specifier = "~=3.0" },
     { name = "jsonargparse", specifier = ">=4.45.0" },
+    { name = "justext", specifier = ">=3.0.2" },
     { name = "langchain", specifier = ">=1.3.2" },
     { name = "langchain-anthropic", specifier = ">=1.4" },
     { name = "langchain-chroma", specifier = ">=1.0.0" },
@@ -7513,7 +7363,6 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9.4,<14.0" },
     { name = "selectolax", specifier = ">=0.4.0,<0.5" },
     { name = "torch", marker = "extra == 'fm'", specifier = ">=2.9.0" },
-    { name = "trafilatura", specifier = ">=1.6.1,<1.7" },
     { name = "truststore", specifier = ">=0.10.4,<1.0" },
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.37.0" },

@@ -12,7 +12,6 @@ from urllib.parse import urljoin, urlparse
 
 import justext
 import requests
-import trafilatura
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -502,31 +501,9 @@ def _dedupe_lines(text: str, min_len: int = 40) -> str:
 def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     """
     Returns plain text with navigation/ads/scripts removed.
-    Prefers trafilatura -> jusText -> BS4 paragraphs.
+    Prefers jusText -> BS4 paragraphs.
     """
-    # 1) Trafilatura
-    # You can tune config: with_metadata, include_comments, include_images, favor_recall, etc.
-    cfg = trafilatura.settings.use_config()
-    cfg.set("DEFAULT", "include_comments", "false")
-    cfg.set("DEFAULT", "include_tables", "false")
-    cfg.set("DEFAULT", "favor_recall", "false")  # be stricter; less noise
-    try:
-        # If you fetched HTML already, use extract() on string; otherwise, fetch_url(url)
-        txt = trafilatura.extract(
-            html,
-            config=cfg,
-            include_comments=False,
-            include_tables=False,
-            favor_recall=False,
-        )
-        if txt and txt.strip():
-            txt = _normalize_ws(txt)
-            txt = _dedupe_lines(txt)
-            return txt[:max_chars]
-    except Exception:  # noqa: BLE001, S110
-        pass
-
-    # 2) jusText
+    # 1) jusText
     try:
         paragraphs = justext.justext(html, justext.get_stoplist("English"))
         body_paras = [p.text for p in paragraphs if not p.is_boilerplate]
@@ -537,7 +514,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     except Exception:  # noqa: BLE001, S110
         pass
 
-    # 4) last-resort: BS4 paragraphs/headings only
+    # 2) last-resort: BS4 paragraphs/headings only
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
