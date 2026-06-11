@@ -26,7 +26,6 @@ Entry points:
 """
 
 # from langchain_core.runnables.graph import MermaidDrawMethod
-from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import (
@@ -50,6 +49,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite
+from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
@@ -74,14 +74,17 @@ from ursa.tools.search_tools import (
     run_web_search,
 )
 from ursa.util.memory_logger import AgentMemory
+from ursa.util.structured_output import invoke_structured
 
 
 # Classes for typing
-class ReviewAssessment(TypedDict):
+class ReviewAssessment(BaseModel):
     """Structured assessment of whether execution has addressed the request."""
 
-    is_complete: bool
-    reason: str
+    is_complete: bool = Field(
+        description="Whether the work adequately addresses the request."
+    )
+    reason: str = Field(description="Brief rationale for the review decision.")
 
 
 class ExecutionState(TypedDict):
@@ -121,8 +124,10 @@ def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
 
 def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
     """Route to recap when review passes, otherwise continue execution."""
-    review = state.get("review") or {}
-    if review.get("is_complete"):
+    review = state.get("review")
+    if isinstance(review, ReviewAssessment):
+        return "recap" if review.is_complete else "continue"
+    if isinstance(review, dict) and review.get("is_complete"):
         return "recap"
     return "continue"
 
@@ -384,45 +389,24 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         review_message = HumanMessage(content=get_review_prompt(user_request))
         review_messages = list(new_state["messages"]) + [review_message]
 
-        try:
-            review_result = self.llm.with_structured_output(
-                ReviewAssessment
-            ).invoke(
-                review_messages,
-                config=self.build_config(tags=["review"]),
-            )
-            if not isinstance(review_result, Mapping):
-                raise ValueError(
-                    "Review step returned no structured assessment."
-                )
-        except Exception:
-            try:
-                review_result = self.llm.with_structured_output(
-                    ReviewAssessment, method="function_calling"
-                ).invoke(
-                    review_messages,
-                    config=self.build_config(tags=["review"]),
-                )
-                if not isinstance(review_result, Mapping):
-                    raise ValueError(
-                        "Review step returned no structured assessment."
-                    )
-            except Exception as e:
-                # Avoid trapping the graph in an infinite review loop if the review model
-                # call fails or returns an unusable structured-output payload. The recap
-                # will still surface the work completed so far.
-                review_result = {
-                    "is_complete": True,
-                    "reason": f"Review step failed with error: {e}. Proceeding to recap.",
-                }
-                print("Review error: ", e)
+        review = invoke_structured(
+            self.llm,
+            ReviewAssessment,
+            review_messages,
+            config=self.build_config(tags=["review"]),
+            context="execution review assessment",
+            fallback=ReviewAssessment(
+                is_complete=True,
+                reason=(
+                    "Review step failed to produce a valid structured "
+                    "assessment. Proceeding to recap."
+                ),
+            ),
+            repair=3,
+        )
 
-        is_complete = bool(review_result.get("is_complete", False))
-        reason = str(review_result.get("reason", ""))
-        review: ReviewAssessment = {
-            "is_complete": is_complete,
-            "reason": reason,
-        }
+        is_complete = bool(review.is_complete)
+        reason = str(review.reason)
 
         events.emit(
             "Execution Review: Complete"
