@@ -26,6 +26,10 @@ from ursa.prompt_library.optimization_prompts import (
 from ursa.tools.feasibility_tools import feasibility_check_auto as fca
 from ursa.util.helperFunctions import extract_tool_calls, run_tool_calls
 from ursa.util.optimization_schema import ProblemSpec, SolverSpec
+from ursa.util.structured_output import (
+    StructuredOutputResult,
+    invoke_structured,
+)
 
 from .base import BaseAgent
 
@@ -62,6 +66,22 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
             for i, t in enumerate(self.tools)
         }
 
+    def _invoke_optimization_schema(
+        self,
+        schema: type,
+        messages: list,
+        *,
+        context: str,
+    ) -> StructuredOutputResult:
+        return invoke_structured(
+            self.llm,
+            schema,
+            messages,
+            include_raw=True,
+            context=context,
+            repair=1,
+        )
+
     # Define the function that calls the model
     def extractor(
         self,
@@ -92,24 +112,19 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        try:
-            llm_out = self.llm.with_structured_output(
-                ProblemSpec, include_raw=True
-            ).invoke([
+        llm_out = self._invoke_optimization_schema(
+            ProblemSpec,
+            [
                 SystemMessage(content=self.math_formulator_prompt),
                 HumanMessage(content=state["problem"]),
-            ])
-        except Exception:
-            llm_out = self.llm.with_structured_output(
-                ProblemSpec, include_raw=True, method="function_calling"
-            ).invoke([
-                SystemMessage(content=self.math_formulator_prompt),
-                HumanMessage(content=state["problem"]),
-            ])
-        new_state["problem_spec"] = llm_out["parsed"]
-        new_state["problem_diagnostic"].extend(
-            extract_tool_calls(llm_out["raw"])
+            ],
+            context="optimization problem formulation",
         )
+        new_state["problem_spec"] = llm_out.parsed
+        if llm_out.raw is not None:
+            new_state["problem_diagnostic"].extend(
+                extract_tool_calls(llm_out.raw)
+            )
 
         self.events(config).emit(
             "Formulated optimization problem",
@@ -125,24 +140,19 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        try:
-            llm_out = self.llm.with_structured_output(
-                ProblemSpec, include_raw=True
-            ).invoke([
+        llm_out = self._invoke_optimization_schema(
+            ProblemSpec,
+            [
                 SystemMessage(content=self.discretizer_prompt),
                 HumanMessage(content=state["problem"]),
-            ])
-        except Exception:
-            llm_out = self.llm.with_structured_output(
-                ProblemSpec, include_raw=True, method="function_calling"
-            ).invoke([
-                SystemMessage(content=self.discretizer_prompt),
-                HumanMessage(content=state["problem"]),
-            ])
-        new_state["problem_spec"] = llm_out["parsed"]
-        new_state["problem_diagnostic"].extend(
-            extract_tool_calls(llm_out["raw"])
+            ],
+            context="optimization problem discretization",
         )
+        new_state["problem_spec"] = llm_out.parsed
+        if llm_out.raw is not None:
+            new_state["problem_diagnostic"].extend(
+                extract_tool_calls(llm_out.raw)
+            )
 
         self.events(config).emit(
             "Discretized optimization problem",
@@ -181,21 +191,15 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        try:
-            llm_out = self.llm.with_structured_output(
-                SolverSpec, include_raw=True
-            ).invoke([
+        llm_out = self._invoke_optimization_schema(
+            SolverSpec,
+            [
                 SystemMessage(content=self.solver_selector_prompt),
                 HumanMessage(content=str(state["problem_spec"])),
-            ])
-        except Exception:
-            llm_out = self.llm.with_structured_output(
-                SolverSpec, include_raw=True, method="function_calling"
-            ).invoke([
-                SystemMessage(content=self.solver_selector_prompt),
-                HumanMessage(content=str(state["problem_spec"])),
-            ])
-        new_state["solver"] = llm_out["parsed"]
+            ],
+            context="optimization solver selection",
+        )
+        new_state["solver"] = llm_out.parsed
 
         self.events(config).emit("Selected solver", stage="select_solver")
         return new_state
@@ -228,27 +232,19 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
     ) -> OptimizerState:
         new_state = state.copy()
 
-        try:
-            llm_out = self.llm.with_structured_output(
-                ProblemSpec, include_raw=True
-            ).invoke([
+        llm_out = self._invoke_optimization_schema(
+            ProblemSpec,
+            [
                 SystemMessage(content=self.verifier_prompt),
                 HumanMessage(
                     content=str(state["problem_spec"]) + state["code"]
                 ),
-            ])
-        except Exception:
-            llm_out = self.llm.with_structured_output(
-                ProblemSpec, include_raw=True, method="function_calling"
-            ).invoke([
-                SystemMessage(content=self.verifier_prompt),
-                HumanMessage(
-                    content=str(state["problem_spec"]) + state["code"]
-                ),
-            ])
-        new_state["problem_spec"] = llm_out["parsed"]
-        if hasattr(llm_out, "tool_calls"):
-            tool_log = run_tool_calls(llm_out, self.tool_maps)
+            ],
+            context="optimization problem verification",
+        )
+        new_state["problem_spec"] = llm_out.parsed
+        if llm_out.raw is not None and hasattr(llm_out.raw, "tool_calls"):
+            tool_log = run_tool_calls(llm_out.raw, self.tool_maps)
             new_state["problem_diagnostic"].extend(tool_log)
 
         self.events(config).emit(
@@ -392,16 +388,23 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 # search_tool = TavilySearchResults(max_results=10, search_depth="advanced", include_answer=True)
 
 
+def _schema_field(value, name: str):
+    if isinstance(value, dict):
+        return value[name]
+    return getattr(value, name)
+
+
 # A function to test if discretization is needed
 def should_discretize(
     state: OptimizerState,
 ) -> Literal["Discretize", "continue"]:
-    cons = state["problem_spec"]["constraints"]
-    decs = state["problem_spec"]["decision_variables"]
+    spec = state["problem_spec"]
+    cons = _schema_field(spec, "constraints")
+    decs = _schema_field(spec, "decision_variables")
 
-    if any("infinite-dimensional" in t["tags"] for t in cons) or any(
-        "infinite-dimensional" in t["type"] for t in decs
-    ):
+    if any(
+        "infinite-dimensional" in _schema_field(t, "tags") for t in cons
+    ) or any("infinite-dimensional" in _schema_field(t, "type") for t in decs):
         return "discretize"
 
     return "continue"
@@ -411,8 +414,8 @@ def should_discretize(
 def should_continue(state: OptimizerState) -> Literal["error", "continue"]:
     spec = state["problem_spec"]
     try:
-        status = spec["status"].lower()
-    except KeyError:
+        status = _schema_field(spec, "status").lower()
+    except (AttributeError, KeyError):
         status = spec["spec"]["status"].lower()
     if "VERIFIED".lower() in status:
         return "continue"
