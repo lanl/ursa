@@ -4,6 +4,8 @@ import pytest
 
 from ursa.agents import MaterialsProjectAgent
 
+requests = pytest.importorskip("mp_api")
+
 
 class FakeDoc:
     def __init__(self, material_id: str, metadata: dict):
