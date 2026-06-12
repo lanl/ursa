@@ -48,6 +48,7 @@ dependencies = [
     "fastmcp~=3.0",
     "pyyaml>=6.0.3",
     "justext>=3.0.2",
+    "matplotlib>=3.10.6",
 ]
 classifiers = [
     "Operating System :: OS Independent",

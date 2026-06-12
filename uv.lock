@@ -999,6 +999,20 @@ wheels = [
 ]
 
 [[package]]
+name = "courlan"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "babel" },
+    { name = "tld" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bb/16/2a771612ee0b3acaa95ac21cc7e8a3319e815d6360f8ffc5987d1ce28499/courlan-1.4.0.tar.gz", hash = "sha256:fbbac7b7fcde2195ea08e707609503c81cf39c891e8d26cdb1fed4585782d63d", size = 208997, upload-time = "2026-06-01T17:30:17.306Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/38/ce65091ff20a16e06d17418c4353af5f56d3190821b1a06983c79ae79274/courlan-1.4.0-py3-none-any.whl", hash = "sha256:ad1dbdefd912ca7238d4607dc855df5df097f56bac175dd662c84eed3802f49e", size = 34193, upload-time = "2026-06-01T17:30:14.984Z" },
+]
+
+[[package]]
 name = "cryptography"
 version = "46.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1156,6 +1170,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/51/da/c5709322a1ddab201d37e2614edb1a90c6b64d5c0f02f9eae70f26847075/DataModelDict-0.9.9.tar.gz", hash = "sha256:0da74146c73ca84bbd3d680c3659464b611228bee48012c3860e320ebf3b5919", size = 16379, upload-time = "2022-02-17T15:57:43.409Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/6b/fe3b022663e3589ee811fc5a499830370170b45244629670cdc99fd3be9e/DataModelDict-0.9.9-py3-none-any.whl", hash = "sha256:0549f80bf8e1d4725397fb737d495da8089828b1af4e5202e31c5d7b03fea852", size = 15040, upload-time = "2022-02-17T15:57:41.227Z" },
+]
+
+[[package]]
+name = "dateparser"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "pytz" },
+    { name = "regex" },
+    { name = "tzlocal" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/2d/a0ccdb78788064fa0dc901b8524e50615c42be1d78b78d646d0b28d09180/dateparser-1.4.0.tar.gz", hash = "sha256:97a21840d5ecdf7630c584f673338a5afac5dfe84f647baf4d7e8df98f9354a4", size = 321512, upload-time = "2026-03-26T09:56:10.292Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/0b/3c3bb7cbe757279e693a0be6049048012f794d01f81099609ecd53b899f0/dateparser-1.4.0-py3-none-any.whl", hash = "sha256:7902b8e85d603494bf70a5a0b1decdddb2270b9c6e6b2bc8a57b93476c0df378", size = 300379, upload-time = "2026-03-26T09:56:08.409Z" },
 ]
 
 [[package]]
@@ -1904,6 +1933,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/2c/48/71de9ed269fdae9c8057e5a4c0aa7402e8bb16f2c6e90b3aa53327b113f8/hpack-4.1.0.tar.gz", hash = "sha256:ec5eca154f7056aa06f196a557655c5b009b382873ac8d1e66e79e87535f1dca", size = 51276, upload-time = "2025-01-22T21:44:58.347Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/c6/80c95b1b2b94682a72cbdbfb85b81ae2daffa4291fbfa1b1464502ede10d/hpack-4.1.0-py3-none-any.whl", hash = "sha256:157ac792668d995c657d93111f46b4535ed114f0c9c8d672271bbec7eae1b496", size = 34357, upload-time = "2025-01-22T21:44:56.92Z" },
+]
+
+[[package]]
+name = "htmldate"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "charset-normalizer" },
+    { name = "dateparser" },
+    { name = "lxml" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/1f/e7cf83e23d7b68105de8b874a8b36ba23b450d6f71388583e4ca3ce475ca/htmldate-1.10.0.tar.gz", hash = "sha256:a38df10772ab5d7dbb11896e3f6a852a8491fb1b0965465bc174e23fc2baae58", size = 44455, upload-time = "2026-06-01T17:43:53.437Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/17/d3356233c826c641f940983d9479eab27faec59d49f4070bc58e80fcc021/htmldate-1.10.0-py3-none-any.whl", hash = "sha256:9211dae35ab94147c8ed9e5fc2c9287a5cf31d2394cb7857e7f5dd814eb2aad6", size = 31561, upload-time = "2026-06-01T17:43:51.797Z" },
 ]
 
 [[package]]
@@ -5701,15 +5746,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pypdf"
-version = "5.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/89/3a/584b97a228950ed85aec97c811c68473d9b8d149e6a8c155668287cf1a28/pypdf-5.9.0.tar.gz", hash = "sha256:30f67a614d558e495e1fbb157ba58c1de91ffc1718f5e0dfeb82a029233890a1", size = 5035118, upload-time = "2025-07-27T14:04:52.364Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/d9/6cff57c80a6963e7dd183bf09e9f21604a77716644b1e580e97b259f7612/pypdf-5.9.0-py3-none-any.whl", hash = "sha256:be10a4c54202f46d9daceaa8788be07aa8cd5ea8c25c529c50dd509206382c35", size = 313193, upload-time = "2025-07-27T14:04:50.53Z" },
-]
-
-[[package]]
 name = "pyperclip"
 version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6965,6 +7001,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tld"
+version = "0.13.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/5d/76b4383ac4e5b5e254e50c09807b3e13820bed6d6c11cd540264988d6802/tld-0.13.2.tar.gz", hash = "sha256:d983fa92b9d717400742fca844e29d5e18271079c7bcfabf66d01b39b4a14345", size = 467175, upload-time = "2026-03-06T23:50:34.498Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/90/39a85a4b63c84213e78b3c17d22e1bf45328acf8ebb33ef93be30d0a3911/tld-0.13.2-py2.py3-none-any.whl", hash = "sha256:9b8fdbdb880e7ba65b216a4937f2c94c49a7226723783d5838fc958ac76f4e0c", size = 296743, upload-time = "2026-03-06T23:50:32.465Z" },
+]
+
+[[package]]
 name = "tokenizers"
 version = "0.22.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7086,6 +7131,24 @@ wheels = [
 ]
 
 [[package]]
+name = "trafilatura"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "charset-normalizer" },
+    { name = "courlan" },
+    { name = "htmldate" },
+    { name = "justext" },
+    { name = "lxml" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/d8/e9f20c95d2e1189258a84467956a00d85a68563cbaec19920302b8a414f6/trafilatura-1.6.1.tar.gz", hash = "sha256:a7792b037d624d04ab05fcce556cfe08b771dfc8c1db1494c750879530c9a30c", size = 3853959, upload-time = "2023-06-15T12:59:19.284Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/47/d3523bdbf4e49233a17c2af6964b3dc9d8707c862847c49b324fbd7f9ba4/trafilatura-1.6.1-py3-none-any.whl", hash = "sha256:fe94ed68fb50ec80ae698095010e1a0a7827bee0542ecd33c2cb55ca3e985aa7", size = 1031276, upload-time = "2023-06-15T12:59:12.869Z" },
+]
+
+[[package]]
 name = "traitlets"
 version = "5.14.3"
 source = { registry = "https://pypi.org/simple" }
@@ -7197,6 +7260,18 @@ wheels = [
 ]
 
 [[package]]
+name = "tzlocal"
+version = "5.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd1773c6be938f89e5735a1f11a9f184ac3639b93cef35d5/tzlocal-5.3.1.tar.gz", hash = "sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd", size = 30761, upload-time = "2025-03-05T21:17:41.549Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/14/e2a54fabd4f08cd7af1c07030603c3356b74da07f7cc056e600436edfa17/tzlocal-5.3.1-py3-none-any.whl", hash = "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d", size = 18026, upload-time = "2025-03-05T21:17:39.857Z" },
+]
+
+[[package]]
 name = "uncalled-for"
 version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7262,13 +7337,12 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langchain-text-splitters" },
     { name = "langgraph-checkpoint-sqlite" },
+    { name = "matplotlib" },
     { name = "mcp" },
-    { name = "mp-api" },
     { name = "pandas" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pymupdf" },
-    { name = "pypdf" },
     { name = "pyyaml" },
     { name = "randomname" },
     { name = "rich" },
@@ -7293,6 +7367,10 @@ image = [
 ]
 lammps = [
     { name = "atomman" },
+    { name = "trafilatura" },
+]
+mp = [
+    { name = "mp-api" },
 ]
 office-readers = [
     { name = "python-docx" },
@@ -7345,8 +7423,9 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=1.0.1" },
     { name = "langchain-text-splitters", specifier = ">=1.0.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.0.3" },
+    { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.20.0,<2.0" },
-    { name = "mp-api", specifier = ">=0.45.8,<0.45.13" },
+    { name = "mp-api", marker = "extra == 'mp'", specifier = ">=0.45.8,<0.45.13" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.39.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.38.0" },
     { name = "ortools", marker = "extra == 'opt'", specifier = ">=9.14,<9.15" },
@@ -7355,7 +7434,6 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'image'", specifier = ">=11.3.0,<12.0.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0" },
     { name = "pymupdf", specifier = ">=1.26.0,<2.0" },
-    { name = "pypdf", specifier = ">=5.9.0,<6.0" },
     { name = "python-docx", marker = "extra == 'office-readers'", specifier = ">=1.2" },
     { name = "python-pptx", marker = "extra == 'office-readers'", specifier = ">=1.0.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -7363,11 +7441,12 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9.4,<14.0" },
     { name = "selectolax", specifier = ">=0.4.0,<0.5" },
     { name = "torch", marker = "extra == 'fm'", specifier = ">=2.9.0" },
+    { name = "trafilatura", marker = "extra == 'lammps'", specifier = ">=1.6.1,<1.7" },
     { name = "truststore", specifier = ">=0.10.4,<1.0" },
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.37.0" },
 ]
-provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel", "dsi", "image"]
+provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel", "dsi", "image", "mp"]
 
 [package.metadata.requires-dev]
 dev = [
