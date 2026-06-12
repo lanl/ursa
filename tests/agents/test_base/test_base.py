@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated, TypedDict
 
 import pytest
@@ -14,7 +16,7 @@ from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
 # Your project imports
-from ursa.agents.base import AgentContext, BaseAgent
+from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
@@ -99,6 +101,10 @@ class EventAgent(Agent):
     def _run_impl(self, state: SpecState, config=None):
         self.events(config).emit("Drafting plan", stage="generate")
         return {"messages": [AIMessage(content="done")]}
+
+
+class ToolAgent(AgentWithTools, Agent):
+    pass
 
 
 class RecordingAsyncHandler(AsyncCallbackHandler):
@@ -298,6 +304,130 @@ def test_build_config_dedupes_default_callbacks(tmpdir: Path):
         sum(callback is agent.telemetry.callbacks[0] for callback in callbacks)
         == 1
     )
+
+
+class AsyncOnlyFlagAgent(Agent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        async def async_tool() -> str:
+            return "ok"
+
+        self.tools = [SimpleNamespace(func=None, coroutine=async_tool)]
+
+
+def _use_temp_agent_groups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("ursa.security.AGENT_GROUPS_DIR", tmp_path / "groups")
+
+
+def test_agent_with_tools_seeds_safe_codes_in_sync_store(tmp_path: Path):
+    agent = ToolAgent(
+        llm=TinyCountingModel(),
+        workspace=tmp_path,
+        safe_codes=["python", "julia"],
+        enable_metrics=False,
+    )
+
+    try:
+        safe_codes = [
+            item.key
+            for item in agent.storage.search(
+                ("workspace", "safe_codes"), limit=1000
+            )
+        ]
+    finally:
+        agent.close()
+
+    assert set(safe_codes) == {"python", "julia"}
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_seeds_safe_codes_in_async_store(tmp_path: Path):
+    agent = ToolAgent(
+        llm=TinyCountingModel(),
+        workspace=tmp_path,
+        safe_codes=["python", "julia"],
+        enable_metrics=False,
+    )
+
+    try:
+        store = await agent._aget_async_storage()
+        safe_codes = [
+            item.key
+            for item in await store.asearch(
+                ("workspace", "safe_codes"), limit=1000
+            )
+        ]
+    finally:
+        await agent.aclose()
+        agent.close()
+
+    assert set(safe_codes) == {"python", "julia"}
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    agent = Agent(
+        llm=TinyCountingModel(),
+        agent_name="persistent_async_agent",
+        enable_metrics=False,
+    )
+
+    try:
+        result = await agent.ainvoke("hello persistent async")
+    finally:
+        await agent.aclose()
+        agent.close()
+
+    assert result["messages"][-1].text == "done"
+    assert (agent.den / "db" / "checkpointer.db").is_file()
+    assert (agent.den / "graph_store.sqlite").is_file()
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_supports_sync_and_async_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    agent = Agent(
+        llm=TinyCountingModel(),
+        agent_name="persistent_sync_async_agent",
+        enable_metrics=False,
+    )
+
+    try:
+        sync_result = agent.invoke("hello sync")
+        async_result = await agent.ainvoke("hello async")
+    finally:
+        await agent.aclose()
+        agent.close()
+
+    assert sync_result["messages"][-1].text == "done"
+    assert async_result["messages"][-1].text == "done"
+
+
+def test_persistent_async_only_agent_sync_invoke_uses_async_sqlite_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    agent = AsyncOnlyFlagAgent(
+        llm=TinyCountingModel(),
+        agent_name="persistent_async_only_agent",
+        enable_metrics=False,
+    )
+
+    try:
+        result = agent.invoke("hello async-only")
+    finally:
+        asyncio.run(agent.aclose())
+        agent.close()
+
+    assert result["messages"][-1].text == "done"
 
 
 @pytest.mark.asyncio

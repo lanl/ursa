@@ -16,6 +16,7 @@ integration capabilities while only needing to implement the core _invoke method
 """
 
 import asyncio
+import inspect
 import re
 import sqlite3
 from abc import ABC, abstractmethod
@@ -50,6 +51,8 @@ from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.runnables.config import merge_configs
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import (
     CompiledStateGraph,
     StateGraph,
@@ -59,6 +62,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
+from langgraph.store.sqlite.aio import AsyncSqliteStore
 from langgraph.types import Overwrite
 
 from ursa.observability.timing import (
@@ -249,6 +253,10 @@ class BaseAgent(Generic[TState], ABC):
         set_checkpointer = True if checkpointer else False
         set_name = True if agent_name else False
         self.checkpointer = checkpointer
+        self._checkpointer_was_provided = set_checkpointer
+        self._async_checkpointer: BaseCheckpointSaver | None = None
+        self._async_storage: BaseStore | None = None
+        self._async_compiled_graph: CompiledStateGraph | None = None
         persist_agent = (agent_name is not None) or set_checkpointer
         den_name = str(self.workspace)
         if persist_agent:
@@ -501,6 +509,68 @@ class BaseAgent(Generic[TState], ABC):
                     save_raw_records=save_raw_records,
                 )
 
+    async def _ainvoke_engine(
+        self,
+        invoke_method,
+        inputs: Optional[InputLike] = None,
+        raw_debug: bool = False,
+        save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
+        metrics_path: Optional[str] = None,
+        otel_endpoint: Optional[str] = None,
+        otel_headers: Optional[str] = None,
+        save_raw_snapshot: Optional[bool] = None,
+        save_raw_records: Optional[bool] = None,
+        config: Optional[dict] = None,
+        **kwargs: Any,
+    ):
+        BaseAgent._invoke_depth += 1
+        invoke_config = dict(config or {})
+
+        try:
+            if BaseAgent._invoke_depth == 1:
+                self.telemetry.begin_run(
+                    agent=self.name, thread_id=self.thread_id
+                )
+
+            if inputs is None:
+                kw_inputs: dict[str, Any] = {}
+                control_kwargs: dict[str, Any] = {}
+                for k, v in kwargs.items():
+                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
+                        control_kwargs[k] = v
+                    else:
+                        kw_inputs[k] = v
+                inputs = kw_inputs
+                kwargs = control_kwargs
+            else:
+                for k in kwargs.keys():
+                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
+                        raise TypeError(
+                            f"Unexpected keyword argument '{k}'. "
+                            "Pass inputs as a single mapping or omit the "
+                            "positional inputs and pass them as keyword "
+                            "arguments."
+                        )
+
+            normalized = self._normalize_inputs(inputs)
+            return await invoke_method(normalized, **invoke_config, **kwargs)
+
+        finally:
+            BaseAgent._invoke_depth -= 1
+
+            if BaseAgent._invoke_depth == 0:
+                self.telemetry.render(
+                    raw=raw_debug,
+                    save_json=save_json,
+                    save_otel=save_otel,
+                    filepath=metrics_path,
+                    otel_endpoint=otel_endpoint,
+                    otel_headers=otel_headers,
+                    save_raw_snapshot=save_raw_snapshot,
+                    save_raw_records=save_raw_records,
+                )
+
     # NOTE: The `invoke` method uses the PEP 570 `/,*` notation to explicitly state which
     # arguments can and cannot be passed as positional or keyword arguments.
     @final
@@ -561,7 +631,7 @@ class BaseAgent(Generic[TState], ABC):
     # NOTE: The `ainvoke` method uses the PEP 570 `/,*` notation to explicitly state which
     # arguments can and cannot be passed as positional or keyword arguments.
     @final
-    def ainvoke(
+    async def ainvoke(
         self,
         inputs: Optional[InputLike] = None,
         /,
@@ -604,7 +674,7 @@ class BaseAgent(Generic[TState], ABC):
             TypeError: If both positional inputs and non-control keyword arguments are
                 provided simultaneously.
         """
-        return self._invoke_engine(
+        return await self._ainvoke_engine(
             invoke_method=self._ainvoke,
             inputs=inputs,
             raw_debug=raw_debug,
@@ -912,7 +982,7 @@ class BaseAgent(Generic[TState], ABC):
 
     @cached_property
     def compiled_graph(self) -> CompiledStateGraph:
-        """Return the compiled StateGraph application for the agent."""
+        """Return the sync compiled StateGraph application for the agent."""
         graph = self.build_graph()
         compiled = graph.compile(
             checkpointer=self.checkpointer,
@@ -920,9 +990,71 @@ class BaseAgent(Generic[TState], ABC):
         ).with_config({"recursion_limit": 50000})
         return self._finalize_graph(compiled)
 
+    async def _aget_async_compiled_graph(self) -> CompiledStateGraph:
+        """Return an async-compatible compiled graph for the agent.
+
+        LangGraph SQLite checkpointers are not interchangeable between sync
+        and async execution. A graph compiled with ``SqliteSaver`` cannot be
+        awaited with ``ainvoke``. Build a separate graph using async SQLite
+        persistence resources for async runs.
+        """
+        if self._async_compiled_graph is None:
+            graph = self.build_graph()
+            compiled = graph.compile(
+                checkpointer=await self._aget_async_checkpointer(),
+                store=await self._aget_async_storage(),
+            ).with_config({"recursion_limit": 50000})
+            self._async_compiled_graph = self._finalize_graph(compiled)
+        return self._async_compiled_graph
+
+    async def _aget_async_checkpointer(self) -> BaseCheckpointSaver | None:
+        """Return an async-compatible checkpointer for async graph runs."""
+        if self.checkpointer is None:
+            return None
+
+        if isinstance(self.checkpointer, AsyncSqliteSaver):
+            return self.checkpointer
+
+        if self._async_checkpointer is not None:
+            return self._async_checkpointer
+
+        if isinstance(self.checkpointer, SqliteSaver):
+            if self._checkpointer_was_provided:
+                raise RuntimeError(
+                    "This agent was configured with a synchronous SqliteSaver "
+                    "checkpointer. Async agent execution requires an async "
+                    "checkpointer, such as AsyncSqliteSaver, or URSA-managed "
+                    "persistence via agent_name."
+                )
+            self._async_checkpointer = await Checkpointer.async_from_workspace(
+                self.den
+            )
+            return self._async_checkpointer
+
+        if self._checkpointer_has_async_methods(self.checkpointer):
+            return self.checkpointer
+
+        raise RuntimeError(
+            "The configured checkpointer does not appear to support LangGraph "
+            "async checkpoint methods. Use an async checkpointer for "
+            "agent.ainvoke(...), or use URSA-managed persistence via "
+            "agent_name."
+        )
+
+    @staticmethod
+    def _checkpointer_has_async_methods(checkpointer: Any) -> bool:
+        required = ("aget_tuple", "alist", "aput", "aput_writes")
+        return all(
+            inspect.iscoroutinefunction(getattr(type(checkpointer), name, None))
+            or inspect.isasyncgenfunction(
+                getattr(type(checkpointer), name, None)
+            )
+            for name in required
+        )
+
     @cached_property
     def storage(self) -> BaseStore:
-        """Create a SQLite-backed LangGraph store for persistent graph data."""
+        """Create a sync SQLite-backed LangGraph store."""
         store_path = self.den / "graph_store.sqlite"
         conn = sqlite3.connect(
             store_path, check_same_thread=False, isolation_level=None
@@ -932,8 +1064,43 @@ class BaseAgent(Generic[TState], ABC):
         self.hook_storage_setup(store)
         return store
 
+    async def _aget_async_storage(self) -> BaseStore:
+        """Create an async SQLite-backed LangGraph store."""
+        if self._async_storage is None:
+            import aiosqlite
+
+            store_path = self.den / "graph_store.sqlite"
+            conn = await aiosqlite.connect(store_path, isolation_level=None)
+            store = AsyncSqliteStore(conn)
+            await store.setup()
+            await self.ahook_storage_setup(store)
+            self._async_storage = store
+        return self._async_storage
+
     def hook_storage_setup(self, store: BaseStore) -> None:
         pass
+
+    async def ahook_storage_setup(self, store: BaseStore) -> None:
+        pass
+
+    def close(self) -> None:
+        """Close sync SQLite resources owned by this agent when possible."""
+        if "storage" in self.__dict__:
+            self.storage.conn.close()
+        if isinstance(self.checkpointer, SqliteSaver):
+            self.checkpointer.conn.close()
+
+    async def aclose(self) -> None:
+        """Close async SQLite resources owned by this agent when possible."""
+        if self._async_storage is not None:
+            await self._async_storage.__aexit__(None, None, None)
+            await self._async_storage.conn.close()
+            self._async_storage = None
+            self._async_compiled_graph = None
+        if isinstance(self._async_checkpointer, AsyncSqliteSaver):
+            await self._async_checkpointer.conn.close()
+            self._async_checkpointer = None
+            self._async_compiled_graph = None
 
     @final
     def build_graph(self) -> StateGraph:
@@ -1004,11 +1171,7 @@ class BaseAgent(Generic[TState], ABC):
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
-                return asyncio.run(
-                    self.compiled_graph.ainvoke(
-                        input, config=config, context=self.context
-                    )
-                )
+                return asyncio.run(self._ainvoke(input, **config))
 
             raise RuntimeError(
                 "This agent has async-only tools, but `.invoke()` was called "
@@ -1027,18 +1190,18 @@ class BaseAgent(Generic[TState], ABC):
                 try:
                     asyncio.get_running_loop()
                 except RuntimeError:
-                    return asyncio.run(
-                        self.compiled_graph.ainvoke(
-                            input, config=config, context=self.context
-                        )
-                    )
+                    return asyncio.run(self._ainvoke(input, **config))
             raise
 
     async def _ainvoke(self, input, **config):
         config = self.build_config(**config)
-        return await self.compiled_graph.ainvoke(
-            input, config=config, context=self.context
-        )
+        graph = await self._aget_async_compiled_graph()
+        try:
+            return await graph.ainvoke(
+                input, config=config, context=self.context
+            )
+        finally:
+            await self.aclose()
 
     def _stream(self, input, **config):
         config = self.build_config(**config)
@@ -1305,10 +1468,12 @@ class AgentWithTools:
         self,
         *args,
         tools: list[BaseTool] | dict[str, BaseTool] | None = None,
+        safe_codes: list[str] | None = None,
         handle_tool_errors=_default_tool_error_handler,
         **kwargs,
     ):
         self._tools: dict[str, BaseTool] = {}
+        self.safe_codes = set(safe_codes or [])
         self.handle_tool_errors = handle_tool_errors
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
@@ -1332,6 +1497,26 @@ class AgentWithTools:
 
     def __post_init__(self):
         super().__post_init__()
+
+    def hook_storage_setup(self, store: BaseStore) -> None:
+        if store is None:
+            return
+        for safe_code in self.safe_codes:
+            store.put(
+                ("workspace", "safe_codes"),
+                safe_code,
+                {},
+            )
+
+    async def ahook_storage_setup(self, store: BaseStore) -> None:
+        if store is None:
+            return
+        for safe_code in self.safe_codes:
+            await store.aput(
+                ("workspace", "safe_codes"),
+                safe_code,
+                {},
+            )
 
     @property
     def tools(self) -> dict[str, BaseTool]:

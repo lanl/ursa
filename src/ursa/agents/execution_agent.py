@@ -241,9 +241,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if extra_tools:
             default_tools.extend(extra_tools)
 
-        super().__init__(llm=llm, tools=default_tools, **kwargs)
+        super().__init__(
+            llm=llm,
+            tools=default_tools,
+            safe_codes=safe_codes or ["python", "julia"],
+            **kwargs,
+        )
         self.agent_memory = agent_memory
-        self.safe_codes = set(safe_codes or ["python", "julia"])
         self.executor_prompt = executor_prompt
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
@@ -578,14 +582,3 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
     def format_result(self, state: ExecutionState) -> str:
         return state["messages"][-1].text
-
-    def hook_storage_setup(self, store):
-        # Record the edit operation
-        if store is None:
-            return
-        for safe_code in self.safe_codes:
-            store.put(
-                ("workspace", "safe_codes"),
-                safe_code,
-                {},
-            )
