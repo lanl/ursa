@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from ursa import security
@@ -71,6 +73,59 @@ class RecordingOrganizer(RecordingMember):
     def invoke(self, prompt, **kwargs):
         self.invocations.append(str(prompt))
         return {"final": f"organizer synthesis from {str(prompt)[:60]}"}
+
+
+class AsyncRecordingMember(RecordingMember):
+    def invoke(self, prompt, **kwargs):  # pragma: no cover - should not run
+        raise AssertionError("async environment path should use ainvoke")
+
+    async def ainvoke(self, prompt, **kwargs):
+        prompt = str(prompt)
+        self.invocations.append(prompt)
+        type(self).prompts.append(prompt)
+        await asyncio.sleep(0)
+        return {
+            "messages": [
+                Message(
+                    f"{self.agent_name or 'member'} async saw {prompt[:40]}"
+                )
+            ]
+        }
+
+
+class AsyncRecordingPI(AsyncRecordingMember):
+    def add_tool(self, tools):
+        self.delegation_tools = tools
+
+    async def ainvoke(self, prompt, **kwargs):
+        self.invocations.append(str(prompt))
+        if getattr(self, "delegation_tools", None):
+            delegated = await self.delegation_tools[0].ainvoke({
+                "task": "delegated async subtask",
+                "context": "async global context",
+            })
+            return {"final": f"async PI synthesized: {delegated}"}
+        return {"final": f"async PI synthesized directly: {str(prompt)[:40]}"}
+
+
+class ConcurrentAsyncMember(AsyncRecordingMember):
+    active = 0
+    max_active = 0
+
+    async def ainvoke(self, prompt, **kwargs):
+        type(self).active += 1
+        type(self).max_active = max(type(self).max_active, type(self).active)
+        try:
+            await asyncio.sleep(0.01)
+            return await super().ainvoke(prompt, **kwargs)
+        finally:
+            type(self).active -= 1
+
+
+class ConcurrentAsyncOrganizer(ConcurrentAsyncMember):
+    async def ainvoke(self, prompt, **kwargs):
+        await super().ainvoke(prompt, **kwargs)
+        return {"final": f"async organizer synthesis from {str(prompt)[:60]}"}
 
 
 class Message:
@@ -179,6 +234,82 @@ def test_team_default_pi_is_execution_agent():
     assert team.config.pi.agent == "ExecutionAgent"
 
 
+async def test_team_ainvoke_uses_async_pi_and_async_delegation_tool(tmp_path):
+    config = {
+        "name": "async_team_test",
+        "pi": {
+            "name": "pi",
+            "role": "lead",
+            "agent": "tests.environments.test_environments.AsyncRecordingPI",
+        },
+        "members": [
+            {
+                "name": "analyst",
+                "role": "analysis",
+                "agent": "tests.environments.test_environments.AsyncRecordingMember",
+            }
+        ],
+        "workspace": str(tmp_path),
+    }
+    team = AgentTeamEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+
+    result = await team.ainvoke("solve asynchronously")
+
+    assert "async PI synthesized" in result["final"]
+    assert team.members["analyst"].invocations
+    assert (
+        "Delegated task:\ndelegated async subtask"
+        in team.members["analyst"].invocations[0]
+    )
+    assert "User task:\nsolve asynchronously" in team.pi.invocations[0]
+
+
+def test_team_invoke_preserves_sync_api_via_async_implementation(tmp_path):
+    config = {
+        "name": "sync_wrapper_team_test",
+        "pi": {
+            "name": "pi",
+            "role": "lead",
+            "agent": "tests.environments.test_environments.AsyncRecordingPI",
+        },
+        "members": [
+            {
+                "name": "analyst",
+                "role": "analysis",
+                "agent": "tests.environments.test_environments.AsyncRecordingMember",
+            }
+        ],
+        "workspace": str(tmp_path),
+    }
+    team = AgentTeamEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+
+    result = team.invoke("sync caller using async internals")
+
+    assert "async PI synthesized" in result["final"]
+    assert team.members["analyst"].invocations
+
+
+async def test_team_invoke_from_running_loop_raises_clear_error(tmp_path):
+    team = AgentTeamEnvironment(
+        llm=fake_llm(),
+        name="running_loop_team_test",
+        members=[],
+        persist_members=False,
+        workspace=tmp_path,
+    )
+
+    try:
+        team.invoke("called from async context")
+    except RuntimeError as exc:
+        assert "await environment.ainvoke" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected .invoke() to reject running event loop")
+
+
 def test_symposium_runs_independent_review_revision_and_synthesis(tmp_path):
     config = {
         "name": "symposium_test",
@@ -218,6 +349,45 @@ def test_symposium_runs_independent_review_revision_and_synthesis(tmp_path):
     assert "Work independently" in alpha_prompts[0]
     assert "Do not change, edit, overwrite, or reorganize" in alpha_prompts[1]
     assert "You may change only your own work/artifacts" in alpha_prompts[2]
+
+
+async def test_symposium_ainvoke_gathers_independent_member_phases(tmp_path):
+    ConcurrentAsyncMember.active = 0
+    ConcurrentAsyncMember.max_active = 0
+    config = {
+        "name": "async_symposium_test",
+        "organizer": {
+            "name": "organizer",
+            "role": "synth",
+            "agent": "tests.environments.test_environments.ConcurrentAsyncOrganizer",
+        },
+        "members": [
+            {
+                "name": "alpha",
+                "role": "first solver",
+                "agent": "tests.environments.test_environments.ConcurrentAsyncMember",
+            },
+            {
+                "name": "beta",
+                "role": "second solver",
+                "agent": "tests.environments.test_environments.ConcurrentAsyncMember",
+            },
+        ],
+        "revision_rounds": 1,
+        "workspace": str(tmp_path),
+    }
+    symposium = AgentSymposiumEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+
+    result = await symposium.ainvoke("hard async user problem")
+
+    assert set(result["initial_writeups"]) == {"alpha", "beta"}
+    assert len(result["review_rounds"]) == 1
+    assert set(result["reviews"]) == {"alpha", "beta"}
+    assert set(result["final_writeups"]) == {"alpha", "beta"}
+    assert "async organizer synthesis" in result["final"]
+    assert type(symposium.members["alpha"]).max_active >= 2
 
 
 def test_yaml_load_and_save_helpers_round_trip(tmp_path):

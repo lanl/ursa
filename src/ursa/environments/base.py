@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -78,6 +80,46 @@ class BaseEnvironment(BaseWorkflow):
                 "agent_name", self._member_agent_name(member.name)
             )
         return cls(llm=llm, **kwargs)
+
+    def _run_ainvoke_from_sync(
+        self, inputs: Mapping[str, Any], **config: Any
+    ) -> Any:
+        """Run this environment's async implementation for sync callers.
+
+        Environments are natively async internally so nested agents/tools can use
+        async-only implementations. The public ``invoke`` surface remains useful
+        for scripts by creating an event loop at the outer boundary. If a loop is
+        already running, callers must use ``await environment.ainvoke(...)``.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._ainvoke(inputs, **config))
+
+        raise RuntimeError(
+            "This environment uses async execution internally, but `.invoke()` "
+            "was called from an async context. Use "
+            "`await environment.ainvoke(...)` instead."
+        )
+
+    async def _invoke_member_async(
+        self, member: Any, prompt: str, **kwargs: Any
+    ) -> Any:
+        """Invoke a member through its async API when available.
+
+        BaseAgent and BaseEnvironment instances expose ``ainvoke``. Lightweight
+        test doubles or custom sync-only members may expose only ``invoke``; run
+        those in a worker thread so async environment phases remain non-blocking.
+        """
+        ainvoke = getattr(member, "ainvoke", None)
+        if callable(ainvoke):
+            result = ainvoke(prompt, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        invoke = getattr(member, "invoke")
+        return await asyncio.to_thread(invoke, prompt, **kwargs)
 
 
 def invocation_kwargs(config: Mapping[str, Any]) -> dict[str, Any]:

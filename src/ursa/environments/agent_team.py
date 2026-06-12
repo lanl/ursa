@@ -246,8 +246,22 @@ class AgentTeamEnvironment(BaseEnvironment):
             self._trace_delegation(f"{member_name} -> PI", text)
             return text
 
+        async def adelegate(task: str, context: str = "") -> str:
+            prompt = self._delegation_prompt(member, task=task, context=context)
+            self._trace_delegation(
+                f"PI -> {member_name}",
+                f"Task:\n{task}\n\nContext:\n{context or 'No additional context provided.'}",
+            )
+            result = await self._invoke_member_async(
+                self.members[member_name], prompt
+            )
+            text = result_to_text(result)
+            self._trace_delegation(f"{member_name} -> PI", text)
+            return text
+
         return StructuredTool.from_function(
             func=delegate,
+            coroutine=adelegate,
             name=tool_name,
             description=(
                 f"Delegate work to team member '{member_name}' ({role}). "
@@ -331,7 +345,10 @@ class AgentTeamEnvironment(BaseEnvironment):
         )
 
     def _invoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
+        return self._run_ainvoke_from_sync(inputs, **config)
+
+    async def _ainvoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
         task = str(inputs.get("task") or inputs.get("prompt") or inputs)
-        return self.pi.invoke(
-            self._pi_prompt(task), **invocation_kwargs(config)
+        return await self._invoke_member_async(
+            self.pi, self._pi_prompt(task), **invocation_kwargs(config)
         )

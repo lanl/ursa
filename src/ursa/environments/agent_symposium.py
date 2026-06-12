@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -257,6 +258,22 @@ class AgentSymposiumEnvironment(BaseEnvironment):
     def _invoke(
         self, inputs: Mapping[str, Any], **config: Any
     ) -> dict[str, Any]:
+        return self._run_ainvoke_from_sync(inputs, **config)
+
+    async def _member_writeup(
+        self,
+        member_config: EnvironmentMemberConfig,
+        prompt: str,
+        invoke_kwargs: Mapping[str, Any],
+    ) -> tuple[str, str]:
+        result = await self._invoke_member_async(
+            self.members[member_config.name], prompt, **invoke_kwargs
+        )
+        return member_config.name, result_to_text(result)
+
+    async def _ainvoke(
+        self, inputs: Mapping[str, Any], **config: Any
+    ) -> dict[str, Any]:
         task = str(inputs.get("task") or inputs.get("prompt") or inputs)
         if not self.config.members:
             raise ValueError(
@@ -264,33 +281,38 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             )
 
         invoke_kwargs = invocation_kwargs(config)
-        initial_writeups: dict[str, str] = {}
-        for member_config in self.config.members:
-            result = self.members[member_config.name].invoke(
-                self._initial_prompt(member_config, task), **invoke_kwargs
+        initial_pairs = await asyncio.gather(*[
+            self._member_writeup(
+                member_config,
+                self._initial_prompt(member_config, task),
+                invoke_kwargs,
             )
-            initial_writeups[member_config.name] = result_to_text(result)
+            for member_config in self.config.members
+        ])
+        initial_writeups = dict(initial_pairs)
 
         current_writeups = dict(initial_writeups)
         review_rounds: list[dict[str, str]] = []
         latest_reviews: dict[str, str] = {}
 
         for round_index in range(1, max(1, self.config.revision_rounds) + 1):
-            round_reviews: dict[str, str] = {}
-            for reviewer_config in self.config.members:
-                result = self.members[reviewer_config.name].invoke(
+            review_pairs = await asyncio.gather(*[
+                self._member_writeup(
+                    reviewer_config,
                     self._review_prompt(
                         reviewer_config, task, current_writeups
                     ),
-                    **invoke_kwargs,
+                    invoke_kwargs,
                 )
-                round_reviews[reviewer_config.name] = result_to_text(result)
+                for reviewer_config in self.config.members
+            ])
+            round_reviews = dict(review_pairs)
             latest_reviews = round_reviews
             review_rounds.append(round_reviews)
 
-            revised_writeups: dict[str, str] = {}
-            for member_config in self.config.members:
-                result = self.members[member_config.name].invoke(
+            revision_pairs = await asyncio.gather(*[
+                self._member_writeup(
+                    member_config,
                     self._revision_prompt(
                         member_config,
                         task,
@@ -299,12 +321,14 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                         round_reviews,
                         round_index,
                     ),
-                    **invoke_kwargs,
+                    invoke_kwargs,
                 )
-                revised_writeups[member_config.name] = result_to_text(result)
-            current_writeups = revised_writeups
+                for member_config in self.config.members
+            ])
+            current_writeups = dict(revision_pairs)
 
-        organizer_result = self.organizer.invoke(
+        organizer_result = await self._invoke_member_async(
+            self.organizer,
             self._synthesis_prompt(task, current_writeups, latest_reviews),
             **invoke_kwargs,
         )
