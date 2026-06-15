@@ -13,6 +13,10 @@ AsciiStr = Annotated[
 
 
 def validate_ascii(value: str) -> str:
+    # 0. Allow pass through if None for optional args
+    if value is None:
+        return value
+
     # 1. Enforce strict type checking
     if type(value) is not str:
         raise TypeError("Value must be a strict string")
