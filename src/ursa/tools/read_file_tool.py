@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_from_file
-from ursa.util.types import AsciiStr
+from ursa.util.types import validate_ascii
 
 
 @tool
@@ -38,7 +38,7 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
 
 @tool
 def download_file_tool(
-    url: Annotated[AsciiStr, "web link for the file"],
+    url: Annotated[str, "web link for the file"],
     output_path: Annotated[
         str, "local path to save the file within the workspace"
     ],
@@ -53,6 +53,7 @@ def download_file_tool(
     Returns:
         Confirmation message with the saved file path.
     """
+    url = validate_ascii(url)
 
     try:
         # Download
