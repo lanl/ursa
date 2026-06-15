@@ -44,6 +44,21 @@ def _experience_path(filename: str, runtime: ToolRuntime[AgentContext]) -> Path:
     return (_experiences_dir(runtime) / safe_name).resolve()
 
 
+def _relative_to_den(path: Path, runtime: ToolRuntime[AgentContext]) -> str:
+    """Return a den-relative path for display/store keys.
+
+    Tool paths are resolved before use. Resolve the den as well so Path.relative_to
+    does not fail when one side is absolute/resolved and the other is not. If a
+    future caller passes an unexpected path outside the den, fall back to the
+    resolved absolute path rather than crashing a tool call.
+    """
+    resolved_path = path.resolve()
+    try:
+        return str(resolved_path.relative_to(runtime.context.den.resolve()))
+    except ValueError:
+        return str(resolved_path)
+
+
 @tool
 def write_experience(
     filename: str,
@@ -90,7 +105,7 @@ def write_experience(
     if (store := runtime.store) is not None:
         store.put(
             ("den", "experience_edit"),
-            str(experience_file.relative_to(runtime.context.den)),
+            _relative_to_den(experience_file, runtime),
             {
                 "modified": time.time(),
                 "tool_call_id": runtime.tool_call_id,
@@ -102,7 +117,7 @@ def write_experience(
         )
 
     console.print("[cyan]Writing experience file:[/]", experience_file)
-    return f"Experience file {experience_file.relative_to(runtime.context.den)} {action} successfully."
+    return f"Experience file {_relative_to_den(experience_file, runtime)} {action} successfully."
 
 
 @tool
@@ -169,7 +184,7 @@ def edit_experience(
     if (store := runtime.store) is not None:
         store.put(
             ("den", "experience_edit"),
-            str(experience_file.relative_to(runtime.context.den)),
+            _relative_to_den(experience_file, runtime),
             {
                 "modified": time.time(),
                 "tool_call_id": runtime.tool_call_id,
@@ -180,7 +195,7 @@ def edit_experience(
             },
         )
 
-    return f"Experience file {experience_file.relative_to(runtime.context.den)} updated successfully."
+    return f"Experience file {_relative_to_den(experience_file, runtime)} updated successfully."
 
 
 @tool
@@ -204,7 +219,7 @@ def read_experience(
     if not experience_file.exists() or not experience_file.is_file():
         return (
             "Experience file not found: "
-            f"{experience_file.relative_to(runtime.context.den)}"
+            f"{_relative_to_den(experience_file, runtime)}"
         )
 
     console.print("[cyan]Reading experience:[/]", experience_file)

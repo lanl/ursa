@@ -40,6 +40,7 @@ MODEL_QUERY = {
         "ursa.agents.chat_agent.ChatAgent",
         "ursa.agents.code_review_agent.CodeReviewAgent",
         "ursa.agents.execution_agent.ExecutionAgent",
+        "ursa.agents.deep_review_agent.DeepReviewAgent",
         "ursa.agents.hypothesizer_agent.HypothesizerAgent",
         "ursa.agents.mp_agent.MaterialsProjectAgent",
         "ursa.agents.planning_agent.PlanningAgent",

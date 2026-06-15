@@ -15,6 +15,7 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "ExecutionAgent": (".execution_agent", "ExecutionAgent"),
     "GitAgent": (".git_agent", "GitAgent"),
     "GitGoAgent": (".git_go_agent", "GitGoAgent"),
+    "DeepReviewAgent": (".deep_review_agent", "DeepReviewAgent"),
     "HypothesizerAgent": (".hypothesizer_agent", "HypothesizerAgent"),
     "LammpsAgent": (".lammps_agent", "LammpsAgent"),
     "make_git_agent": (".git_agent", "make_git_agent"),

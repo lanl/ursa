@@ -225,7 +225,6 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         return {"messages": updated_messages}
 
     def _build_graph(self):
-        self.llm = self.llm.bind_tools(self.tools.values())
         self.add_node(self._documenter)
         self.add_node(self._runner)
         self.add_node(self._summarize)
