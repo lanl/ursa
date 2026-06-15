@@ -55,14 +55,17 @@ class CallbackRenderingMixin:
 
     AGENT_KEYS: ClassVar[dict[str, str]] = {
         "ExecutionAgent": "executor",
+        "DeepReviewAgent": "deep_review",
         "HypothesizerAgent": "hypothesizer",
         "PlanningAgent": "planner",
         "executor": "executor",
+        "deep_review": "deep_review",
         "hypothesizer": "hypothesizer",
         "planner": "planner",
     }
     AGENT_RULE_TITLES: ClassVar[dict[str, str]] = {
         "executor": "⚙️ Execute",
+        "deep_review": "🔎 Deep Review",
         "hypothesizer": "💡 Hypothesize",
         "planner": "🗺️ Plan",
     }

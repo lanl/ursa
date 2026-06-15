@@ -6,7 +6,7 @@ from cmd import Cmd
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aiosqlite
 from fastmcp import FastMCP
@@ -182,6 +182,10 @@ class HITL:
                 "use_web": self.config.use_web,
                 **rag_tool_config,
             },
+        )
+        self.agents["deep_review"] = AgentHITL(
+            agent_class=agents.DeepReviewAgent,
+            config={"use_web": self.config.use_web, **rag_tool_config},
         )
         self.agents["hypothesize"] = AgentHITL(
             agent_class=agents.HypothesizerAgent
@@ -492,7 +496,7 @@ class UrsaRepl(Cmd):
                 self.console.print(name + ": {}")
 
 
-def get_provider_and_model(model_str: Optional[str]):
+def get_provider_and_model(model_str: str | None):
     if model_str is None:
         return "none", "none"
 
