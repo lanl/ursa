@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_file
-from ursa.util.types import AsciiStr
+from ursa.util.types import AsciiStr, validate_ascii
 
 
 def _resolve_repo_dir(
@@ -162,7 +162,7 @@ def _allow_unsafe_writes_enabled() -> bool:
 @tool(description="Write source code to a file")
 def write_code(
     code: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
 ) -> str:
     """Write source code to a file
@@ -174,13 +174,14 @@ def write_code(
         filename: Name of the target file (including its extension).
 
     """
+    filename = validate_ascii(filename)
     return _write_code_file(code, filename, runtime)
 
 
 @tool(description="Write source code to a file within a repository boundary")
 def write_code_with_repo(
     code: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
     repo_path: AsciiStr,
 ) -> str:
@@ -191,6 +192,7 @@ def write_code_with_repo(
         filename: Name of the target file (including its extension).
         repo_path: Repo path - file must resolve within this directory.
     """
+    filename = validate_ascii(filename)
     workspace_dir = runtime.context.workspace
     repo, error = _resolve_repo_dir(repo_path, workspace_dir, "write", filename)
     if error:
@@ -203,9 +205,9 @@ def write_code_with_repo(
 def edit_code(
     old_code: str,
     new_code: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
-    repo_path: AsciiStr | None = None,
+    repo_path: str | None = None,
 ) -> str:
     """Replace the **first** occurrence of *old_code* with *new_code* in *filename*.
 
@@ -218,6 +220,8 @@ def edit_code(
     Returns:
         Success / failure message.
     """
+    filename = validate_ascii(filename)
+    repo_path = validate_ascii(repo_path)
     workspace_dir = runtime.context.workspace
     events = ToolEvents.from_runtime("edit_code", runtime)
 
