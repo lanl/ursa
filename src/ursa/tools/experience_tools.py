@@ -9,7 +9,7 @@ from rich.panel import Panel
 from ursa.agents.base import AgentContext
 from ursa.util.diff_renderer import DiffRenderer
 from ursa.util.parse import read_text_file, read_text_from_file
-from ursa.util.types import AsciiStr
+from ursa.util.types import validate_ascii
 
 console = get_console()
 
@@ -46,7 +46,7 @@ def _experience_path(filename: str, runtime: ToolRuntime[AgentContext]) -> Path:
 
 @tool
 def write_experience(
-    filename: AsciiStr,
+    filename: str,
     content: str,
     runtime: ToolRuntime[AgentContext],
     append: bool = True,
@@ -64,6 +64,7 @@ def write_experience(
     Returns:
         Confirmation message describing the write operation.
     """
+    filename = validate_ascii(filename)
     experience_file = _experience_path(filename, runtime)
     experience_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -108,7 +109,7 @@ def write_experience(
 def edit_experience(
     old_content: str,
     new_content: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
 ) -> str:
     """Replace the first occurrence of old_content with new_content in a markdown experience file.
@@ -121,6 +122,7 @@ def edit_experience(
     Returns:
         Success or failure message describing the edit operation.
     """
+    filename = validate_ascii(filename)
     experience_file = _experience_path(filename, runtime)
     console.print("[cyan]Editing experience file:[/cyan]", filename)
 
@@ -183,7 +185,7 @@ def edit_experience(
 
 @tool
 def read_experience(
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
 ) -> str:
     """Read a markdown experience file to recall previously stored context.
@@ -197,6 +199,7 @@ def read_experience(
     Returns:
         The contents of the requested experience file.
     """
+    filename = validate_ascii(filename)
     experience_file = _experience_path(filename, runtime)
     if not experience_file.exists() or not experience_file.is_file():
         return (
