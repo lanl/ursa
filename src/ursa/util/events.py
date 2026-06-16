@@ -45,11 +45,13 @@ Tool usage from a ``ToolRuntime``:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
 from time import monotonic_ns, perf_counter
 from typing import Any, Self
+from uuid import uuid4
 
 from langchain.tools import ToolRuntime
 from langchain_core.callbacks import BaseCallbackHandler
@@ -312,6 +314,118 @@ class AgentEvents(ProgressEvents):
         )
 
 
+class EnvironmentEvents(ProgressEvents):
+    """Emit standardized URSA progress events for an environment.
+
+    Environment events use the same custom LangChain event channel as agent and
+    tool events so a single callback recorder can capture complete nested runs.
+    Environments may also be invoked directly rather than from inside a
+    LangChain runnable. In that case LangChain refuses ad-hoc custom events
+    because there is no parent run ID, so this helper falls back to directly
+    notifying callbacks from the runnable config.
+    """
+
+    def __init__(
+        self,
+        environment: str,
+        config: RunnableConfig | None = None,
+        event_name: str = DEFAULT_EVENT_NAME,
+        *,
+        environment_type: str | None = None,
+        environment_id: str | None = None,
+        path: list[str] | None = None,
+    ) -> None:
+        default_payload: dict[str, Any] = {}
+        if environment_type is not None:
+            default_payload["environment_type"] = environment_type
+        if environment_id is not None:
+            default_payload["environment_id"] = environment_id
+        if path is not None:
+            default_payload["path"] = path
+        super().__init__(
+            name=environment,
+            config=config,
+            event_name=event_name,
+            name_key="environment",
+            default_payload=default_payload,
+        )
+
+    def emit(
+        self,
+        message: str,
+        *,
+        stage: str,
+        **payload: Any,
+    ) -> dict[str, Any] | None:
+        if self.config is None:
+            return None
+        body = self._payload(message=message, stage=stage, **payload)
+        try:
+            dispatch_custom_event(self.event_name, body, config=self.config)
+        except RuntimeError as exc:
+            if not self._is_missing_parent_run_error(exc):
+                raise
+            self._direct_emit(body)
+        return body
+
+    async def aemit(
+        self,
+        message: str,
+        *,
+        stage: str,
+        **payload: Any,
+    ) -> dict[str, Any] | None:
+        if self.config is None:
+            return None
+        body = self._payload(message=message, stage=stage, **payload)
+        try:
+            await adispatch_custom_event(
+                self.event_name,
+                body,
+                config=self.config,
+            )
+        except RuntimeError as exc:
+            if not self._is_missing_parent_run_error(exc):
+                raise
+            await self._adirect_emit(body)
+        return body
+
+    @staticmethod
+    def _is_missing_parent_run_error(exc: RuntimeError) -> bool:
+        return (
+            "Unable to dispatch an adhoc event without a parent run id"
+            in str(exc)
+        )
+
+    def _callbacks(self) -> list[Any]:
+        if self.config is None:
+            return []
+        callbacks = self.config.get("callbacks", [])
+        if callbacks is None:
+            return []
+        if isinstance(callbacks, list):
+            return callbacks
+        return [callbacks]
+
+    def _direct_emit(self, body: dict[str, Any]) -> None:
+        run_id = uuid4()
+        for callback in self._callbacks():
+            handler = getattr(callback, "on_custom_event", None)
+            if handler is None:
+                continue
+            handler(self.event_name, body, run_id=run_id)
+
+    async def _adirect_emit(self, body: dict[str, Any]) -> None:
+        run_id = uuid4()
+        for callback in self._callbacks():
+            handler = getattr(callback, "on_custom_event", None)
+            if handler is None:
+                continue
+            result = handler(self.event_name, body, run_id=run_id)
+            if inspect.isawaitable(result):
+                await result
+
+
 class ToolEvents(ProgressEvents):
     """Emit standardized URSA progress events for a single tool."""
 
@@ -459,6 +573,7 @@ __all__ = [
     "DEFAULT_EVENT_NAME",
     "AgentEvents",
     "EventConsoleFormatter",
+    "EnvironmentEvents",
     "EventLoggingHandler",
     "EventRange",
     "ProgressEvents",

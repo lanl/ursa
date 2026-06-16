@@ -10,6 +10,7 @@ from ursa.agents.base import AgentContext
 from ursa.util.events import (
     LOGGER,
     AgentEvents,
+    EnvironmentEvents,
     EventConsoleFormatter,
     EventLoggingHandler,
     ToolEvents,
@@ -172,6 +173,42 @@ def test_event_console_formatter_renders_readable_event() -> None:
     finally:
         logger.handlers = []
         logger.propagate = True
+
+
+def test_environment_events_include_environment_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
+        calls.append((event_name, payload, config))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        fake_dispatch,
+    )
+
+    config = {"metadata": {"thread_id": "thread-env"}}
+    events = EnvironmentEvents(
+        environment="team",
+        config=config,
+        environment_type="agent_team",
+        environment_id="team-id",
+        path=["team"],
+    )
+    payload = events.emit("Team started", stage="team", phase="start")
+
+    assert payload == {
+        "environment": "team",
+        "stage": "team",
+        "message": "Team started",
+        "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+        "environment_type": "agent_team",
+        "environment_id": "team-id",
+        "path": ["team"],
+        "phase": "start",
+    }
+    assert calls == [("ursa_agent_progress", payload, config)]
 
 
 def test_tool_events_emit_tool_payload_from_runtime(

@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Mapping
 
 from langchain.chat_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 
 from ursa.security import group_environments_dir, validate_group_name
 from ursa.workflows.base_workflow import BaseWorkflow, InputLike
 
 from .config import EnvironmentMemberConfig, load_object, make_llm
+
+_CURRENT_ENVIRONMENT_CONFIG: ContextVar[RunnableConfig | None] = ContextVar(
+    "ursa_current_environment_config",
+    default=None,
+)
 
 
 class BaseEnvironment(BaseWorkflow):
@@ -125,6 +132,34 @@ class BaseEnvironment(BaseWorkflow):
 def invocation_kwargs(config: Mapping[str, Any]) -> dict[str, Any]:
     """Drop empty control kwargs before forwarding nested invocations."""
     return {key: value for key, value in config.items() if value is not None}
+
+
+def runnable_config_from_kwargs(
+    config: Mapping[str, Any],
+) -> RunnableConfig | None:
+    """Extract the LangChain runnable config from environment kwargs."""
+    value = config.get("config")
+    if isinstance(value, Mapping):
+        return dict(value)
+    return None
+
+
+def current_environment_config() -> RunnableConfig | None:
+    """Return the runnable config bound to the current environment invocation."""
+    return _CURRENT_ENVIRONMENT_CONFIG.get()
+
+
+def bind_current_environment_config(
+    config: RunnableConfig | None,
+) -> Token[RunnableConfig | None]:
+    """Bind runnable config for delegation tools created outside the run scope."""
+    return _CURRENT_ENVIRONMENT_CONFIG.set(config)
+
+
+def reset_current_environment_config(
+    token: Token[RunnableConfig | None],
+) -> None:
+    _CURRENT_ENVIRONMENT_CONFIG.reset(token)
 
 
 def result_to_text(result: Any) -> str:

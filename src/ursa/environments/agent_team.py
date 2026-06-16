@@ -2,13 +2,24 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Mapping
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from .base import BaseEnvironment, invocation_kwargs, result_to_text
+from ursa.util.events import EnvironmentEvents
+
+from .base import (
+    BaseEnvironment,
+    bind_current_environment_config,
+    current_environment_config,
+    invocation_kwargs,
+    reset_current_environment_config,
+    result_to_text,
+    runnable_config_from_kwargs,
+)
 from .config import (
     AgentTeamConfig,
     EnvironmentMemberConfig,
@@ -228,6 +239,66 @@ class AgentTeamEnvironment(BaseEnvironment):
             )
         return pi_agent
 
+    def _events(self, config: Mapping[str, Any] | None) -> EnvironmentEvents:
+        return EnvironmentEvents(
+            environment=self.name,
+            config=config,
+            environment_type="agent_team",
+            environment_id=self.name,
+            path=[self.name],
+        )
+
+    def _source(self, name: str, *, kind: str = "agent") -> dict[str, Any]:
+        return {
+            "id": f"{self.name}.{name}",
+            "name": name,
+            "kind": kind,
+            "path": [self.name, name],
+        }
+
+    def _member_node(self, member: EnvironmentMemberConfig) -> dict[str, Any]:
+        kind = (
+            "environment"
+            if isinstance(self.members.get(member.name), BaseEnvironment)
+            else "agent"
+        )
+        return {
+            "id": f"{self.name}.{member.name}",
+            "name": member.name,
+            "kind": kind,
+            "role": member.role,
+            "agent_class": member.agent,
+            "path": [self.name, member.name],
+        }
+
+    def _topology_payload(self) -> dict[str, Any]:
+        pi = self.config.pi
+        nodes = [
+            {
+                "id": f"{self.name}.{pi.name}",
+                "name": pi.name,
+                "kind": "agent",
+                "role": pi.role,
+                "agent_class": pi.agent,
+                "path": [self.name, pi.name],
+            },
+            *[self._member_node(member) for member in self.config.members],
+        ]
+        return {
+            "kind": "agent_team",
+            "name": self.name,
+            "description": self.config.description,
+            "nodes": nodes,
+            "edges": [
+                {
+                    "source": f"{self.name}.{pi.name}",
+                    "target": f"{self.name}.{member.name}",
+                    "kind": "delegates_to",
+                }
+                for member in self.config.members
+            ],
+        }
+
     def _make_delegation_tool(
         self, member: EnvironmentMemberConfig
     ) -> StructuredTool:
@@ -237,25 +308,115 @@ class AgentTeamEnvironment(BaseEnvironment):
 
         def delegate(task: str, context: str = "") -> str:
             prompt = self._delegation_prompt(member, task=task, context=context)
+            runtime_config = current_environment_config()
+            events = self._events(runtime_config)
+            source = self._source(self.config.pi.name)
+            target = self._source(member_name)
+            start = perf_counter()
+            events.emit(
+                f"Delegating to {member_name}",
+                stage="delegation",
+                phase="start",
+                event_type="delegation_started",
+                source=source,
+                target=target,
+                task=task,
+                context=context,
+                prompt=prompt,
+            )
             self._trace_delegation(
                 f"PI -> {member_name}",
                 f"Task:\n{task}\n\nContext:\n{context or 'No additional context provided.'}",
             )
-            result = self.members[member_name].invoke(prompt)
+            try:
+                kwargs = {"config": runtime_config} if runtime_config else {}
+                result = self.members[member_name].invoke(prompt, **kwargs)
+            except BaseException as exc:
+                events.emit(
+                    f"Delegation to {member_name} failed",
+                    stage="delegation",
+                    phase="error",
+                    event_type="delegation_failed",
+                    level="error",
+                    source=source,
+                    target=target,
+                    task=task,
+                    context=context,
+                    error=str(exc),
+                    elapsed_seconds=perf_counter() - start,
+                )
+                raise
             text = result_to_text(result)
+            events.emit(
+                f"Delegation to {member_name} completed",
+                stage="delegation",
+                phase="end",
+                event_type="delegation_completed",
+                source=target,
+                target=source,
+                task=task,
+                context=context,
+                result=text,
+                elapsed_seconds=perf_counter() - start,
+            )
             self._trace_delegation(f"{member_name} -> PI", text)
             return text
 
         async def adelegate(task: str, context: str = "") -> str:
             prompt = self._delegation_prompt(member, task=task, context=context)
+            runtime_config = current_environment_config()
+            events = self._events(runtime_config)
+            source = self._source(self.config.pi.name)
+            target = self._source(member_name)
+            start = perf_counter()
+            await events.aemit(
+                f"Delegating to {member_name}",
+                stage="delegation",
+                phase="start",
+                event_type="delegation_started",
+                source=source,
+                target=target,
+                task=task,
+                context=context,
+                prompt=prompt,
+            )
             self._trace_delegation(
                 f"PI -> {member_name}",
                 f"Task:\n{task}\n\nContext:\n{context or 'No additional context provided.'}",
             )
-            result = await self._invoke_member_async(
-                self.members[member_name], prompt
-            )
+            try:
+                kwargs = {"config": runtime_config} if runtime_config else {}
+                result = await self._invoke_member_async(
+                    self.members[member_name], prompt, **kwargs
+                )
+            except BaseException as exc:
+                await events.aemit(
+                    f"Delegation to {member_name} failed",
+                    stage="delegation",
+                    phase="error",
+                    event_type="delegation_failed",
+                    level="error",
+                    source=source,
+                    target=target,
+                    task=task,
+                    context=context,
+                    error=str(exc),
+                    elapsed_seconds=perf_counter() - start,
+                )
+                raise
             text = result_to_text(result)
+            await events.aemit(
+                f"Delegation to {member_name} completed",
+                stage="delegation",
+                phase="end",
+                event_type="delegation_completed",
+                source=target,
+                target=source,
+                task=task,
+                context=context,
+                result=text,
+                elapsed_seconds=perf_counter() - start,
+            )
             self._trace_delegation(f"{member_name} -> PI", text)
             return text
 
@@ -349,6 +510,50 @@ class AgentTeamEnvironment(BaseEnvironment):
 
     async def _ainvoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
         task = str(inputs.get("task") or inputs.get("prompt") or inputs)
-        return await self._invoke_member_async(
-            self.pi, self._pi_prompt(task), **invocation_kwargs(config)
+        runtime_config = runnable_config_from_kwargs(config)
+        events = self._events(runtime_config)
+        token = bind_current_environment_config(runtime_config)
+        start = perf_counter()
+        await events.aemit(
+            f"Agent team {self.name} started",
+            stage="team",
+            phase="start",
+            event_type="team_started",
+            task=task,
+            topology=self._topology_payload(),
         )
+        await events.aemit(
+            f"Agent team {self.name} topology declared",
+            stage="team",
+            phase="topology",
+            event_type="topology_declared",
+            topology=self._topology_payload(),
+        )
+        try:
+            result = await self._invoke_member_async(
+                self.pi, self._pi_prompt(task), **invocation_kwargs(config)
+            )
+        except BaseException as exc:
+            await events.aemit(
+                f"Agent team {self.name} failed",
+                stage="team",
+                phase="error",
+                event_type="team_failed",
+                level="error",
+                task=task,
+                error=str(exc),
+                elapsed_seconds=perf_counter() - start,
+            )
+            raise
+        finally:
+            reset_current_environment_config(token)
+        await events.aemit(
+            f"Agent team {self.name} completed",
+            stage="team",
+            phase="end",
+            event_type="team_completed",
+            task=task,
+            result=result_to_text(result),
+            elapsed_seconds=perf_counter() - start,
+        )
+        return result

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Mapping
 
 from langchain.chat_models import BaseChatModel
 
-from .base import BaseEnvironment, invocation_kwargs, result_to_text
+from ursa.util.events import EnvironmentEvents
+
+from .base import (
+    BaseEnvironment,
+    invocation_kwargs,
+    result_to_text,
+    runnable_config_from_kwargs,
+)
 from .config import (
     AgentSymposiumConfig,
     EnvironmentMemberConfig,
@@ -71,6 +79,86 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             member.name: member for member in self.config.members
         }
         self.organizer = self.build_member(self.config.organizer)
+
+    def _events(self, config: Mapping[str, Any] | None) -> EnvironmentEvents:
+        return EnvironmentEvents(
+            environment=self.name,
+            config=config,
+            environment_type="agent_symposium",
+            environment_id=self.name,
+            path=[self.name],
+        )
+
+    def _source(self, name: str, *, kind: str = "agent") -> dict[str, Any]:
+        return {
+            "id": f"{self.name}.{name}",
+            "name": name,
+            "kind": kind,
+            "path": [self.name, name],
+        }
+
+    def _environment_source(self) -> dict[str, Any]:
+        return {
+            "id": self.name,
+            "name": self.name,
+            "kind": "environment",
+            "path": [self.name],
+        }
+
+    def _member_node(self, member: EnvironmentMemberConfig) -> dict[str, Any]:
+        member_obj = self.members.get(member.name)
+        kind = (
+            "environment"
+            if isinstance(member_obj, BaseEnvironment)
+            else "agent"
+        )
+        return {
+            "id": f"{self.name}.{member.name}",
+            "name": member.name,
+            "kind": kind,
+            "role": member.role,
+            "agent_class": member.agent,
+            "path": [self.name, member.name],
+        }
+
+    def _topology_payload(self) -> dict[str, Any]:
+        organizer = self.config.organizer
+        organizer_kind = (
+            "environment"
+            if isinstance(self.organizer, BaseEnvironment)
+            else "agent"
+        )
+        nodes = [
+            {
+                "id": f"{self.name}.{organizer.name}",
+                "name": organizer.name,
+                "kind": organizer_kind,
+                "role": organizer.role,
+                "agent_class": organizer.agent,
+                "path": [self.name, organizer.name],
+            },
+            *[self._member_node(member) for member in self.config.members],
+        ]
+        edges = []
+        for member in self.config.members:
+            edges.append({
+                "source": self.name,
+                "target": f"{self.name}.{member.name}",
+                "kind": "dispatches_to",
+            })
+            edges.append({
+                "source": f"{self.name}.{member.name}",
+                "target": f"{self.name}.{organizer.name}",
+                "kind": "synthesized_by",
+            })
+        return {
+            "kind": "agent_symposium",
+            "name": self.name,
+            "description": self.config.description,
+            "revision_rounds": self.config.revision_rounds,
+            "nodes": nodes,
+            "edges": edges,
+        }
 
     @classmethod
     def from_yaml(
@@ -265,11 +353,59 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         member_config: EnvironmentMemberConfig,
         prompt: str,
         invoke_kwargs: Mapping[str, Any],
+        events: EnvironmentEvents,
+        *,
+        event_prefix: str,
+        phase_name: str,
+        round_index: int | None = None,
     ) -> tuple[str, str]:
-        result = await self._invoke_member_async(
-            self.members[member_config.name], prompt, **invoke_kwargs
+        member_name = member_config.name
+        source = self._source(member_name)
+        start = perf_counter()
+        await events.aemit(
+            f"{member_name} started {phase_name}",
+            stage="symposium",
+            phase=phase_name,
+            event_type=f"{event_prefix}_started",
+            source=source,
+            target=self._environment_source(),
+            member=member_name,
+            round_index=round_index,
+            prompt=prompt,
         )
-        return member_config.name, result_to_text(result)
+        try:
+            result = await self._invoke_member_async(
+                self.members[member_name], prompt, **invoke_kwargs
+            )
+        except BaseException as exc:
+            await events.aemit(
+                f"{member_name} failed {phase_name}",
+                stage="symposium",
+                phase=phase_name,
+                event_type=f"{event_prefix}_failed",
+                level="error",
+                source=source,
+                target=self._environment_source(),
+                member=member_name,
+                round_index=round_index,
+                error=str(exc),
+                elapsed_seconds=perf_counter() - start,
+            )
+            raise
+        text = result_to_text(result)
+        await events.aemit(
+            f"{member_name} completed {phase_name}",
+            stage="symposium",
+            phase=phase_name,
+            event_type=f"{event_prefix}_completed",
+            source=source,
+            target=self._environment_source(),
+            member=member_name,
+            round_index=round_index,
+            result=text,
+            elapsed_seconds=perf_counter() - start,
+        )
+        return member_name, text
 
     async def _ainvoke(
         self, inputs: Mapping[str, Any], **config: Any
@@ -280,65 +416,187 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                 "AgentSymposiumEnvironment requires at least one member."
             )
 
+        runtime_config = runnable_config_from_kwargs(config)
+        events = self._events(runtime_config)
         invoke_kwargs = invocation_kwargs(config)
-        initial_pairs = await asyncio.gather(*[
-            self._member_writeup(
-                member_config,
-                self._initial_prompt(member_config, task),
-                invoke_kwargs,
+        start = perf_counter()
+        await events.aemit(
+            f"Agent symposium {self.name} started",
+            stage="symposium",
+            phase="start",
+            event_type="symposium_started",
+            task=task,
+            topology=self._topology_payload(),
+        )
+        await events.aemit(
+            f"Agent symposium {self.name} topology declared",
+            stage="symposium",
+            phase="topology",
+            event_type="topology_declared",
+            topology=self._topology_payload(),
+        )
+        try:
+            await events.aemit(
+                "Initial symposium work started",
+                stage="symposium",
+                phase="initial_work",
+                event_type="symposium_phase_started",
+                task=task,
             )
-            for member_config in self.config.members
-        ])
-        initial_writeups = dict(initial_pairs)
-
-        current_writeups = dict(initial_writeups)
-        review_rounds: list[dict[str, str]] = []
-        latest_reviews: dict[str, str] = {}
-
-        for round_index in range(1, max(1, self.config.revision_rounds) + 1):
-            review_pairs = await asyncio.gather(*[
-                self._member_writeup(
-                    reviewer_config,
-                    self._review_prompt(
-                        reviewer_config, task, current_writeups
-                    ),
-                    invoke_kwargs,
-                )
-                for reviewer_config in self.config.members
-            ])
-            round_reviews = dict(review_pairs)
-            latest_reviews = round_reviews
-            review_rounds.append(round_reviews)
-
-            revision_pairs = await asyncio.gather(*[
+            initial_pairs = await asyncio.gather(*[
                 self._member_writeup(
                     member_config,
-                    self._revision_prompt(
-                        member_config,
-                        task,
-                        current_writeups[member_config.name],
-                        current_writeups,
-                        round_reviews,
-                        round_index,
-                    ),
+                    self._initial_prompt(member_config, task),
                     invoke_kwargs,
+                    events,
+                    event_prefix="initial_work",
+                    phase_name="initial_work",
                 )
                 for member_config in self.config.members
             ])
-            current_writeups = dict(revision_pairs)
+            initial_writeups = dict(initial_pairs)
+            await events.aemit(
+                "Initial symposium work completed",
+                stage="symposium",
+                phase="initial_work",
+                event_type="symposium_phase_completed",
+                result=initial_writeups,
+            )
 
-        organizer_result = await self._invoke_member_async(
-            self.organizer,
-            self._synthesis_prompt(task, current_writeups, latest_reviews),
-            **invoke_kwargs,
+            current_writeups = dict(initial_writeups)
+            review_rounds: list[dict[str, str]] = []
+            latest_reviews: dict[str, str] = {}
+
+            for round_index in range(
+                1, max(1, self.config.revision_rounds) + 1
+            ):
+                await events.aemit(
+                    f"Review round {round_index} started",
+                    stage="symposium",
+                    phase="review",
+                    event_type="review_round_started",
+                    round_index=round_index,
+                    writeups=current_writeups,
+                )
+                review_pairs = await asyncio.gather(*[
+                    self._member_writeup(
+                        reviewer_config,
+                        self._review_prompt(
+                            reviewer_config, task, current_writeups
+                        ),
+                        invoke_kwargs,
+                        events,
+                        event_prefix="review",
+                        phase_name="review",
+                        round_index=round_index,
+                    )
+                    for reviewer_config in self.config.members
+                ])
+                round_reviews = dict(review_pairs)
+                latest_reviews = round_reviews
+                review_rounds.append(round_reviews)
+                await events.aemit(
+                    f"Review round {round_index} completed",
+                    stage="symposium",
+                    phase="review",
+                    event_type="review_round_completed",
+                    round_index=round_index,
+                    reviews=round_reviews,
+                )
+
+                await events.aemit(
+                    f"Revision round {round_index} started",
+                    stage="symposium",
+                    phase="revision",
+                    event_type="revision_round_started",
+                    round_index=round_index,
+                    reviews=round_reviews,
+                )
+                revision_pairs = await asyncio.gather(*[
+                    self._member_writeup(
+                        member_config,
+                        self._revision_prompt(
+                            member_config,
+                            task,
+                            current_writeups[member_config.name],
+                            current_writeups,
+                            round_reviews,
+                            round_index,
+                        ),
+                        invoke_kwargs,
+                        events,
+                        event_prefix="revision",
+                        phase_name="revision",
+                        round_index=round_index,
+                    )
+                    for member_config in self.config.members
+                ])
+                current_writeups = dict(revision_pairs)
+                await events.aemit(
+                    f"Revision round {round_index} completed",
+                    stage="symposium",
+                    phase="revision",
+                    event_type="revision_round_completed",
+                    round_index=round_index,
+                    writeups=current_writeups,
+                )
+
+            synthesis_prompt = self._synthesis_prompt(
+                task, current_writeups, latest_reviews
+            )
+            synth_start = perf_counter()
+            await events.aemit(
+                "Symposium synthesis started",
+                stage="symposium",
+                phase="synthesis",
+                event_type="synthesis_started",
+                source=self._source(self.config.organizer.name),
+                task=task,
+                prompt=synthesis_prompt,
+            )
+            organizer_result = await self._invoke_member_async(
+                self.organizer,
+                synthesis_prompt,
+                **invoke_kwargs,
+            )
+            final = result_to_text(organizer_result)
+            await events.aemit(
+                "Symposium synthesis completed",
+                stage="symposium",
+                phase="synthesis",
+                event_type="synthesis_completed",
+                source=self._source(self.config.organizer.name),
+                result=final,
+                elapsed_seconds=perf_counter() - synth_start,
+            )
+            result = {
+                "task": task,
+                "initial_writeups": initial_writeups,
+                "review_rounds": review_rounds,
+                "reviews": latest_reviews,
+                "final_writeups": current_writeups,
+                "organizer_result": organizer_result,
+                "final": final,
+            }
+        except BaseException as exc:
+            await events.aemit(
+                f"Agent symposium {self.name} failed",
+                stage="symposium",
+                phase="error",
+                event_type="symposium_failed",
+                level="error",
+                task=task,
+                error=str(exc),
+                elapsed_seconds=perf_counter() - start,
+            )
+            raise
+        await events.aemit(
+            f"Agent symposium {self.name} completed",
+            stage="symposium",
+            phase="end",
+            event_type="symposium_completed",
+            task=task,
+            result=result["final"],
+            elapsed_seconds=perf_counter() - start,
         )
-        final = result_to_text(organizer_result)
-        return {
-            "task": task,
-            "initial_writeups": initial_writeups,
-            "review_rounds": review_rounds,
-            "reviews": latest_reviews,
-            "final_writeups": current_writeups,
-            "organizer_result": organizer_result,
-            "final": final,
-        }
+        return result
