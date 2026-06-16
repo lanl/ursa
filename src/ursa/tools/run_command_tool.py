@@ -12,7 +12,11 @@ from ursa.prompt_library.safety_prompts import (
 )
 from ursa.util.events import ToolEvents
 from ursa.util.structured_output import invoke_structured
-from ursa.util.types import validate_ascii
+from ursa.util.types import (
+    AsciiValidationError,
+    ascii_validation_message,
+    validate_ascii,
+)
 
 
 class SafetyAssessment(BaseModel):
@@ -36,7 +40,10 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         A formatted string with "STDOUT:" followed by the truncated stdout and
         "STDERR:" followed by the truncated stderr.
     """
-    query = validate_ascii(query)
+    try:
+        query = validate_ascii(query)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("query", exc)
     workspace_dir = Path(runtime.context.workspace)
     if runtime.store is not None:
         search_results = runtime.store.search(

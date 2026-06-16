@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
-from pydantic import ValidationError
 
 from tests.tools.utils import (
     invoke_with_event_recorder,
@@ -12,7 +11,6 @@ from tests.tools.utils import (
     make_runtime,
 )
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
-from ursa.util.types import AsciiStr
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
 
@@ -188,8 +186,8 @@ def test_run_command_handles_keyboard_interrupt(
     assert "KeyboardInterrupt:" in result
 
 
-def test_run_command_rejects_unicode_input(
-    tmp_path: Path, chat_model: BaseChatModel
+def test_run_command_returns_message_for_unicode_input(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     runtime = make_runtime(
         tmp_path,
@@ -197,21 +195,18 @@ def test_run_command_rejects_unicode_input(
         thread_id="run-thread",
         tool_call_id="unicode",
     )
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess should not run for invalid input"
+        ),
+    )
 
-    with pytest.raises(ValidationError):
-        run_command.invoke({"query": "ls café", "runtime": runtime})
+    result = run_command.func("ls café", runtime)
 
-
-def test_run_command_schema_has_regex_constraint():
-    field = run_command.args_schema.model_fields["query"]
-    assert field.annotation is str
-    constraints = [meta for meta in field.metadata if hasattr(meta, "pattern")]
-    assert constraints
-    ascii_constraints = [
-        meta for meta in AsciiStr.__metadata__ if hasattr(meta, "pattern")
-    ]
-    assert ascii_constraints
-    assert constraints[0].pattern == ascii_constraints[0].pattern
+    assert result.startswith("Invalid query:")
+    assert "U+00E9" in result
+    assert "corrected ASCII string" in result
 
 
 def test_run_command_blocks_commands_that_fail_safety_check(
