@@ -8,7 +8,11 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_from_file
-from ursa.util.types import validate_ascii
+from ursa.util.types import (
+    AsciiValidationError,
+    ascii_validation_message,
+    validate_ascii,
+)
 
 
 @tool
@@ -53,7 +57,14 @@ def download_file_tool(
     Returns:
         Confirmation message with the saved file path.
     """
-    url = validate_ascii(url)
+    try:
+        url = validate_ascii(url)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("url", exc)
+    try:
+        output_path = validate_ascii(output_path)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("output_path", exc)
 
     try:
         # Download

@@ -87,6 +87,25 @@ def test_write_code_records_store_entry(
     assert isinstance(payload["elapsed_ms"], float)
 
 
+def test_write_code_rejects_invalid_ascii_filename_without_cleaning(
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+):
+    existing = tmp_path / "caf.py"
+    existing.write_text("original", encoding="utf-8")
+    runtime = make_runtime(tmp_path, llm=chat_model)
+
+    result = write_code.func(
+        code="replacement",
+        filename="café.py",
+        runtime=runtime,
+    )
+
+    assert result.startswith("Invalid filename:")
+    assert "U+00E9" in result
+    assert existing.read_text(encoding="utf-8") == "original"
+
+
 def test_edit_code_updates_file_and_records(
     tmp_path: Path, chat_model: BaseChatModel
 ):

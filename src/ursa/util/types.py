@@ -11,22 +11,53 @@ AsciiStr = Annotated[
 ]
 """ Limit strings to "text" ASCII characters (letters, digits, symbols, whitespace) """
 
+_ALLOWED_ASCII_PATTERN = re.compile(r"^[\x20-\x7E\t\n\r\f\v]*$")
+_INVALID_ASCII_PATTERN = re.compile(r"[^\x20-\x7E\t\n\r\f\v]")
+_ALLOWED_ASCII_DESCRIPTION = (
+    "printable ASCII characters plus tab, newline, carriage return, "
+    "form feed, and vertical tab"
+)
 
-def validate_ascii(value: str) -> str:
-    # 0. Allow pass through if None for optional args
+
+class AsciiValidationError(ValueError):
+    """Raised when a tool string contains unsupported non-ASCII characters."""
+
+
+def _invalid_ascii_description(value: str) -> str:
+    details = []
+    for match in _INVALID_ASCII_PATTERN.finditer(value):
+        char = match.group()
+        details.append(f"position {match.start()} (U+{ord(char):04X})")
+    return ", ".join(details)
+
+
+def validate_ascii(value: str | None) -> str | None:
+    """Validate tool strings against URSA's ASCII text-string constraint.
+
+    This intentionally rejects invalid characters instead of cleaning them. Silent
+    cleaning can change file paths or commands into different valid strings, which
+    risks operating on the wrong target.
+    """
     if value is None:
         return value
 
-    # 1. Enforce strict type checking
     if type(value) is not str:
-        raise TypeError("Value must be a strict string")
+        raise AsciiValidationError(
+            f"Value must be a strict string, got {type(value).__name__}."
+        )
 
-    # 2. Define the inverse regex pattern
-    # The '^' inside '[^...]' removes anything NOT in your allowed ASCII set
-    invalid_chars_pattern = re.compile(r"[^\x20-\x7E\t\n\r\f\v]")
+    if not _ALLOWED_ASCII_PATTERN.fullmatch(value):
+        invalid = _invalid_ascii_description(value)
+        raise AsciiValidationError(
+            f"Value must contain only {_ALLOWED_ASCII_DESCRIPTION}; "
+            f"invalid character(s) at {invalid}."
+        )
 
-    # 3. Silently drop invalid characters
-    cleaned_value = invalid_chars_pattern.sub("", value)
+    return value.strip()
 
-    # 4. Strip leading and trailing whitespace
-    return cleaned_value.strip()
+
+def ascii_validation_message(field_name: str, exc: AsciiValidationError) -> str:
+    """Format an ASCII validation failure for return to an LLM tool caller."""
+    return (
+        f"Invalid {field_name}: {exc} Please provide a corrected ASCII string."
+    )
