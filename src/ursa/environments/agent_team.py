@@ -256,6 +256,42 @@ class AgentTeamEnvironment(BaseEnvironment):
             "path": [self.name, name],
         }
 
+    def _member_runtime_config(
+        self,
+        base_config: Mapping[str, Any] | None,
+        member: EnvironmentMemberConfig,
+    ) -> dict[str, Any] | None:
+        """Attach stable team-member identity to nested agent/tool events."""
+        if base_config is None:
+            return None
+        member_id = f"{self.name}.{member.name}"
+        merged = dict(base_config)
+        base_metadata = merged.get("metadata")
+        metadata = (
+            dict(base_metadata) if isinstance(base_metadata, Mapping) else {}
+        )
+        metadata.update({
+            "environment_id": self.name,
+            "environment_member": member.name,
+            "environment_member_id": member_id,
+            "environment_member_role": member.role,
+            "environment_member_path": [self.name, member.name],
+            "agent": member.name,
+            "agent_id": member_id,
+        })
+        merged["metadata"] = metadata
+
+        base_tags = merged.get("tags")
+        if isinstance(base_tags, str):
+            tags = [base_tags]
+        else:
+            tags = list(base_tags) if base_tags else []
+        for tag in (member.name, member_id, "environment_member"):
+            if tag not in tags:
+                tags.append(tag)
+        merged["tags"] = tags
+        return merged
+
     def _member_node(self, member: EnvironmentMemberConfig) -> dict[str, Any]:
         kind = (
             "environment"
@@ -329,7 +365,10 @@ class AgentTeamEnvironment(BaseEnvironment):
                 f"Task:\n{task}\n\nContext:\n{context or 'No additional context provided.'}",
             )
             try:
-                kwargs = {"config": runtime_config} if runtime_config else {}
+                member_config = self._member_runtime_config(
+                    runtime_config, member
+                )
+                kwargs = {"config": member_config} if member_config else {}
                 result = self.members[member_name].invoke(prompt, **kwargs)
             except BaseException as exc:
                 events.emit(
@@ -385,7 +424,10 @@ class AgentTeamEnvironment(BaseEnvironment):
                 f"Task:\n{task}\n\nContext:\n{context or 'No additional context provided.'}",
             )
             try:
-                kwargs = {"config": runtime_config} if runtime_config else {}
+                member_config = self._member_runtime_config(
+                    runtime_config, member
+                )
+                kwargs = {"config": member_config} if member_config else {}
                 result = await self._invoke_member_async(
                     self.members[member_name], prompt, **kwargs
                 )
@@ -530,8 +572,14 @@ class AgentTeamEnvironment(BaseEnvironment):
             topology=self._topology_payload(),
         )
         try:
+            pi_kwargs = invocation_kwargs(config)
+            pi_runtime_config = self._member_runtime_config(
+                runtime_config, self.config.pi
+            )
+            if pi_runtime_config is not None:
+                pi_kwargs["config"] = pi_runtime_config
             result = await self._invoke_member_async(
-                self.pi, self._pi_prompt(task), **invocation_kwargs(config)
+                self.pi, self._pi_prompt(task), **pi_kwargs
             )
         except BaseException as exc:
             await events.aemit(

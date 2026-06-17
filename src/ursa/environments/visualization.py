@@ -108,6 +108,18 @@ def _infer_event_type(data: Mapping[str, Any]) -> str:
     return str(data.get("stage") or "progress")
 
 
+def _tool_target_from_payload(data: Mapping[str, Any]) -> dict[str, Any] | None:
+    tool = data.get("tool")
+    if not tool:
+        return None
+    return {
+        "id": data.get("tool_call_id") or tool,
+        "name": tool,
+        "kind": "tool",
+        "path": [tool],
+    }
+
+
 def _source_from_payload(data: Mapping[str, Any]) -> dict[str, Any]:
     source = data.get("source")
     if isinstance(source, Mapping):
@@ -124,7 +136,9 @@ def _source_from_payload(data: Mapping[str, Any]) -> dict[str, Any]:
             "id": data.get("agent_id") or data.get("agent"),
             "name": data.get("agent"),
             "kind": "agent",
-            "path": data.get("path") or [data.get("agent")],
+            "path": data.get("agent_path")
+            or data.get("environment_member_path")
+            or [data.get("agent")],
         }
     if data.get("tool"):
         return {
@@ -347,6 +361,12 @@ class EnvironmentEventRecorder(BaseCallbackHandler):
             target = dict(target)
         else:
             target = None
+        if (
+            target is None
+            and safe_data.get("tool")
+            and source.get("kind") != "tool"
+        ):
+            target = _tool_target_from_payload(safe_data)
         environment_name = str(
             safe_data.get("environment") or self.environment_name
         )

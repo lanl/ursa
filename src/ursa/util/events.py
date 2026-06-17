@@ -50,7 +50,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from time import monotonic_ns, perf_counter
-from typing import Any, Self
+from typing import Any, Mapping, Self
 from uuid import uuid4
 
 from langchain.tools import ToolRuntime
@@ -436,8 +436,11 @@ class ToolEvents(ProgressEvents):
         event_name: str = DEFAULT_EVENT_NAME,
         *,
         tool_call_id: str | None = None,
+        owner_payload: Mapping[str, Any] | None = None,
     ) -> None:
         default_payload: dict[str, Any] = {}
+        if owner_payload:
+            default_payload.update(owner_payload)
         if tool_call_id is not None:
             default_payload["tool_call_id"] = tool_call_id
         super().__init__(
@@ -447,6 +450,47 @@ class ToolEvents(ProgressEvents):
             name_key="tool",
             default_payload=default_payload,
         )
+
+    @staticmethod
+    def _owner_payload_from_runtime(
+        runtime: ToolRuntime[Any],
+    ) -> dict[str, Any]:
+        """Return agent/member identity fields recorded on a tool runtime."""
+        config = runtime.config if isinstance(runtime.config, Mapping) else {}
+        metadata = config.get("metadata")
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        context = getattr(runtime, "context", None)
+
+        environment_id = metadata.get("environment_id")
+        member = metadata.get("environment_member")
+        member_id = metadata.get("environment_member_id")
+        member_path = metadata.get("environment_member_path")
+        member_role = metadata.get("environment_member_role")
+
+        agent = metadata.get("agent") or member
+        agent_id = metadata.get("agent_id") or member_id
+        if agent is None and context is not None:
+            agent = getattr(context, "agent_name", None)
+        if agent_id is None and environment_id and agent:
+            agent_id = f"{environment_id}.{agent}"
+
+        payload: dict[str, Any] = {}
+        if agent is not None:
+            payload["agent"] = str(agent)
+        if agent_id is not None:
+            payload["agent_id"] = str(agent_id)
+        if member is not None:
+            payload["environment_member"] = str(member)
+        if member_id is not None:
+            payload["environment_member_id"] = str(member_id)
+        if member_role is not None:
+            payload["environment_member_role"] = str(member_role)
+        if environment_id is not None:
+            payload["environment_id"] = str(environment_id)
+        if member_path is not None:
+            payload["environment_member_path"] = member_path
+        return payload
 
     @classmethod
     def from_runtime(
@@ -464,6 +508,7 @@ class ToolEvents(ProgressEvents):
             config=runtime.config,
             event_name=event_name,
             tool_call_id=runtime.tool_call_id,
+            owner_payload=cls._owner_payload_from_runtime(runtime),
         )
 
 

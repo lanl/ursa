@@ -311,7 +311,7 @@ function explicitParticipantForEvent(e) {
   for (const obj of [e.source, e.target, p.source, p.target]) {
     if (obj && obj.kind !== 'tool') { const id = participantIdFromValue(obj); if (id) return id; }
   }
-  for (const key of ['member','agent','agent_id','participant','participant_id','owner','owner_id']) {
+  for (const key of ['environment_member_id','environment_member','member','agent','agent_id','participant','participant_id','owner','owner_id']) {
     const id = participantIdFromValue(p[key]); if (id) return id;
   }
   return '';

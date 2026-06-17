@@ -125,6 +125,14 @@ def test_run_with_visualization_records_team_delegation_and_forwards_config(
     assert any(
         isinstance(callback, EnvironmentEventRecorder) for callback in callbacks
     )
+    metadata = delegated_kwargs["config"].get("metadata", {})
+    assert metadata["environment_id"] == "visual_team"
+    assert metadata["environment_member"] == "analyst"
+    assert metadata["environment_member_id"] == "visual_team.analyst"
+    assert metadata["environment_member_role"] == "analysis"
+    assert metadata["environment_member_path"] == ["visual_team", "analyst"]
+    assert metadata["agent"] == "analyst"
+    assert metadata["agent_id"] == "visual_team.analyst"
 
 
 @pytest.mark.asyncio
@@ -191,6 +199,52 @@ def test_environment_run_recorder_marks_success_on_normal_exit(
 
     manifest = read_environment_run_manifest("default", "context-run")
     assert manifest["status"] == "succeeded"
+
+
+def test_recorder_normalizes_tool_owner_as_source_and_tool_as_target(
+    tmp_path: Path,
+) -> None:
+    recorder = EnvironmentEventRecorder(
+        run_id="manual-run",
+        group="default",
+        environment_name="manual_env",
+        environment_type="agent_team",
+        run_dir=tmp_path / "manual-run",
+    )
+
+    attributed = recorder.normalize_event({
+        "tool": "run_web_search",
+        "tool_call_id": "call-1",
+        "agent": "analyst",
+        "agent_id": "team.analyst",
+        "environment_member": "analyst",
+        "environment_member_id": "team.analyst",
+        "environment_member_path": ["team", "analyst"],
+        "stage": "search",
+        "message": "Searching Web",
+    })
+    assert attributed["source"] == {
+        "id": "team.analyst",
+        "name": "analyst",
+        "kind": "agent",
+        "path": ["team", "analyst"],
+    }
+    assert attributed["target"] == {
+        "id": "call-1",
+        "name": "run_web_search",
+        "kind": "tool",
+        "path": ["run_web_search"],
+    }
+
+    unattributed = recorder.normalize_event({
+        "tool": "run_web_search",
+        "tool_call_id": "call-2",
+        "stage": "search",
+        "message": "Searching Web",
+    })
+    assert unattributed["source"]["kind"] == "tool"
+    assert unattributed["source"]["id"] == "call-2"
+    assert unattributed["target"] is None
 
 
 def test_recorder_normalizes_non_json_payload_and_truncates(

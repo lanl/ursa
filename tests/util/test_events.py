@@ -257,6 +257,57 @@ def test_tool_events_emit_tool_payload_from_runtime(
     assert calls == [("ursa_agent_progress", payload, runtime.config)]
 
 
+def test_tool_events_include_owner_payload_from_runtime_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
+        calls.append((event_name, payload, config))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        fake_dispatch,
+    )
+
+    runtime = ToolRuntime(
+        state={},
+        context=AgentContext(
+            llm=None,
+            workspace=Path("workspace"),
+            den=Path("workspace"),
+            agent_name="fallback_agent",
+            group="default",
+        ),
+        config={
+            "metadata": {
+                "environment_id": "team",
+                "environment_member": "analyst",
+                "environment_member_id": "team.analyst",
+                "environment_member_role": "analysis",
+                "environment_member_path": ["team", "analyst"],
+            }
+        },
+        stream_writer=lambda _: None,
+        tool_call_id="tool-call-10",
+        store=None,
+    )
+
+    events = ToolEvents.from_runtime("run_web_search", runtime)
+    payload = events.emit("Searching Web", stage="search", query="fusion")
+
+    assert payload["tool"] == "run_web_search"
+    assert payload["tool_call_id"] == "tool-call-10"
+    assert payload["agent"] == "analyst"
+    assert payload["agent_id"] == "team.analyst"
+    assert payload["environment_id"] == "team"
+    assert payload["environment_member"] == "analyst"
+    assert payload["environment_member_id"] == "team.analyst"
+    assert payload["environment_member_role"] == "analysis"
+    assert payload["environment_member_path"] == ["team", "analyst"]
+    assert calls == [("ursa_agent_progress", payload, runtime.config)]
+
+
 def test_range_emits_start_and_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
