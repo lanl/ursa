@@ -85,7 +85,7 @@ def test_import_agent_db_creates_agent_checkpoint_and_rewrites_thread_ids(
     group_root = root / "science"
     group_dir = group_root / "agents"
     group_root.mkdir(parents=True)
-    monkeypatch.setattr(agent_management, "AGENT_GROUPS_DIR", root)
+    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
 
     source_db = tmp_path / "execute.db"
     _write_checkpoint_db(source_db)
@@ -124,7 +124,7 @@ def test_import_agent_db_requires_name(monkeypatch, tmp_path):
     group_root = root / "science"
     group_dir = group_root / "agents"
     group_root.mkdir(parents=True)
-    monkeypatch.setattr(agent_management, "AGENT_GROUPS_DIR", root)
+    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
 
     source_db = tmp_path / "execute.db"
     _write_checkpoint_db(source_db)
@@ -142,7 +142,7 @@ def test_import_agent_db_cleans_up_destination_on_invalid_database(
     group_root = root / "science"
     group_dir = group_root / "agents"
     group_root.mkdir(parents=True)
-    monkeypatch.setattr(agent_management, "AGENT_GROUPS_DIR", root)
+    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", root)
 
     source_db = tmp_path / "invalid.db"
     source_db.write_text("not sqlite", encoding="utf-8")
