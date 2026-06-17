@@ -32,7 +32,7 @@ def test_write_experience_reports_path_with_symlinked_den(
         result
         == "Experience file experiences/note.md overwritten successfully."
         or result
-        == "Experience file experiences\note.md overwritten successfully."
+        == "Experience file experiences\\note.md overwritten successfully."
     )
     assert (real_den / "experiences" / "note.md").read_text(
         encoding="utf-8"
