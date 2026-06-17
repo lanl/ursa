@@ -64,7 +64,6 @@ Inside the URSA prompt, type `help` or try:
 
 ```text
 ursa> Summarize what URSA can help me do.
-ursa> plan Write a plan for analyzing a CSV file with pandas.
 ursa> execute Write and run a Python script that prints the first 10 prime numbers.
 ```
 

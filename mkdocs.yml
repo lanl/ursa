@@ -37,10 +37,10 @@ nav:
       - Install with pip: installation/pip.md
   - Getting Started:
       - CLI: getting-started/cli.md
-      - Python Scripts: getting-started/python-scripts.md
-      - MCP Server: getting-started/mcp-server.md
-      - Plan-Execute From YAML: getting-started/plan-execute-yaml.md
       - Web Dashboard: getting-started/dashboard.md
+      - Python Scripts: getting-started/python-scripts.md
+      - Plan-Execute From YAML: getting-started/plan-execute-yaml.md
+      - MCP Server: getting-started/mcp-server.md
   - Configuration:
       - Overview: configuration/index.md
       - OpenAI-compatible endpoints: configuration/openai-compatible.md

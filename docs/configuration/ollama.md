@@ -7,7 +7,7 @@ URSA can use local models through Ollama via LangChain's `ollama` provider.
 Install Ollama from the [Ollama website](https://ollama.com/) and start the service. Then pull a model:
 
 ```bash
-ollama pull llama3.1
+ollama pull gpt-oss-20b 
 ```
 
 ## Configure URSA
@@ -16,7 +16,7 @@ Create `config.yaml`:
 
 ```yaml
 llm_model:
-  model: ollama:llama3.1
+  model: ollama:gpt-oss-20b
   base_url: http://localhost:11434
 
 workspace: ./ursa-ollama-workspace
@@ -32,7 +32,7 @@ ursa --config config.yaml
 
 ```bash
 ursa \
-  --llm_model.model ollama:llama3.1 \
+  --llm_model.model ollama:gpt-oss-20b \
   --llm_model.base_url http://localhost:11434
 ```
 

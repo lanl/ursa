@@ -56,18 +56,6 @@ The workspace contains generated code, outputs, checkpoints, and artifacts creat
 
 For detailed checkpointing, resume behavior, and troubleshooting, see the [Plan-Execute checkpointing reference](../Plan-Execute-Runner-Checkpointing-Guide.md).
 
-## Notes from the scientific demo workflow
-
-The demo material in `README_dark.html` used the same style of workflow for a longer Bayesian nuclear-data example:
-
-```bash
-python plan_execute_from_yaml.py \
-  --config bayesian_nuclear_data.yaml \
-  --workspace bayesian_nuclear_data
-```
-
-That example highlights why YAML-driven plan-execute workflows are useful: they let you describe a complex scientific task once, run it in a dedicated workspace, and keep checkpoints and artifacts for later review.
-
 ## Where next?
 
 - [Plan-Execute checkpointing reference](../Plan-Execute-Runner-Checkpointing-Guide.md)

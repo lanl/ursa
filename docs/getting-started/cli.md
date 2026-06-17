@@ -8,8 +8,8 @@ This guide walks through starting URSA from the terminal, configuring a model, c
 - You have access to an LLM endpoint.
 - You have a dedicated workspace directory for files URSA may create or modify.
 
-!!! warning "Use a dedicated workspace"
-    The execution agent can write files and run shell commands. Start in a directory created for URSA work, not in a source tree or data directory you cannot risk modifying.
+!!! warning "Be aware of your workspace"
+    The execution agent can write files and run shell commands. Be careful using workspaces with source tree or data directory you cannot risk modifying. Good practice is to make backups or copies of directories before working.
 
 ## 1. Create a configuration file
 
@@ -22,7 +22,7 @@ llm_model:
   model: openai:gpt-5.4
   api_key_env: OPENAI_API_KEY
 
-workspace: ./ursa-workspace
+workspace: .
 ```
 
 Then set your API key in the shell:
@@ -68,14 +68,14 @@ Plain text input is handled by the default chat behavior.
 Run the planning agent with the `plan` command:
 
 ```text
-ursa> plan Write a plan for analyzing a CSV file with pandas and plotting summary statistics.
+ursa> plan Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
 ```
 
 You can also type the agent name first and provide the prompt interactively:
 
 ```text
 ursa> plan
-plan: Write a plan for analyzing a CSV file with pandas and plotting summary statistics.
+plan: Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
 ```
 
 ## 5. Use the execution agent

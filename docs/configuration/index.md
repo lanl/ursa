@@ -80,7 +80,7 @@ llm_model:
 
 ```yaml
 llm_model:
-  model: ollama:llama3.1
+  model: ollama:gpt-oss-2b
   base_url: http://localhost:11434
 ```
 
