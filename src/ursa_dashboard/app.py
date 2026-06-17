@@ -85,6 +85,10 @@ from .api_models import (
     WorkspaceListResponse,
 )
 from .artifacts import scan_artifacts
+from .environment_run_ui import (
+    render_environment_run_detail_page,
+    render_environment_runs_page,
+)
 from .models import AgentListResponse
 from .registry import REGISTRY
 from .run_manager import RunManager
@@ -4660,6 +4664,18 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             headers={"Cache-Control": "no-cache"},
         )
 
+    def _environment_run_manifest_for_dashboard(run_id: str) -> dict[str, Any]:
+        manifest = read_environment_run_manifest(dashboard_group, run_id)
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        manifest.setdefault("paths", {})
+        manifest["paths"].update({
+            "run_dir": str(paths.run_dir),
+            "events_path": str(paths.events_path),
+            "artifacts_dir": str(paths.artifacts_dir),
+            "logs_dir": str(paths.logs_dir),
+        })
+        return manifest
+
     @app.get("/environment-runs", dependencies=[Depends(require_auth)])
     async def list_environment_runs() -> dict[str, Any]:
         return {
@@ -4670,7 +4686,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     @app.get("/environment-runs/{run_id}", dependencies=[Depends(require_auth)])
     async def get_environment_run(run_id: str) -> dict[str, Any]:
         try:
-            return read_environment_run_manifest(dashboard_group, run_id)
+            return _environment_run_manifest_for_dashboard(run_id)
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=404, detail="Run not found"
@@ -4805,37 +4821,12 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     )
     async def ui_environment_runs() -> HTMLResponse:
         runs = list_environment_run_manifests(dashboard_group)
-        rows = []
-        for run in runs:
-            run_id = html.escape(str(run.get("run_id", "")))
-            name = html.escape(str(run.get("environment_name", "")))
-            env_type = html.escape(str(run.get("environment_type", "")))
-            status = html.escape(str(run.get("status", "")))
-            updated = html.escape(str(run.get("updated_at", "")))
-            preview = html.escape(str(run.get("task_preview", "")))
-            rows.append(
-                "<tr>"
-                f"<td><a href='/ui/environment-runs/{run_id}'>{run_id}</a></td>"
-                f"<td>{name}</td><td>{env_type}</td><td>{status}</td>"
-                f"<td>{updated}</td><td>{preview}</td>"
-                "</tr>"
+        return HTMLResponse(
+            render_environment_runs_page(
+                dashboard_group=dashboard_group,
+                runs=runs,
             )
-        body = "".join(rows) or (
-            "<tr><td colspan='6' class='muted'>No environment runs recorded.</td></tr>"
         )
-        return HTMLResponse(f"""
-<!doctype html>
-<html><head><title>URSA Environment Runs</title>
-<style>
-body{{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:24px;background:#0b1020;color:#e7edf7}}
-a{{color:#8bd3ff}}table{{width:100%;border-collapse:collapse;background:#111a33}}
-th,td{{padding:10px;border-bottom:1px solid #26324d;text-align:left;vertical-align:top}}
-.muted{{color:#9aa8bd}}.top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}}
-</style></head><body>
-<div class='top'><div><h1>Environment Runs</h1><div class='muted'>Group: {html.escape(dashboard_group)}</div></div><a href='/ui'>Dashboard</a></div>
-<table><thead><tr><th>Run</th><th>Name</th><th>Type</th><th>Status</th><th>Updated</th><th>Task</th></tr></thead><tbody>{body}</tbody></table>
-</body></html>
-""")
 
     @app.get(
         "/ui/environment-runs/{run_id}",
@@ -4844,55 +4835,17 @@ th,td{{padding:10px;border-bottom:1px solid #26324d;text-align:left;vertical-ali
     )
     async def ui_environment_run_detail(run_id: str) -> HTMLResponse:
         try:
-            manifest = read_environment_run_manifest(dashboard_group, run_id)
+            manifest = _environment_run_manifest_for_dashboard(run_id)
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=404, detail="Run not found"
             ) from exc
-        title = html.escape(str(manifest.get("environment_name") or run_id))
-        safe_run_id = html.escape(run_id)
-        return HTMLResponse(f"""
-<!doctype html>
-<html><head><title>{title} - URSA Environment Run</title>
-<style>
-body{{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#0b1020;color:#e7edf7}}
-a{{color:#8bd3ff}}.wrap{{display:grid;grid-template-columns:300px 1fr 380px;height:100vh}}
-.panel{{padding:16px;overflow:auto;border-right:1px solid #26324d}}.right{{border-right:0;border-left:1px solid #26324d}}
-.event{{padding:8px;border-bottom:1px solid #26324d;cursor:pointer}}.event:hover,.selected{{background:#182442}}
-.badge{{display:inline-block;padding:2px 8px;border-radius:999px;background:#26324d;margin-left:8px}}
-pre{{white-space:pre-wrap;word-break:break-word;background:#111a33;padding:10px;border-radius:8px}}
-.node{{padding:4px 0;color:#c9d6e8}}.muted{{color:#9aa8bd}}
-button,input{{background:#182442;color:#e7edf7;border:1px solid #405071;border-radius:6px;padding:6px}}
-</style></head><body>
-<div class='wrap'>
-  <div class='panel'><a href='/ui/environment-runs'>← Runs</a><h2>{title}</h2><div id='meta'></div><h3>Topology</h3><div id='topology' class='muted'>Waiting for topology…</div></div>
-  <div class='panel'><h3>Replay <span id='count' class='badge'>0</span></h3><div><button id='live'>Pause live</button> <button id='step'>Step</button> <input id='scrub' type='range' min='0' max='0' value='0' /></div><div id='events'></div></div>
-  <div class='panel right'><h3>Inspector</h3><pre id='inspect'>Select an event.</pre></div>
-</div>
-<script>
-const runId = {json.dumps(run_id)};
-let events = [];
-let live = true;
-let selected = -1;
-const meta = document.getElementById('meta');
-const topology = document.getElementById('topology');
-const eventBox = document.getElementById('events');
-const inspect = document.getElementById('inspect');
-const scrub = document.getElementById('scrub');
-const count = document.getElementById('count');
-function esc(s){{return String(s).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));}}
-function renderMeta(m){{meta.innerHTML = `<div>Status: <b>${{esc(m.status)}}</b></div><div class='muted'>Run: {safe_run_id}</div><div class='muted'>Updated: ${{esc(m.updated_at||'')}}</div><pre>${{esc(m.task_preview||'')}}</pre>`;}}
-function renderTopology(t){{if(!t)return; topology.innerHTML = `<div><b>${{esc(t.kind||'environment')}}</b></div>` + (t.nodes||[]).map(n=>`<div class='node'>• ${{esc(n.name)}} <span class='muted'>${{esc(n.kind)}} / ${{esc(n.role||'')}}</span></div>`).join('') + `<h4>Edges</h4>` + (t.edges||[]).map(e=>`<div class='node'>${{esc(e.source)}} → ${{esc(e.target)}} <span class='muted'>${{esc(e.kind)}}</span></div>`).join('');}}
-function select(i){{selected=i; inspect.textContent = JSON.stringify(events[i]||{{}}, null, 2); renderEvents();}}
-function renderEvents(){{count.textContent=events.length; scrub.max=Math.max(0,events.length-1); scrub.value=selected<0?events.length-1:selected; eventBox.innerHTML=events.map((e,i)=>`<div class='event ${{i===selected?'selected':''}}' onclick='select(${{i}})'><b>#${{e.seq}}</b> ${{esc(e.event_type||'event')}}<br><span class='muted'>${{esc(e.message||'')}}</span></div>`).join('');}}
-function addEvent(e){{events.push(e); if(e.event_type==='topology_declared') renderTopology(e.payload && e.payload.topology); if(live) selected=events.length-1; renderEvents(); if(live) inspect.textContent=JSON.stringify(e,null,2);}}
-fetch('/environment-runs/'+encodeURIComponent(runId)).then(r=>r.json()).then(renderMeta);
-fetch('/environment-runs/'+encodeURIComponent(runId)+'/events').then(r=>r.json()).then(d=>{{(d.events||[]).forEach(addEvent); const last=events[events.length-1]; const src=new EventSource('/environment-runs/'+encodeURIComponent(runId)+'/stream?after_seq='+(last?last.seq:0)); src.onmessage=(ev)=>addEvent(JSON.parse(ev.data)); src.onerror=()=>{{}};}});
-document.getElementById('live').onclick=()=>{{live=!live; document.getElementById('live').textContent=live?'Pause live':'Resume live';}};
-document.getElementById('step').onclick=()=>{{live=false; if(selected < events.length-1) select(selected+1);}};
-scrub.oninput=()=>{{live=false; select(Number(scrub.value));}};
-</script></body></html>
-""")
+        return HTMLResponse(
+            render_environment_run_detail_page(
+                run_id=run_id,
+                manifest=manifest,
+            )
+        )
 
     @app.get("/", include_in_schema=False, dependencies=[Depends(require_auth)])
     async def ui_root() -> HTMLResponse:

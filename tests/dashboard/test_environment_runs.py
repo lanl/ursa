@@ -28,8 +28,36 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
     )
     (run_dir / "events.jsonl").write_text(
         "\n".join([
-            json.dumps({"seq": 1, "event_type": "team_started"}),
-            json.dumps({"seq": 2, "event_type": "team_completed"}),
+            json.dumps({
+                "seq": 1,
+                "event_type": "topology_declared",
+                "payload": {
+                    "topology": {
+                        "kind": "agent_team",
+                        "nodes": [
+                            {"id": "team.pi", "name": "PI", "kind": "agent"},
+                            {
+                                "id": "team.analyst",
+                                "name": "analyst",
+                                "kind": "agent",
+                            },
+                        ],
+                        "edges": [
+                            {
+                                "source": "team.pi",
+                                "target": "team.analyst",
+                                "kind": "delegates_to",
+                            }
+                        ],
+                    }
+                },
+            }),
+            json.dumps({
+                "seq": 2,
+                "event_type": "team_completed",
+                "message": "Team completed",
+                "payload": {"result": "final answer", "elapsed_seconds": 1.2},
+            }),
         ])
         + "\n",
         encoding="utf-8",
@@ -42,7 +70,10 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
 
     detail_response = client.get("/environment-runs/run-1")
     assert detail_response.status_code == 200
-    assert detail_response.json()["environment_name"] == "team"
+    detail_json = detail_response.json()
+    assert detail_json["environment_name"] == "team"
+    assert detail_json["paths"]["run_dir"] == str(run_dir)
+    assert detail_json["paths"]["artifacts_dir"] == str(run_dir / "artifacts")
 
     events_response = client.get("/environment-runs/run-1/events?after_seq=1")
     assert events_response.status_code == 200
@@ -51,3 +82,16 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
     ui_response = client.get("/ui/environment-runs")
     assert ui_response.status_code == 200
     assert "Environment Runs" in ui_response.text
+    assert "Open work replay" in ui_response.text
+
+    detail_ui_response = client.get("/ui/environment-runs/run-1")
+    assert detail_ui_response.status_code == 200
+    assert "Environment Graph" in detail_ui_response.text
+    assert "Work Timeline" in detail_ui_response.text
+    assert "Current Activity" in detail_ui_response.text
+    assert "Final Result" in detail_ui_response.text
+    assert "Workspace" in detail_ui_response.text
+    assert "Raw Events" in detail_ui_response.text
+    assert "Participants" not in detail_ui_response.text
+    assert "Inspector" not in detail_ui_response.text
+    assert "cytoscape" in detail_ui_response.text
