@@ -22,7 +22,12 @@ def validate_group_name(group: str | None) -> str:
     value = (group or DEFAULT_GROUP_NAME).strip()
     if not value:
         raise ValueError("Group name must not be empty")
-    if Path(value).name != value or value in {".", ".."}:
+    if (
+        "/" in value
+        or "\\" in value
+        or Path(value).name != value
+        or value in {".", ".."}
+    ):
         raise ValueError("Group name must be a simple directory name")
     return value
 
