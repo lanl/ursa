@@ -258,7 +258,6 @@ class BaseAgent(Generic[TState], ABC):
         self._async_storage: BaseStore | None = None
         self._async_compiled_graph: CompiledStateGraph | None = None
         persist_agent = (agent_name is not None) or set_checkpointer
-        den_name = str(self.workspace)
         if persist_agent:
             if set_checkpointer:
                 if set_name:

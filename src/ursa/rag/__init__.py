@@ -1,7 +1,7 @@
 """Persistent RAG collection helpers for URSA."""
 
 from .persistence import (
-    RAG_AGENTS_DIR,
+    URSA_CACHE_DIR,
     build_persistent_rag_agent,
     delete_rag_agent,
     ensure_rag_agent_dir,
@@ -21,7 +21,7 @@ from .persistence import (
 from .tools import build_rag_tool, build_rag_tools, rag_tool_name
 
 __all__ = [
-    "RAG_AGENTS_DIR",
+    "URSA_CACHE_DIR",
     "build_persistent_rag_agent",
     "build_rag_tool",
     "build_rag_tools",

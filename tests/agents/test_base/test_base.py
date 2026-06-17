@@ -319,7 +319,7 @@ class AsyncOnlyFlagAgent(Agent):
 def _use_temp_agent_groups(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("ursa.security.AGENT_GROUPS_DIR", tmp_path / "groups")
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "groups")
 
 
 def test_agent_with_tools_seeds_safe_codes_in_sync_store(tmp_path: Path):
