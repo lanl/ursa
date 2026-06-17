@@ -73,7 +73,7 @@ def test_apply_dashboard_config_validates_group_before_persisting(
         "allowed_base_urls:\n  - https://safe.example.org/v1\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", groups_dir)
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", groups_dir)
 
     store = SettingsStore(tmp_path / "workspace")
     original = store.load()

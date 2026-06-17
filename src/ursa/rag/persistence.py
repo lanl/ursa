@@ -11,12 +11,8 @@ from typing import Any, Sequence
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
 
-from ursa.security import AGENT_GROUPS_DIR, GROUP_CONFIG_FILENAME
+from ursa.security import GROUP_CONFIG_FILENAME, URSA_CACHE_DIR
 
-# Backwards-compatible name for tests/imports. In the hierarchical layout this
-# is the root containing group directories; RAG agents live under
-# ``RAG_AGENTS_DIR / <group> / "rag"``.
-RAG_AGENTS_DIR = AGENT_GROUPS_DIR
 _RAG_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -57,7 +53,7 @@ def validate_rag_group_name(group_name: str | None) -> str:
 
 
 def rag_group_dir(group_name: str = "default") -> Path:
-    return RAG_AGENTS_DIR / validate_rag_group_name(group_name) / "rag"
+    return URSA_CACHE_DIR / validate_rag_group_name(group_name) / "rag"
 
 
 def _missing_group_error(group_name: str) -> ValueError:
@@ -70,7 +66,7 @@ def _missing_group_error(group_name: str) -> ValueError:
 
 
 def regular_agent_group_dir(group_name: str = "default") -> Path:
-    return AGENT_GROUPS_DIR / validate_rag_group_name(group_name)
+    return URSA_CACHE_DIR / validate_rag_group_name(group_name)
 
 
 def sync_rag_group_from_agent_group(group_name: str = "default") -> Path:

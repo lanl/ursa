@@ -673,7 +673,7 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
                 payload.get("path"),
                 payload.get("code"),
             )
-        elif tool_name == "edit_code":
+        elif tool_name in {"edit_code", "edit_experience"}:
             self._print_edit_code_start(
                 payload.get("filename"),
                 payload.get("path"),

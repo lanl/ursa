@@ -1,17 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
 from langchain.chat_models import BaseChatModel
 
-URSA_CACHE_DIR = Path("~/.cache/ursa").expanduser()
-# Backwards-compatible name used by existing modules/tests for the root that
-# contains group directories. In the hierarchical layout, each group lives at
-# ``AGENT_GROUPS_DIR / <group>`` and contains ``agents/``, ``rag/``, and
-# ``dashboard/`` subdirectories.
-AGENT_GROUPS_DIR = URSA_CACHE_DIR
+URSA_CACHE_DIR = Path(os.getenv("XDG_CACHE_HOME", "~/.cache/ursa")).expanduser()
 GROUP_CONFIG_FILENAME = "group.yaml"
 
 
@@ -26,13 +22,18 @@ def validate_group_name(group: str | None) -> str:
     value = (group or DEFAULT_GROUP_NAME).strip()
     if not value:
         raise ValueError("Group name must not be empty")
-    if Path(value).name != value or value in {".", ".."}:
+    if (
+        "/" in value
+        or "\\" in value
+        or Path(value).name != value
+        or value in {".", ".."}
+    ):
         raise ValueError("Group name must be a simple directory name")
     return value
 
 
 def group_root_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
-    return AGENT_GROUPS_DIR.expanduser() / validate_group_name(group)
+    return URSA_CACHE_DIR.expanduser() / validate_group_name(group)
 
 
 def group_agents_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
@@ -69,15 +70,11 @@ def get_model_base_url(model: object) -> str | None:
     return None
 
 
-def _group_dir(group: str) -> Path:
-    return group_root_dir(group)
-
-
 def _load_group_allowed_base_urls(group: str) -> list[str] | None:
     if group == DEFAULT_GROUP_NAME:
         return None
 
-    group_dir = _group_dir(group)
+    group_dir = group_root_dir(group)
     if not group_dir.exists() or not group_dir.is_dir():
         raise GroupBaseURLPolicyError(
             f"Group '{group}' does not exist. Please create it before use."

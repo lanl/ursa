@@ -4,14 +4,14 @@ from pathlib import Path
 import yaml
 
 from ursa.security import (
-    AGENT_GROUPS_DIR,
     GROUP_CONFIG_FILENAME,
+    URSA_CACHE_DIR,
     validate_group_name,
 )
 
 
 def _group_root_dir(group_name: str) -> Path:
-    return AGENT_GROUPS_DIR / validate_group_name(group_name)
+    return URSA_CACHE_DIR / validate_group_name(group_name)
 
 
 def _group_agents_dir(group_name: str) -> Path:
@@ -125,11 +125,11 @@ def validate_group_config(config_file: Path) -> dict:
 
 
 def list_groups() -> None:
-    AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
+    URSA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _group_root_dir("default").mkdir(parents=True, exist_ok=True)
     _ensure_group_subdirs("default")
 
-    for path in sorted(p for p in AGENT_GROUPS_DIR.iterdir() if p.is_dir()):
+    for path in sorted(p for p in URSA_CACHE_DIR.iterdir() if p.is_dir()):
         print(path.name)
 
 
@@ -138,7 +138,7 @@ def create_group(group_name: str, config_file: Path) -> None:
 
     validate_group_config(config_file)
 
-    AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
+    URSA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _group_root_dir("default").mkdir(parents=True, exist_ok=True)
     _ensure_group_subdirs("default")
 
