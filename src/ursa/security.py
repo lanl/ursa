@@ -7,7 +7,9 @@ from urllib.parse import urlsplit
 import yaml
 from langchain.chat_models import BaseChatModel
 
-URSA_CACHE_DIR = Path(os.getenv("XDG_CACHE_HOME", "~/.cache/ursa")).expanduser()
+URSA_CACHE_DIR = (
+    Path(os.getenv("XDG_CACHE_HOME", "~/.cache")).expanduser() / "ursa"
+)
 GROUP_CONFIG_FILENAME = "group.yaml"
 
 
