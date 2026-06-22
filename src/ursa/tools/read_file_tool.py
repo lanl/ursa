@@ -75,6 +75,12 @@ def download_file_tool(
         output_path = runtime.context.workspace / Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        ToolEvents.from_runtime("download_file", runtime).emit(
+            "Downloaded file",
+            stage="Download",
+            path=str(output_path),
+        )
+
         # Write file to disk
         with open(output_path, "wb") as f:
             f.writelines(response.iter_content(chunk_size=8192))

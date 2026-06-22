@@ -20,7 +20,7 @@ class LLMSettings(BaseModel):
     # Security: we intentionally do *not* store an API key in settings.json.
     # Instead, we store the *name* of an environment variable that contains
     # the key. The worker copies that value into OPENAI_API_KEY at runtime.
-    api_key_env_var: str | None = Field(
+    api_key_env: str | None = Field(
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
     )
@@ -39,9 +39,9 @@ class LLMSettings(BaseModel):
             raise ValueError("llm.model_kwargs must be a JSON object")
         return v
 
-    @field_validator("api_key_env_var")
+    @field_validator("api_key_env")
     @classmethod
-    def _validate_api_key_env_var(cls, v: str | None) -> str | None:
+    def _validate_api_key_env(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = str(v).strip()
@@ -50,7 +50,7 @@ class LLMSettings(BaseModel):
         # Conservative env-var name validation.
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
             raise ValueError(
-                "api_key_env_var must be a valid environment variable name"
+                "api_key_env must be a valid environment variable name"
             )
         return v
 
@@ -123,7 +123,7 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
     """Return a dashboard settings patch from a CLI-style URSA config.
 
     The dashboard intentionally stores only non-secret LLM settings. CLI
-    ``llm_model.api_key_env`` is mapped to dashboard ``llm.api_key_env_var``;
+    ``llm_model.api_key_env`` is mapped to dashboard ``llm.api_key_env``;
     raw API keys are rejected so they are not persisted in settings.json.
     Additional ``llm_model`` fields accepted by the CLI config are passed
     through as dashboard ``llm.model_kwargs`` except for fields that have a
@@ -137,7 +137,7 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
     if llm_cfg.base_url is not None:
         patch["base_url"] = llm_cfg.base_url
     if llm_cfg.api_key_env is not None:
-        patch["api_key_env_var"] = llm_cfg.api_key_env
+        patch["api_key_env"] = llm_cfg.api_key_env
     if llm_cfg.max_completion_tokens is not None:
         patch["max_tokens"] = llm_cfg.max_completion_tokens
 
@@ -222,9 +222,9 @@ def apply_dashboard_config(
 
 
 class SettingsStore:
-    def __init__(self, workspace_root: Path):
-        self.workspace_root = workspace_root
-        self.path = self.workspace_root / "_meta" / "settings.json"
+    def __init__(self, dashboard_root: Path):
+        self.dashboard_root = dashboard_root
+        self.path = self.dashboard_root / "_meta" / "settings.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> GlobalSettings:

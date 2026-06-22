@@ -58,6 +58,7 @@ from ursa.prompt_library.execution_prompts import (
     recap_prompt,
 )
 from ursa.tools import (
+    download_file_tool,
     edit_code,
     edit_experience,
     list_experiences,
@@ -226,6 +227,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             write_code,
             edit_code,
             read_file,
+            download_file_tool,
             read_image_tool,
             read_experience,
             write_experience,

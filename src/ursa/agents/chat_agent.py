@@ -9,6 +9,7 @@ from langgraph.runtime import Runtime
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.chatter_prompts import get_chatter_system_prompt
 from ursa.tools import (
+    download_file_tool,
     edit_code,
     edit_experience,
     list_experiences,
@@ -99,6 +100,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
             write_code,
             edit_code,
             read_file,
+            download_file_tool,
             read_image_tool,
             list_experiences,
             write_experience,
