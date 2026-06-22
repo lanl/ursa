@@ -5,7 +5,7 @@ def test_create_group_initializes_hierarchical_subdirectories(
     monkeypatch, tmp_path
 ):
     cache_root = tmp_path / "ursa"
-    monkeypatch.setattr(groups, "AGENT_GROUPS_DIR", cache_root)
+    monkeypatch.setattr(groups, "URSA_CACHE_DIR", cache_root)
     config_file = tmp_path / "group.yaml"
     config_file.write_text(
         "allowed_base_urls:\n  - https://example.com\n",
