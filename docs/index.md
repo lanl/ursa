@@ -10,8 +10,8 @@ Use URSA when you want to:
 - connect to OpenAI, Anthropic, Google GenAI, Ollama, or an OpenAI-compatible endpoint,
 - persist named agents and reuse them across sessions,
 - ingest documents into persistent RAG collections,
-- expose URSA as an MCP server for another client or agent framework,
 - compose multiple agents into teams or symposium-style peer review environments.
+- expose URSA as an MCP server for another client or agent framework,
 
 !!! warning "Execution and network access"
     Some URSA agents can write files, run shell commands, and use web or MCP tools. Use a dedicated workspace, review actions carefully, and read the [Sandboxing and information-control guidance](best-practices/sandboxing.md) before running high-trust or data-sensitive workflows.
