@@ -10,7 +10,7 @@ class WorkspaceJailError(Exception):
     pass
 
 
-def workspace_root_from_env(default: str | Path | None = None) -> Path:
+def dashboard_root_from_env(default: str | Path | None = None) -> Path:
     root = os.environ.get("URSA_DASHBOARD_WORKSPACE_ROOT")
     if root:
         p = Path(root)

@@ -1331,7 +1331,7 @@ def parse_args_and_user_inputs():
         models_cfg.get("choices")
         or (
             "openai:gpt-5",
-            "openai:gpt-5-mini",
+            "openai:gpt-5.4-mini",
             "openai:o3",
             "openai:o3-mini",
         )

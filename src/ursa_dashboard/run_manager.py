@@ -12,7 +12,7 @@ from typing import Any, Optional
 from .artifacts import scan_artifacts
 from .events import make_event
 from .retention import RetentionPolicy, enforce_retention
-from .security import safe_join, workspace_root_from_env
+from .security import dashboard_root_from_env, safe_join
 from .storage import (
     RunPaths,
     append_jsonl,
@@ -48,16 +48,16 @@ class RunManager:
     def __init__(
         self,
         *,
-        workspace_root: Path | None = None,
+        dashboard_root: Path | None = None,
         config: RunConfig | None = None,
         retention: RetentionPolicy | None = None,
     ):
-        self.workspace_root = workspace_root or workspace_root_from_env()
+        self.dashboard_root = dashboard_root or dashboard_root_from_env()
         self.config = config or RunConfig()
         self.retention = retention or RetentionPolicy()
 
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
-        (self.workspace_root / "_meta" / "runs").mkdir(
+        self.dashboard_root.mkdir(parents=True, exist_ok=True)
+        (self.dashboard_root / "_meta" / "runs").mkdir(
             parents=True, exist_ok=True
         )
 
@@ -70,17 +70,17 @@ class RunManager:
         self._workers: list[asyncio.Task] = []
 
         # Lightweight index for listing (append-only)
-        self._index_path = self.workspace_root / "_meta" / "runs_index.jsonl"
+        self._index_path = self.dashboard_root / "_meta" / "runs_index.jsonl"
 
     # ----------------------------
     # Paths and persistence
     # ----------------------------
 
     def _run_paths(self, *, agent_id: str, run_id: str) -> RunPaths:
-        run_dir = self.workspace_root / "runs" / agent_id / run_id
+        run_dir = self.dashboard_root / "runs" / agent_id / run_id
         logs_dir = run_dir / "logs"
         artifacts_dir = run_dir / "artifacts"
-        meta_path = self.workspace_root / "_meta" / "runs" / f"{run_id}.json"
+        meta_path = self.dashboard_root / "_meta" / "runs" / f"{run_id}.json"
         return RunPaths(
             run_dir=run_dir,
             logs_dir=logs_dir,
@@ -93,11 +93,11 @@ class RunManager:
         )
 
     def _read_run(self, run_id: str) -> dict[str, Any]:
-        meta_path = self.workspace_root / "_meta" / "runs" / f"{run_id}.json"
+        meta_path = self.dashboard_root / "_meta" / "runs" / f"{run_id}.json"
         return read_json(meta_path)
 
     def _write_run(self, run_id: str, rec: dict[str, Any]) -> None:
-        meta_path = self.workspace_root / "_meta" / "runs" / f"{run_id}.json"
+        meta_path = self.dashboard_root / "_meta" / "runs" / f"{run_id}.json"
         write_json(meta_path, rec)
 
     async def _emit(
@@ -145,7 +145,7 @@ class RunManager:
 
         # Enforce retention once at startup
         enforce_retention(
-            workspace_root=self.workspace_root, policy=self.retention
+            dashboard_root=self.dashboard_root, policy=self.retention
         )
 
         # Recovery: if the dashboard restarts, mark in-progress runs as failed,
@@ -162,7 +162,7 @@ class RunManager:
         await asyncio.gather(*self._workers, return_exceptions=True)
 
     async def _recover_runs(self) -> None:
-        meta_dir = self.workspace_root / "_meta" / "runs"
+        meta_dir = self.dashboard_root / "_meta" / "runs"
         if not meta_dir.exists():
             return
 
@@ -237,26 +237,26 @@ class RunManager:
             "llm": llm,
             "runner": runner,
             "run_dir": str(
-                paths.run_dir.relative_to(self.workspace_root)
+                paths.run_dir.relative_to(self.dashboard_root)
             ).replace("\\", "/"),
             "logs": {
                 "stdout": str(
-                    paths.stdout_path.relative_to(self.workspace_root)
+                    paths.stdout_path.relative_to(self.dashboard_root)
                 ).replace("\\", "/"),
                 "stderr": str(
-                    paths.stderr_path.relative_to(self.workspace_root)
+                    paths.stderr_path.relative_to(self.dashboard_root)
                 ).replace("\\", "/"),
                 "events": str(
-                    paths.events_path.relative_to(self.workspace_root)
+                    paths.events_path.relative_to(self.dashboard_root)
                 ).replace("\\", "/"),
             },
             "artifacts": {
                 "dir": str(
-                    paths.artifacts_dir.relative_to(self.workspace_root)
+                    paths.artifacts_dir.relative_to(self.dashboard_root)
                 ).replace("\\", "/"),
                 "manifest": str(
                     paths.artifacts_manifest_path.relative_to(
-                        self.workspace_root
+                        self.dashboard_root
                     )
                 ).replace("\\", "/"),
             },
@@ -292,7 +292,7 @@ class RunManager:
         return self._read_run(run_id)
 
     async def list_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        meta_dir = self.workspace_root / "_meta" / "runs"
+        meta_dir = self.dashboard_root / "_meta" / "runs"
         recs = []
         for p in meta_dir.glob("*.json"):
             try:
@@ -474,7 +474,7 @@ class RunManager:
                     agent_workspace_dir = raw_workspace_dir.resolve()
                 else:
                     agent_workspace_dir = safe_join(
-                        self.workspace_root, str(workspace_dir_value)
+                        self.dashboard_root, str(workspace_dir_value)
                     )
                 agent_workspace_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
@@ -672,7 +672,7 @@ class RunManager:
                     assistant_text = f"({status})"
 
                 _append_session_message(
-                    self.workspace_root,
+                    self.dashboard_root,
                     session_id=str(session_id),
                     role="assistant",
                     text=assistant_text,
@@ -683,7 +683,7 @@ class RunManager:
                 sess_patch = {"last_run_id": run_id}
                 try:
                     sess = read_json(
-                        self.workspace_root
+                        self.dashboard_root
                         / "sessions"
                         / str(session_id)
                         / "session.json"
@@ -693,7 +693,7 @@ class RunManager:
                 except Exception:
                     sess_patch["active_run_id"] = None
                 _update_session(
-                    self.workspace_root, str(session_id), sess_patch
+                    self.dashboard_root, str(session_id), sess_patch
                 )
             except Exception:
                 pass
@@ -738,7 +738,7 @@ class RunManager:
 
         # Enforce retention after each run
         enforce_retention(
-            workspace_root=self.workspace_root, policy=self.retention
+            dashboard_root=self.dashboard_root, policy=self.retention
         )
 
     async def _drain_stream(

@@ -108,7 +108,7 @@ def test_resolve_ingest_source_validates_without_copying(tmp_path: Path):
 def test_build_persistent_rag_agent_uses_external_ingest_source(
     monkeypatch, tmp_path: Path
 ):
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(persistence, "URSA_CACHE_DIR", tmp_path / "ursa")
     source = tmp_path / "docs"
     source.mkdir()
     captured = {}
@@ -142,7 +142,7 @@ def test_rag_ingest_passes_source_path_without_copying(
 
     from ursa.cli.rag_management import handle_rag_command
 
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(persistence, "URSA_CACHE_DIR", tmp_path / "ursa")
     source = tmp_path / "source.md"
     source.write_text("hello", encoding="utf-8")
     captured = {}
@@ -231,8 +231,7 @@ def test_rag_group_uses_shared_group_config(monkeypatch, tmp_path: Path):
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", root)
-    monkeypatch.setattr(persistence, "AGENT_GROUPS_DIR", root)
+    monkeypatch.setattr(persistence, "URSA_CACHE_DIR", root)
 
     path = persistence.ensure_rag_agent_dir("science", "docs")
 
@@ -245,15 +244,14 @@ def test_rag_group_errors_when_regular_agent_group_is_missing(
     monkeypatch, tmp_path: Path
 ):
     root = tmp_path / "ursa"
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", root)
-    monkeypatch.setattr(persistence, "AGENT_GROUPS_DIR", root)
+    monkeypatch.setattr(persistence, "URSA_CACHE_DIR", root)
 
     with pytest.raises(ValueError, match="Group 'missing' does not exist"):
         persistence.ensure_rag_agent_dir("missing", "docs")
 
 
 def test_rag_agent_dir_uses_group_cache_root(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(persistence, "RAG_AGENTS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(persistence, "URSA_CACHE_DIR", tmp_path / "ursa")
     path = persistence.ensure_rag_agent_dir("default", "docs")
     assert path == tmp_path / "ursa" / "default" / "rag" / "docs"
     assert (path / "database").is_dir()

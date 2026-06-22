@@ -1,84 +1,101 @@
 # WebSearchAgent Documentation
 
-`WebSearchAgent` is a powerful tool for conducting internet-based research on any topic. It leverages language models and web search capabilities to gather, process, and summarize information from online sources.
+`WebSearchAgent` is an acquisition agent for open-web research. It subclasses `BaseAcquisitionAgent`, so it uses the same acquire-then-summarize/RAG graph as `ArxivAgent` and `OSTIAgent`.
 
-## Basic Usage
+`WebSearchAgent` uses DDGS search, retrieves HTML or PDF content from result URLs, extracts readable text, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.
+
+See also: [Acquisition Agents](acquisition_agents.md).
+
+## Basic usage
 
 ```python
+from langchain.chat_models import init_chat_model
 from ursa.agents import WebSearchAgent
-from langchain_openai import ChatOpenAI
 
-# Initialize with default model (gpt-5-mini)
-websearcher = WebSearchAgent()
+llm = init_chat_model("openai:gpt-5.4-mini")
+agent = WebSearchAgent(llm=llm)
 
-# Or initialize with a custom model
-model = ChatOpenAI(model="gpt-5-mini", max_completion_tokens=10000)
-websearcher = WebSearchAgent(llm=model)
+state = agent.invoke({
+    "query": "2025 Detroit Tigers top prospects birth years",
+    "context": "Who are the 2025 Detroit Tigers top 10 prospects and what year was each born?",
+})
 
-# Run a web search query
-result = websearcher.invoke("Who are the 2025 Detroit Tigers top 10 prospects and what year were they born?")
+print(agent.format_result(state))
+```
 
-# Access the web search results
-sources = result["urls_visited"]
+You can also pass a plain string. In that case, the string becomes `context`, and the agent asks the LLM to generate a short web search query:
 
-print("Web Search Summary:")
-print(result["final_summary"])
-print("Sources:", sources)
+```python
+state = agent.invoke("Find current information about recent quantum computing developments.")
+print(agent.format_result(state))
 ```
 
 ## Parameters
 
-### Initialization
+`WebSearchAgent` uses the shared `BaseAcquisitionAgent` parameters and adds `user_agent`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | init_chat_model("openai:gpt-5-mini") | The language model to use for web search |
-| `**kwargs` | `dict` | `{}` | Additional parameters passed to the base agent |
+| `llm` | `BaseChatModel` | required | Language model used for query generation and summarization. |
+| `user_agent` | `str` | `"Mozilla/5.0"` | User-Agent header used when retrieving web pages. |
+| `summarize` | `bool` | `True` | Whether to summarize/RAG over acquired web items. If `False`, acquisition stops after `items` are populated. |
+| `rag_embedding` | optional embedding object | `None` | If provided, use the RAG path instead of direct per-result summarization. |
+| `process_images` | `bool` | `True` | For PDF results, optionally append image interpretations when image-description support is available. |
+| `max_results` | `int` | `5` | Maximum number of web search results to acquire. |
+| `database_path` | `str` | `"acq_db"` | Directory under the agent den for cached HTML/PDF files. |
+| `summaries_path` | `str` | `"acq_summaries"` | Directory under the agent den for per-item and final summaries. |
+| `vectorstore_path` | `str` | `"acq_vectorstores"` | Stored vector-store path configuration inherited from the acquisition base. The current shared RAG node constructs a `RAGAgent` over the acquired database when `rag_embedding` is provided. |
+| `num_threads` | `int` | `4` | Maximum number of concurrent materialization/summarization workers. |
+| `download` | `bool` | `True` | If `True`, search and retrieve web results. If `False`, read cached `.pdf`, `.txt`, or `.html` files from `database_path`. |
+| `**kwargs` | `dict` | `{}` | Passed to `BaseAgent` / `BaseAcquisitionAgent`, including workspace/den and persistence options. |
 
-### Run Method
+`WebSearchAgent` requires the DDGS dependency imported as `ddgs.DDGS`. If it is unavailable, initialization raises `ImportError`.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `prompt` | str | Required | The web search question or topic |
-| `recursion_limit` | int | 100 | Maximum recursion depth for the web search process |
+## How it works
 
-## Features
+`WebSearchAgent` implements the acquisition hooks required by `BaseAcquisitionAgent`:
 
-- **Automated Web Search**: Uses DuckDuckGo to find relevant information
-- **Content Processing**: Extracts and summarizes content from web pages
-- **Iterative Web Search**: Continues researching until sufficient information is gathered
-- **Source Tracking**: Records all URLs visited during research
-- **Internet Connectivity Check**: Verifies internet access before attempting research
+- `_search(query)` — uses DDGS text search with `max_results` and `backend="auto"`.
+- `_id(hit_or_item)` — hashes the result URL to create a stable cache ID.
+- `_materialize(hit)` — retrieves each result URL:
+  - PDF-looking URLs are downloaded and parsed as PDFs.
+  - Other URLs are fetched as HTML, cached, and passed through main-text extraction.
+- `_citation(item)` — formats citations as `title (url)` when a title is available.
 
-## Output
+After acquisition, the shared graph either:
 
-The agent returns a dictionary containing:
+- summarizes each result and aggregates the summaries into `state["final_summary"]`, or
+- invokes the RAG path when `rag_embedding` is configured, or
+- stops after `state["items"]` when `summarize=False`.
 
-- `messages`: A list of message objects, with the final message containing the comprehensive web search summary
-- `urls_visited`: A list of all sources consulted during the web search process
+## Output state
 
-## Advanced Usage
+Important fields in the returned state include:
 
-```python
-from langchain.chat_model import init_chat_model
-from ursa.agents import WebSearchAgent
+- `query` — final web search query.
+- `context` — task/question used for summarization.
+- `items` — acquired web item metadata, including local cache paths and extracted text.
+- `summaries` — per-item summaries when direct summarization is used.
+- `final_summary` — aggregate response to the requested context.
 
-# Initialize with custom parameters
-websearcher = WebSearchAgent(
-    llm=init_chat_model("openai:gpt-5-mini"),
-    url="https://www.example.com"  # Custom URL for internet connectivity check
-)
+Each web item may also include `extra["snippet"]` from the search result body.
 
-# Run with higher recursion limit for complex topics
-result = websearcher.invoke(
-    "What are the latest developments in quantum computing? Summarize in markdown format.",
-    recursion_limit=200
-)
+`agent.format_result(state)` returns `state["final_summary"]` when present.
+
+## Cached files
+
+By default, the agent writes artifacts under the agent den:
+
+- cached HTML/PDF/text: `acq_db/`
+- per-item summaries: `acq_summaries/`
+- combined direct-summarization file: `acq_summaries/summaries_combined.txt`
+- final direct-summarization file: `acq_summaries/final_summary.txt`
+- RAG workflow artifacts are managed by the shared RAG path when `rag_embedding` is provided.
+
+## CLI
+
+The interactive CLI registers this agent as:
+
+```text
+web
 ```
-
-## Notes
-
-- The agent requires internet connectivity to function properly
-- Rate limiting is implemented to avoid overwhelming search services
-- For networks with SSL inspection, you may need to set the `CERT_FILE` environment variable
-- The websearch process includes multiple steps: search, content processing, review, and final summarization

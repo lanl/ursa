@@ -405,7 +405,7 @@ def setup_llm(
 def setup_workspace(
     user_specified_workspace: str | None,
     project: str = "run",
-    model_name: str = "openai:gpt-5-mini",
+    model_name: str = "openai:gpt-5.4-mini",
 ) -> str:
     """
     Set up a workspace directory for a plan/execute run.

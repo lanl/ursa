@@ -308,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                     + "\n"
                 )
 
-            model_name = os.getenv("URSA_MODEL", "openai:gpt-5-mini")
+            model_name = os.getenv("URSA_MODEL", "openai:gpt-5.4-mini")
             with ux.status(f"Initializing model ({model_name})..."):
                 model = init_chat_model(
                     model=model_name,

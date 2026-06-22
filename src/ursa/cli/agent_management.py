@@ -9,8 +9,8 @@ from pathlib import Path
 from jsonargparse import ArgumentParser
 
 from ursa.security import (
-    AGENT_GROUPS_DIR,
     DEFAULT_GROUP_NAME,
+    URSA_CACHE_DIR,
     validate_group_name,
 )
 
@@ -18,7 +18,7 @@ _AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _group_root_dir(group_name: str) -> Path:
-    return AGENT_GROUPS_DIR / validate_group_name(group_name)
+    return URSA_CACHE_DIR / validate_group_name(group_name)
 
 
 def _group_agents_dir(group_name: str) -> Path:
@@ -172,7 +172,7 @@ def add_agent_management_subcommands(subparsers) -> None:
 def ensure_group_dir(group_name: str) -> Path:
     group_name = validate_group_name(group_name)
 
-    AGENT_GROUPS_DIR.mkdir(parents=True, exist_ok=True)
+    URSA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     root_dir = _group_root_dir(group_name)
     if not root_dir.exists():
         if group_name == DEFAULT_GROUP_NAME:

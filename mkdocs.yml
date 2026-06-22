@@ -6,6 +6,15 @@ theme:
   logo: assets/favicon.png
   favicon: assets/favicon.png
 
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
 plugins:
   - search
   - autorefs
@@ -16,29 +25,70 @@ plugins:
           options:
             show_source: true  # link back to your code
             show_submodules: true
-   
+
 watch:
   - src
 
 nav:
   - Home: index.md
-  - Setup: 
-      - chatOllama: chatollama_setup.md
+  - Installation:
+      - Overview: installation/index.md
+      - Install with uv: installation/uv.md
+      - Install with pip: installation/pip.md
+  - Getting Started:
+      - CLI: getting-started/cli.md
+      - Web Dashboard: getting-started/dashboard.md
+      - Python Scripts: getting-started/python-scripts.md
+      - Plan-Execute From YAML: getting-started/plan-execute-yaml.md
+      - MCP Server: getting-started/mcp-server.md
+  - Configuration:
+      - Overview: configuration/index.md
+      - OpenAI-compatible endpoints: configuration/openai-compatible.md
+      - Ollama and local endpoints: configuration/ollama.md
+      - LangChain providers: configuration/langchain-providers.md
+      - Files, CLI flags, and environment variables: configuration/files-and-env.md
+      - MCP server configuration: configuration/mcp.md
+  - Persistence:
+      - Overview: persistence/index.md
+      - Named agents: persistence/named-agents.md
+      - Groups and endpoint security: persistence/groups-and-security.md
+      - RAG collections: persistence/rag.md
+      - Checkpoints and sharing: persistence/checkpoints-and-sharing.md
+      - Quick reference: persistence/quick-reference.md
   - Agents:
-      - arXiv Agent: arxiv_agent.md
-      - DSIAgent: dsi_agent.md
+      - Overview: agents/index.md
+      - Chat Agent: chat_agent.md
+      - Acquisition Agents:
+          - Overview: acquisition_agents.md
+          - arXiv Agent: arxiv_agent.md
+          - OSTI Agent: osti_agent.md
+          - Web Search Agent: web_search_agent.md
+      - Deep Review Agent: deep_review_agent.md
+      - DSI Agent: dsi_agent.md
       - Execution Agent: execution_agent.md
       - Git Go Agent: git_go_agent.md
       - Hypothesizer Agent: hypothesizer_agent.md
+      - LAMMPS Agent: lammps_agent.md
       - Planning Agent: planning_agent.md
-      - Web Search Agent: web_search_agent.md
-  - Tutorials:
-     - Combining arXiv agent and execution agent: combining_arxiv_and_execution.md
-     - Human in the Loop: humanInTheLoop_example.md
-     - Neutron Star: combining_arxiv_and_execution_neutronStar.md
-  - API Reference: 
-    - agents: api_reference/agents.md
-    - prompt_library: api_reference/prompt_library.md
-    - tools: api_reference/tools.md
-    - util: api_reference/util.md
-
+  - Environments:
+      - Overview: environments/index.md
+      - Agent Teams: environments/agent-teams.md
+      - Agent Symposia: environments/agent-symposia.md
+  - Best Practices:
+      - Sandboxing and information control: best-practices/sandboxing.md
+      - Contributing: best-practices/contributing.md
+  - Reference:
+      - CLI reference: reference/cli.md
+      - MCP reference: reference/mcp.md
+      - Event logging: logging_events.md
+      - Metrics: Metrics-Guide.md
+      - Plan-Execute checkpointing: Plan-Execute-Runner-Checkpointing-Guide.md
+      - Tutorials and examples:
+          - Combining arXiv agent and execution agent: combining_arxiv_and_execution.md
+          - Human in the Loop: humanInTheLoop_example.md
+          - Neutron Star: combining_arxiv_and_execution_neutronStar.md
+      - API Reference:
+          - agents: api_reference/agents.md
+          - prompt_library: api_reference/prompt_library.md
+          - tools: api_reference/tools.md
+          - util: api_reference/util.md

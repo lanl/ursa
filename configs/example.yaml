@@ -10,7 +10,7 @@ llm_model:
   # Provider Overview: https://docs.langchain.com/oss/python/integrations/providers/overview
   model: openai:gpt-5.2
   max_completion_tokens: 10000
-  api_key: SUPER_SECRET_API_KEY
+  api_key_env: OPENAI_API_KEY
 emb_model:
   # The embedding model (default none) can similarly be configured
   # Exact options are model/provider dependent, see the LangGraph docs
@@ -35,17 +35,18 @@ mcp_servers:
     transport: stdio
     command: ursa
     args:
-      - --model llm_model.model openai:gpt-5-nano
       - --config
       - config.yaml
+      - --llm_model.model
+      - openai:gpt-5-nano
     env:
       # Ursa will interpolate env variables into ${VAR}
       # fallbacks can be specified as ${VAR:Default}
-      OPENAI_API_KEY: ${SUPER_SECRET_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANOTHER_VAR: ${ANOTHER_VAR:4}
       # More environmental variables to set for the mcp server
   ursa-http:
     # streamable-http servers are configured when started, not here
-    transport: streamable_http
+    transport: streamable-http
     url: http://localhost:8000/mcp
     timeout: 60 # Time out in seconds

@@ -8,7 +8,7 @@ Key features:
 - Safety-checked shell execution via run_command with output size budgeting.
 - Code authoring and edits through write_code and edit_code.
 - Web search capability through DuckDuckGoSearchResults.
-- Summarization of the session and optional memory logging.
+- Summarization of the session
 - Configurable graph with nodes for agent, action, and summarize.
 
 Implementation notes:
@@ -30,7 +30,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import (
     Annotated,
-    Any,
     Literal,
     NotRequired,
     TypedDict,
@@ -58,6 +57,7 @@ from ursa.prompt_library.execution_prompts import (
     recap_prompt,
 )
 from ursa.tools import (
+    download_file_tool,
     edit_code,
     edit_experience,
     list_experiences,
@@ -73,7 +73,6 @@ from ursa.tools.search_tools import (
     run_osti_search,
     run_web_search,
 )
-from ursa.util.memory_logger import AgentMemory
 from ursa.util.structured_output import invoke_structured
 
 
@@ -164,16 +163,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     This agent wraps an LLM with a small execution graph that alternates
     between issuing model queries, invoking tools (read, run, write, edit, search),
     performing safety checks, and summarizing progress. It manages a
-    workspace on disk, optional symlinks, and an optional memory backend to
-    persist summaries.
+    workspace on disk, optional symlinks.
 
     Args:
         llm (BaseChatModel): Model identifier or bound chat model
             instance. If a string is provided, the BaseAgent initializer will
             resolve it.
-        agent_memory (Any | AgentMemory, optional): Memory backend used to
-            store summarized agent interactions. If provided, summaries are
-            saved here.
         log_state (bool): When True, the agent writes intermediate json state
             to disk for debugging and auditability.
         **kwargs: Passed through to the BaseAgent constructor (e.g., model
@@ -185,7 +180,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
         recap_prompt (str): Prompt used to request concise summaries for
-            memory or final output.
+            final output.
         tools (dict[str, Tool]): Tools available to the agent (run_command, write_code,
             edit_code, read_file, run_web_search, run_osti_search, run_arxiv_search),
             keyed by tool name for quick lookups.
@@ -197,8 +192,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         query_executor(state): Send messages to the executor LLM, ensure
             workspace exists, and handle symlink setup before returning the
             model response.
-        recap(state): Produce and optionally persist a summary of recent
-            interactions to the memory backend.
+        recap(state): Produce a summary of recent interactions.
         _build_graph(): Construct and compile the StateGraph for the agent
             loop.
 
@@ -212,7 +206,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Any | AgentMemory | None = None,
         log_state: bool = False,
         extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
@@ -226,6 +219,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             write_code,
             edit_code,
             read_file,
+            download_file_tool,
             read_image_tool,
             read_experience,
             write_experience,
@@ -247,7 +241,6 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             safe_codes=safe_codes or ["python", "julia"],
             **kwargs,
         )
-        self.agent_memory = agent_memory
         self.executor_prompt = executor_prompt
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
@@ -453,11 +446,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         state: ExecutionState,
         config: RunnableConfig | None = None,
     ) -> ExecutionState:
-        """Produce a concise summary of the conversation and optionally persist memory.
+        """Produce a concise summary of the conversation
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
-        summary of recent interactions, optionally logs salient details to the agent
-        memory backend, and writes debug state when logging is enabled.
+        summary of recent interactions and writes debug state when logging is enabled.
 
         Args:
             state (ExecutionState): The execution state containing message history.
@@ -504,29 +496,8 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                     latest_message=new_state["messages"][-1].text[:2000],
                 )
 
-        # 3) Optionally persist salient details to the memory backend.
-        if self.agent_memory:
-            memories: list[str] = []
-            # Collect human/system/tool message content; for AI tool calls, store args.
-            for msg in new_state["messages"]:
-                msg_content = msg.text
-                if not isinstance(msg, AIMessage) or not msg.tool_calls:
-                    memories.append(msg_content)
-                else:
-                    tool_strings = []
-                    for tool in msg.tool_calls:
-                        tool_strings.append("Tool Name: " + tool["name"])
-                        for arg_name in tool["args"]:
-                            tool_strings.append(
-                                f"Arg: {arg_name!s}\nValue: "
-                                f"{tool['args'][arg_name]!s}"
-                            )
-                    memories.append("\n".join(tool_strings))
-            memories.append(response_content)
-            self.agent_memory.add_memories(memories)
-
         if full_overwrite:
-            # 4) Optionally write state to disk for debugging/auditing.
+            # 3) Optionally write state to disk for debugging/auditing.
             new_state["messages"].append(response)
             if self.log_state:
                 self.write_state("execution_agent.json", new_state)

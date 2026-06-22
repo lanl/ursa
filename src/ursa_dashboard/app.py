@@ -171,7 +171,7 @@ def create_app() -> FastAPI:
         or "default"
     )
     rm = RunManager()
-    settings_store = SettingsStore(rm.workspace_root)
+    settings_store = SettingsStore(rm.dashboard_root)
     dashboard_config = str(
         os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
     ).strip()
@@ -364,7 +364,7 @@ def create_app() -> FastAPI:
     def list_sessions(
         limit: int = Query(default=50, ge=1, le=500),
     ) -> SessionListResponse:
-        recs = session_list_sessions(rm.workspace_root, limit=limit)
+        recs = session_list_sessions(rm.dashboard_root, limit=limit)
         return SessionListResponse(sessions=recs)
 
     @app.get(
@@ -408,13 +408,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown agent_id")
         settings_snapshot = settings_store.load().model_dump(mode="json")
         sess = session_create_session(
-            rm.workspace_root,
+            rm.dashboard_root,
             agent_id=agent_id,
             agent_name=agent_name,
             title=req.title,
         )
         sess = session_update_session(
-            rm.workspace_root,
+            rm.dashboard_root,
             sess["session_id"],
             {
                 "llm": settings_snapshot.get("llm") or {},
@@ -432,12 +432,12 @@ def create_app() -> FastAPI:
         session_id: str, limit: int = Query(default=200, ge=1, le=2000)
     ) -> SessionDetail:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
-        msgs = session_read_messages(rm.workspace_root, session_id, limit=limit)
+        msgs = session_read_messages(rm.dashboard_root, session_id, limit=limit)
         return SessionDetail(session=sess, messages=msgs)
 
     @app.patch(
@@ -451,7 +451,7 @@ def create_app() -> FastAPI:
         try:
             # Handle unknown session ID by trying to read and failing gracefully
             existing_session = session_read_session(
-                rm.workspace_root, session_id
+                rm.dashboard_root, session_id
             )
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
@@ -476,14 +476,14 @@ def create_app() -> FastAPI:
                 existing_session.get("runner") or {}, patch["runner"] or {}
             )
 
-        sess2 = session_update_session(rm.workspace_root, session_id, patch)
-        msgs = session_read_messages(rm.workspace_root, session_id, limit=200)
+        sess2 = session_update_session(rm.dashboard_root, session_id, patch)
+        msgs = session_read_messages(rm.dashboard_root, session_id, limit=200)
         return SessionDetail(session=sess2, messages=msgs)
 
     @app.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
     def delete_session(session_id: str) -> Response:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -494,7 +494,7 @@ def create_app() -> FastAPI:
             )
 
         try:
-            session_delete_session(rm.workspace_root, session_id)
+            session_delete_session(rm.dashboard_root, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception as e:
@@ -512,10 +512,10 @@ def create_app() -> FastAPI:
     ):
         # Lightweight endpoint for polling
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            _ = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
-        return session_read_messages(rm.workspace_root, session_id, limit=limit)
+        return session_read_messages(rm.dashboard_root, session_id, limit=limit)
 
     @app.post(
         "/sessions/{session_id}/message",
@@ -526,7 +526,7 @@ def create_app() -> FastAPI:
         session_id: str, req: SessionMessageRequest
     ) -> SessionMessageResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -539,11 +539,11 @@ def create_app() -> FastAPI:
         agent_name = str(sess.get("agent_name") or "").strip() or None
 
         # Build conversational prompt from prior transcript.
-        prior = session_read_messages(rm.workspace_root, session_id, limit=200)
+        prior = session_read_messages(rm.dashboard_root, session_id, limit=200)
         prompt = build_prompt_from_messages(prior, new_user_text=req.text)
 
         user_msg = session_append_message(
-            rm.workspace_root,
+            rm.dashboard_root,
             session_id=session_id,
             role="user",
             text=req.text,
@@ -594,7 +594,7 @@ def create_app() -> FastAPI:
         )
 
         sess2 = session_update_session(
-            rm.workspace_root,
+            rm.dashboard_root,
             session_id,
             {
                 "agent_id": agent_id,
@@ -887,7 +887,7 @@ def create_app() -> FastAPI:
     # ----------------------------
 
     def _run_dir_for(run: dict[str, Any]) -> Path:
-        return (rm.workspace_root / run["run_dir"]).resolve()
+        return (rm.dashboard_root / run["run_dir"]).resolve()
 
     def _file_sha256(
         path: Path, *, max_bytes: int = 50 * 1024 * 1024
@@ -1028,7 +1028,7 @@ def create_app() -> FastAPI:
         limit: int = Query(default=5000, ge=1, le=20000),
     ) -> WorkspaceAllFilesResponse:
         # Optional global scan across all runs.
-        base = rm.workspace_root / "runs"
+        base = rm.dashboard_root / "runs"
         files: list[dict[str, Any]] = []
         if base.exists():
             for root, dirnames, filenames in os.walk(base):
@@ -1042,7 +1042,7 @@ def create_app() -> FastAPI:
                 for fn in filenames:
                     p = Path(root) / fn
                     try:
-                        rel = p.relative_to(rm.workspace_root).as_posix()
+                        rel = p.relative_to(rm.dashboard_root).as_posix()
                         st = p.stat()
                     except Exception:
                         continue
@@ -1389,14 +1389,14 @@ def create_app() -> FastAPI:
     # ----------------------------
 
     def _session_default_workspace_dir(session_id: str) -> Path:
-        sp = session_paths(rm.workspace_root, session_id)
+        sp = session_paths(rm.dashboard_root, session_id)
         return sp.workspace_dir.resolve()
 
     def _session_workspace_dir(
         session_id: str, sess: dict[str, Any] | None = None
     ) -> Path:
         if sess is None:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         custom = str(sess.get("workspace_path") or "").strip()
         if custom:
             p = Path(custom).expanduser()
@@ -1435,7 +1435,7 @@ def create_app() -> FastAPI:
         session_id: str,
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1452,7 +1452,7 @@ def create_app() -> FastAPI:
         session_id: str, req: SessionWorkspaceSetRequest
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1485,7 +1485,7 @@ def create_app() -> FastAPI:
                 )
             patch = {"workspace_path": str(p.resolve())}
 
-        sess2 = session_update_session(rm.workspace_root, session_id, patch)
+        sess2 = session_update_session(rm.dashboard_root, session_id, patch)
         ws = _session_workspace_dir(session_id, sess2)
         files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
         return _workspace_response(session_id, sess2, files)
@@ -1600,7 +1600,7 @@ def create_app() -> FastAPI:
         session_id: str,
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1649,7 +1649,7 @@ def create_app() -> FastAPI:
             )
 
         sess2 = session_update_session(
-            rm.workspace_root, session_id, {"workspace_path": str(p.resolve())}
+            rm.dashboard_root, session_id, {"workspace_path": str(p.resolve())}
         )
         ws = _session_workspace_dir(session_id, sess2)
         files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
@@ -1701,7 +1701,7 @@ def create_app() -> FastAPI:
         overwrite: bool = Form(default=False),
     ):
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1734,7 +1734,7 @@ def create_app() -> FastAPI:
             saved.append({"path": rel, "size_bytes": size})
 
         # Touch session updated_at.
-        session_update_session(rm.workspace_root, session_id, {})
+        session_update_session(rm.dashboard_root, session_id, {})
 
         # Return updated file listing for convenience.
         files_out = scan_artifacts(ws, exclude_dirs={"__pycache__"})
@@ -1754,7 +1754,7 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> SessionFileMetaResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1786,7 +1786,7 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> HTMLResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1923,7 +1923,7 @@ def create_app() -> FastAPI:
         ),
     ):
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -3874,7 +3874,7 @@ def create_app() -> FastAPI:
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
-    $('#set_api_key_env_var').value = llm.api_key_env_var || '';
+    $('#set_api_key_env').value = llm.api_key_env || '';
     const modelKwargs = llm.model_kwargs || {};
     $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
     $('#set_timeout').value = runner.timeout_seconds ?? '';
@@ -3981,7 +3981,7 @@ def create_app() -> FastAPI:
       llm: {
         base_url: ($('#set_base_url').value || '').trim() || null,
         model: ($('#set_model').value || '').trim() || null,
-        api_key_env_var: ($('#set_api_key_env_var').value || '').trim() || null,
+        api_key_env: ($('#set_api_key_env').value || '').trim() || null,
         model_kwargs: modelKwargs,
       },
       runner: {
@@ -5086,8 +5086,8 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">LLM</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
-            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
-            <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
+            <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model and base_url.</div>

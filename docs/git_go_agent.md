@@ -12,7 +12,7 @@ from ursa.agents import GitGoAgent
 
 # Initialize the agent
 agent = GitGoAgent(
-    llm=init_chat_model("openai:gpt-5-mini"),
+    llm=init_chat_model("openai:gpt-5.4-mini"),
     workspace=Path("/path/to/your/repo"),
 )
 
