@@ -28,7 +28,7 @@ When initializing `DSIAgent`, you can customize its behavior with these paramete
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5-mini")` | The LLM model to use  |
+| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5.4-mini")` | The LLM model to use  |
 | `database_path` | str | True | Path to the dataset to load |
 | `process_images` | bool | True | Whether to extract and describe images from papers |
 | `output_mode` | str | True | Jupyter for jupyter notebooks or console |

@@ -42,7 +42,7 @@ Compare the timing for all three methods on the first million integers, and chec
 ]
 
 # Init the model
-model = init_chat_model(model="openai:gpt-5-mini")
+model = init_chat_model(model="openai:gpt-5.4-mini")
 
 # Setup checkpointing
 db_path = Path(workspace) / "checkpoint.db"

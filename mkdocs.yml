@@ -57,14 +57,19 @@ nav:
       - Quick reference: persistence/quick-reference.md
   - Agents:
       - Overview: agents/index.md
-      - arXiv Agent: arxiv_agent.md
+      - Chat Agent: chat_agent.md
+      - Acquisition Agents:
+          - Overview: acquisition_agents.md
+          - arXiv Agent: arxiv_agent.md
+          - OSTI Agent: osti_agent.md
+          - Web Search Agent: web_search_agent.md
+      - Deep Review Agent: deep_review_agent.md
       - DSI Agent: dsi_agent.md
       - Execution Agent: execution_agent.md
       - Git Go Agent: git_go_agent.md
       - Hypothesizer Agent: hypothesizer_agent.md
       - LAMMPS Agent: lammps_agent.md
       - Planning Agent: planning_agent.md
-      - Web Search Agent: web_search_agent.md
   - Best Practices:
       - Sandboxing and information control: best-practices/sandboxing.md
       - Contributing: best-practices/contributing.md

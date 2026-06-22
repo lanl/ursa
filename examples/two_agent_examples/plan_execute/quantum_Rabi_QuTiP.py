@@ -29,7 +29,7 @@ def main():
         workspace = "qutip_workspace"
 
         model = init_chat_model(
-            model="openai:gpt-5-mini",
+            model="openai:gpt-5.4-mini",
             max_completion_tokens=20000,
             max_retries=2,
         )

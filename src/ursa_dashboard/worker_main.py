@@ -13,7 +13,7 @@ from ursa.util.http import inject_truststore_into_ssl
 
 
 def _normalize_model(model: str) -> str:
-    # Examples use "openai:gpt-5-mini".
+    # Examples use "openai:gpt-5.4-mini".
     if ":" in model:
         return model
     return f"openai:{model}"
@@ -49,7 +49,7 @@ def _init_llm(llm_cfg: dict[str, Any]):
         os.environ["OPENAI_BASE_URL"] = str(base_url)
         os.environ["OPENAI_API_BASE"] = str(base_url)
 
-    model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5-mini"))
+    model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5.4-mini"))
 
     model_kwargs = llm_cfg.get("model_kwargs") or {}
     if not isinstance(model_kwargs, dict):
