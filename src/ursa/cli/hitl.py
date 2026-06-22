@@ -143,7 +143,6 @@ class HITL:
         enforce_model_group_policy(self.embedding, self.group)
 
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
-        self.memory = None
         if base_url := getattr(self.config.llm_model, "base_url"):
             if model_base_url := get_base_url(self.model):
                 if base_url != model_base_url:
@@ -178,7 +177,6 @@ class HITL:
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
             config={
-                "agent_memory": self.memory,
                 "use_web": self.config.use_web,
                 **rag_tool_config,
             },
@@ -199,12 +197,6 @@ class HITL:
 
         if has_optional_dep_group("lammps"):
             self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
-
-        if self.memory is not None:
-            self.agents["recall"] = AgentHITL(
-                agent_class=agents.RecallAgent,
-                config={"memory": self.memory},
-            )
 
         # Apply agent-specific configuration overrides
         for agent, agent_config in agent_overrides.items():

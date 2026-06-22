@@ -68,12 +68,33 @@ llm = init_chat_model(
 )
 ```
 
+## Compose agents with environments
+
+When one agent is not the right shape for the work, URSA environments let you run multiple agents behind one Python object. An [Agent Team](../environments/agent-teams.md) gives a PI delegation tools for specialist members. An [Agent Symposium](../environments/agent-symposia.md) asks multiple members or nested teams to work independently, review one another, revise, and then synthesize a final answer.
+
+```python
+from langchain.chat_models import init_chat_model
+from ursa.environments import AgentSymposiumEnvironment
+
+llm = init_chat_model(model="openai:gpt-4o-mini")
+symposium = AgentSymposiumEnvironment.from_yaml(
+    "examples/environments/agent_symposium.yaml",
+    llm=llm,
+)
+
+result = symposium.invoke("Compare two solution strategies and recommend one.")
+print(result["final"])
+```
+
+See [Environments](../environments/index.md) for narrative guides and YAML examples.
+
 ## Checkpointing and longer examples
 
 Many of the examples in the repository show checkpointing and multi-step workflows. See:
 
 - `examples/single_agent_examples/`
 - `examples/two_agent_examples/`
+- `examples/environments/`
 - [Plan-Execute From YAML](plan-execute-yaml.md)
 - [Plan-Execute checkpointing reference](../Plan-Execute-Runner-Checkpointing-Guide.md)
 
