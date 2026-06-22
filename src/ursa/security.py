@@ -50,6 +50,10 @@ def group_dashboard_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
     return group_root_dir(group) / "dashboard"
 
 
+def group_environments_dir(group: str | None = DEFAULT_GROUP_NAME) -> Path:
+    return group_root_dir(group) / "environments"
+
+
 def group_config_file(group: str | None = DEFAULT_GROUP_NAME) -> Path:
     return group_root_dir(group) / GROUP_CONFIG_FILENAME
 

@@ -70,6 +70,10 @@ nav:
       - Hypothesizer Agent: hypothesizer_agent.md
       - LAMMPS Agent: lammps_agent.md
       - Planning Agent: planning_agent.md
+  - Environments:
+      - Overview: environments/index.md
+      - Agent Teams: environments/agent-teams.md
+      - Agent Symposia: environments/agent-symposia.md
   - Best Practices:
       - Sandboxing and information control: best-practices/sandboxing.md
       - Contributing: best-practices/contributing.md
