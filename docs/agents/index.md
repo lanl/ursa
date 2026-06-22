@@ -38,6 +38,10 @@ ursa --use-web
 
 With `--use-web`, tool-capable agents that support web access, such as `ChatAgent`, `ExecutionAgent`, `DeepReviewAgent`, and `PromptingAgent`, receive web/search tools according to their implementation. Without it, they should rely on local workspace, experience, RAG, MCP, or other explicitly configured tools.
 
+## Composing agents
+
+For work that benefits from multiple roles, URSA environments compose agents behind one `invoke(...)` interface. Use an [Agent Team](../environments/agent-teams.md) when one PI should delegate to specialists and synthesize a coherent answer. Use an [Agent Symposium](../environments/agent-symposia.md) when several agents or nested teams should work independently, review one another, revise, and then produce a final synthesis.
+
 ## Safety note
 
 Agents with tools can access local files, run commands, or make network requests depending on configuration. Use dedicated workspaces for execution-heavy workflows and review generated commands/code when appropriate. See [Sandboxing and information control](../best-practices/sandboxing.md).

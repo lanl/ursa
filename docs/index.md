@@ -10,7 +10,8 @@ Use URSA when you want to:
 - connect to OpenAI, Anthropic, Google GenAI, Ollama, or an OpenAI-compatible endpoint,
 - persist named agents and reuse them across sessions,
 - ingest documents into persistent RAG collections,
-- expose URSA as an MCP server for another client or agent framework.
+- expose URSA as an MCP server for another client or agent framework,
+- compose multiple agents into teams or symposium-style peer review environments.
 
 !!! warning "Execution and network access"
     Some URSA agents can write files, run shell commands, and use web or MCP tools. Use a dedicated workspace, review actions carefully, and read the [Sandboxing and information-control guidance](best-practices/sandboxing.md) before running high-trust or data-sensitive workflows.
@@ -75,4 +76,5 @@ ursa> execute Write and run a Python script that prints the first 10 prime numbe
 - [Configure model endpoints](configuration/index.md)
 - [Use named agents and persistence](persistence/index.md)
 - [Run URSA as an MCP server](getting-started/mcp-server.md)
+- [Compose agents with environments](environments/index.md)
 - [Review sandboxing and information-control guidance](best-practices/sandboxing.md)
