@@ -12,7 +12,14 @@ import yaml
 from jsonargparse import Namespace
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.embeddings import Embeddings, init_embeddings
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_serializer,
+    field_validator,
+)
 
 from ursa.util.http import (
     build_httpx_async_client,
@@ -119,21 +126,31 @@ class UrsaConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
         validate_assignment=True,
+        populate_by_name=True,
     )
 
     _temp_workspace: TemporaryDirectory | None = PrivateAttr(default=None)
 
     workspace: Path = Field(
-        default_factory=lambda: Path("ursa_workspace"),
+        default_factory=lambda: Path("."),
     )
     """Directory to store URSA's output."""
+
+    agent_name: str | None = None
+    """Name of the agent for persistence."""
+
+    group: str | None = "default"
+    """Security group for the agent to control information flow"""
 
     thread_id: str | None = None
     """ Thread ID for persistence """
 
+    use_web: bool = False
+    """Enable web-search tools for ChatAgent and ExecutionAgent."""
+
     llm_model: ChatModelConfig = Field(
         default_factory=lambda: ChatModelConfig(
-            model="openai:gpt-5.2",
+            model="openai:gpt-5.4",
         )
     )
     """Default LLM"""
@@ -141,11 +158,21 @@ class UrsaConfig(BaseModel):
     emb_model: EmbModelConfig | None = None
     """Default Embedding model"""
 
+    rag_tools: list[str] = Field(default_factory=list)
+    """Persisted RAG agent names to bind as tools."""
+
     agent_config: dict[str, dict[str, Any]] | None = None
     """ Configuration options for URSA Agents """
 
     mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
+
+    @field_validator("rag_tools", mode="before")
+    @classmethod
+    def _normalize_rag_tools(cls, value):
+        from ursa.rag.persistence import normalize_rag_tool_names
+
+        return normalize_rag_tool_names(value)
 
     def model_post_init(self, __context):
         """Handle temporary workspace creation post validation."""

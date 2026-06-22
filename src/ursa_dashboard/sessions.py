@@ -29,9 +29,9 @@ def _validate_session_id(session_id: str) -> str:
     return sid
 
 
-def session_paths(workspace_root: Path, session_id: str) -> SessionPaths:
+def session_paths(dashboard_root: Path, session_id: str) -> SessionPaths:
     session_id = _validate_session_id(session_id)
-    base = workspace_root / "sessions" / session_id
+    base = dashboard_root / "sessions" / session_id
     return SessionPaths(
         session_dir=base,
         meta_path=base / "session.json",
@@ -41,17 +41,28 @@ def session_paths(workspace_root: Path, session_id: str) -> SessionPaths:
 
 
 def create_session(
-    workspace_root: Path, *, agent_id: str, title: str | None = None
+    dashboard_root: Path,
+    *,
+    agent_id: str,
+    agent_name: str | None = None,
+    title: str | None = None,
 ) -> dict[str, Any]:
     session_id = new_ulid()
-    paths = session_paths(workspace_root, session_id)
+    paths = session_paths(dashboard_root, session_id)
     paths.workspace_dir.mkdir(parents=True, exist_ok=True)
 
     now = utc_now()
+    resolved_agent_name = str(agent_name or "").strip() or None
     rec: dict[str, Any] = {
         "session_id": session_id,
         "agent_id": agent_id,
-        "title": title or f"{agent_id} session",
+        "agent_name": resolved_agent_name,
+        "title": title
+        or (
+            f"{resolved_agent_name}"
+            if resolved_agent_name
+            else f"{agent_id} session"
+        ),
         "created_at": now,
         "updated_at": now,
         "active_run_id": None,
@@ -61,15 +72,15 @@ def create_session(
     return rec
 
 
-def read_session(workspace_root: Path, session_id: str) -> dict[str, Any]:
-    paths = session_paths(workspace_root, session_id)
+def read_session(dashboard_root: Path, session_id: str) -> dict[str, Any]:
+    paths = session_paths(dashboard_root, session_id)
     return read_json(paths.meta_path)
 
 
 def update_session(
-    workspace_root: Path, session_id: str, patch: dict[str, Any]
+    dashboard_root: Path, session_id: str, patch: dict[str, Any]
 ) -> dict[str, Any]:
-    paths = session_paths(workspace_root, session_id)
+    paths = session_paths(dashboard_root, session_id)
     rec = read_json(paths.meta_path)
     rec.update(patch)
     rec["updated_at"] = utc_now()
@@ -78,9 +89,9 @@ def update_session(
 
 
 def list_sessions(
-    workspace_root: Path, *, limit: int = 50, agent_id: str | None = None
+    dashboard_root: Path, *, limit: int = 50, agent_id: str | None = None
 ) -> list[dict[str, Any]]:
-    root = workspace_root / "sessions"
+    root = dashboard_root / "sessions"
     if not root.exists():
         return []
     recs: list[dict[str, Any]] = []
@@ -99,17 +110,17 @@ def list_sessions(
     return recs[:limit]
 
 
-def delete_session(workspace_root: Path, session_id: str) -> None:
+def delete_session(dashboard_root: Path, session_id: str) -> None:
     """Delete the session directory (messages + per-session workspace).
 
     Note: does not delete global run records; runs are stored separately.
     """
 
-    paths = session_paths(workspace_root, session_id)
+    paths = session_paths(dashboard_root, session_id)
     if not paths.session_dir.exists():
         raise FileNotFoundError(paths.session_dir)
-    # Safety: only delete under workspace_root/sessions
-    sessions_root = (workspace_root / "sessions").resolve()
+    # Safety: only delete under dashboard_root/sessions
+    sessions_root = (dashboard_root / "sessions").resolve()
     sess_real = paths.session_dir.resolve()
     try:
         sess_real.relative_to(sessions_root)
@@ -120,31 +131,35 @@ def delete_session(workspace_root: Path, session_id: str) -> None:
 
 
 def append_message(
-    workspace_root: Path,
+    dashboard_root: Path,
     *,
     session_id: str,
     role: str,
     text: str,
     run_id: str | None = None,
     message_id: str | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
-    paths = session_paths(workspace_root, session_id)
+    paths = session_paths(dashboard_root, session_id)
     msg = {
         "message_id": message_id or new_ulid(),
         "ts": utc_now(),
         "role": role,
         "text": text,
         "run_id": run_id,
+        "agent_id": agent_id,
+        "agent_name": agent_name,
     }
     append_jsonl(paths.messages_path, msg)
-    update_session(workspace_root, session_id, {})
+    update_session(dashboard_root, session_id, {})
     return msg
 
 
 def read_messages(
-    workspace_root: Path, session_id: str, *, limit: int = 200
+    dashboard_root: Path, session_id: str, *, limit: int = 200
 ) -> list[dict[str, Any]]:
-    paths = session_paths(workspace_root, session_id)
+    paths = session_paths(dashboard_root, session_id)
     if not paths.messages_path.exists():
         return []
     msgs: list[dict[str, Any]] = []
@@ -187,6 +202,9 @@ def build_prompt_from_messages(
             if role == "user"
             else ("Assistant" if role == "assistant" else "System")
         )
+        agent_id = str(m.get("agent_id") or "").strip()
+        if agent_id:
+            prefix = f"{prefix}[{agent_id}]"
         lines.append(f"{prefix}: {txt}")
 
     lines.append(f"User: {new_user_text}")

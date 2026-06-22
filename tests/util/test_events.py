@@ -189,7 +189,13 @@ def test_tool_events_emit_tool_payload_from_runtime(
 
     runtime = ToolRuntime(
         state={},
-        context=AgentContext(llm=None, workspace=Path("workspace")),
+        context=AgentContext(
+            llm=None,
+            workspace=Path("workspace"),
+            den=Path("workspace"),
+            agent_name=None,
+            group="default",
+        ),
         config={"metadata": {"thread_id": "thread-9"}},
         stream_writer=lambda _: None,
         tool_call_id="tool-call-9",

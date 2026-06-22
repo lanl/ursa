@@ -13,6 +13,7 @@ from ursa.prompt_library.planning_prompts import (
     planner_prompt,
     reflection_prompt,
 )
+from ursa.util.structured_output import invoke_structured
 
 from .base import BaseAgent
 
@@ -115,14 +116,16 @@ class PlanningAgent(BaseAgent[PlanningState]):
         else:
             messages = [SystemMessage(content=self.planner_prompt)] + messages
 
-        try:
-            structured_llm = self.llm.with_structured_output(Plan)
-            plan = cast(Plan, structured_llm.invoke(messages))
-        except Exception:
-            structured_llm = self.llm.with_structured_output(
-                Plan, method="function_calling"
-            )
-            plan = cast(Plan, structured_llm.invoke(messages))
+        plan = cast(
+            Plan,
+            invoke_structured(
+                self.llm,
+                Plan,
+                messages,
+                context="planning generation",
+                repair=3,
+            ),
+        )
         events.emit(
             "Drafted plan",
             stage="generate_result",

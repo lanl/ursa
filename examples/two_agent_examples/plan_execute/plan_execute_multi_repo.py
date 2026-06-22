@@ -1858,7 +1858,7 @@ def main():
 
     models_cfg = getattr(cfg, "models", {}) or {}
     default_model = (models_cfg.get("default") or None) or (
-        models_cfg.get("choices") or ["openai:gpt-5-mini"]
+        models_cfg.get("choices") or ["openai:gpt-5.4-mini"]
     )[0]
     planner_model = models_cfg.get("planner") or default_model
     executor_model = models_cfg.get("executor") or default_model

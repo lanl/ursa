@@ -5,7 +5,8 @@ import threading
 from cmd import Cmd
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any
 
 import aiosqlite
 from fastmcp import FastMCP
@@ -23,9 +24,12 @@ from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
+from ursa.security import (
+    enforce_group_base_url_policy,
+    enforce_model_group_policy,
+)
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
-from ursa.util.memory_logger import AgentMemory
 
 ursa_banner = r"""
   __  ________________ _
@@ -112,30 +116,33 @@ def get_base_url(model: BaseChatModel) -> str | None:
 class HITL:
     def __init__(self, config: UrsaConfig):
         self.config = config
-        self.thread_id = config.thread_id or "ursa_cli"
+        self.thread_id = config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
         agent_overrides = dict(config.agent_config or {})
-        memory_overrides = agent_overrides.pop("memory", None)
 
+        self.agent_name = self.config.agent_name
+        self.group = self.config.group
+
+        enforce_group_base_url_policy(
+            self.config.llm_model.base_url, self.group
+        )
         self.model: BaseChatModel = self.config.llm_model.init_chat_model()
+        enforce_model_group_policy(self.model, self.group)
+        if self.config.emb_model:
+            enforce_group_base_url_policy(
+                self.config.emb_model.base_url, self.group
+            )
         self.embedding = (
             self.config.emb_model.init_embedding()
             if self.config.emb_model
             else None
         )
+        enforce_model_group_policy(self.embedding, self.group)
+
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
-        self.memory = (
-            AgentMemory(
-                embedding_model=self.embedding,
-                path=str(self.workspace / "memory"),
-                **(memory_overrides or {}),
-            )
-            if self.embedding
-            else None
-        )
         if base_url := getattr(self.config.llm_model, "base_url"):
             if model_base_url := get_base_url(self.model):
                 if base_url != model_base_url:
@@ -151,29 +158,45 @@ class HITL:
                             f"Model base url ({model_base_url}) and config ({base_url}) do not match"
                         )
 
+        rag_tool_config = {
+            "rag_tools": self.config.rag_tools,
+            "rag_tool_embedding": self.embedding,
+        }
+
         self.agents: dict[str, AgentHITL] = {}
-        self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
+        self.agents["chat"] = AgentHITL(
+            agent_class=agents.ChatAgent,
+            config={"use_web": self.config.use_web, **rag_tool_config},
+        )
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
         if has_optional_dep_group("dsi"):
-            self.agents["dsi"] = AgentHITL(agent_class=agents.DSIAgent)
+            self.agents["dsi"] = AgentHITL(
+                agent_class=agents.DSIAgent,
+                config=dict(rag_tool_config),
+            )
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
-            config={"agent_memory": self.memory},
+            config={
+                "use_web": self.config.use_web,
+                **rag_tool_config,
+            },
+        )
+        self.agents["deep_review"] = AgentHITL(
+            agent_class=agents.DeepReviewAgent,
+            config={"use_web": self.config.use_web, **rag_tool_config},
         )
         self.agents["hypothesize"] = AgentHITL(
             agent_class=agents.HypothesizerAgent
         )
         self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
+        self.agents["prompt"] = AgentHITL(
+            agent_class=agents.PromptingAgent,
+            config={"use_web": self.config.use_web},
+        )
         self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
 
         if has_optional_dep_group("lammps"):
             self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
-
-        if self.memory is not None:
-            self.agents["recall"] = AgentHITL(
-                agent_class=agents.RecallAgent,
-                config={"memory": self.memory},
-            )
 
         # Apply agent-specific configuration overrides
         for agent, agent_config in agent_overrides.items():
@@ -189,9 +212,9 @@ class HITL:
         self.last_agent = None
 
     async def _get_checkpointer(
-        self, name: str = "checkpoint"
+        self, checkpoint_path: Path
     ) -> AsyncSqliteSaver:
-        checkpoint_path = (self.config.workspace / name).with_suffix(".db")
+        checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(checkpoint_path))
         return AsyncSqliteSaver(conn)
@@ -201,14 +224,17 @@ class HITL:
 
         # Lazily instantiate the agents
         if agent._agent is None:
-            checkpointer = await self._get_checkpointer(name)
             await agent.instantiate(
                 llm=self.model,
                 workspace=self.workspace,
-                checkpointer=checkpointer,
+                agent_name=self.agent_name,
+                group=self.group,
                 mcp_client=self.mcp_client,
                 thread_id=f"{self.thread_id}",
             )
+            # Replacing the sync checkpointer with an async one for the hitl
+            async_checkpointer = await self._get_checkpointer(agent._agent.den)
+            agent._agent.checkpointer = async_checkpointer
 
         assert agent._agent is not None
         return agent
@@ -462,7 +488,7 @@ class UrsaRepl(Cmd):
                 self.console.print(name + ": {}")
 
 
-def get_provider_and_model(model_str: Optional[str]):
+def get_provider_and_model(model_str: str | None):
     if model_str is None:
         return "none", "none"
 

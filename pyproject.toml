@@ -26,21 +26,19 @@ dependencies = [
     "pandas>=2.3.1,<3.0",
     "pillow>=11.3.0,<12.0",
     "pymupdf>=1.26.0,<2.0",
-    "pypdf>=5.9.0,<6.0",
     "rich>=13.9.4,<14.0",
-    "mp-api>=0.45.8,<0.45.13",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
-    "trafilatura>=1.6.1,<1.7",
     "truststore>=0.10.4,<1.0",
     "selectolax>=0.4.0,<0.5",
     "langchain>=1.3.2",
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.4.1",
     "langchain-openai>=1.0.1",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "aiosqlite>=0.20.0",
     "langchain-anthropic>=1.4",
     "langchain-google-genai>=4.2",
-    "langgraph-checkpoint-sqlite>=3.0.0",
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
     "langchain-mcp-adapters>=0.1.12,<0.2",
@@ -49,6 +47,8 @@ dependencies = [
     "jsonargparse>=4.45.0",
     "fastmcp~=3.0",
     "pyyaml>=6.0.3",
+    "justext>=3.0.2",
+    "matplotlib>=3.10.6",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -78,6 +78,7 @@ fm = [
 ] # Ursa's MCP FM interface
 lammps = [
     "atomman>=1.5.2",
+    "trafilatura>=1.6.1,<1.7",
 ]
 office_readers = [
     "python-docx>=1.2",
@@ -95,6 +96,9 @@ dsi = [
 ]
 image = [
     "pillow>=11.3.0,<12.0.0",
+]
+mp = [
+    "mp-api>=0.45.8,<0.45.13",
 ]
 
 [build-system]

@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 
 from langchain.tools import ToolRuntime, tool
@@ -8,7 +7,7 @@ from ursa.util.events import ToolEvents
 
 
 @tool
-def run_arxiv_search(
+async def run_arxiv_search(
     prompt: str, query: str, runtime: ToolRuntime, max_results: int = 3
 ):
     """
@@ -31,8 +30,10 @@ def run_arxiv_search(
             summarize=True,
             process_images=False,
             max_results=max_results,
-            workspace=runtime.context.workspace,
+            workspace=runtime.context.den,
             # rag_embedding=self.embedding,
+            checkpointer=None,
+            agent_name=None,
             database_path=Path("./arxiv_downloaded"),
             summaries_path=Path("./arxiv_summaries"),
             download=True,
@@ -45,12 +46,11 @@ def run_arxiv_search(
         )
         assert isinstance(query, str)
 
-        arxiv_result = asyncio.run(
-            agent.ainvoke(
-                arxiv_search_query=query,
-                context=prompt,
-            )
-        )["final_summary"]
+        arxiv_result = await agent.ainvoke(
+            arxiv_search_query=query,
+            context=prompt,
+        )
+        arxiv_result = arxiv_result["final_summary"]
 
         events.emit(
             "ArXiv search complete",
@@ -72,7 +72,7 @@ def run_arxiv_search(
 
 
 @tool
-def run_web_search(
+async def run_web_search(
     prompt: str,
     query: str,
     runtime: ToolRuntime,
@@ -98,8 +98,10 @@ def run_web_search(
             summarize=True,
             process_images=False,
             max_results=max_results,
-            workspace=runtime.context.workspace,
+            workspace=runtime.context.den,
             # rag_embedding=self.embedding,
+            checkpointer=None,
+            agent_name=None,
             database_path=Path("./web_downloads"),
             summaries_path=Path("./web_summaries"),
             download=True,
@@ -112,12 +114,11 @@ def run_web_search(
         )
         assert isinstance(query, str)
 
-        web_result = asyncio.run(
-            agent.ainvoke(
-                query=query,
-                context=prompt,
-            )
-        )["final_summary"]
+        web_result = await agent.ainvoke(
+            query=query,
+            context=prompt,
+        )
+        web_result = web_result["final_summary"]
 
         events.emit(
             "Web search complete",
@@ -139,7 +140,7 @@ def run_web_search(
 
 
 @tool
-def run_osti_search(
+async def run_osti_search(
     prompt: str,
     query: str,
     runtime: ToolRuntime,
@@ -165,8 +166,10 @@ def run_osti_search(
             summarize=True,
             process_images=False,
             max_results=max_results,
-            workspace=runtime.context.workspace,
+            workspace=runtime.context.den,
             # rag_embedding=self.embedding,
+            checkpointer=None,
+            agent_name=None,
             database_path=Path("./osti_downloaded_papers"),
             summaries_path=Path("./osti_generated_summaries"),
             vectorstore_path=Path("./osti_vectorstores"),
@@ -180,12 +183,11 @@ def run_osti_search(
         )
         assert isinstance(query, str)
 
-        osti_result = asyncio.run(
-            agent.ainvoke(
-                query=query,
-                context=prompt,
-            )
-        )["final_summary"]
+        osti_result = await agent.ainvoke(
+            query=query,
+            context=prompt,
+        )
+        osti_result = osti_result["final_summary"]
 
         events.emit(
             "OSTI.gov search complete",

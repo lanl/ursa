@@ -1,13 +1,37 @@
 import logging
 from pathlib import Path
 
+import yaml
 from jsonargparse import ArgumentParser, set_parsing_settings
 
 from ursa import __version__
+from ursa.cli.agent_management import (
+    add_agent_management_subcommands,
+    copy_agent,
+    delete_agent,
+    import_agent,
+    list_agents,
+    save_agent,
+    share_agent,
+    show_agent,
+)
 from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
+)
+from ursa.cli.groups import (
+    add_group_subcommands,
+    create_group,
+    delete_group,
+    list_groups,
+    show_group,
+    update_group,
+)
+from ursa.cli.rag_management import (
+    RAG_COMMANDS,
+    add_rag_subcommands,
+    handle_rag_command,
 )
 from ursa.util.http import inject_truststore_into_ssl
 
@@ -37,7 +61,30 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Print the Ursa configuration and exit",
     )
-    parser.add_class_arguments(UrsaConfig, help="URSA configuration")
+    parser.add_class_arguments(
+        UrsaConfig,
+        help="URSA configuration",
+        skip={"agent_name", "rag_tools"},
+    )
+    parser.add_argument(
+        "--rag-tools",
+        dest="rag_tools",
+        default=None,
+        help="Comma-separated persisted RAG agent names to bind as tools.",
+    )
+    parser.add_argument(
+        "--use-web",
+        dest="use_web",
+        action="store_true",
+        default=False,
+        help="Enable web-search tools for ChatAgent and ExecutionAgent.",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Name of the agent for persistence",
+    )
 
     # Run Ursa as an MCP Server
     mcp_parser = ArgumentParser()
@@ -48,6 +95,15 @@ def build_parser() -> ArgumentParser:
         help="[Experimental] Run URSA as an MCP server",
         dest="subcommand",
     )
+
+    # Agent group management commands
+    add_group_subcommands(subparsers)
+
+    # Agent management commands
+    add_agent_management_subcommands(subparsers)
+
+    # Persistent RAG management commands
+    add_rag_subcommands(subparsers)
 
     exec_parser = ArgumentParser()
     exec_parser.add_argument("prompt", type=str)
@@ -60,11 +116,36 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
+def _config_path_from_namespace(cfg) -> Path | None:
+    """Return a root or subcommand-local config path from parsed CLI args."""
+    config_path = getattr(cfg, "config", None)
+    subcommand = cfg.get("subcommand", None)
+    if subcommand is not None:
+        cmd_cfg = cfg.get(subcommand, None)
+        cmd_config_path = (
+            getattr(cmd_cfg, "config", None) if cmd_cfg is not None else None
+        )
+        config_path = cmd_config_path or config_path
+    return config_path
+
+
 def resolve_config(cfg) -> UrsaConfig:
     """Produce the effective UrsaConfig from the parsed arguments."""
-    cli_config = UrsaConfig.from_namespace(cfg)
+    cfg_dict = cfg.as_dict()
+    # Change `name` to `agent_name` for consistency with agent
+    #    arguments.
+    # TODO: Longer term, we should make our agents use `name`
+    #    as the argument for the class, but this is a problem
+    #    with the current class property `name` that is used by
+    #    the CLI
+    if cfg_dict.get("name") is not None:
+        cfg_dict["agent_name"] = cfg_dict.pop("name")
+    else:
+        cfg_dict.pop("name", None)
+
+    cli_config = UrsaConfig.model_validate(cfg_dict, extra="ignore")
+    config_path = _config_path_from_namespace(cfg)
     config = UrsaConfig()
-    config_path = getattr(cfg, "config", None)
     if config_path:
         config.update(UrsaConfig.from_file(config_path))
     return config.update(cli_config)
@@ -74,16 +155,77 @@ def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
-    ursa_config = resolve_config(cfg)
 
     subcommand = cfg.get("subcommand", None)
-    cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
-
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
 
-    if cfg["print_config"]:
-        import yaml
+    match subcommand:
+        case "list-groups":
+            list_groups()
+            return
+        case "create-group":
+            cmd_config = cfg.get(subcommand, None)
+            create_group(cmd_config.group_name, cmd_config.config_file)
+            return
+        case "delete-group":
+            cmd_config = cfg.get(subcommand, None)
+            delete_group(cmd_config.group_name)
+            return
+        case "show-group":
+            cmd_config = cfg.get(subcommand, None)
+            show_group(cmd_config.group_name)
+            return
+        case "update-group":
+            cmd_config = cfg.get(subcommand, None)
+            update_group(cmd_config.group_name, cmd_config.config_file)
+            return
+        case "list-agents":
+            cmd_config = cfg.get(subcommand, None)
+            list_agents(cmd_config.group)
+            return
+        case "show-agent":
+            cmd_config = cfg.get(subcommand, None)
+            show_agent(cmd_config.name, cmd_config.group)
+            return
+        case "delete-agent":
+            cmd_config = cfg.get(subcommand, None)
+            delete_agent(cmd_config.name, cmd_config.group)
+            return
+        case "save-agent":
+            cmd_config = cfg.get(subcommand, None)
+            save_agent(cmd_config.name, cmd_config.group)
+            return
+        case "copy-agent":
+            cmd_config = cfg.get(subcommand, None)
+            copy_agent(
+                cmd_config.name,
+                cmd_config.source_agent,
+                cmd_config.group,
+                cmd_config.from_group,
+            )
+            return
+        case "share-agent":
+            cmd_config = cfg.get(subcommand, None)
+            share_agent(
+                cmd_config.name, cmd_config.group, cmd_config.no_checkpoint
+            )
+            return
+        case "import-agent":
+            cmd_config = cfg.get(subcommand, None)
+            import_agent(
+                cmd_config.archive_file, cmd_config.group, cmd_config.name
+            )
+            return
 
+    if subcommand in RAG_COMMANDS:
+        ursa_config = resolve_config(cfg)
+        if handle_rag_command(cfg, ursa_config):
+            return
+
+    ursa_config = resolve_config(cfg)
+    cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
+
+    if cfg["print_config"]:
         print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))
         exit(0)
 

@@ -13,7 +13,7 @@ configure_event_logging()
 async def main():
     tid = f"run-{uuid4().hex[:8]}"
     model = init_chat_model(
-        model="openai:gpt-5-mini",
+        model="openai:gpt-5.4-mini",
         max_completion_tokens=50000,
     )
 

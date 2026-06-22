@@ -67,30 +67,6 @@ def _common_llm_params() -> list[AgentParam]:
             source=ParamSource.llm,
             target="model",
         ),
-        AgentParam(
-            name="llm_max_tokens",
-            title="Max Tokens",
-            description="Max tokens for the response.",
-            type="integer",
-            required=False,
-            default=4096,
-            advanced=True,
-            source=ParamSource.llm,
-            target="max_tokens",
-            constraints=ParamConstraint(minimum=1),
-        ),
-        AgentParam(
-            name="llm_temperature",
-            title="Temperature",
-            description="Sampling temperature.",
-            type="number",
-            required=False,
-            default=0.2,
-            advanced=True,
-            source=ParamSource.llm,
-            target="temperature",
-            constraints=ParamConstraint(minimum=0.0, maximum=2.0),
-        ),
     ]
 
 
@@ -190,6 +166,7 @@ def _planning_executor_workflow_builder() -> Callable[
                 "messages_to_keep",
                 "safe_codes",
                 "log_state",
+                "use_web",
             ]:
                 planner_init.pop(k, None)
             executor_init.pop("max_reflection_steps", None)
@@ -287,9 +264,45 @@ register(
 register(
     AgentEntry(
         spec=AgentSpec(
+            agent_id="prompting_agent",
+            display_name="Prompting Agent",
+            description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
+            capabilities=AgentCapabilities(
+                supports_streaming=False,
+                supports_cancellation=False,
+                produces_artifacts=False,
+            ),
+            parameters=[
+                _prompt_param(title="Prompt to refine"),
+                AgentParam(
+                    name="use_web",
+                    title="Include web tool context",
+                    description="Include web/arXiv/OSTI tools in the downstream-tool context used while drafting the prompt.",
+                    type="boolean",
+                    required=False,
+                    default=False,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="use_web",
+                ),
+            ]
+            + _common_llm_params()
+            + _runner_params(),
+            tags=["planning", "prompting"],
+        ),
+        build_adapter=_baseagent_adapter_builder(
+            "ursa.agents.prompting_agent.PromptingAgent"
+        ),
+        build_inputs=lambda p: p["prompt"],
+    )
+)
+
+register(
+    AgentEntry(
+        spec=AgentSpec(
             agent_id="execution_agent",
             display_name="Execution Agent",
-            description="Tool-using agent that can write/edit files, run shell commands, and search the web/arXiv/OSTI.",
+            description="Tool-using agent that can write/edit files and run shell commands. Web/arXiv/OSTI search tools are available only when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -360,7 +373,7 @@ register(
         spec=AgentSpec(
             agent_id="planning_executor_workflow",
             display_name="Planning + Execution Workflow",
-            description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step. Best for longer, complex tasks.",
+            description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step. Best for longer, complex tasks. Executor web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -703,9 +716,9 @@ register(
 register(
     AgentEntry(
         spec=AgentSpec(
-            agent_id="hypothesizer_agent",
-            display_name="Hypothesizer Agent",
-            description="Iteratively generates and refines hypotheses with web searches.",
+            agent_id="deep_review_agent",
+            display_name="Deep Review Agent",
+            description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via use_web.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -716,7 +729,7 @@ register(
                 AgentParam(
                     name="max_iterations",
                     title="Max iterations",
-                    description="Number of hypothesis/refinement loops.",
+                    description="Number of draft/critique/refinement loops.",
                     type="integer",
                     required=False,
                     default=3,
@@ -725,10 +738,44 @@ register(
                     target="max_iterations",
                     constraints=ParamConstraint(minimum=1, maximum=20),
                 ),
+                AgentParam(
+                    name="use_web",
+                    title="Enable web search tools",
+                    description="Expose web/arXiv/OSTI search tools to the autonomous reviewer. When false, Deep Review cannot perform web searches.",
+                    type="boolean",
+                    required=False,
+                    default=False,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="use_web",
+                ),
             ]
             + _common_llm_params()
             + _runner_params(),
-            tags=["research"],
+            tags=["research", "review"],
+        ),
+        build_adapter=_baseagent_adapter_builder(
+            "ursa.agents.deep_review_agent.DeepReviewAgent"
+        ),
+        build_inputs=lambda p: p["prompt"],
+    )
+)
+
+register(
+    AgentEntry(
+        spec=AgentSpec(
+            agent_id="hypothesizer_agent",
+            display_name="Hypothesizer Agent",
+            description="Maintains a persistent hypothesis space in an experience artifact for reuse by other agents.",
+            capabilities=AgentCapabilities(
+                supports_streaming=False,
+                supports_cancellation=False,
+                produces_artifacts=True,
+            ),
+            parameters=[_prompt_param(title="Question, evidence, or update")]
+            + _common_llm_params()
+            + _runner_params(),
+            tags=["research", "hypotheses", "experiences"],
         ),
         build_adapter=_baseagent_adapter_builder(
             "ursa.agents.hypothesizer_agent.HypothesizerAgent"

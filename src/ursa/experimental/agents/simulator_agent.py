@@ -106,7 +106,7 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         **kwargs,
     ):
         tools = []
-        super().__init__(llm, tools=tools, **kwargs)
+        super().__init__(llm, tools=tools, workspace=workspace, **kwargs)
         self.documenter_prompt = documenter_prompt
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
@@ -225,7 +225,6 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         return {"messages": updated_messages}
 
     def _build_graph(self):
-        self.llm = self.llm.bind_tools(self.tools.values())
         self.add_node(self._documenter)
         self.add_node(self._runner)
         self.add_node(self._summarize)

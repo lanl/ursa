@@ -25,12 +25,16 @@ def make_runtime(
         state={},
         context=AgentContext(
             llm=llm,
+            agent_name=None,
+            group="default",
+            den=None,
             workspace=workspace,
             tool_character_limit=limit,
         ),
         config=config or {"metadata": {"thread_id": thread_id}},
         stream_writer=lambda _: None,
         tool_call_id=tool_call_id,
+        # tools=[],
         store=store,
     )
 

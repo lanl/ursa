@@ -13,7 +13,7 @@ from ursa.util.http import inject_truststore_into_ssl
 
 
 def _normalize_model(model: str) -> str:
-    # Examples use "openai:gpt-5-mini".
+    # Examples use "openai:gpt-5.4-mini".
     if ":" in model:
         return model
     return f"openai:{model}"
@@ -27,20 +27,20 @@ def _init_llm(llm_cfg: dict[str, Any]):
 
     # Security: prefer reading the API key from an environment variable.
     # - If llm_cfg.api_key is provided (advanced / legacy), it is used directly.
-    # - Otherwise, if llm_cfg.api_key_env_var is set, copy that env var's value
+    # - Otherwise, if llm_cfg.api_key_env is set, copy that env var's value
     #   into OPENAI_API_KEY for the OpenAI-compatible client stack.
     api_key = llm_cfg.get("api_key")
     if api_key is not None and str(api_key).strip() != "":
         os.environ["OPENAI_API_KEY"] = str(api_key)
     else:
-        env_name = llm_cfg.get("api_key_env_var")
+        env_name = llm_cfg.get("api_key_env")
         if env_name is not None:
             env_name = str(env_name).strip()
         if env_name:
             env_val = os.environ.get(env_name)
             if not env_val:
                 raise ValueError(
-                    f"LLM api_key_env_var '{env_name}' is not set in the dashboard environment"
+                    f"LLM api_key_env '{env_name}' is not set in the dashboard environment"
                 )
             os.environ["OPENAI_API_KEY"] = str(env_val)
             api_key = str(env_val)
@@ -49,17 +49,13 @@ def _init_llm(llm_cfg: dict[str, Any]):
         os.environ["OPENAI_BASE_URL"] = str(base_url)
         os.environ["OPENAI_API_BASE"] = str(base_url)
 
-    model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5-mini"))
+    model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5.4-mini"))
 
     model_kwargs = llm_cfg.get("model_kwargs") or {}
     if not isinstance(model_kwargs, dict):
         raise ValueError("llm.model_kwargs must be a JSON object")
 
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
-    # if llm_cfg.get("max_tokens") is not None:
-    #    kwargs["max_completion_tokens"] = int(llm_cfg["max_tokens"])
-    if llm_cfg.get("temperature") is not None:
-        kwargs["temperature"] = float(llm_cfg["temperature"])
 
     kwargs["api_key"] = api_key
     kwargs["base_url"] = str(base_url)
@@ -117,9 +113,9 @@ def main() -> int:
             llm_cfg.get("model") or ""
         ).strip().lower() in {"none", "disabled"}
         llm = None if llm_disabled else _init_llm(llm_cfg)
-        # Ensure deterministic run id threading.
+        # Ensure consistent cross-session threading.
         agent_init = dict(agent_init)
-        agent_init.setdefault("thread_id", args.run_id)
+        agent_init["thread_id"] = "ursa"
         agent_init.setdefault("enable_metrics", True)
 
         adapter = entry.build_adapter(llm, agent_init)
@@ -194,8 +190,8 @@ def main() -> int:
             def emit(self, _event):
                 return None
 
-        final_text = adapter.invoke(
-            ctx=ctx, inputs=inputs_obj, sink=_NoopSink()
+        final_text = asyncio.run(
+            adapter.ainvoke(ctx=ctx, inputs=inputs_obj, sink=_NoopSink())
         )
 
         out = {

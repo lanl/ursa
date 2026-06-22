@@ -16,6 +16,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
+from ursa.security import enforce_model_group_policy
 from ursa.util.parse import (
     OFFICE_EXTENSIONS,
     SPECIAL_TEXT_FILENAMES,
@@ -75,11 +76,17 @@ class RAGAgent(BaseAgent[RAGState]):
         self.embedding = embedding or init_embeddings(
             "openai:text-embedding-3-small"
         )
+        enforce_model_group_policy(self.embedding, self.group)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.database_path = self.workspace / database_path
-        self.summaries_path = self.workspace / summaries_path
-        self.vectorstore_path = self.workspace / vectorstore_path
+        database_root = Path(database_path)
+        self.database_path = (
+            database_root
+            if database_root.is_absolute()
+            else self.den / database_root
+        )
+        self.summaries_path = self.den / summaries_path
+        self.vectorstore_path = self.den / vectorstore_path
 
         self.vectorstore_path.mkdir(exist_ok=True, parents=True)
         self.vectorstore = self._open_global_vectorstore()
@@ -164,10 +171,11 @@ class RAGAgent(BaseAgent[RAGState]):
             )
         ]
 
-        base_dir = Path(self.database_path)
+        base_path = Path(self.database_path)
         ingestible_paths: list[Path] = []
 
-        for p in base_dir.rglob("*"):
+        paths = [base_path] if base_path.is_file() else base_path.rglob("*")
+        for p in paths:
             if not p.is_file():
                 continue
 

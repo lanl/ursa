@@ -215,9 +215,9 @@ class BaseAcquisitionAgent(BaseAgent):
         self.rag_embedding = rag_embedding
         self.process_images = process_images
         self.max_results = max_results
-        self.database_path = self.workspace / database_path
-        self.summaries_path = self.workspace / summaries_path
-        self.vectorstore_path = self.workspace / vectorstore_path
+        self.database_path = self.den / database_path
+        self.summaries_path = self.den / summaries_path
+        self.vectorstore_path = self.den / vectorstore_path
         self.download = download
         self.num_threads = num_threads
 
@@ -392,7 +392,7 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
-            workspace=self.workspace,
+            den=self.den,
             embedding=self.rag_embedding,
             vectorstore_path="rag_vectorstore",
             database_path=self.database_path.name,

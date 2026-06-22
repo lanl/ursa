@@ -36,6 +36,26 @@ from fastapi.responses import (
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from ursa.cli.agent_management import (
+    copy_agent as cli_copy_agent,
+)
+from ursa.cli.agent_management import (
+    delete_agent as cli_delete_agent,
+)
+from ursa.cli.agent_management import (
+    ensure_group_dir,
+    validate_agent_name,
+)
+from ursa.cli.agent_management import (
+    save_agent as cli_save_agent,
+)
+from ursa.rag.persistence import (
+    list_rag_agent_names,
+    normalize_rag_tool_names,
+    rag_agent_dir,
+)
+from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
+
 from .api_models import (
     ErrorResponse,
     FileMetaResponse,
@@ -88,7 +108,7 @@ from .sessions import (
 from .sessions import (
     update_session as session_update_session,
 )
-from .settings import AuthConfig, SettingsStore
+from .settings import AuthConfig, SettingsStore, apply_dashboard_config
 
 
 def create_app() -> FastAPI:
@@ -134,8 +154,59 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
+    dashboard_group = (
+        str(
+            os.environ.get("URSA_DASHBOARD_GROUP", "default") or "default"
+        ).strip()
+        or "default"
+    )
     rm = RunManager()
-    settings_store = SettingsStore(rm.workspace_root)
+    settings_store = SettingsStore(rm.dashboard_root)
+    dashboard_config = str(
+        os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
+    ).strip()
+    if dashboard_config:
+        apply_dashboard_config(
+            settings_store, dashboard_config, group=dashboard_group
+        )
+
+    dashboard_use_web = str(
+        os.environ.get("URSA_DASHBOARD_USE_WEB", "")
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    web_opt_in_agent_ids = {
+        "chat_agent",
+        "execution_agent",
+        "planning_executor_workflow",
+        "prompting_agent",
+    }
+    rag_tool_agent_ids = {
+        "chat_agent",
+        "execution_agent",
+        "planning_executor_workflow",
+    }
+
+    def _agent_init_with_dashboard_defaults(
+        agent_id: str, agent_init: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        out = dict(agent_init or {})
+        if agent_id in web_opt_in_agent_ids:
+            out.setdefault("use_web", dashboard_use_web)
+        if agent_id in rag_tool_agent_ids:
+            settings_tools = settings_store.load().tools
+            configured = list(settings_tools.rag_tools or [])
+            explicit = out.get("rag_tools", None)
+            if explicit is None:
+                out["rag_tools"] = configured
+            else:
+                merged = normalize_rag_tool_names(explicit) + configured
+                out["rag_tools"] = list(dict.fromkeys(merged))
+            out.setdefault("rag_tool_group", dashboard_group)
+        return out
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -145,7 +216,18 @@ def create_app() -> FastAPI:
                 "URSA_DASHBOARD_MODE=remote requires URSA_DASHBOARD_TOKEN"
             )
         await rm.start()
-        settings_store.load()
+        settings = settings_store.load()
+        try:
+            enforce_group_base_url_policy(
+                (
+                    settings.llm.base_url
+                    if getattr(settings, "llm", None)
+                    else None
+                ),
+                dashboard_group,
+            )
+        except GroupBaseURLPolicyError as e:
+            raise RuntimeError(str(e)) from e
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
@@ -245,6 +327,21 @@ def create_app() -> FastAPI:
         s = settings_store.patch(req.patch)
         return SettingsResponse(settings=s.model_dump(mode="json"))
 
+    @app.get(
+        "/rag-tools",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_rag_tools() -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        try:
+            names = list_rag_agent_names(dashboard_group)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        for name in names:
+            path = rag_agent_dir(dashboard_group, name)
+            items.append({"name": name, "path": str(path)})
+        return {"group": dashboard_group, "rag_agents": items}
+
     # ----------------------------
     # Sessions (multi-turn chat)
     # ----------------------------
@@ -257,8 +354,30 @@ def create_app() -> FastAPI:
     def list_sessions(
         limit: int = Query(default=50, ge=1, le=500),
     ) -> SessionListResponse:
-        recs = session_list_sessions(rm.workspace_root, limit=limit)
+        recs = session_list_sessions(rm.dashboard_root, limit=limit)
         return SessionListResponse(sessions=recs)
+
+    @app.get(
+        "/agent-names",
+        dependencies=[Depends(require_auth)],
+    )
+    def list_agent_names() -> dict[str, Any]:
+        group_dir = ensure_group_dir(dashboard_group)
+        items: list[dict[str, Any]] = []
+        for path in sorted(
+            (p for p in group_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        ):
+            stat = path.stat()
+            items.append({
+                "agent_name": path.name,
+                "updated_at": datetime.utcfromtimestamp(
+                    stat.st_mtime
+                ).isoformat()
+                + "Z",
+                "path": str(path),
+            })
+        return {"group": dashboard_group, "agent_names": items}
 
     @app.post(
         "/sessions",
@@ -266,16 +385,26 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def create_session(req: SessionCreateRequest) -> SessionDetail:
-        if req.agent_id not in REGISTRY or (
-            req.agent_id.startswith("demo_") and not _include_demo_agents()
+        agent_name = str(req.agent_name or "").strip() or None
+        if agent_name is not None:
+            validate_agent_name(agent_name)
+            # New named agents are allowed. If the directory does not yet exist,
+            # the underlying agent class will create persistent state on first use.
+
+        agent_id = str(req.agent_id or "").strip() or "chat_agent"
+        if agent_id not in REGISTRY or (
+            agent_id.startswith("demo_") and not _include_demo_agents()
         ):
             raise HTTPException(status_code=404, detail="Unknown agent_id")
         settings_snapshot = settings_store.load().model_dump(mode="json")
         sess = session_create_session(
-            rm.workspace_root, agent_id=req.agent_id, title=req.title
+            rm.dashboard_root,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            title=req.title,
         )
         sess = session_update_session(
-            rm.workspace_root,
+            rm.dashboard_root,
             sess["session_id"],
             {
                 "llm": settings_snapshot.get("llm") or {},
@@ -293,12 +422,12 @@ def create_app() -> FastAPI:
         session_id: str, limit: int = Query(default=200, ge=1, le=2000)
     ) -> SessionDetail:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
-        msgs = session_read_messages(rm.workspace_root, session_id, limit=limit)
+        msgs = session_read_messages(rm.dashboard_root, session_id, limit=limit)
         return SessionDetail(session=sess, messages=msgs)
 
     @app.patch(
@@ -312,7 +441,7 @@ def create_app() -> FastAPI:
         try:
             # Handle unknown session ID by trying to read and failing gracefully
             existing_session = session_read_session(
-                rm.workspace_root, session_id
+                rm.dashboard_root, session_id
             )
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
@@ -337,14 +466,14 @@ def create_app() -> FastAPI:
                 existing_session.get("runner") or {}, patch["runner"] or {}
             )
 
-        sess2 = session_update_session(rm.workspace_root, session_id, patch)
-        msgs = session_read_messages(rm.workspace_root, session_id, limit=200)
+        sess2 = session_update_session(rm.dashboard_root, session_id, patch)
+        msgs = session_read_messages(rm.dashboard_root, session_id, limit=200)
         return SessionDetail(session=sess2, messages=msgs)
 
     @app.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
     def delete_session(session_id: str) -> Response:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -355,7 +484,7 @@ def create_app() -> FastAPI:
             )
 
         try:
-            session_delete_session(rm.workspace_root, session_id)
+            session_delete_session(rm.dashboard_root, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception as e:
@@ -373,10 +502,10 @@ def create_app() -> FastAPI:
     ):
         # Lightweight endpoint for polling
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            _ = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
-        return session_read_messages(rm.workspace_root, session_id, limit=limit)
+        return session_read_messages(rm.dashboard_root, session_id, limit=limit)
 
     @app.post(
         "/sessions/{session_id}/message",
@@ -387,26 +516,29 @@ def create_app() -> FastAPI:
         session_id: str, req: SessionMessageRequest
     ) -> SessionMessageResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        agent_id = str(sess.get("agent_id") or "")
+        agent_id = str(req.agent_id or sess.get("agent_id") or "")
         if agent_id not in REGISTRY:
             raise HTTPException(
                 status_code=400,
                 detail="Session agent_id is no longer available",
             )
+        agent_name = str(sess.get("agent_name") or "").strip() or None
 
         # Build conversational prompt from prior transcript.
-        prior = session_read_messages(rm.workspace_root, session_id, limit=200)
+        prior = session_read_messages(rm.dashboard_root, session_id, limit=200)
         prompt = build_prompt_from_messages(prior, new_user_text=req.text)
 
         user_msg = session_append_message(
-            rm.workspace_root,
+            rm.dashboard_root,
             session_id=session_id,
             role="user",
             text=req.text,
+            agent_id=agent_id,
+            agent_name=agent_name,
         )
 
         # Merge global defaults, then per-session settings, then per-message overrides.
@@ -426,7 +558,12 @@ def create_app() -> FastAPI:
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
 
-        agent_init = dict(req.agent_init or {})
+        agent_init = _agent_init_with_dashboard_defaults(
+            agent_id, req.agent_init
+        )
+        if agent_name is not None:
+            agent_init["agent_name"] = agent_name
+        agent_init["group"] = dashboard_group
 
         # Use a shared per-session workspace directory so artifacts persist across turns.
         workspace_dir = _session_workspace_dir(session_id, sess)
@@ -447,9 +584,13 @@ def create_app() -> FastAPI:
         )
 
         sess2 = session_update_session(
-            rm.workspace_root,
+            rm.dashboard_root,
             session_id,
-            {"active_run_id": run["run_id"], "last_run_id": run["run_id"]},
+            {
+                "agent_id": agent_id,
+                "active_run_id": run["run_id"],
+                "last_run_id": run["run_id"],
+            },
         )
         return SessionMessageResponse(
             session=sess2, user_message=user_msg, run=run
@@ -458,6 +599,68 @@ def create_app() -> FastAPI:
     # ----------------------------
     # Runs
     # ----------------------------
+
+    @app.get(
+        "/agent-management",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_agent_management() -> dict[str, Any]:
+        group_dir = ensure_group_dir(dashboard_group)
+        items = []
+        for path in sorted(
+            (p for p in group_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        ):
+            items.append({"agent_name": path.name, "path": str(path)})
+        return {"group": dashboard_group, "agents": items}
+
+    @app.post(
+        "/agent-management/save",
+        dependencies=[Depends(require_auth)],
+    )
+    def save_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
+        name = validate_agent_name(str(payload.get("agent_name") or "").strip())
+        cli_save_agent(name, dashboard_group)
+        return {
+            "ok": True,
+            "action": "save",
+            "agent_name": name,
+            "group": dashboard_group,
+        }
+
+    @app.post(
+        "/agent-management/copy",
+        dependencies=[Depends(require_auth)],
+    )
+    def copy_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
+        source = validate_agent_name(
+            str(payload.get("source_agent_name") or "").strip()
+        )
+        new_name = validate_agent_name(
+            str(payload.get("new_agent_name") or "").strip()
+        )
+        cli_copy_agent(new_name, source, dashboard_group, dashboard_group)
+        return {
+            "ok": True,
+            "action": "copy",
+            "agent_name": new_name,
+            "source_agent_name": source,
+            "group": dashboard_group,
+        }
+
+    @app.post(
+        "/agent-management/delete",
+        dependencies=[Depends(require_auth)],
+    )
+    def delete_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
+        name = validate_agent_name(str(payload.get("agent_name") or "").strip())
+        cli_delete_agent(name, dashboard_group)
+        return {
+            "ok": True,
+            "action": "delete",
+            "agent_name": name,
+            "group": dashboard_group,
+        }
 
     @app.post(
         "/runs", response_model=RunRecord, dependencies=[Depends(require_auth)]
@@ -478,10 +681,14 @@ def create_app() -> FastAPI:
         if req.agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
 
+        agent_init = _agent_init_with_dashboard_defaults(
+            req.agent_id, req.agent_init
+        )
+
         rec = await rm.create_run(
             agent_id=req.agent_id,
             params=req.params,
-            agent_init=req.agent_init,
+            agent_init=agent_init,
             llm=llm,
             runner=runner,
             extra={"mcp": mcp},
@@ -670,7 +877,7 @@ def create_app() -> FastAPI:
     # ----------------------------
 
     def _run_dir_for(run: dict[str, Any]) -> Path:
-        return (rm.workspace_root / run["run_dir"]).resolve()
+        return (rm.dashboard_root / run["run_dir"]).resolve()
 
     def _file_sha256(
         path: Path, *, max_bytes: int = 50 * 1024 * 1024
@@ -811,7 +1018,7 @@ def create_app() -> FastAPI:
         limit: int = Query(default=5000, ge=1, le=20000),
     ) -> WorkspaceAllFilesResponse:
         # Optional global scan across all runs.
-        base = rm.workspace_root / "runs"
+        base = rm.dashboard_root / "runs"
         files: list[dict[str, Any]] = []
         if base.exists():
             for root, dirnames, filenames in os.walk(base):
@@ -825,7 +1032,7 @@ def create_app() -> FastAPI:
                 for fn in filenames:
                     p = Path(root) / fn
                     try:
-                        rel = p.relative_to(rm.workspace_root).as_posix()
+                        rel = p.relative_to(rm.dashboard_root).as_posix()
                         st = p.stat()
                     except Exception:
                         continue
@@ -1172,14 +1379,14 @@ def create_app() -> FastAPI:
     # ----------------------------
 
     def _session_default_workspace_dir(session_id: str) -> Path:
-        sp = session_paths(rm.workspace_root, session_id)
+        sp = session_paths(rm.dashboard_root, session_id)
         return sp.workspace_dir.resolve()
 
     def _session_workspace_dir(
         session_id: str, sess: dict[str, Any] | None = None
     ) -> Path:
         if sess is None:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         custom = str(sess.get("workspace_path") or "").strip()
         if custom:
             p = Path(custom).expanduser()
@@ -1218,7 +1425,7 @@ def create_app() -> FastAPI:
         session_id: str,
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1235,7 +1442,7 @@ def create_app() -> FastAPI:
         session_id: str, req: SessionWorkspaceSetRequest
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1268,7 +1475,7 @@ def create_app() -> FastAPI:
                 )
             patch = {"workspace_path": str(p.resolve())}
 
-        sess2 = session_update_session(rm.workspace_root, session_id, patch)
+        sess2 = session_update_session(rm.dashboard_root, session_id, patch)
         ws = _session_workspace_dir(session_id, sess2)
         files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
         return _workspace_response(session_id, sess2, files)
@@ -1383,7 +1590,7 @@ def create_app() -> FastAPI:
         session_id: str,
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1432,7 +1639,7 @@ def create_app() -> FastAPI:
             )
 
         sess2 = session_update_session(
-            rm.workspace_root, session_id, {"workspace_path": str(p.resolve())}
+            rm.dashboard_root, session_id, {"workspace_path": str(p.resolve())}
         )
         ws = _session_workspace_dir(session_id, sess2)
         files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
@@ -1484,7 +1691,7 @@ def create_app() -> FastAPI:
         overwrite: bool = Form(default=False),
     ):
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1517,7 +1724,7 @@ def create_app() -> FastAPI:
             saved.append({"path": rel, "size_bytes": size})
 
         # Touch session updated_at.
-        session_update_session(rm.workspace_root, session_id, {})
+        session_update_session(rm.dashboard_root, session_id, {})
 
         # Return updated file listing for convenience.
         files_out = scan_artifacts(ws, exclude_dirs={"__pycache__"})
@@ -1537,7 +1744,7 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> SessionFileMetaResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1569,7 +1776,7 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> HTMLResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1706,7 +1913,7 @@ def create_app() -> FastAPI:
         ),
     ):
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -1895,6 +2102,8 @@ def create_app() -> FastAPI:
   const state = {
     agents: [],
     agentsById: new Map(),
+    agentNames: [],
+    selectedComposerAgentId: '',
     sessions: [],
     activeSessionId: null,
     activeSession: null, // {session, messages}
@@ -2695,42 +2904,136 @@ def create_app() -> FastAPI:
     };
   }
 
+  function chooseNewSessionType() {
+    return new Promise((resolve) => {
+      const modal = $('#newSessionTypeModal');
+      const namedBtn = $('#newSessionNamedBtn');
+      const nonPersistentBtn = $('#newSessionNonPersistentBtn');
+      const closeBtn = $('#closeNewSessionTypeBtn');
+      const backdrop = $('#newSessionTypeBackdrop');
+      if (!modal || !namedBtn || !nonPersistentBtn || !closeBtn || !backdrop) {
+        resolve('nonpersistent');
+        return;
+      }
+
+      const cleanup = (choice) => {
+        modal.classList.remove('open');
+        namedBtn.onclick = null;
+        nonPersistentBtn.onclick = null;
+        closeBtn.onclick = null;
+        backdrop.onclick = null;
+        document.removeEventListener('keydown', onKeydown);
+        resolve(choice);
+      };
+
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+
+      namedBtn.onclick = () => cleanup('named');
+      nonPersistentBtn.onclick = () => cleanup('nonpersistent');
+      closeBtn.onclick = () => cleanup(null);
+      backdrop.onclick = () => cleanup(null);
+      document.addEventListener('keydown', onKeydown);
+      modal.classList.add('open');
+      namedBtn.focus();
+    });
+  }
+
   function renderAgents() {
     const list = $('#agentList');
     if (!list) return;
     list.innerHTML = '';
 
-    const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
-    for (const a of agents) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'agentBtn';
-      btn.onclick = () => startSession(a.agent_id);
+    const wrap = document.createElement('div');
+    wrap.style.display = 'grid';
+    wrap.style.gap = '10px';
 
-      const top = document.createElement('div');
-      top.className = 'row';
+    const form = document.createElement('div');
+    form.className = 'card';
+    form.style.padding = '12px';
+    form.innerHTML = `
+      <div class="small muted" style="margin-bottom:8px">New session in group: ${escHtml(state.dashboardGroup || 'default')}</div>
+      <button class="btn primary" id="createUnnamedSessionBtn" type="button" style="width:100%">Start New Session</button>
+      <div class="muted small" style="margin-top:8px">Start an unnamed session or create a new named agent session.</div>
+    `;
+    wrap.appendChild(form);
 
-      const name = document.createElement('div');
-      name.className = 'agentName';
-      name.textContent = a.display_name || a.agent_id;
-      top.appendChild(name);
+    const existing = document.createElement('div');
+    existing.className = 'card';
+    existing.style.padding = '12px';
+    const items = (state.agentNames || []);
+    existing.innerHTML = `
+      <div style="margin-bottom:8px; font-size:1rem; font-weight:600;">Continue with an agent by name</div>
+      <input id="agentSearchInput" placeholder="Type an agent name to search..." style="width:100%; margin-bottom:8px" />
+      <div id="agentSearchResults"></div>
+    `;
 
-      const start = document.createElement('span');
-      start.className = 'pill action';
-      start.textContent = 'New session';
-      top.appendChild(start);
+    const search = existing.querySelector('#agentSearchInput');
+    const listWrap = existing.querySelector('#agentSearchResults');
 
-      const desc = document.createElement('div');
-      desc.className = 'agentDesc';
-      desc.textContent = a.description || '';
+    function draw(filterText='') {
+      const q = String(filterText || '').trim().toLowerCase();
+      listWrap.innerHTML = '';
+      if (!q) {
+        listWrap.innerHTML = '<div class="small muted">Search results will appear as you type.</div>';
+        return;
+      }
+      const filtered = items.filter(item => String(item.agent_name || '').toLowerCase().includes(q));
+      if (!filtered.length) {
+        listWrap.innerHTML = '<div class="small muted">No matching named agents.</div>';
+        return;
+      }
+      for (const item of filtered) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'agentBtn';
+        btn.onclick = () => startSession('', item.agent_name);
 
-      btn.appendChild(top);
-      btn.appendChild(desc);
-      list.appendChild(btn);
+        const top = document.createElement('div');
+        top.className = 'row';
+        const name = document.createElement('div');
+        name.className = 'agentName';
+        name.textContent = item.agent_name;
+        top.appendChild(name);
+        const start = document.createElement('span');
+        start.className = 'pill action';
+        start.textContent = 'New session';
+        top.appendChild(start);
+
+        const desc = document.createElement('div');
+        desc.className = 'agentDesc';
+        desc.textContent = `${fmtTime(item.updated_at)}`;
+
+        btn.appendChild(top);
+        btn.appendChild(desc);
+        listWrap.appendChild(btn);
+      }
     }
 
-    if (!agents.length) {
-      list.innerHTML = '<div class="muted">No agents found.</div>';
+    search.oninput = () => draw(search.value || '');
+    draw('');
+    wrap.appendChild(existing);
+    list.appendChild(wrap);
+
+    const createBtn = $('#createUnnamedSessionBtn');
+    if (createBtn) {
+      createBtn.onclick = async () => {
+        const sessionType = await chooseNewSessionType();
+        if (sessionType === null) return;
+        if (sessionType === 'nonpersistent') {
+          await startSession('', '');
+          return;
+        }
+        const name = prompt('Enter the new agent name');
+        if (name === null) return;
+        const trimmed = String(name || '').trim();
+        if (!trimmed) {
+          alert('Agent name cannot be empty.');
+          return;
+        }
+        await startSession('', trimmed);
+      };
     }
   }
 
@@ -2752,12 +3055,13 @@ def create_app() -> FastAPI:
 
         const title = document.createElement('div');
         title.className = 'sessionTitle';
-        title.textContent = s.title || s.session_id;
+        title.textContent = s.title || s.agent_name || s.session_id;
 
         const meta = document.createElement('div');
         meta.className = 'muted small sessionMeta';
 
-        const agentName = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+        const agentType = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+        const persistentName = s.agent_name || s.title || 'Unnamed agent';
         const stateClass = isRunning ? 'running' : 'idle';
         const stateText = isRunning ? 'Running' : 'Idle';
 
@@ -2766,7 +3070,9 @@ def create_app() -> FastAPI:
             <span class="sessionMetaDot"></span>${stateText}
         </span>
         <span class="sessionMetaSep">·</span>
-        <span>${escHtml(agentName)}</span>
+        <span>${escHtml(persistentName)}</span>
+        <span class="sessionMetaSep">·</span>
+        <span>${escHtml(agentType)}</span>
         <span class="sessionMetaSep">·</span>
         <span>${escHtml(fmtTime(s.updated_at))}</span>
         `;
@@ -2895,10 +3201,11 @@ def create_app() -> FastAPI:
     }
 
     const s = state.activeSession.session;
-    const agentName = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+    const agentType = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+    const persistentName = s.agent_name || s.title || 'Session';
 
-    if (title) title.textContent = s.title || 'Session';
-    if (meta) meta.textContent = `${agentName} \u00b7 created ${fmtTime(s.created_at)}`;
+    if (title) title.textContent = s.title || persistentName || 'Session';
+    if (meta) meta.textContent = `${persistentName} \u00b7 ${agentType} \u00b7 created ${fmtTime(s.created_at)}`;
 
     if (wsTitle) wsTitle.textContent = `Artifacts`;
 
@@ -2943,6 +3250,14 @@ def create_app() -> FastAPI:
         t.textContent = ' \u00b7 ' + fmtTime(m.ts);
         head.appendChild(t);
 
+        if (m.agent_id) {
+        const a = document.createElement('span');
+        a.className = 'muted small';
+        const label = state.agentsById.get(m.agent_id)?.display_name || m.agent_id;
+        a.textContent = ' \u00b7 ' + label;
+        head.appendChild(a);
+        }
+
         if (m.run_id) {
         const r = document.createElement('span');
         r.className = 'muted small mono';
@@ -2963,6 +3278,7 @@ def create_app() -> FastAPI:
         msgs.appendChild(row);
     }
 
+    renderComposerAgentSelect();
     msgs.scrollTop = msgs.scrollHeight;
 
     showSessionLogs(state.activeSession).catch(err => {
@@ -2972,11 +3288,21 @@ def create_app() -> FastAPI:
   }
 
   async function refreshAgents() {
-    const res = await api('GET', '/agents');
+    const [res, namesRes] = await Promise.all([
+      api('GET', '/agents'),
+      api('GET', '/agent-names')
+    ]);
     state.agents = res.agents || [];
     state.agentsById = new Map(state.agents.map(a => [a.agent_id, a]));
+    state.agentNames = namesRes.agent_names || [];
+    state.dashboardGroup = namesRes.group || 'default';
+    if (!state.selectedComposerAgentId && state.agents.length) {
+      state.selectedComposerAgentId = state.agents[0].agent_id;
+    }
     renderAgents();
     renderSessions();
+    renderComposerAgentSelect();
+    await refreshAgentManagement();
   }
 
   async function refreshSessions() {
@@ -2985,8 +3311,12 @@ def create_app() -> FastAPI:
     renderSessions();
   }
 
-  async function startSession(agentId) {
-    const res = await api('POST', '/sessions', { agent_id: agentId });
+  async function startSession(agentId, agentName='') {
+    const payload = {};
+    if (String(agentId || '').trim()) payload.agent_id = String(agentId || '').trim();
+    if (String(agentName || '').trim()) payload.agent_name = String(agentName || '').trim();
+    const res = await api('POST', '/sessions', payload);
+    await refreshAgents();
     await refreshSessions();
     await loadSession(res.session.session_id);
   }
@@ -3147,6 +3477,19 @@ def create_app() -> FastAPI:
     }
   }
 
+  function renderComposerAgentSelect() {
+    const sel = $('#composerAgentType');
+    if (!sel) return;
+    const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
+    sel.innerHTML = agents.map(a => `<option value="${escHtml(a.agent_id)}">${escHtml(a.display_name || a.agent_id)}</option>`).join('');
+    const activeAgentId = state.activeSession?.session?.agent_id || '';
+    const target = state.selectedComposerAgentId || activeAgentId || agents[0]?.agent_id || '';
+    if (target) sel.value = target;
+    sel.onchange = () => {
+      state.selectedComposerAgentId = String(sel.value || '');
+    };
+  }
+
   async function setSessionWorkspace(path) {
     if (!state.activeSessionId) return;
     const res = await api('PATCH', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`, { path });
@@ -3205,10 +3548,13 @@ def create_app() -> FastAPI:
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/message`, { text });
+      const agentId = String($('#composerAgentType')?.value || state.selectedComposerAgentId || state.activeSession?.session?.agent_id || '').trim();
+      await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/message`, { text, agent_id: agentId || undefined });
+      state.selectedComposerAgentId = agentId || state.selectedComposerAgentId;
       if (ta) ta.value = '';
       await loadSession(state.activeSessionId);
       await refreshSessions();
+      await refreshAgents();
     } catch (e) {
       alert('Failed to send: ' + e.message);
     } finally {
@@ -3400,6 +3746,91 @@ def create_app() -> FastAPI:
     renderMcpServers();
   }
 
+  function setRagToolStatus(msg) {
+    const el = $('#ragToolStatus');
+    if (el) el.textContent = msg || '';
+  }
+
+  function renderRagTools() {
+    const available = $('#ragAvailableList');
+    const selected = $('#ragSelectedList');
+    if (!available || !selected) return;
+
+    const chosen = new Set(state._ragTools || []);
+    const agents = state._availableRagAgents || [];
+    available.innerHTML = '';
+    selected.innerHTML = '';
+
+    const groupLabel = $('#ragToolsGroupLabel');
+    if (groupLabel) groupLabel.textContent = 'Group: ' + (state._ragToolsGroup || state.dashboardGroup || 'default');
+
+    const availableAgents = agents.filter(item => !chosen.has(item.name));
+    if (!availableAgents.length) {
+      available.innerHTML = '<div class="muted small">No unselected persisted RAG agents found for this group.</div>';
+    } else {
+      for (const item of availableAgents) {
+        const row = document.createElement('div');
+        row.className = 'row ragToolRow';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '8px';
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(item.name)}</div><div class="muted small">${escHtml(item.path || '')}</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn';
+        btn.textContent = 'Add';
+        btn.onclick = () => {
+          state._ragTools = Array.from(new Set([...(state._ragTools || []), item.name])).sort();
+          setRagToolStatus('Added ' + item.name + ' (staged). Click Save to persist.');
+          renderRagTools();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+        available.appendChild(row);
+      }
+    }
+
+    const selectedNames = Array.from(chosen).sort();
+    if (!selectedNames.length) {
+      selected.innerHTML = '<div class="muted small">No RAG tools selected.</div>';
+    } else {
+      for (const name of selectedNames) {
+        const item = agents.find(x => x.name === name) || { name, path: '' };
+        const row = document.createElement('div');
+        row.className = 'row ragToolRow';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '8px';
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(name)}</div><div class="muted small">${escHtml(item.path || 'Not found in current group')}</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn danger';
+        btn.textContent = 'Remove';
+        btn.onclick = () => {
+          state._ragTools = (state._ragTools || []).filter(x => x !== name);
+          setRagToolStatus('Removed ' + name + ' (staged). Click Save to persist.');
+          renderRagTools();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+        selected.appendChild(row);
+      }
+    }
+  }
+
+  async function refreshRagTools() {
+    try {
+      const res = await api('GET', '/rag-tools');
+      state._availableRagAgents = res.rag_agents || [];
+      state._ragToolsGroup = res.group || state.dashboardGroup || 'default';
+      renderRagTools();
+    } catch (e) {
+      state._availableRagAgents = [];
+      renderRagTools();
+      setRagToolStatus('Failed to load RAG agents: ' + e.message);
+    }
+  }
+
   function applyTheme(theme) {
     const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     let resolved = 'light';
@@ -3424,6 +3855,7 @@ def create_app() -> FastAPI:
     const llm = mode === 'session' ? _deepMergeObjects(globalLlm, session?.llm || {}) : globalLlm;
     const runner = mode === 'session' ? _deepMergeObjects(globalRunner, session?.runner || {}) : globalRunner;
     const mcp = state.settings.mcp || {};
+    const tools = state.settings.tools || {};
 
     // Settings-related entries
     const ui = state.settings.ui || {};
@@ -3432,9 +3864,7 @@ def create_app() -> FastAPI:
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
-    $('#set_api_key_env_var').value = llm.api_key_env_var || '';
-    $('#set_max_tokens').value = llm.max_tokens ?? '';
-    $('#set_temperature').value = llm.temperature ?? '';
+    $('#set_api_key_env').value = llm.api_key_env || '';
     const modelKwargs = llm.model_kwargs || {};
     $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
     $('#set_timeout').value = runner.timeout_seconds ?? '';
@@ -3445,8 +3875,87 @@ def create_app() -> FastAPI:
     clearMcpEditor();
     renderMcpServers();
 
+    // Persisted RAG tools
+    state._ragTools = Array.from(new Set(tools.rag_tools || [])).sort();
+    await refreshRagTools();
+
+    const groupLabel = $('#agentMgmtGroupLabel');
+    if (groupLabel) groupLabel.textContent = 'Group: ' + (state.dashboardGroup || 'default');
+    await refreshAgentManagement();
+
     const upd = $('#settingsUpdated');
     if (upd) upd.textContent = mode === 'session' ? 'Loaded session settings.' : 'Loaded.';
+  }
+
+  async function refreshAgentManagement() {
+    const list = $('#agentMgmtList');
+    if (!list) return;
+    try {
+      const res = await api('GET', '/agent-management');
+      const agents = res.agents || [];
+      list.innerHTML = '';
+      if (!agents.length) {
+        list.innerHTML = '<div class="muted small">No named agents in this group.</div>';
+        return;
+      }
+      for (const item of agents) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.style.justifyContent = 'space-between';
+        row.style.alignItems = 'center';
+        row.style.gap = '8px';
+        row.style.padding = '8px 0';
+
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(item.agent_name)}</div><div class="muted small">${escHtml(item.path || '')}</div>`;
+
+        const actions = document.createElement('div');
+        actions.className = 'row';
+        actions.style.gap = '6px';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn';
+        saveBtn.type = 'button';
+        saveBtn.textContent = 'Checkpoint';
+        saveBtn.onclick = async () => {
+          await api('POST', '/agent-management/save', { agent_name: item.agent_name });
+          await refreshAgents();
+          await refreshAgentManagement();
+        };
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn';
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy';
+        copyBtn.onclick = async () => {
+          const newName = prompt('New name for copied agent', item.agent_name + '.copy');
+          if (newName === null) return;
+          await api('POST', '/agent-management/copy', { source_agent_name: item.agent_name, new_agent_name: newName });
+          await refreshAgents();
+          await refreshAgentManagement();
+        };
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn danger';
+        delBtn.type = 'button';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = async () => {
+          if (!confirm('Delete agent ' + item.agent_name + '?')) return;
+          await api('POST', '/agent-management/delete', { agent_name: item.agent_name });
+          await refreshAgents();
+          await refreshAgentManagement();
+        };
+
+        actions.appendChild(saveBtn);
+        actions.appendChild(copyBtn);
+        actions.appendChild(delBtn);
+        row.appendChild(label);
+        row.appendChild(actions);
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = `<div class="muted small">Failed to load agent management: ${escHtml(e.message)}</div>`;
+    }
   }
 
   async function saveSettings() {
@@ -3462,9 +3971,7 @@ def create_app() -> FastAPI:
       llm: {
         base_url: ($('#set_base_url').value || '').trim() || null,
         model: ($('#set_model').value || '').trim() || null,
-        api_key_env_var: ($('#set_api_key_env_var').value || '').trim() || null,
-        max_tokens: ($('#set_max_tokens').value === '' ? null : Number($('#set_max_tokens').value)),
-        temperature: ($('#set_temperature').value === '' ? null : Number($('#set_temperature').value)),
+        api_key_env: ($('#set_api_key_env').value || '').trim() || null,
         model_kwargs: modelKwargs,
       },
       runner: {
@@ -3480,11 +3987,14 @@ def create_app() -> FastAPI:
       ...common,
       mcp: {
         servers: (state._mcpServers || {}),
+      },
+      tools: {
+        rag_tools: Array.from(new Set(state._ragTools || [])).sort(),
       }
     };
 
     // remove nulls to avoid overwriting with null unless explicitly intended
-    // (but preserve empty objects where we need to allow clearing settings, e.g. mcp.servers).
+    // (but preserve empty objects/arrays where we need to allow clearing settings, e.g. mcp.servers and tools.rag_tools).
     function compact(o, path='') {
       if (!o || typeof o !== 'object') return o;
       const out = Array.isArray(o) ? [] : {};
@@ -3495,6 +4005,8 @@ def create_app() -> FastAPI:
           const c = compact(v, p);
           const empty = c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0;
           if (!empty || p === 'mcp.servers' || p === 'llm.model_kwargs') out[k] = c;
+        } else if (Array.isArray(v)) {
+          if (v.length || p === 'tools.rag_tools') out[k] = v;
         } else out[k] = v;
       }
       return out;
@@ -3666,6 +4178,8 @@ def create_app() -> FastAPI:
     if (mRem) mRem.onclick = removeMcpServerFromEditor;
     const mClr = $('#mcpClearBtn');
     if (mClr) mClr.onclick = clearMcpEditor;
+    const ragRefresh = $('#ragRefreshBtn');
+    if (ragRefresh) ragRefresh.onclick = refreshRagTools;
 
     $('#saveSettingsBtn').onclick = saveSettings;
 
@@ -4042,6 +4556,20 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   display: flex;
   flex-direction: column;
 }
+.modalCard.smallModalCard {
+  top: 16vh;
+  width: min(520px, 92vw);
+  height: auto;
+  gap: 14px;
+}
+.modalActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 560px) {
+  .modalActions { grid-template-columns: 1fr; }
+}
 
 .settingsShell {
   flex: 1 1 auto;
@@ -4219,7 +4747,13 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <div class="section conversation" id="conversationSection">
         <div class="messages" id="sessionMessages"></div>
         <div class="composer">
-          <div class="muted small" style="margin: 8px 0">Ctrl/⌘ + Enter to send</div>
+          <div class="row" style="justify-content:space-between; align-items:center; margin: 8px 0; gap: 8px; flex-wrap: wrap;">
+            <div class="muted small">Ctrl/⌘ + Enter to send</div>
+            <div class="row" style="gap:8px; justify-content:flex-end; align-items:center; margin-left:auto;">
+              <label class="muted small" for="composerAgentType">Agent type</label>
+              <select id="composerAgentType" style="min-width:220px"></select>
+            </div>
+          </div>
           <textarea id="messageInput" placeholder="Message the agent..."></textarea>
           <div class="row" style="margin-top: 8px">
             <button class="btn primary" id="sendMsgBtn" type="button">Send</button>
@@ -4284,6 +4818,24 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 
 
+<div class="modal" id="newSessionTypeModal" aria-hidden="true">
+  <div class="backdrop" id="newSessionTypeBackdrop"></div>
+  <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="newSessionTypeTitle">
+    <div class="topbar">
+      <div>
+        <div class="title" id="newSessionTypeTitle">Start New Session</div>
+        <div class="muted small">Choose how this session should be created.</div>
+      </div>
+      <button class="btn" id="closeNewSessionTypeBtn" type="button">Close</button>
+    </div>
+    <div class="modalActions">
+      <button class="btn primary" id="newSessionNamedBtn" type="button">New Named Agent Session</button>
+      <button class="btn" id="newSessionNonPersistentBtn" type="button">Non-persistent Session</button>
+    </div>
+  </div>
+</div>
+
+
 <div class="modal" id="settingsModal" aria-hidden="true">
   <div class="backdrop" id="settingsBackdrop"></div>
   <div class="modalCard">
@@ -4300,7 +4852,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
         <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
         <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
+        <button class="settingsNavBtn" data-settings-section="tools" type="button">Agent tools</button>
         <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
+        <button class="settingsNavBtn" data-settings-section="agents" type="button">Agent management</button>
       </div>
 
       <div class="settingsContent">
@@ -4338,13 +4892,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">LLM</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
-            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
-            <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
+            <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
-            <div class="fieldRow"><div class="label">Max completion tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
-            <div class="fieldRow"><div class="label">Temperature</div><input class="input" id="set_temperature" type="number" step="0.1" min="0" max="2" /></div>
-            <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
-            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model, max tokens, and temperature.</div>
+            <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
+            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model and base_url.</div>
           </div>
         </div>
 
@@ -4352,6 +4904,37 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">Runner</div>
             <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="tools">
+          <div class="section">
+            <div class="sectionHead">Agent tools</div>
+            <div class="muted small" style="margin: 2px 0 10px">
+              Select persisted RAG agents to attach as tools to new Chat, Execution, and Planning + Execution runs. Create or update collections with <code>ursa rag-ingest</code>; this dashboard only selects existing persisted collections.
+            </div>
+            <div class="muted small" id="ragToolsGroupLabel" style="margin-bottom:8px"></div>
+
+            <div class="fieldRow">
+              <div class="label">Selected RAG tools</div>
+              <div>
+                <div id="ragSelectedList"></div>
+                <div class="muted small" style="margin-top:6px">These tools are staged until you click Save.</div>
+              </div>
+            </div>
+
+            <div class="fieldRow">
+              <div class="label">Available RAG agents</div>
+              <div>
+                <div id="ragAvailableList"></div>
+                <div class="muted small" style="margin-top:6px">Only persisted RAG agents in the active dashboard group are shown.</div>
+              </div>
+            </div>
+
+            <div class="row" style="justify-content:flex-start; gap: 10px">
+              <button class="btn" id="ragRefreshBtn" type="button">Refresh RAG agents</button>
+              <div class="muted small" id="ragToolStatus"></div>
+            </div>
           </div>
         </div>
 
@@ -4382,6 +4965,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
               <button class="btn" id="mcpClearBtn" type="button">Clear</button>
               <div class="muted small" id="mcpStatus"></div>
             </div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="agents">
+          <div class="section">
+            <div class="sectionHead">Agent management</div>
+            <div class="muted small" style="margin: 2px 0 10px">Manage named agents in the active dashboard group.</div>
+            <div class="muted small" id="agentMgmtGroupLabel" style="margin-bottom:8px"></div>
+            <div id="agentMgmtList"></div>
           </div>
         </div>
       </div>

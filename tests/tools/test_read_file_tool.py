@@ -8,7 +8,7 @@ from tests.tools.utils import (
     invoke_with_parent_run,
     make_runtime,
 )
-from ursa.tools.read_file_tool import read_file
+from ursa.tools.read_file_tool import download_file_tool, read_file
 from ursa.util import parse
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
@@ -86,3 +86,30 @@ def test_read_file_uses_pdf_reader(
 
     assert result == "pdf contents"
     assert called["path"] == tmp_path / "report.pdf"
+
+
+def test_download_file_rejects_invalid_ascii_output_path_without_cleaning(
+    monkeypatch,
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+):
+    existing = tmp_path / "caf.txt"
+    existing.write_text("original", encoding="utf-8")
+    runtime = make_runtime(tmp_path, llm=chat_model)
+    monkeypatch.setattr(
+        "ursa.tools.read_file_tool.requests.get",
+        lambda *args, **kwargs: pytest.fail(
+            "requests.get should not run for invalid output_path"
+        ),
+    )
+
+    result = download_file_tool.func(
+        url="https://example.com/file.txt",
+        output_path="caf\u00e9.txt",
+        runtime=runtime,
+    )
+
+    assert result.startswith("Invalid output_path:")
+    assert "U+00E9" in result
+    assert "corrected ASCII string" in result
+    assert existing.read_text(encoding="utf-8") == "original"

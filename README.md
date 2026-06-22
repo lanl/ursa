@@ -10,48 +10,25 @@ Composes information flow between agents for planning, code writing and executio
 
 The original ArXiv paper is [here](https://arxiv.org/abs/2506.22653).
 
+## Documentation
+
+Detailed documenation including:
+- Installation
+- Getting Started Guides
+- Configuration
+- ... and more
+
+are located at: [URSA Documentation](https://lanl.github.io/ursa)
+
+
 ## Installation
-You can install `ursa` via `pip` or [`uv`](https://docs.astral.sh/uv/). Installing `ursa` in a clean
-environment with python 3.11-3.12 may be necessary. (Some `ursa` dependencies
-currently do not support `python>=3.13`.)
 
-**uv**
+URSA is published on PyPI as [`ursa-ai`](https://pypi.org/project/ursa-ai/) and supports Python 3.11 or newer.
+You can install it with `uv` or `pip`; `uv` is recommended for new projects.
 
-```sh
-uv init -p 3.12  # or 3.11
-uv add ursa-ai
-```
+## Documentation and examples
 
-**pip**
-
-```sh
-pip install ursa-ai
-```
-
-**conda with pip install**
-
-```sh
-conda create -y -n ursa-env python=3.12  # or 3.11
-conda run --live-stream -n ursa-env python -m pip install ursa-ai
-```
-
-## How to use this code
-Better documentation will be incoming, but for examples in the `examples/`
-folder demonstrates how to set up some basic problems. They also should give
-some idea of how to pass results from one agent to another. I will look to add
-things with multi-agent graphs, etc. in the future.
-
-Documentation for each URSA agent:
-- [Planning Agent](docs/planning_agent.md)
-- [Execution Agent](docs/execution_agent.md)
-- [ArXiv Agent](docs/arxiv_agent.md)
-- [DSI Agent](docs/dsi_agent.md)
-- [Web Search Agent](docs/web_search_agent.md)
-- [Hypothesizer Agent](docs/hypothesizer_agent.md)
-
-Documentation for combining agents:
-- [ArXiv -> Execution for Materials](docs/combining_arxiv_and_execution.md)
-- [ArXiv -> Execution for Neutron Star Properties](docs/combining_arxiv_and_execution_neutronStar.md)
+The MkDocs documentation in `docs/` is organized around installation, getting started, configuration, persistence, agents, best practices, and reference material. The `examples/` folder demonstrates practical workflows and ways to pass results from one agent to another.
 
 
 ## Command Line Usage
@@ -62,10 +39,19 @@ You can install `ursa` as a command line app with `pip install`; or with [`uv`](
 uv tool install ursa-ai
 ```
 
-To use the command line app, run
+A reusable YAML configuration file is the preferred way to select endpoints and runtime settings. For example:
+
+```yaml
+llm_model:
+  model: openai:gpt-5.2
+  api_key_env: OPENAI_API_KEY
+workspace: .
+```
+
+Then start the command line app with:
 
 ```
-ursa --llm_model.model openai:gpt-5.2
+ursa --config config.yaml
 ```
 
 This will start a REPL in your terminal.
@@ -133,135 +119,6 @@ ursa-dashboard --host 127.0.0.1 --port 8080
 ```
 
 This requires installing with the optional `[dashboard]` dependencies.
-
-### Configuring URSA
-
-See the example [configuration file](./configs/example.yaml) and [documentation](./configs/README.md) for more details.
-
-## URSA MCP Server
-
-You can connect `ursa` as an [Model Context Protocol](https://modelcontextprotocol.io) Server
-to other agentic frameworks or interfaces. To start the MCP server, run:
-
-
-```shell
-ursa mcp-server --transport streamable-http
-```
-
-This will start an MCP server on localhost on port 8000.
-
-> [!WARNING]
-> The MCP Server does not isolate sessions from one another. As such, using the server in a multi-user context
-> is not recommended.
-
-
-### MCP Inspector
-
-After installing the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector), you can test the Ursa MCP server by running:
-
-```shell
-npx @modelcontextprotocol/inspector \
-    uv run ursa mcp-server
-```
-
-Or by connecting to an existing MCP server using the `streamable-http` transport by running:
-
-```shell
-npx @modelcontextprotocol/inspector \
-    --transport http \
-    --server-url http://localhost:8000/mcp
-```
-
-
-You can test the server using curl from another terminal:
-
-
-The MCP server configuration options can be seen with:
-```
-ursa mcp-server --help
-```
-
-The served instance of ursa can be configured via a configuration file (`ursa --config config.yaml mcp-server...`)
-or command line arguments (`ursa --llm_model.model openai:gpt-5 ... mcp-server ...`).
-
-
-## Sandboxing
-The Execution Agent is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
-and execute code has the potential to cause problems like:
-- Damage code or data on the computer
-- Damage the computer
-- Transmit your local data
-
-The Web Search Agent scrapes data from urls, so has the potential to attempt to pull information from questionable sources.
-
-Some suggestions for sandboxing the agent:
-- Creating a specific environment such that limits URSA's access to only what you want. Examples:
-    - Creating/using a virtual machine that is sandboxed from the rest of your machine
-    - Creating a new account on your machine specifically for URSA
-- Creating a network blacklist/whitelist to ensure that network commands and webscraping are contained to safe sources
-
-You have a duty for ensuring that you use URSA responsibly.
-
-## Container image
-
-To enable limited sandboxing insofar as containerization does this, you can run
-the following commands:
-
-### Docker
-
-```shell
-# Pull the image
-docker pull ghcr.io/lanl/ursa
-
-# Run script from host system
-mkdir -p scripts
-echo "import ursa; print('Hello from ursa')" > scripts/my_script.py
-docker run -e "OPENAI_API_KEY"=$OPENAI_API_KEY \
-    --mount type=bind,src=$PWD/scripts,dst=/mnt/workspace \
-    ghcr.io/lanl/ursa \
-    bash -c "uv run /mnt/workspace/my_script.py"
-```
-
-### Charliecloud
-
-[Charliecloud](https://charliecloud.io/) is a rootless alternative to docker
-that is sometimes preferred on HPC. The following commands replicate the
-behaviors above for docker.
-
-```shell
-# Pull the image
-ch-image pull ghcr.io/lanl/ursa ursa
-
-# Convert image to sqfs, for use on another system
-ch-convert ursa ursa.sqfs
-
-# Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)
-mkdir -p scripts
-echo "import ursa; print('Hello from ursa')" > scripts/my_script.py
-ch-run -W ursa \
-    --unset-env="*" \
-    --set-env \
-    --set-env="OPENAI_API_KEY"=$OPENAI_API_KEY \
-    --bind ${PWD}/scripts:/mnt/workspace \
-    --cd /mnt/workspace \
-    -- bash -c \
-    "uv run --no-sync my_script.py"
-```
-
-## Development Dependencies
-
-* [`uv`](https://docs.astral.sh/uv/)
-    * `uv` is an extremely fast python package and project manager, written in Rust.
-      Follow installation instructions
-      [here](https://docs.astral.sh/uv/getting-started/installation/)
-
-* [`ruff`](https://docs.astral.sh/ruff/)
-    * An extremely fast Python linter and code formatter, written in Rust.
-    * After installing `uv`, you can install ruff with `uv tool install ruff`
-
-* [`just`](https://github.com/casey/just)
-    * A modern way to save and run project-specific commands
-    * After installing `uv`, you can install just with `uv tool install rust-just`
 
 ## Development Team
 

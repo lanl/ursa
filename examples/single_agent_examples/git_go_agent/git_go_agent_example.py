@@ -11,7 +11,7 @@ configure_event_logging()
 def main():
     repo_root = Path.cwd()
     agent = GitGoAgent(
-        llm=init_chat_model("openai:gpt-5-mini"),
+        llm=init_chat_model("openai:gpt-5.4-mini"),
         workspace=repo_root,
     )
 

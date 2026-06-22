@@ -180,7 +180,7 @@ Key parameters you can tune:
 - `mpirun_cmd` (default `mpirun`): currently available options are `mpirun` and `mpiexec`. Other options such as `srun` will be added soon
 
 ### LLM / context trimming
-- `tiktoken_model` (default `gpt-5-mini`): tokenizer model name used to trim fetched potential metadata text
+- `tiktoken_model` (default `gpt-5.4-mini`): tokenizer model name used to trim fetched potential metadata text
 - `max_tokens` (default `200000`): token cap for extracted metadata text
 
 ---
