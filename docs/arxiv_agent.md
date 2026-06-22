@@ -1,91 +1,94 @@
 # ArxivAgent Documentation
 
-`ArxivAgent` is a class that helps fetch, process, and summarize scientific papers from arXiv. It uses LLMs to generate summaries of papers relevant to a given query and context.
+`ArxivAgent` is an acquisition agent for arXiv papers. It subclasses `BaseAcquisitionAgent`, so it uses the same acquire-then-summarize/RAG graph as `WebSearchAgent` and `OSTIAgent`.
 
-## Basic Usage
+`ArxivAgent` searches the arXiv API, downloads matching paper PDFs, extracts text, optionally augments PDF text with image descriptions, and then summarizes the acquired papers or runs the RAG path when an embedding model is configured.
 
-```python
-from ursa.agents import ArxivAgent
+See also: [Acquisition Agents](acquisition_agents.md).
 
-# Initialize the agent
-agent = ArxivAgent()
-
-# Run a query
-result = agent.invoke(
-    arxiv_search_query="Experimental Constraints on neutron star radius", 
-    context="What are the constraints on the neutron star radius and what uncertainties are there on the constraints?"
-)
-
-# Print the summary
-print(result)
-```
-
-## Parameters
-
-When initializing `ArxivAgent`, you can customize its behavior with these parameters:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `llm` | `BaseChatModel` | `init_chat_model("openai:gpt-5-mini")` | The LLM model to use for summarization |
-| `summarize` | bool | True | Whether to summarize the papers or just fetch them |
-| `process_images` | bool | True | Whether to extract and describe images from papers |
-| `max_results` | int | 3 | Maximum number of papers to fetch from arXiv |
-| `database_path` | str | 'arxiv_papers' | Directory to store downloaded PDFs |
-| `summaries_path` | str | 'arxiv_generated_summaries' | Directory to store paper summaries |
-| `vectorstore_path` | str | 'arxiv_vectorstores' | Directory to store vector embeddings |
-| `download` | bool | True | Whether to download papers or use existing ones |
-
-## Advanced Usage
-
-### Customizing the Agent
+## Basic usage
 
 ```python
 from langchain.chat_models import init_chat_model
 from ursa.agents import ArxivAgent
 
-agent = ArxivAgent(
-    llm=init_chat_model("openai:gpt-5-mini"),  # Use a more powerful model
-    max_results=5,       # Fetch more papers
-    process_images=False,  # Skip image processing to save time
-    download=False  # Use only papers already in database_path
-)
+llm = init_chat_model("openai:gpt-5.4-mini")
+agent = ArxivAgent(llm=llm)
+
+state = agent.invoke({
+    "query": "neutron star radius constraints",
+    "context": "What are the constraints on neutron star radius, and what uncertainties affect those constraints?",
+})
+
+print(agent.format_result(state))
 ```
 
-### Running Multiple Queries
+You can also pass a plain string. In that case, the string becomes `context`, and the agent asks the LLM to generate a short arXiv search query:
 
 ```python
-# First query
-result1 = agent.invoke(
-    arxiv_search_query="quantum computing error correction", 
-    context="Summarize recent advances in quantum error correction techniques"
-)
-
-# Second query (will reuse downloaded papers if applicable)
-result2 = agent.invoke(
-    arxiv_search_query="quantum computing algorithms", 
-    context="What are the most promising quantum algorithms for near-term devices?"
-)
+state = agent.invoke("Summarize recent arXiv papers about neutron star radius constraints.")
+print(agent.format_result(state))
 ```
 
-## How It Works
+## Parameters
 
-1. **Fetching Papers**: The agent searches arXiv for papers matching your query and downloads them as PDFs.
+`ArxivAgent` uses the shared `BaseAcquisitionAgent` parameters with arXiv-specific defaults:
 
-2. **Processing**: If `summarize=True`, each paper is:
-   - Converted to text
-   - Split into chunks
-   - Embedded into a vector database
-   - If `process_images=True`, images are extracted and described using GPT-4 Vision
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `llm` | `BaseChatModel` | required | Language model used for query generation and summarization. |
+| `process_images` | `bool` | `True` | For downloaded PDFs, optionally append image interpretations when image-description support is available. |
+| `max_results` | `int` | `3` | Maximum number of arXiv results to acquire. |
+| `download` | `bool` | `True` | If `True`, search arXiv and download PDFs. If `False`, read cached files from `database_path`. |
+| `rag_embedding` | optional embedding object | `None` | If provided, use the RAG path instead of direct per-paper summarization. |
+| `database_path` | `str` | `"arxiv_papers"` | Directory under the agent den for downloaded/cached papers. |
+| `summaries_path` | `str` | `"arxiv_generated_summaries"` | Directory under the agent den for per-paper and final summaries. |
+| `vectorstore_path` | `str` | `"arxiv_vectorstores"` | Stored vector-store path configuration inherited from the acquisition base. The current shared RAG node constructs a `RAGAgent` over the acquired database when `rag_embedding` is provided. |
+| `**kwargs` | `dict` | `{}` | Passed to `BaseAgent` / `BaseAcquisitionAgent`, including workspace/den and persistence options. |
 
-3. **Summarization**: The agent:
-   - Retrieves the most relevant chunks based on your context
-   - Generates a summary for each paper
-   - Creates a final summary addressing your specific context
+Inherited acquisition parameters such as `summarize` and `num_threads` can also be supplied through the shared base class path.
 
-4. **Output**: Returns a comprehensive summary that synthesizes information from all relevant papers.
+## How it works
 
-## Notes
+`ArxivAgent` implements the acquisition hooks required by `BaseAcquisitionAgent`:
 
-- Summaries and vector stores are cached, making subsequent queries faster.
-- The agent uses a ThreadPoolExecutor to process papers in parallel.
-- You can find the combined summaries in 'summaries_combined.txt' and the final summary in 'final_summary.txt'.
+- `_search(query)` — queries `http://export.arxiv.org/api/query` and normalizes entries into lightweight hits containing arXiv IDs and titles.
+- `_id(hit_or_item)` — uses the arXiv ID as the stable item ID.
+- `_materialize(hit)` — downloads `https://arxiv.org/pdf/<arxiv_id>.pdf`, stores it in `database_path`, and extracts PDF text.
+- `_citation(item)` — formats citations as `ArXiv ID: <id>`.
+
+After acquisition, the shared graph either:
+
+- summarizes each paper and aggregates the summaries into `state["final_summary"]`, or
+- invokes the RAG path when `rag_embedding` is configured, or
+- stops after `state["items"]` when `summarize=False`.
+
+## Output state
+
+Important fields in the returned state include:
+
+- `query` — final arXiv search query.
+- `context` — task/question used for summarization.
+- `items` — acquired paper metadata, including local PDF paths and extracted text.
+- `summaries` — per-paper summaries when direct summarization is used.
+- `final_summary` — aggregate response to the requested context.
+
+`agent.format_result(state)` returns `state["final_summary"]` when present.
+
+## Cached files
+
+By default, the agent writes artifacts under the agent den:
+
+- PDFs: `arxiv_papers/`
+- per-paper summaries: `arxiv_generated_summaries/`
+- combined direct-summarization file: `arxiv_generated_summaries/summaries_combined.txt`
+- final direct-summarization file: `arxiv_generated_summaries/final_summary.txt`
+- RAG workflow artifacts are managed by the shared RAG path when `rag_embedding` is provided.
+
+## CLI
+
+The interactive CLI registers this agent as:
+
+```text
+arxiv
+```

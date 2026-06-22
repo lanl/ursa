@@ -56,7 +56,7 @@ def main(mode: str):
 
         # 2. LLM & agents
         model = init_chat_model(
-            model="openai:gpt-5-mini"
+            model="openai:gpt-5.4-mini"
             if mode == "prod"
             else "ollama:llama3.1:8b",
             max_tokens=10000 if mode == "prod" else 4000,

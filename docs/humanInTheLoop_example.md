@@ -1,6 +1,6 @@
 # URSA Human-in-the-Loop Agent Interface Documentation
 
-## Previous Human-in-the-Loop Example has been Depreciated
+## Previous Human-in-the-Loop Example has been Deprecated
 
 The HITL interface can now be accessed via the URSA CLI, launch with:
 

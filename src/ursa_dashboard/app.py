@@ -4892,7 +4892,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">LLM</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
-            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
             <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
