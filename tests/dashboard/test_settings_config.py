@@ -35,7 +35,7 @@ def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
         "llm": {
             "model": "openai:gpt-test",
             "base_url": "https://models.example.org/v1",
-            "api_key_env_var": "SAFE_API_KEY",
+            "api_key_env": "SAFE_API_KEY",
             "max_tokens": 4096,
             "temperature": 0.3,
             "model_kwargs": {
