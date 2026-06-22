@@ -149,7 +149,7 @@ def test_load_object_resolves_environment_short_names():
 
 def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):
     cache_root = tmp_path / "ursa"
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", cache_root)
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", cache_root)
 
     team = AgentTeamEnvironment(
         llm=fake_llm(),
@@ -429,7 +429,7 @@ members:
 
 def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
     cache_root = tmp_path / "ursa"
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", cache_root)
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", cache_root)
 
     team = AgentTeamConfig(
         name="science_team",
