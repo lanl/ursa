@@ -49,6 +49,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "justext>=3.0.2",
     "matplotlib>=3.10.6",
+    "scipy>=1.16.2,<2.0.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
