@@ -7,7 +7,7 @@ from threading import Lock
 from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
-from langchain.embeddings import Embeddings, init_embeddings
+from langchain.embeddings import Embeddings
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -73,9 +73,12 @@ class RAGAgent(BaseAgent[RAGState]):
         self.retriever = None
         self._vs_lock = Lock()
         self.return_k = return_k
-        self.embedding = embedding or init_embeddings(
-            "openai:text-embedding-3-small"
-        )
+        if embedding is None:
+            raise ValueError(
+                "RAGAgent requires an explicit embedding model. Configure "
+                "emb_model in your URSA config when using RAG features."
+            )
+        self.embedding = embedding
         enforce_model_group_policy(self.embedding, self.group)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
