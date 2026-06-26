@@ -23,6 +23,7 @@ class EnvironmentMemberConfig:
       model: optional ModelConfig-compatible mapping for this member
       config: kwargs passed to the agent/environment constructor
       prompt: optional extra role/system guidance included in delegated tasks
+      reviewer: whether this member participates in symposium review phases
     """
 
     name: str
@@ -31,6 +32,7 @@ class EnvironmentMemberConfig:
     model: ModelConfig | None = None
     config: dict[str, Any] = field(default_factory=dict)
     prompt: str | None = None
+    reviewer: bool = True
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "EnvironmentMemberConfig":
