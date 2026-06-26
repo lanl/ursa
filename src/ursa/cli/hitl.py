@@ -13,6 +13,8 @@ from fastmcp import FastMCP
 from langchain.chat_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -351,6 +353,33 @@ class UrsaRepl(Cmd):
                 border_style="cyan",
             )
 
+        # Setup prompt_toolkit for multiline input
+        kb = KeyBindings()
+
+        def _(event):
+            event.current_buffer.validate_and_handle()
+
+        self.session = PromptSession(multiline=True, key_bindings=kb)
+
+    def cmdloop(self, intro=None):
+        """Override cmdloop to use prompt_toolkit for multiline input"""
+        self.preloop()
+        if intro is not None:
+            self.intro = intro
+        if self.intro:
+            self.stdout.write(str(self.intro) + "\n")
+
+        stop = None
+        while not stop:
+            try:
+                line = self.session.prompt(self.prompt)
+                line = self.precmd(line)
+                stop = self.onecmd(line)
+                stop = self.postcmd(stop, line)
+            except EOFError:
+                break
+        self.postloop()
+
     def __getattribute__(self, name: str) -> Any:
         # Dynamically add do_agent methods
         if name.startswith("do_"):
@@ -374,7 +403,7 @@ class UrsaRepl(Cmd):
         else:
             exit_shortcut = None
 
-        msg = "[dim]For help, type: ? or help."
+        msg = "[dim]For help, type: ? or help. Press Enter for newline, Alt+Enter to send."
         if exit_shortcut is None:
             msg += " Exit by typing 'exit'."
         else:

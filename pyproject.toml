@@ -50,6 +50,7 @@ dependencies = [
     "justext>=3.0.2",
     "matplotlib>=3.10.6",
     "scipy>=1.16.2,<2.0.0",
+    "prompt-toolkit>=3.0.52,<4.0.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
