@@ -1,3 +1,9 @@
+from warnings import filterwarnings
+
+# NOTE [alui | 26 June, 2026]:
+# Pydantic warnings occured around v0.16.0. Suppress for now.
+filterwarnings("ignore", message="Pydantic serializer warnings:*")
+
 import logging
 from pathlib import Path
 
