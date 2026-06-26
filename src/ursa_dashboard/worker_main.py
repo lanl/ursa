@@ -23,7 +23,8 @@ def _init_llm(llm_cfg: dict[str, Any]):
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model  # type: ignore
 
-    base_url = llm_cfg.get("base_url")
+    raw_base_url = llm_cfg.get("base_url")
+    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
 
     # Security: prefer reading the API key from an environment variable.
     # - If llm_cfg.api_key is provided (advanced / legacy), it is used directly.
@@ -58,7 +59,8 @@ def _init_llm(llm_cfg: dict[str, Any]):
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
 
     kwargs["api_key"] = api_key
-    kwargs["base_url"] = str(base_url)
+    if base_url:
+        kwargs["base_url"] = base_url
 
     return init_chat_model(**kwargs)
 
