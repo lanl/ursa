@@ -37,7 +37,6 @@ MODEL_QUERY = {
         "ursa.agents.acquisition_agents.WebSearchAgent",
         "ursa.agents.acquisition_agents.OSTIAgent",
         "ursa.agents.chat_agent.ChatAgent",
-        "ursa.agents.code_review_agent.CodeReviewAgent",
         "ursa.agents.execution_agent.ExecutionAgent",
         "ursa.agents.deep_review_agent.DeepReviewAgent",
         "ursa.agents.hypothesizer_agent.HypothesizerAgent",

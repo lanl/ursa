@@ -9,7 +9,6 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "BaseAgent": (".base", "BaseAgent"),
     "BaseChatModel": (".base", "BaseChatModel"),
     "ChatAgent": (".chat_agent", "ChatAgent"),
-    "CodeReviewAgent": (".code_review_agent", "CodeReviewAgent"),
     "DSIAgent": (".dsi_agent", "DSIAgent"),
     "ExecutionAgent": (".execution_agent", "ExecutionAgent"),
     "GitAgent": (".git_agent", "GitAgent"),
