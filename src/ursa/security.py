@@ -9,7 +9,7 @@ from langchain.chat_models import BaseChatModel
 
 URSA_CACHE_DIR = (
     Path(
-        os.getenv("URSA_CACHE_DIR", os.getenv("XDG_CACHE_HOME", "~/.cache"))
+        os.getenv("URSA_CACHE_HOME", os.getenv("XDG_CACHE_HOME", "~/.cache"))
     ).expanduser()
     / "ursa"
 )
