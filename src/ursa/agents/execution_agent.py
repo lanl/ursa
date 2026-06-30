@@ -30,7 +30,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import (
     Annotated,
+    Any,
     Literal,
+    Mapping,
     NotRequired,
     TypedDict,
 )
@@ -99,6 +101,7 @@ class ExecutionState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     symlinkdir: dict
     review: NotRequired[ReviewAssessment]
+    current_user_request: NotRequired[str]
 
 
 def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
@@ -248,6 +251,56 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
 
+    @staticmethod
+    def _message_text(msg: Any) -> str:
+        """Extract readable text from LangChain-style message inputs."""
+        text = getattr(msg, "text", None)
+        if text:
+            return str(text)
+        content = getattr(msg, "content", None)
+        if content is not None:
+            return str(content)
+        if isinstance(msg, Mapping):
+            content = msg.get("content")
+            if content is not None:
+                return str(content)
+        if isinstance(msg, tuple) and len(msg) >= 2:
+            return str(msg[1])
+        return ""
+
+    @classmethod
+    def _first_human_message_text(cls, messages: Any) -> str:
+        """Return text for the first human/user message in a message sequence."""
+        if not isinstance(messages, (list, tuple)):
+            return ""
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                return cls._message_text(msg)
+            if isinstance(msg, Mapping):
+                role = str(msg.get("role") or msg.get("type") or "").lower()
+                if role in {"human", "user"}:
+                    return cls._message_text(msg)
+            if isinstance(msg, tuple) and msg:
+                role = str(msg[0]).lower()
+                if role in {"human", "user"}:
+                    return cls._message_text(msg)
+        return ""
+
+    def _normalize_inputs(self, inputs):
+        """Normalize inputs and remember this invocation's user request.
+
+        Persistent LangGraph threads merge a new ``messages`` input with prior
+        checkpointed history. Capturing the first human/user message before that
+        merge gives review a stable request for the current invoke instead of the
+        first human message in the entire persisted conversation.
+        """
+        normalized = dict(super()._normalize_inputs(inputs))
+        user_request = self._first_human_message_text(
+            normalized.get("messages", [])
+        )
+        normalized["current_user_request"] = user_request
+        return normalized
+
     # Define the function that calls the model
     def query_executor(
         self,
@@ -349,17 +402,23 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
-    def _get_original_user_request(self, state: ExecutionState) -> str:
-        """Return the first human message as the original user request."""
-        for msg in state.get("messages", []):
+    def _get_current_user_request(self, state: ExecutionState) -> str:
+        """Return the user request for the current invoke.
+
+        Prefer ``current_user_request``, which is captured from the entry input
+        before LangGraph merges new messages with any checkpointed history. If a
+        legacy/in-memory state does not have that field, fall back to the latest
+        human message rather than the first one in the full history.
+        """
+        current_request = state.get("current_user_request")
+        if current_request:
+            return str(current_request)
+        for msg in reversed(state.get("messages", [])):
             if isinstance(msg, HumanMessage):
-                return str(getattr(msg, "text", None) or msg.content)
+                return self._message_text(msg)
         messages = state.get("messages", [])
         if messages:
-            msg = messages[0]
-            return str(
-                getattr(msg, "text", None) or getattr(msg, "content", "")
-            )
+            return self._message_text(messages[-1])
         return ""
 
     def review_work(
@@ -382,7 +441,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             new_state, system_prompt=self.executor_prompt
         )
 
-        user_request = self._get_original_user_request(new_state)
+        user_request = self._get_current_user_request(new_state)
         review_message = HumanMessage(content=get_review_prompt(user_request))
         review_messages = list(new_state["messages"]) + [review_message]
 
@@ -425,7 +484,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         feedback = HumanMessage(
             content=(
-                "Review of the current work determined that the original user "
+                "Review of the current work determined that the current user "
                 "request has not yet been adequately addressed. Continue working "
                 "and specifically address the following review feedback:\n\n"
                 f"{reason}"

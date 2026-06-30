@@ -1,4 +1,3 @@
-from langgraph.checkpoint.memory import InMemorySaver
 from rich import get_console
 from rich.panel import Panel
 
@@ -29,9 +28,6 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         # db_path.parent.mkdir(parents=True, exist_ok=True)
         # conn = sqlite3.connect(str(db_path), check_same_thread=False)
         # checkpointer = SqliteSaver(conn)
-
-        self.planner.checkpointer = InMemorySaver()
-        self.executor.checkpointer = InMemorySaver()
 
     def _invoke(self, task: str, *, config: dict | None = None, **kw):
         invoke_config = dict(config or {})

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from warnings import filterwarnings
 
 import yaml
 from jsonargparse import ArgumentParser, set_parsing_settings
@@ -36,6 +37,9 @@ from ursa.cli.rag_management import (
 from ursa.util.http import inject_truststore_into_ssl
 
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
+# NOTE [alui | 26 June, 2026]:
+# Pydantic warnings occured around v0.16.0. Suppress for now.
+filterwarnings("ignore", message="Pydantic serializer warnings:*")
 
 
 def build_parser() -> ArgumentParser:

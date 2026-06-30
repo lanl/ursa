@@ -136,6 +136,7 @@ def test_read_image_tool_reads_from_runtime_workspace(
     assert base64.b64decode(result[0]["base64"]).startswith(b"\x89PNG")
 
 
+@pytest.mark.real_llm
 def test_read_image_tool_output_can_be_read_by_attached_llm(
     tmp_path: Path, vision_chat_model: BaseChatModel
 ):

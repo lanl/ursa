@@ -29,7 +29,7 @@ TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 
 @dataclass
 class RunConfig:
-    concurrency: int = 2
+    concurrency: int = 5
     stdout_cap_bytes: int = 25 * 1024 * 1024
     stderr_cap_bytes: int = 25 * 1024 * 1024
     events_cap_bytes: int = 50 * 1024 * 1024
@@ -444,6 +444,7 @@ class RunManager:
         params_json = paths.run_dir / "params.json"
         agent_init_json = paths.run_dir / "agent_init.json"
         llm_json = paths.run_dir / "llm.json"
+        embedding_json = paths.run_dir / "embedding.json"
         mcp_json = paths.run_dir / "mcp.json"
         output_json = paths.run_dir / "output.json"
         params_json.write_text(
@@ -454,6 +455,9 @@ class RunManager:
         )
         llm_json.write_text(
             json.dumps(rec.get("llm") or {}, indent=2), encoding="utf-8"
+        )
+        embedding_json.write_text(
+            json.dumps(rec.get("embedding") or {}, indent=2), encoding="utf-8"
         )
         mcp_json.write_text(
             json.dumps(rec.get("mcp") or {}, indent=2), encoding="utf-8"
@@ -498,6 +502,8 @@ class RunManager:
             str(agent_init_json),
             "--llm-json",
             str(llm_json),
+            "--embedding-json",
+            str(embedding_json),
             "--mcp-json",
             str(mcp_json),
             "--output-json",

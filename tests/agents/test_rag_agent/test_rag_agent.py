@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ursa.agents import RAGAgent
 
 
@@ -81,3 +83,16 @@ async def test_rag_agent_retrieves_contextual_documents(
     stdout = capsys.readouterr().out
     assert "[RAG Agent]" not in stdout
     assert "RAG failed due to:" not in stdout
+
+
+def test_rag_agent_requires_explicit_embedding(chat_model, tmpdir):
+    with pytest.raises(
+        ValueError, match="requires an explicit embedding model"
+    ):
+        RAGAgent(
+            llm=chat_model,
+            workspace=tmpdir,
+            database_path="database",
+            summaries_path="summaries",
+            vectorstore_path="vectors",
+        )

@@ -23,7 +23,8 @@ def _init_llm(llm_cfg: dict[str, Any]):
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model  # type: ignore
 
-    base_url = llm_cfg.get("base_url")
+    raw_base_url = llm_cfg.get("base_url")
+    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
 
     # Security: prefer reading the API key from an environment variable.
     # - If llm_cfg.api_key is provided (advanced / legacy), it is used directly.
@@ -58,9 +59,60 @@ def _init_llm(llm_cfg: dict[str, Any]):
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
 
     kwargs["api_key"] = api_key
-    kwargs["base_url"] = str(base_url)
+    if base_url:
+        kwargs["base_url"] = base_url
 
     return init_chat_model(**kwargs)
+
+
+def _init_embedding(embedding_cfg: dict[str, Any]):
+    """Initialize an embedding model from dashboard settings.
+
+    Returns None when no embedding model is configured. Mirrors the LLM worker
+    behavior: non-secret config is snapshotted into the run record, while the
+    actual secret is read from api_key_env at worker runtime.
+    """
+
+    model = str(embedding_cfg.get("model") or "").strip()
+    if not model or model.lower() in {"none", "disabled"}:
+        return None
+
+    from langchain.embeddings import init_embeddings  # type: ignore
+
+    raw_base_url = embedding_cfg.get("base_url")
+    base_url = str(raw_base_url).strip() if raw_base_url is not None else None
+
+    api_key = embedding_cfg.get("api_key")
+    if api_key is not None and str(api_key).strip() != "":
+        os.environ["OPENAI_API_KEY"] = str(api_key)
+    else:
+        env_name = embedding_cfg.get("api_key_env")
+        if env_name is not None:
+            env_name = str(env_name).strip()
+        if env_name:
+            env_val = os.environ.get(env_name)
+            if not env_val:
+                raise ValueError(
+                    f"Embedding api_key_env '{env_name}' is not set in the dashboard environment"
+                )
+            os.environ["OPENAI_API_KEY"] = str(env_val)
+            api_key = str(env_val)
+
+    if base_url:
+        os.environ["OPENAI_BASE_URL"] = str(base_url)
+        os.environ["OPENAI_API_BASE"] = str(base_url)
+
+    model_kwargs = embedding_cfg.get("model_kwargs") or {}
+    if not isinstance(model_kwargs, dict):
+        raise ValueError("embedding.model_kwargs must be a JSON object")
+
+    kwargs: dict[str, Any] = {**model_kwargs, "model": _normalize_model(model)}
+    if api_key is not None:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    return init_embeddings(**kwargs)
 
 
 def _maybe_run_async(result):
@@ -80,6 +132,7 @@ def main() -> int:
     )
     ap.add_argument("--agent-init-json", required=True)
     ap.add_argument("--llm-json", required=True)
+    ap.add_argument("--embedding-json", required=False)
     ap.add_argument("--mcp-json", required=False)
     ap.add_argument("--output-json", required=True)
     args = ap.parse_args()
@@ -91,6 +144,14 @@ def main() -> int:
             Path(args.agent_init_json).read_text(encoding="utf-8")
         )
         llm_cfg = json.loads(Path(args.llm_json).read_text(encoding="utf-8"))
+        embedding_cfg: dict[str, Any] = {}
+        if args.embedding_json:
+            try:
+                embedding_cfg = json.loads(
+                    Path(args.embedding_json).read_text(encoding="utf-8")
+                )
+            except Exception:
+                embedding_cfg = {}
         mcp_cfg: dict[str, Any] = {}
         if args.mcp_json:
             try:
@@ -113,10 +174,16 @@ def main() -> int:
             llm_cfg.get("model") or ""
         ).strip().lower() in {"none", "disabled"}
         llm = None if llm_disabled else _init_llm(llm_cfg)
+        embedding = _init_embedding(embedding_cfg)
         # Ensure consistent cross-session threading.
         agent_init = dict(agent_init)
         agent_init["thread_id"] = "ursa"
         agent_init.setdefault("enable_metrics", True)
+        if embedding is not None:
+            if agent_init.get("rag_tools"):
+                agent_init.setdefault("rag_tool_embedding", embedding)
+            if args.agent_id == "rag_agent":
+                agent_init.setdefault("embedding", embedding)
 
         adapter = entry.build_adapter(llm, agent_init)
 

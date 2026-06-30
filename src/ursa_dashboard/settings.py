@@ -88,6 +88,41 @@ class MCPSettings(BaseModel):
         return v
 
 
+class EmbeddingSettings(BaseModel):
+    """Dashboard-level embedding model settings for RAG features."""
+
+    model: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = Field(
+        default="OPENAI_API_KEY",
+        description="Name of the environment variable that contains the embedding API key (the secret is not stored).",
+    )
+    model_kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("model_kwargs")
+    @classmethod
+    def _validate_model_kwargs(cls, v: Any) -> dict[str, Any]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("embedding.model_kwargs must be a JSON object")
+        return v
+
+    @field_validator("api_key_env")
+    @classmethod
+    def _validate_api_key_env(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = str(v).strip()
+        if v == "":
+            return None
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
+            raise ValueError(
+                "api_key_env must be a valid environment variable name"
+            )
+        return v
+
+
 class ToolSettings(BaseModel):
     """Dashboard-level tools attached to new tool-capable agent runs."""
 
@@ -113,6 +148,7 @@ class GlobalSettings(BaseModel):
 
     updated_at: str | None = None
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     tools: ToolSettings = Field(default_factory=ToolSettings)
@@ -168,7 +204,40 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
     # Validate against the dashboard settings schema before returning, so CLI
     # errors fail early instead of being deferred until the first run.
     LLMSettings.model_validate(patch)
-    return {"llm": patch}
+
+    out: dict[str, Any] = {"llm": patch}
+
+    emb_cfg = cfg.emb_model
+    if emb_cfg is not None:
+        emb_patch: dict[str, Any] = {"model": emb_cfg.model}
+        if emb_cfg.base_url is not None:
+            emb_patch["base_url"] = emb_cfg.base_url
+        if emb_cfg.api_key_env is not None:
+            emb_patch["api_key_env"] = emb_cfg.api_key_env
+
+        emb_model_kwargs: dict[str, Any] = {}
+        for key, value in (emb_cfg.model_extra or {}).items():
+            if value is None:
+                continue
+            if key == "api_key":
+                raise ValueError(
+                    "Dashboard config does not store raw emb_model.api_key; "
+                    "use emb_model.api_key_env instead."
+                )
+            if key == "model_kwargs":
+                if not isinstance(value, dict):
+                    raise ValueError("emb_model.model_kwargs must be an object")
+                emb_model_kwargs.update(value)
+                continue
+            emb_model_kwargs[key] = value
+
+        if emb_model_kwargs:
+            emb_patch["model_kwargs"] = emb_model_kwargs
+
+        EmbeddingSettings.model_validate(emb_patch)
+        out["embedding"] = emb_patch
+
+    return out
 
 
 def merge_global_settings_patch(
@@ -181,7 +250,11 @@ def merge_global_settings_patch(
     # Important: our PATCH endpoint uses deep-merge semantics so callers can
     # update individual nested fields. However, for some objects we want
     # *replace* semantics so deletions are respected.
-    REPLACE_PATHS = {"mcp.servers", "llm.model_kwargs"}
+    REPLACE_PATHS = {
+        "mcp.servers",
+        "llm.model_kwargs",
+        "embedding.model_kwargs",
+    }
 
     def deep_merge(
         dst: dict[str, Any], src: dict[str, Any], path: str = ""
@@ -216,6 +289,8 @@ def apply_dashboard_config(
     patch = dashboard_llm_patch_from_ursa_config(path)
     settings = merge_global_settings_patch(settings_store.load(), patch)
     enforce_group_base_url_policy(settings.llm.base_url, group)
+    if settings.embedding.model:
+        enforce_group_base_url_policy(settings.embedding.base_url, group)
     settings_store.save(settings)
     return settings
 

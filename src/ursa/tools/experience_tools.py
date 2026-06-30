@@ -38,7 +38,9 @@ def _validate_experience_filename(filename: str) -> str:
         )
 
     if path.suffix.lower() != ".md":
-        raise ValueError("Experience files must use the .md extension.")
+        raise ValueError(
+            f"Experience files, {name} , must use the .md extension."
+        )
 
     return name
 
@@ -76,7 +78,7 @@ def write_experience(
     context worth preserving in the future.
 
     Args:
-        filename: Markdown filename to write inside the experiences directory.
+        filename: Markdown filename to write inside the experiences directory. Must be a .md file!
         content: Text content to store.
         append: If True, append content to the file. If False, overwrite the file.
 

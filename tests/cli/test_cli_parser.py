@@ -331,3 +331,36 @@ def test_api_key_env(monkeypatch, tmp_path):
     assert config.llm_model.api_key_env == "TEST_ENV_API_KEY"
     assert config.llm_model.kwargs["api_key"] == "super-secret-key"
     assert "api_key_env" not in config.llm_model.kwargs.keys()
+
+
+def test_model_config_omits_unset_or_blank_base_url_for_provider_default():
+    for value in (None, "", "   "):
+        cfg = ModelConfig(model="openai:gpt-5", base_url=value)
+
+        kwargs = cfg.kwargs
+
+        assert cfg.base_url is None
+        assert "base_url" not in kwargs
+
+
+def test_model_config_strips_configured_base_url():
+    cfg = ModelConfig(
+        model="openai:gpt-5",
+        base_url=" https://models.example.org/v1 ",
+    )
+
+    kwargs = cfg.kwargs
+
+    assert cfg.base_url == "https://models.example.org/v1"
+    assert kwargs["base_url"] == "https://models.example.org/v1"
+
+
+def test_model_config_omits_blank_api_key_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg = ModelConfig(model="openai:gpt-5", api_key_env="   ")
+
+    kwargs = cfg.kwargs
+
+    assert cfg.api_key_env is None
+    assert "api_key" not in kwargs
+    assert "api_key_env" not in kwargs

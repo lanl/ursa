@@ -18,7 +18,9 @@ from .base import (
 from .config import (
     AgentSymposiumConfig,
     EnvironmentMemberConfig,
+    load_object,
     load_symposium_config,
+    make_llm,
 )
 
 
@@ -72,13 +74,13 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         )
         self.config = symposium_config
         self.members = {
-            member.name: self.build_member(member)
+            member.name: self._build_symposium_participant(member)
             for member in self.config.members
         }
         self.member_configs = {
             member.name: member for member in self.config.members
         }
-        self.organizer = self.build_member(self.config.organizer)
+        self.organizer = self._build_symposium_organizer(self.config.organizer)
 
     def _events(self, config: Mapping[str, Any] | None) -> EnvironmentEvents:
         return EnvironmentEvents(
@@ -226,6 +228,60 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             return member
         return EnvironmentMemberConfig.from_mapping(member)
 
+    def _build_symposium_participant(
+        self, member: EnvironmentMemberConfig
+    ) -> Any:
+        """Instantiate a symposium participant in its own child workspace.
+
+        Symposium member names are stable URSA agent names. This lets users
+        reuse existing named agents directly from YAML instead of creating new
+        ``<symposium>_<member>`` checkpoints.
+        """
+        return self._build_symposium_agent(
+            member,
+            workspace=self._member_workspace(member.name),
+            agent_name=member.name,
+        )
+
+    def _build_symposium_organizer(
+        self, member: EnvironmentMemberConfig
+    ) -> Any:
+        """Instantiate the organizer in the parent symposium workspace."""
+        return self._build_symposium_agent(
+            member,
+            workspace=self.workspace,
+            agent_name=member.name,
+        )
+
+    def _build_symposium_agent(
+        self,
+        member: EnvironmentMemberConfig,
+        *,
+        workspace: Path,
+        agent_name: str,
+    ) -> Any:
+        cls = load_object(member.agent)
+        llm = make_llm(self.llm, member.model)
+        kwargs = dict(member.config or {})
+        kwargs.setdefault("workspace", workspace)
+        kwargs.setdefault("group", self.group)
+        if isinstance(cls, type) and issubclass(cls, BaseEnvironment):
+            kwargs.setdefault("name", member.name)
+            kwargs.setdefault("persist_members", self.persist_members)
+        elif self.persist_members:
+            kwargs.setdefault("agent_name", agent_name)
+        return cls(llm=llm, **kwargs)
+
+    def _member_workspace_roster(self) -> str:
+        return (
+            "\n".join(
+                f"- {member.name}: {member.name}/ "
+                f"({self._member_workspace(member.name)})"
+                for member in self.config.members
+            )
+            or "No symposium member workspaces configured."
+        )
+
     def _member_roster(self) -> str:
         return (
             "\n".join(
@@ -271,6 +327,10 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             "fair but critical review for each writeup. Discuss strengths, weaknesses, "
             "reproducibility, evidence quality, missing checks, and concrete ways to "
             "improve the solution.\n\n"
+            "For this review phase, your workspace is the parent symposium "
+            "workspace. Participant artifacts are available in these child "
+            "workspace directories, using the relative paths shown:\n"
+            f"{self._member_workspace_roster()}\n\n"
             "Important review constraints:\n"
             "- Do not change, edit, overwrite, or reorganize any work you are reviewing.\n"
             "- If code or files are referenced, you may inspect or run them only to assess "
@@ -338,6 +398,9 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             f"{description}\n"
             "Symposium members:\n"
             f"{self._member_roster()}\n\n"
+            "The organizer workspace is the parent symposium workspace. Final "
+            "member artifacts are available in these child workspace directories:\n"
+            f"{self._member_workspace_roster()}\n\n"
             f"Original problem:\n{task}\n\n"
             f"Final participant writeups:\n{writeup_block}\n\n"
             f"Peer reviews:\n{review_block}"
@@ -355,6 +418,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         invoke_kwargs: Mapping[str, Any],
         events: EnvironmentEvents,
         *,
+        workspace: Path | None = None,
         event_prefix: str,
         phase_name: str,
         round_index: int | None = None,
@@ -373,9 +437,10 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             round_index=round_index,
             prompt=prompt,
         )
+        member = self.members[member_name]
         try:
-            result = await self._invoke_member_async(
-                self.members[member_name], prompt, **invoke_kwargs
+            result = await self._invoke_member_with_workspace_async(
+                member, prompt, workspace=workspace, **invoke_kwargs
             )
         except BaseException as exc:
             await events.aemit(
@@ -406,6 +471,32 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             elapsed_seconds=perf_counter() - start,
         )
         return member_name, text
+
+    async def _invoke_member_with_workspace_async(
+        self,
+        member: Any,
+        prompt: str,
+        *,
+        workspace: Path | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Invoke a member, optionally using a temporary workspace.
+
+        Participants normally work in their own child workspaces. During review,
+        reviewers are temporarily run from the parent symposium workspace so
+        file tools can inspect every participant's child workspace. The original
+        workspace is restored after the invocation.
+        """
+        if workspace is None or not hasattr(member, "workspace"):
+            return await self._invoke_member_async(member, prompt, **kwargs)
+
+        original_workspace = getattr(member, "workspace")
+        setattr(member, "workspace", Path(workspace))
+        Path(workspace).mkdir(parents=True, exist_ok=True)
+        try:
+            return await self._invoke_member_async(member, prompt, **kwargs)
+        finally:
+            setattr(member, "workspace", original_workspace)
 
     async def _ainvoke(
         self, inputs: Mapping[str, Any], **config: Any
@@ -466,6 +557,9 @@ class AgentSymposiumEnvironment(BaseEnvironment):
             current_writeups = dict(initial_writeups)
             review_rounds: list[dict[str, str]] = []
             latest_reviews: dict[str, str] = {}
+            reviewer_configs = [
+                member for member in self.config.members if member.reviewer
+            ]
 
             for round_index in range(
                 1, max(1, self.config.revision_rounds) + 1
@@ -489,8 +583,9 @@ class AgentSymposiumEnvironment(BaseEnvironment):
                         event_prefix="review",
                         phase_name="review",
                         round_index=round_index,
+                        workspace=self.workspace,
                     )
-                    for reviewer_config in self.config.members
+                    for reviewer_config in reviewer_configs
                 ])
                 round_reviews = dict(review_pairs)
                 latest_reviews = round_reviews

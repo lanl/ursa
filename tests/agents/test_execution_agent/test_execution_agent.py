@@ -14,6 +14,8 @@ from langchain_core.messages import (
 )
 
 from ursa.agents import ExecutionAgent
+from ursa.agents.execution_agent import ReviewAssessment
+from ursa.util import Checkpointer
 
 
 @pytest.fixture(autouse=True)
@@ -109,6 +111,107 @@ def _tool_call_message_stream() -> Iterator[AIMessage]:
 @pytest.fixture
 def chat_model():
     return ToolReadyFakeChatModel(messages=_message_stream("ok"))
+
+
+def test_execution_agent_captures_current_invoke_request(
+    chat_model, tmpdir: Path
+):
+    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+
+    normalized = execution_agent._normalize_inputs("current request")
+
+    assert normalized["current_user_request"] == "current request"
+    assert (
+        execution_agent._get_current_user_request({
+            "messages": [
+                HumanMessage(content="old persisted request"),
+                AIMessage(content="old response"),
+                HumanMessage(content="current request"),
+            ],
+            "current_user_request": normalized["current_user_request"],
+            "symlinkdir": {},
+        })
+        == "current request"
+    )
+
+
+def test_execution_agent_review_uses_current_invoke_request(
+    chat_model, monkeypatch, tmpdir: Path
+):
+    captured = {}
+
+    def fake_get_review_prompt(user_request: str) -> str:
+        captured["user_request"] = user_request
+        return f"REVIEW::{user_request}"
+
+    def fake_invoke_structured(*args, **kwargs):
+        captured["review_messages"] = args[2]
+        return ReviewAssessment(is_complete=True, reason="done")
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.get_review_prompt",
+        fake_get_review_prompt,
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.invoke_structured",
+        fake_invoke_structured,
+    )
+
+    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    result = execution_agent.review_work({
+        "messages": [
+            HumanMessage(content="old persisted request"),
+            AIMessage(content="old response"),
+            HumanMessage(content="new invocation request"),
+            AIMessage(content="new response"),
+        ],
+        "current_user_request": "new invocation request",
+        "symlinkdir": {},
+    })
+
+    assert captured["user_request"] == "new invocation request"
+    assert captured["review_messages"][-1].content == (
+        "REVIEW::new invocation request"
+    )
+    assert result["review"].is_complete is True
+
+
+def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
+    chat_model, monkeypatch, tmpdir: Path
+):
+    reviewed_requests = []
+
+    def fake_get_review_prompt(user_request: str) -> str:
+        reviewed_requests.append(user_request)
+        return f"REVIEW::{user_request}"
+
+    def fake_invoke_structured(*args, **kwargs):
+        return ReviewAssessment(is_complete=True, reason="done")
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.get_review_prompt",
+        fake_get_review_prompt,
+    )
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.invoke_structured",
+        fake_invoke_structured,
+    )
+
+    execution_agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmpdir,
+        checkpointer=Checkpointer.from_workspace(Path(tmpdir) / "checkpoints"),
+    )
+    try:
+        execution_agent.invoke("first persisted request")
+        execution_agent.invoke("second persisted request")
+    finally:
+        execution_agent.close()
+
+    assert reviewed_requests == [
+        "first persisted request",
+        "second persisted request",
+    ]
 
 
 @pytest.mark.asyncio
