@@ -8,7 +8,10 @@ import yaml
 from langchain.chat_models import BaseChatModel
 
 URSA_CACHE_DIR = (
-    Path(os.getenv("XDG_CACHE_HOME", "~/.cache")).expanduser() / "ursa"
+    Path(
+        os.getenv("URSA_CACHE_HOME", os.getenv("XDG_CACHE_HOME", "~/.cache"))
+    ).expanduser()
+    / "ursa"
 )
 GROUP_CONFIG_FILENAME = "group.yaml"
 

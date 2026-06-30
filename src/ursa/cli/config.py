@@ -48,6 +48,14 @@ class ModelConfig(BaseModel):
     api_key_env: str | None = None
     """Environmental variable containing the API key for this session"""
 
+    @field_validator("base_url", "api_key_env", mode="before")
+    @classmethod
+    def _strip_blank_optional_strings(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        value = str(value).strip()
+        return value or None
+
     ssl_verify: bool = True
     """Flag for verifying SSL certs. during API access"""
 

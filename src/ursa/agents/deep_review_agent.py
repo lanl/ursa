@@ -20,7 +20,7 @@ from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
-from ursa.prompt_library.hypothesizer_prompts import (
+from ursa.prompt_library.deepreview_prompts import (
     competitor_prompt,
     critic_prompt,
     hypothesizer_prompt,

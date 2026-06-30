@@ -226,6 +226,14 @@ def create_app() -> FastAPI:
                 ),
                 dashboard_group,
             )
+            if (
+                getattr(settings, "embedding", None)
+                and settings.embedding.model
+            ):
+                enforce_group_base_url_policy(
+                    settings.embedding.base_url,
+                    dashboard_group,
+                )
         except GroupBaseURLPolicyError as e:
             raise RuntimeError(str(e)) from e
 
@@ -549,6 +557,7 @@ def create_app() -> FastAPI:
         runner = _deep_merge_dicts(
             s.get("runner") or {}, sess.get("runner") or {}, req.runner or {}
         )
+        embedding = s.get("embedding") or {}
         mcp = s.get("mcp") or {}
 
         # Demo agents should work without external credentials.
@@ -579,6 +588,7 @@ def create_app() -> FastAPI:
                 "session_id": session_id,
                 "session_user_message_id": user_msg.get("message_id"),
                 "workspace_dir": str(workspace_dir),
+                "embedding": embedding,
                 "mcp": mcp,
             },
         )
@@ -675,6 +685,7 @@ def create_app() -> FastAPI:
         s = settings_store.load().model_dump(mode="json")
         llm = _deep_merge_dicts(s.get("llm") or {}, req.llm or {})
         runner = _deep_merge_dicts(s.get("runner") or {}, req.runner or {})
+        embedding = s.get("embedding") or {}
         mcp = s.get("mcp") or {}
 
         # Demo agents should work without external credentials.
@@ -691,7 +702,7 @@ def create_app() -> FastAPI:
             agent_init=agent_init,
             llm=llm,
             runner=runner,
-            extra={"mcp": mcp},
+            extra={"embedding": embedding, "mcp": mcp},
         )
         return rec
 
@@ -3851,8 +3862,10 @@ def create_app() -> FastAPI:
     setSettingsModalMode(mode, session);
 
     const globalLlm = state.settings.llm || {};
+    const globalEmbedding = state.settings.embedding || {};
     const globalRunner = state.settings.runner || {};
     const llm = mode === 'session' ? _deepMergeObjects(globalLlm, session?.llm || {}) : globalLlm;
+    const embedding = globalEmbedding;
     const runner = mode === 'session' ? _deepMergeObjects(globalRunner, session?.runner || {}) : globalRunner;
     const mcp = state.settings.mcp || {};
     const tools = state.settings.tools || {};
@@ -3867,6 +3880,13 @@ def create_app() -> FastAPI:
     $('#set_api_key_env').value = llm.api_key_env || '';
     const modelKwargs = llm.model_kwargs || {};
     $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
+
+    $('#set_embedding_base_url').value = embedding.base_url || '';
+    $('#set_embedding_model').value = embedding.model || '';
+    $('#set_embedding_api_key_env').value = embedding.api_key_env || '';
+    const embeddingModelKwargs = embedding.model_kwargs || {};
+    $('#set_embedding_model_kwargs').value = Object.keys(embeddingModelKwargs).length ? JSON.stringify(embeddingModelKwargs, null, 2) : '';
+
     $('#set_timeout').value = runner.timeout_seconds ?? '';
 
     // MCP is global-only.
@@ -3960,8 +3980,10 @@ def create_app() -> FastAPI:
 
   async function saveSettings() {
     let modelKwargs;
+    let embeddingModelKwargs;
     try {
       modelKwargs = _jsonObjectFromTextarea('#set_model_kwargs', 'Model kwargs');
+      embeddingModelKwargs = _jsonObjectFromTextarea('#set_embedding_model_kwargs', 'Embedding model kwargs');
     } catch (e) {
       alert(e.message || String(e));
       return;
@@ -3985,6 +4007,12 @@ def create_app() -> FastAPI:
         stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
       },
       ...common,
+      embedding: {
+        base_url: ($('#set_embedding_base_url').value || '').trim() || null,
+        model: ($('#set_embedding_model').value || '').trim() || null,
+        api_key_env: ($('#set_embedding_api_key_env').value || '').trim() || null,
+        model_kwargs: embeddingModelKwargs,
+      },
       mcp: {
         servers: (state._mcpServers || {}),
       },
@@ -3993,18 +4021,20 @@ def create_app() -> FastAPI:
       }
     };
 
-    // remove nulls to avoid overwriting with null unless explicitly intended
-    // (but preserve empty objects/arrays where we need to allow clearing settings, e.g. mcp.servers and tools.rag_tools).
+    // Remove nulls to avoid overwriting with null unless explicitly intended.
+    // Preserve llm.base_url=null so clearing the Base URL field restores the model provider default.
+    // Also preserve empty objects/arrays where we need to allow clearing settings, e.g. mcp.servers and tools.rag_tools.
     function compact(o, path='') {
       if (!o || typeof o !== 'object') return o;
       const out = Array.isArray(o) ? [] : {};
       for (const [k,v] of Object.entries(o)) {
         const p = path ? (path + '.' + k) : k;
-        if (v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v))) continue;
+        if (v === undefined || (typeof v === 'number' && Number.isNaN(v))) continue;
+        if (v === null && p !== 'llm.base_url' && !p.startsWith('embedding.')) continue;
         if (typeof v === 'object' && !Array.isArray(v)) {
           const c = compact(v, p);
           const empty = c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0;
-          if (!empty || p === 'mcp.servers' || p === 'llm.model_kwargs') out[k] = c;
+          if (!empty || p === 'mcp.servers' || p === 'llm.model_kwargs' || p === 'embedding.model_kwargs') out[k] = c;
         } else if (Array.isArray(v)) {
           if (v.length || p === 'tools.rag_tools') out[k] = v;
         } else out[k] = v;
@@ -4851,6 +4881,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <div class="settingsNav">
         <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
         <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn" data-settings-section="embedding" type="button">Embedding/RAG</button>
         <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
         <button class="settingsNavBtn" data-settings-section="tools" type="button">Agent tools</button>
         <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
@@ -4891,12 +4922,25 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <div class="settingsPane hidden" data-settings-pane="llm">
           <div class="section">
             <div class="sectionHead">LLM</div>
-            <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
+            <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
             <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div>
             <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model and base_url.</div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="embedding">
+          <div class="section">
+            <div class="sectionHead">Embedding / RAG</div>
+            <div class="muted small" style="margin: 2px 0 10px">Configure the embedding model used by RAG agents and persisted RAG tools. The dashboard stores only non-secret settings.</div>
+            <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_embedding_base_url" placeholder="Model Provider Default" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_embedding_model" placeholder="openai:text-embedding-3-large" /></div>
+            <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_embedding_api_key_env" placeholder="OPENAI_API_KEY" /></div>
+            <div class="muted small" style="margin: 2px 0 10px">Set the embedding API key in the dashboard server environment and reference its variable name here.</div>
+            <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_embedding_model_kwargs" rows="7" placeholder='{{"dimensions":1024}}' style="font-family: var(--mono);"></textarea></div>
+            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_embeddings. Explicit fields above still take precedence for model and base_url.</div>
           </div>
         </div>
 

@@ -41,11 +41,13 @@ class RecordingMember:
         self.group = group
         self.kwargs = kwargs
         self.invocations: list[str] = []
+        self.workspaces_seen: list = []
         type(self).kwargs_seen.append(kwargs)
 
     def invoke(self, prompt, **kwargs):
         prompt = str(prompt)
         self.invocations.append(prompt)
+        self.workspaces_seen.append(self.workspace)
         type(self).prompts.append(prompt)
         return {
             "messages": [
@@ -60,6 +62,7 @@ class RecordingPI(RecordingMember):
 
     def invoke(self, prompt, **kwargs):
         self.invocations.append(str(prompt))
+        self.workspaces_seen.append(self.workspace)
         if getattr(self, "delegation_tools", None):
             delegated = self.delegation_tools[0].invoke({
                 "task": "delegated subtask",
@@ -72,6 +75,7 @@ class RecordingPI(RecordingMember):
 class RecordingOrganizer(RecordingMember):
     def invoke(self, prompt, **kwargs):
         self.invocations.append(str(prompt))
+        self.workspaces_seen.append(self.workspace)
         return {"final": f"organizer synthesis from {str(prompt)[:60]}"}
 
 
@@ -82,6 +86,7 @@ class AsyncRecordingMember(RecordingMember):
     async def ainvoke(self, prompt, **kwargs):
         prompt = str(prompt)
         self.invocations.append(prompt)
+        self.workspaces_seen.append(self.workspace)
         type(self).prompts.append(prompt)
         await asyncio.sleep(0)
         return {
@@ -99,6 +104,7 @@ class AsyncRecordingPI(AsyncRecordingMember):
 
     async def ainvoke(self, prompt, **kwargs):
         self.invocations.append(str(prompt))
+        self.workspaces_seen.append(self.workspace)
         if getattr(self, "delegation_tools", None):
             delegated = await self.delegation_tools[0].ainvoke({
                 "task": "delegated async subtask",
@@ -349,6 +355,87 @@ def test_symposium_runs_independent_review_revision_and_synthesis(tmp_path):
     assert "Work independently" in alpha_prompts[0]
     assert "Do not change, edit, overwrite, or reorganize" in alpha_prompts[1]
     assert "You may change only your own work/artifacts" in alpha_prompts[2]
+
+
+def test_symposium_uses_stable_names_parent_workspace_and_reviewer_flag(
+    tmp_path,
+):
+    config = {
+        "name": "soccer_symposium",
+        "organizer": {
+            "name": "organizer",
+            "role": "synth",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        "members": [
+            {
+                "name": "nemo_soccer",
+                "role": "first solver and reviewer",
+                "agent": "tests.environments.test_environments.RecordingMember",
+            },
+            {
+                "name": "honeybee_soccer",
+                "role": "second solver only",
+                "agent": "tests.environments.test_environments.RecordingMember",
+                "reviewer": False,
+            },
+        ],
+        "workspace": str(tmp_path),
+    }
+    symposium = AgentSymposiumEnvironment(
+        llm=fake_llm(), config=config, persist_members=True
+    )
+
+    assert symposium.organizer.agent_name == "organizer"
+    assert symposium.organizer.workspace == tmp_path
+    assert symposium.members["nemo_soccer"].agent_name == "nemo_soccer"
+    assert symposium.members["honeybee_soccer"].agent_name == "honeybee_soccer"
+    assert (
+        symposium.members["nemo_soccer"].workspace == tmp_path / "nemo_soccer"
+    )
+    assert symposium.members["honeybee_soccer"].workspace == (
+        tmp_path / "honeybee_soccer"
+    )
+    assert symposium.config.members[0].reviewer is True
+    assert symposium.config.members[1].reviewer is False
+
+    result = symposium.invoke("hard soccer problem")
+
+    assert set(result["initial_writeups"]) == {
+        "nemo_soccer",
+        "honeybee_soccer",
+    }
+    assert set(result["reviews"]) == {"nemo_soccer"}
+    assert set(result["final_writeups"]) == {
+        "nemo_soccer",
+        "honeybee_soccer",
+    }
+
+    reviewer = symposium.members["nemo_soccer"]
+    non_reviewer = symposium.members["honeybee_soccer"]
+    assert reviewer.workspaces_seen == [
+        tmp_path / "nemo_soccer",
+        tmp_path,
+        tmp_path / "nemo_soccer",
+    ]
+    assert non_reviewer.workspaces_seen == [
+        tmp_path / "honeybee_soccer",
+        tmp_path / "honeybee_soccer",
+    ]
+    assert reviewer.workspace == tmp_path / "nemo_soccer"
+    assert non_reviewer.workspace == tmp_path / "honeybee_soccer"
+    assert "honeybee_soccer/" in reviewer.invocations[1]
+    assert "parent symposium workspace" in reviewer.invocations[1]
+    assert (
+        "Do not change, edit, overwrite, or reorganize"
+        in (reviewer.invocations[1])
+    )
+    assert (
+        "Do not change, edit, overwrite, or reorganize"
+        not in (non_reviewer.invocations[1])
+    )
+    assert symposium.organizer.workspaces_seen == [tmp_path]
+    assert "honeybee_soccer/" in symposium.organizer.invocations[0]
 
 
 async def test_symposium_ainvoke_gathers_independent_member_phases(tmp_path):
