@@ -2,16 +2,16 @@ from pathlib import Path
 from typing import Annotated, Optional, TypedDict
 
 from langchain.chat_models import BaseChatModel
-from langchain.embeddings import init_embeddings
 from langchain_core.messages import (
-    SystemMessage,
+    AIMessage,
+    HumanMessage,
 )
 from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
 from rich import get_console
 
-from ursa.agents import ExecutionAgent, RAGAgent
-from ursa.agents.base import AgentWithTools, BaseAgent
+from ursa.agents import ChatAgent, RAGAgent
+from ursa.agents.base import BaseAgent
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util import Checkpointer
 
@@ -91,7 +91,7 @@ class State(TypedDict):
     goal: str
 
 
-class SimulatorAgent(AgentWithTools, BaseAgent):
+class SimulatorAgent(BaseAgent):
     state_type = State
 
     def __init__(
@@ -105,8 +105,7 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         thread_id=str,
         **kwargs,
     ):
-        tools = []
-        super().__init__(llm, tools=tools, workspace=workspace, **kwargs)
+        super().__init__(llm, workspace=workspace, **kwargs)
         self.documenter_prompt = documenter_prompt
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
@@ -115,13 +114,13 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
         self.embedding = embedding
         self.use_web = use_web
         self.llm = llm
-        self.documenter = ExecutionAgent(
+        self.documenter = ChatAgent(
             llm=self.llm,
             workspace=workspace,
             checkpointer=checkpointer,
             thread_id=self.thread_id + "_documenter",
         )
-        self.runner = ExecutionAgent(
+        self.runner = ChatAgent(
             llm=self.llm,
             workspace=workspace,
             checkpointer=checkpointer,
@@ -135,7 +134,7 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
             "All standard programming languages and tools for compiling and running codes and the associated files available in your workspace."
         ]
 
-        self.documenter.remove_tool(["run_command"])
+        self.documenter.remove_tool(["run_command", "write_code"])
 
         if not self.use_web:
             self.documenter.remove_tool([
@@ -211,10 +210,29 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
 
     # Define the function that calls the model
     def _summarize(self, state: State) -> State:
-        messages = state["messages"] + [SystemMessage(content=recap_prompt)]
-        response = self.llm.invoke(
-            messages, {"configurable": {"thread_id": self.thread_id}}
-        )
+        messages = state["messages"] + [HumanMessage(content=recap_prompt)]
+        # 2) Invoke the LLM to generate a recap; capture content even on failure.
+        try:
+            response = self.llm.invoke(
+                messages, self.build_config(tags=["recap"])
+            )
+            response_content = response.text
+        except Exception as ee:
+            try:
+                response = self.runner.llm.invoke(
+                    input=messages,
+                    config=self.build_config(tags=["recap"]),
+                )
+                response_content = response.text
+            except Exception as e:
+                response_content = f"Response errors {ee} and {e}"
+                response = AIMessage(content=response_content)
+                console.rule(
+                    f"[bold black] Recap #1 failed: {type(ee).__name__}:\n{ee} [/bold black]"
+                )
+                console.rule(
+                    f"[bold black] Recap #2 failed: {type(e).__name__}:\n{e} [/bold black]"
+                )
 
         updated_messages = [*state["messages"], response]
 
@@ -238,10 +256,7 @@ class SimulatorAgent(AgentWithTools, BaseAgent):
 
 
 def main():
-    import sqlite3
-
     from langchain.chat_models import init_chat_model
-    from langgraph.checkpoint.sqlite import SqliteSaver
 
     problem = (
         "Your task is to perform a parameter sweep of dcopf using an open source "
@@ -255,24 +270,9 @@ def main():
     )
     workspace = "ursa_simulator_test"
 
-    db_path = Path(workspace) / "checkpoint.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
-
-    embedding = init_embeddings("openai:text-embedding-3-large")
     model = init_chat_model(
         model="openai:gpt-5.2",
     )
-
-    simulator = SimulatorAgent(
-        llm=model,
-        workspace=workspace,
-        embedding=embedding,
-        checkpointer=checkpointer,
-        use_web=True,
-    )
-    simulator.thread_id = "dcopf_test_executor"
 
     agent = SimulatorAgent(llm=model, log_state=True, workspace=workspace)
     result = agent.invoke(problem)
