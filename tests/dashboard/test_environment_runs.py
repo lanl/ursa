@@ -9,7 +9,7 @@ from ursa_dashboard.app import create_app
 
 
 def test_environment_run_api_routes(monkeypatch, tmp_path):
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
     monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
     run_dir = tmp_path / "ursa" / "default" / "environment_runs" / "run-1"
     run_dir.mkdir(parents=True)

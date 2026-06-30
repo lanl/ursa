@@ -87,7 +87,7 @@ def reset_visual_fakes():
 def test_run_with_visualization_records_team_delegation_and_forwards_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
     team = AgentTeamEnvironment(
         llm=fake_llm(),
         name="visual_team",
@@ -139,7 +139,7 @@ def test_run_with_visualization_records_team_delegation_and_forwards_config(
 async def test_arun_with_visualization_records_symposium_events(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
     symposium = AgentSymposiumEnvironment(
         llm=fake_llm(),
         name="visual_symposium",
@@ -182,7 +182,7 @@ async def test_arun_with_visualization_records_symposium_events(
 def test_environment_run_recorder_marks_success_on_normal_exit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(security, "AGENT_GROUPS_DIR", tmp_path / "ursa")
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
     team = AgentTeamEnvironment(
         llm=fake_llm(),
         name="context_team",

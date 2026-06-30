@@ -4911,6 +4911,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         logo_img_style = "" if str(logo_img_src).strip() else "display:none"
 
+        environment_runs_button = ""
+        with contextlib.suppress(Exception):
+            if list_environment_run_manifests(dashboard_group):
+                environment_runs_button = (
+                    '<button class="btn" type="button" '
+                    "onclick=\"window.location.href='/ui/environment-runs'\">"
+                    "Environment Runs</button>"
+                )
+
         body = f"""
 <div class="app">
   <div class="sidebar" id="leftPanel">
@@ -4930,7 +4939,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <button class="btn" id="toggleLogsBtn" type="button">Hide logs</button>
         <button class="btn" id="toggleArtifactsBtn" type="button">Hide artifacts</button>
         <button class="btn" id="openSettingsBtn" type="button">Settings</button>
-        <button class="btn" type="button" onclick="window.location.href='/ui/environment-runs'">Environment Runs</button>
+        {environment_runs_button}
       </div>
     </div>
 
