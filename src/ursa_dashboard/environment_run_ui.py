@@ -526,8 +526,8 @@ function renderCurrentEvent() {
   if (tool && !owner) sections += block('Assignment', 'This tool event did not record the member that invoked it. The UI is not assigning it to a graph participant to avoid misleading attribution.');
   sections += block('Task / instruction', p.task || p.prompt);
   sections += block('Tool query / command', p.query || p.command || p.input, {markdown:false});
-  sections += block('File or path', p.path || p.filename, {markdown:false});
   sections += block('Result', p.result || p.output || p.final);
+  sections += block('File or path', p.path || p.filename, {markdown:false});
   sections += block('Error', p.error || p.error_type, {markdown:false});
   sections += block('Safety rationale', p.reason);
   if (!sections) sections = block('Details', p, {markdown:false});

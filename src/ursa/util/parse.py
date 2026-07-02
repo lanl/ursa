@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import re
@@ -11,9 +13,12 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import justext
+import pymupdf
 import requests
 from bs4 import BeautifulSoup
-from langchain_community.document_loaders import PyPDFLoader
+
+with contextlib.redirect_stdout(io.StringIO()):
+    import pymupdf4llm
 
 # Check for optional dependencies
 docx_installed = False
@@ -313,9 +318,8 @@ def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> str | None:
 
 def _pdf_page_count(path: Path) -> int:
     try:
-        loader = PyPDFLoader(path)
-        pages = loader.load()
-        return len(pages)
+        with pymupdf.open(str(path)) as doc:
+            return len(doc)
     except Exception as e:  # noqa: BLE001
         print("[Error]: ", e)
         return 0
@@ -540,9 +544,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
 
 
 def read_text_pdf(path: str | Path) -> str:
-    loader = PyPDFLoader(path)
-    pages = loader.load()
-    return "\n".join(p.page_content for p in pages)
+    return pymupdf4llm.to_markdown(str(path)) or ""
 
 
 def read_pdf(path: str | Path) -> str:
