@@ -45,11 +45,13 @@ Tool usage from a ``ToolRuntime``:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
 from time import monotonic_ns, perf_counter
-from typing import Any, Self
+from typing import Any, Mapping, Self
+from uuid import uuid4
 
 from langchain.tools import ToolRuntime
 from langchain_core.callbacks import BaseCallbackHandler
@@ -312,6 +314,118 @@ class AgentEvents(ProgressEvents):
         )
 
 
+class EnvironmentEvents(ProgressEvents):
+    """Emit standardized URSA progress events for an environment.
+
+    Environment events use the same custom LangChain event channel as agent and
+    tool events so a single callback recorder can capture complete nested runs.
+    Environments may also be invoked directly rather than from inside a
+    LangChain runnable. In that case LangChain refuses ad-hoc custom events
+    because there is no parent run ID, so this helper falls back to directly
+    notifying callbacks from the runnable config.
+    """
+
+    def __init__(
+        self,
+        environment: str,
+        config: RunnableConfig | None = None,
+        event_name: str = DEFAULT_EVENT_NAME,
+        *,
+        environment_type: str | None = None,
+        environment_id: str | None = None,
+        path: list[str] | None = None,
+    ) -> None:
+        default_payload: dict[str, Any] = {}
+        if environment_type is not None:
+            default_payload["environment_type"] = environment_type
+        if environment_id is not None:
+            default_payload["environment_id"] = environment_id
+        if path is not None:
+            default_payload["path"] = path
+        super().__init__(
+            name=environment,
+            config=config,
+            event_name=event_name,
+            name_key="environment",
+            default_payload=default_payload,
+        )
+
+    def emit(
+        self,
+        message: str,
+        *,
+        stage: str,
+        **payload: Any,
+    ) -> dict[str, Any] | None:
+        if self.config is None:
+            return None
+        body = self._payload(message=message, stage=stage, **payload)
+        try:
+            dispatch_custom_event(self.event_name, body, config=self.config)
+        except RuntimeError as exc:
+            if not self._is_missing_parent_run_error(exc):
+                raise
+            self._direct_emit(body)
+        return body
+
+    async def aemit(
+        self,
+        message: str,
+        *,
+        stage: str,
+        **payload: Any,
+    ) -> dict[str, Any] | None:
+        if self.config is None:
+            return None
+        body = self._payload(message=message, stage=stage, **payload)
+        try:
+            await adispatch_custom_event(
+                self.event_name,
+                body,
+                config=self.config,
+            )
+        except RuntimeError as exc:
+            if not self._is_missing_parent_run_error(exc):
+                raise
+            await self._adirect_emit(body)
+        return body
+
+    @staticmethod
+    def _is_missing_parent_run_error(exc: RuntimeError) -> bool:
+        return (
+            "Unable to dispatch an adhoc event without a parent run id"
+            in str(exc)
+        )
+
+    def _callbacks(self) -> list[Any]:
+        if self.config is None:
+            return []
+        callbacks = self.config.get("callbacks", [])
+        if callbacks is None:
+            return []
+        if isinstance(callbacks, list):
+            return callbacks
+        return [callbacks]
+
+    def _direct_emit(self, body: dict[str, Any]) -> None:
+        run_id = uuid4()
+        for callback in self._callbacks():
+            handler = getattr(callback, "on_custom_event", None)
+            if handler is None:
+                continue
+            handler(self.event_name, body, run_id=run_id)
+
+    async def _adirect_emit(self, body: dict[str, Any]) -> None:
+        run_id = uuid4()
+        for callback in self._callbacks():
+            handler = getattr(callback, "on_custom_event", None)
+            if handler is None:
+                continue
+            result = handler(self.event_name, body, run_id=run_id)
+            if inspect.isawaitable(result):
+                await result
+
+
 class ToolEvents(ProgressEvents):
     """Emit standardized URSA progress events for a single tool."""
 
@@ -322,8 +436,11 @@ class ToolEvents(ProgressEvents):
         event_name: str = DEFAULT_EVENT_NAME,
         *,
         tool_call_id: str | None = None,
+        owner_payload: Mapping[str, Any] | None = None,
     ) -> None:
         default_payload: dict[str, Any] = {}
+        if owner_payload:
+            default_payload.update(owner_payload)
         if tool_call_id is not None:
             default_payload["tool_call_id"] = tool_call_id
         super().__init__(
@@ -333,6 +450,47 @@ class ToolEvents(ProgressEvents):
             name_key="tool",
             default_payload=default_payload,
         )
+
+    @staticmethod
+    def _owner_payload_from_runtime(
+        runtime: ToolRuntime[Any],
+    ) -> dict[str, Any]:
+        """Return agent/member identity fields recorded on a tool runtime."""
+        config = runtime.config if isinstance(runtime.config, Mapping) else {}
+        metadata = config.get("metadata")
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        context = getattr(runtime, "context", None)
+
+        environment_id = metadata.get("environment_id")
+        member = metadata.get("environment_member")
+        member_id = metadata.get("environment_member_id")
+        member_path = metadata.get("environment_member_path")
+        member_role = metadata.get("environment_member_role")
+
+        agent = metadata.get("agent") or member
+        agent_id = metadata.get("agent_id") or member_id
+        if agent is None and context is not None:
+            agent = getattr(context, "agent_name", None)
+        if agent_id is None and environment_id and agent:
+            agent_id = f"{environment_id}.{agent}"
+
+        payload: dict[str, Any] = {}
+        if agent is not None:
+            payload["agent"] = str(agent)
+        if agent_id is not None:
+            payload["agent_id"] = str(agent_id)
+        if member is not None:
+            payload["environment_member"] = str(member)
+        if member_id is not None:
+            payload["environment_member_id"] = str(member_id)
+        if member_role is not None:
+            payload["environment_member_role"] = str(member_role)
+        if environment_id is not None:
+            payload["environment_id"] = str(environment_id)
+        if member_path is not None:
+            payload["environment_member_path"] = member_path
+        return payload
 
     @classmethod
     def from_runtime(
@@ -350,6 +508,7 @@ class ToolEvents(ProgressEvents):
             config=runtime.config,
             event_name=event_name,
             tool_call_id=runtime.tool_call_id,
+            owner_payload=cls._owner_payload_from_runtime(runtime),
         )
 
 
@@ -459,6 +618,7 @@ __all__ = [
     "DEFAULT_EVENT_NAME",
     "AgentEvents",
     "EventConsoleFormatter",
+    "EnvironmentEvents",
     "EventLoggingHandler",
     "EventRange",
     "ProgressEvents",

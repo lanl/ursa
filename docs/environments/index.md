@@ -57,6 +57,17 @@ URSA currently includes two multi-agent environment patterns.
 
 </div>
 
+## Visualize environment runs
+
+Environment runs can be recorded and replayed with `run_with_visualization(...)`
+and `arun_with_visualization(...)`. Recorded runs include the environment graph,
+major phases, delegation events, tool activity, errors, and final results.
+
+Use visualization when you want to debug or audit how a team or symposium reached
+its answer.
+
+[:octicons-arrow-right-24: Visualizing Environment Runs](visualization.md)
+
 ## Why use an environment instead of one larger prompt?
 
 Environments make the collaboration pattern explicit. That matters because complex

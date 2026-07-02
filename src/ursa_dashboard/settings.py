@@ -158,8 +158,7 @@ class GlobalSettings(BaseModel):
 def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
     """Return a dashboard settings patch from a CLI-style URSA config.
 
-    The dashboard intentionally stores only non-secret LLM settings. CLI
-    ``llm_model.api_key_env`` is mapped to dashboard ``llm.api_key_env``;
+    The dashboard intentionally stores only non-secret LLM settings.
     raw API keys are rejected so they are not persisted in settings.json.
     Additional ``llm_model`` fields accepted by the CLI config are passed
     through as dashboard ``llm.model_kwargs`` except for fields that have a

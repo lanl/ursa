@@ -49,6 +49,12 @@ from ursa.cli.agent_management import (
 from ursa.cli.agent_management import (
     save_agent as cli_save_agent,
 )
+from ursa.environments.visualization import (
+    get_environment_run_paths,
+    list_environment_run_manifests,
+    read_environment_run_events,
+    read_environment_run_manifest,
+)
 from ursa.rag.persistence import (
     list_rag_agent_names,
     normalize_rag_tool_names,
@@ -79,6 +85,10 @@ from .api_models import (
     WorkspaceListResponse,
 )
 from .artifacts import scan_artifacts
+from .environment_run_ui import (
+    render_environment_run_detail_page,
+    render_environment_runs_page,
+)
 from .models import AgentListResponse
 from .registry import REGISTRY
 from .run_manager import RunManager
@@ -4684,6 +4694,189 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             headers={"Cache-Control": "no-cache"},
         )
 
+    def _environment_run_manifest_for_dashboard(run_id: str) -> dict[str, Any]:
+        manifest = read_environment_run_manifest(dashboard_group, run_id)
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        manifest.setdefault("paths", {})
+        manifest["paths"].update({
+            "run_dir": str(paths.run_dir),
+            "events_path": str(paths.events_path),
+            "artifacts_dir": str(paths.artifacts_dir),
+            "logs_dir": str(paths.logs_dir),
+        })
+        return manifest
+
+    @app.get("/environment-runs", dependencies=[Depends(require_auth)])
+    async def list_environment_runs() -> dict[str, Any]:
+        return {
+            "group": dashboard_group,
+            "runs": list_environment_run_manifests(dashboard_group),
+        }
+
+    @app.get("/environment-runs/{run_id}", dependencies=[Depends(require_auth)])
+    async def get_environment_run(run_id: str) -> dict[str, Any]:
+        try:
+            return _environment_run_manifest_for_dashboard(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+
+    @app.get(
+        "/environment-runs/{run_id}/events",
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_environment_run_events(
+        run_id: str,
+        after_seq: int = Query(default=0, ge=0),
+        limit: int = Query(default=1000, ge=1, le=10000),
+    ) -> dict[str, Any]:
+        try:
+            read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        events = read_environment_run_events(
+            dashboard_group, run_id, after_seq=after_seq, limit=limit
+        )
+        return {"run_id": run_id, "events": events}
+
+    async def _environment_run_sse(
+        run_id: str, after_seq: int = 0
+    ) -> AsyncIterator[bytes]:
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        cursor_seq = after_seq
+        offset = 0
+        last_keepalive = asyncio.get_event_loop().time()
+
+        def format_sse(event: dict[str, Any]) -> bytes:
+            seq = int(event.get("seq", 0))
+            data = json.dumps(event, ensure_ascii=False)
+            return (
+                f"id: {seq}\nevent: message\nretry: 1500\ndata: {data}\n\n"
+            ).encode("utf-8")
+
+        while True:
+            if paths.events_path.exists():
+                with paths.events_path.open("rb") as f:
+                    if offset:
+                        f.seek(offset)
+                    while True:
+                        line_b = f.readline()
+                        if not line_b:
+                            offset = f.tell()
+                            break
+                        try:
+                            event = json.loads(
+                                line_b.decode("utf-8", errors="replace")
+                            )
+                            seq = int(event.get("seq", 0))
+                        except Exception:
+                            continue
+                        if seq <= cursor_seq:
+                            continue
+                        cursor_seq = seq
+                        yield format_sse(event)
+
+            status = None
+            with contextlib.suppress(Exception):
+                status = json.loads(
+                    paths.manifest_path.read_text(encoding="utf-8")
+                ).get("status")
+            if status in {"succeeded", "failed", "cancelled"}:
+                # Give writers a moment to flush any final event records that
+                # landed just before or after the terminal manifest update.
+                await asyncio.sleep(0.1)
+                if paths.events_path.exists():
+                    with paths.events_path.open("rb") as f:
+                        if offset:
+                            f.seek(offset)
+                        while True:
+                            line_b = f.readline()
+                            if not line_b:
+                                offset = f.tell()
+                                break
+                            try:
+                                event = json.loads(
+                                    line_b.decode("utf-8", errors="replace")
+                                )
+                                seq = int(event.get("seq", 0))
+                            except Exception:
+                                continue
+                            if seq <= cursor_seq:
+                                continue
+                            cursor_seq = seq
+                            yield format_sse(event)
+                break
+
+            now = asyncio.get_event_loop().time()
+            if now - last_keepalive > 15:
+                yield b": keepalive\n\n"
+                last_keepalive = now
+            await asyncio.sleep(0.5)
+
+    @app.get(
+        "/environment-runs/{run_id}/stream",
+        dependencies=[Depends(require_auth)],
+    )
+    async def stream_environment_run_events(
+        run_id: str,
+        after_seq: int = Query(default=0, ge=0),
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse:
+        try:
+            read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        with contextlib.suppress(Exception):
+            if last_event_id is not None and str(last_event_id).strip():
+                after_seq = max(after_seq, int(str(last_event_id).strip()))
+        return StreamingResponse(
+            _environment_run_sse(run_id, after_seq),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    @app.get(
+        "/ui/environment-runs",
+        include_in_schema=False,
+        dependencies=[Depends(require_auth)],
+    )
+    async def ui_environment_runs() -> HTMLResponse:
+        runs = list_environment_run_manifests(dashboard_group)
+        return HTMLResponse(
+            render_environment_runs_page(
+                dashboard_group=dashboard_group,
+                runs=runs,
+            )
+        )
+
+    @app.get(
+        "/ui/environment-runs/{run_id}",
+        include_in_schema=False,
+        dependencies=[Depends(require_auth)],
+    )
+    async def ui_environment_run_detail(run_id: str) -> HTMLResponse:
+        try:
+            manifest = _environment_run_manifest_for_dashboard(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        return HTMLResponse(
+            render_environment_run_detail_page(
+                run_id=run_id,
+                manifest=manifest,
+            )
+        )
+
     @app.get("/", include_in_schema=False, dependencies=[Depends(require_auth)])
     async def ui_root() -> HTMLResponse:
         return await ui_dashboard()
@@ -4718,6 +4911,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         logo_img_style = "" if str(logo_img_src).strip() else "display:none"
 
+        environment_runs_button = ""
+        with contextlib.suppress(Exception):
+            if list_environment_run_manifests(dashboard_group):
+                environment_runs_button = (
+                    '<button class="btn" type="button" '
+                    "onclick=\"window.location.href='/ui/environment-runs'\">"
+                    "Environment Runs</button>"
+                )
+
         body = f"""
 <div class="app">
   <div class="sidebar" id="leftPanel">
@@ -4737,6 +4939,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <button class="btn" id="toggleLogsBtn" type="button">Hide logs</button>
         <button class="btn" id="toggleArtifactsBtn" type="button">Hide artifacts</button>
         <button class="btn" id="openSettingsBtn" type="button">Settings</button>
+        {environment_runs_button}
       </div>
     </div>
 
