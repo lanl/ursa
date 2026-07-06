@@ -3,11 +3,16 @@ from collections.abc import Iterator
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from pydantic import Field
 
 from ursa.agents.planning_agent import Plan, PlanningAgent
 
 
-class FakePlanningChatModel:
+class FakePlanningChatModel(GenericFakeChatModel):
+    messages: Iterator[AIMessage | str] = Field(
+        default_factory=lambda: iter([AIMessage(content="unused")])
+    )
+
     def model_copy(self, update=None):
         return self
 
