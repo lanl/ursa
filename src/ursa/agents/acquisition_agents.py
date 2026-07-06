@@ -392,7 +392,7 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
-            den=self.den,
+            workspace=self.den,
             embedding=self.rag_embedding,
             vectorstore_path="rag_vectorstore",
             database_path=self.database_path.name,

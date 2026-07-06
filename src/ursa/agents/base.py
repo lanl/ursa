@@ -16,6 +16,7 @@ integration capabilities while only needing to implement the core _invoke method
 """
 
 import asyncio
+import importlib.metadata
 import inspect
 import re
 import sqlite3
@@ -80,6 +81,12 @@ from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
+
+try:
+    URSA_VERSION = importlib.metadata.version("ursa-ai")
+except importlib.metadata.PackageNotFoundError:
+    # Fallback for local development if the package isn't installed via pip/uv yet
+    URSA_VERSION = "0.0.0-dev"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -226,6 +233,12 @@ class BaseAgent(Generic[TState], ABC):
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
         """
+        llm = llm.bind(
+            extra_headers={
+                "User-Agent": f"ursa/{URSA_VERSION}",
+                "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
+            }
+        )
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or ".")
         self.agent_name = agent_name
