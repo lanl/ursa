@@ -250,9 +250,11 @@ def main(args=None):
             from ursa.cli.hitl import HITL
 
             hitl = HITL(ursa_config)
-            mcp = hitl.as_mcp_server(
-                host=cmd_config.host,
-                port=cmd_config.port,
-                log_level=cmd_config.log_level.upper(),
-            )
-            mcp.run(transport=cmd_config.transport)
+            mcp = hitl.as_mcp_server()
+            run_kwargs = {
+                "transport": cmd_config.transport,
+                "log_level": cmd_config.log_level.upper(),
+            }
+            if cmd_config.transport == "streamable-http":
+                run_kwargs.update(host=cmd_config.host, port=cmd_config.port)
+            mcp.run(**run_kwargs)
