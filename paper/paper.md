@@ -102,9 +102,13 @@ Several agentic systems have also been developed specifically for scientific res
 
 # Software design
 
-URSA is built on top of LangGraph [@langgraph] and is agnostic to the underlying large language model. The framework is organized around a collection of core agents that support general scientific workflows and serve as building blocks for the construction of domain-specific agents. This design enables the same architectural components to be reused across a wide range of scientific applications.
+URSA is built on top of LangGraph [@langgraph] and is agnostic to the underlying large language model. Its software architecture is organized around three main concepts: (i) reusable core and domain-specific agents, (ii) multiple user interfaces that expose a common execution engine, and (iii) execution environments that orchestrate collaboration among multiple agents.
 
-## Core Agents
+## Agent Framework
+
+URSA's agents are organized around a collection of core agents that support general scientific workflows and serve as building blocks for the construction of domain-specific agents. This design enables the same architectural components to be reused across a wide range of scientific applications.
+
+### Core Agents
 
 URSA's core agents include, but are not limited to, the following:
 
@@ -112,24 +116,101 @@ URSA's core agents include, but are not limited to, the following:
 
 * Execution Agent: This agent carries out research tasks specified either in natural language or in the structured JSON format produced by the Planning Agent. It interacts with tools through LangGraph tool calls and through the Model Context Protocol (MCP), allowing virtually any user-provided executable to be incorporated into agent workflows. The Execution Agent also includes built-in tools for code generation and execution, file reading and writing, and system command execution. To improve safety, proposed system commands are screened by an LLM-driven safety node before execution.
 
+<!--
 * ArXiv Agent: This agent supports literature-review by searching, downloading, and analyzing papers from the arXiv repository. Given a user query, it uses the arXiv search API to identify relevant papers and constructs a retrieval-augmented generation (RAG) database for each paper using a user-specified embedding model. LLM-backed nodes then generate summaries of the individual papers. When the underlying LLM supports multimodal input, the agent can summarize both textual content and figures from the papers. A final aggregator node synthesizes the individual summaries into a report tailored to the user's query.
+-->
 
-## Simulation Agent
+### Domain-Specific Agents
 
-The Simulation Agent supports a key aspect of many scientific workflows: the use of computationally intensive simulation codes on high-performance computing (HPC) resources. The agent is capable of interacting with user-specified simulation codes, including their compilation, execution, debugging, and analysis.
+URSA allows for the construction of highly domain-specific agents that can fit into the bigger URSA ecosystem in a natural manner. As examples, we discuss two specific agents
 
-The Simulation Agent also illustrates URSA's compositional design philosophy. Rather than implementing simulation-specific functionality from scratch, it is constructed by orchestrating multiple instances of the core Execution Agent within a LangGraph workflow. One execution agent is responsible for documentation and knowledge acquisition, while another is responsible for simulation setup, execution, debugging, and analysis. The documentation stage gathers information from user-provided manuals, web resources, scientific literature, and RAG-based knowledge bases to construct a task-specific user guide. This guide is then passed to the simulation stage, which uses it to configure and execute simulation campaigns, analyze outputs, and iteratively resolve execution failures. A final summarization stage synthesizes the results of the workflow.
-
-This architecture demonstrates how URSA's core agents can be composed into domain-specific agents that incorporate specialized knowledge and tools while reusing common execution and reasoning capabilities.
-
-
-## Extended Domain-Specific Agents
-
-Finally, URSA allows for the construction of highly domain-specific agents that can fit into the bigger URSA ecosystem in a natural manner. As examples, we discuss two specific agents
+* Simulation Agent: The Simulation Agent supports the use of computationally intensive simulation codes on high-performance computing (HPC) resources. The agent is also capable of handling their compilation, execution, debugging, and analysis. Rather than implementing simulation-specific functionality from scratch, this agent is constructed by orchestrating multiple instances of the core Execution Agent within a LangGraph workflow. One execution agent is responsible for documentation and knowledge acquisition, while another is responsible for simulation setup, execution, debugging, and analysis. The documentation stage gathers information from user-provided manuals, web resources, scientific literature, and RAG-based knowledge bases to construct a task-specific user guide. This guide is then passed to the simulation stage, which uses it to configure and execute simulation campaigns, analyze outputs, and iteratively resolve execution failures. A final summarization stage synthesizes the results of the workflow.
 
 * LAMMPS Agent: The LAMMPS Agent [@somasundaram] is a domain-specific agent for atomistic simulations built on top of the URSA framework. The agent is capable of autonomously orchestrating the full lifecycle of a molecular dynamics simulation, including interatomic potential selection, generation of LAMMPS input scripts, simulation execution, iterative error recovery, and post-processing of results. The agent can operate in a highly autonomous mode requiring only a natural-language description of the desired simulation, or in an expert mode where users can provide simulation templates, interatomic potentials, and other domain-specific inputs. A key feature of the agent is its ability to iteratively refine simulation inputs in response to execution failures and to leverage other agents within the URSA ecosystem for tasks such as visualization, literature review, and validation against published results.
 
 * Optimization Agent: The Optimization Agent is a self-contained LangGraph workflow for formulating and solving optimization and inverse-design problems from natural-language input. The agent first extracts the optimization problem, converts it into a structured mathematical representation, and optionally discretizes the problem when infinite-dimensional variables or constraints are detected. It then selects an appropriate solver, generates executable optimization code, runs feasibility checks using a dedicated tool, verifies the resulting formulation, and produces a final explanation of the solution. If verification fails, the workflow loops back to the problem-extraction stage, allowing the agent to iteratively revise the formulation. Unlike the Simulation Agent, the Optimization Agent is not built by composing multiple URSA agents, but it follows the same graph-based design philosophy and can be incorporated into larger URSA workflows.
+
+
+## User Interfaces
+
+URSA's framework is exposed through multiple interfaces that target different scientific workflows while sharing the same underlying engine. Users may interact with URSA through a command-line interface, a web dashboard, or directly through the Python API. Regardless of the interface, the same underlying LangGraph workflows, agent definitions, tools, and model configurations are used.
+
+### Command-Line Interface
+
+The command-line interface (CLI) provides an interactive REPL for executing agents and composing scientific workflows. A typical session is launched using
+
+```bash
+ursa --config config.yaml
+```
+
+where the YAML configuration specifies the desired language model and runtime options. Within the REPL, users can invoke individual agents using commands such as
+
+```text
+ursa> plan Write a workflow for computing elastic constants.
+ursa> execute Execute the plan.
+```
+
+or interact directly with the underlying language model. Because the CLI shares the same backend as the Python API, workflows developed interactively can later be embedded into automated scripts with minimal modification.
+
+### Web Dashboard
+
+URSA also provides a browser-based dashboard that exposes the same agent capabilities through a graphical interface. After installing the optional dashboard dependencies, the server can be started with
+
+```bash
+ursa-dashboard
+```
+
+or configured explicitly, for example,
+
+```bash
+ursa-dashboard --host 127.0.0.1 --port 8080
+```
+
+The dashboard enables users to configure agents, manage conversations, inspect intermediate outputs, and execute scientific workflows without requiring command-line interaction while relying on the same backend infrastructure as the CLI.
+
+### Python Interface
+
+For integration into scientific software, URSA can be imported directly as a Python package. Agents may be instantiated, configured, and executed within Python scripts or Jupyter notebooks. A typical workflow consists of creating an agent instance and invoking it with a natural-language task:
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+
+from ursa.agents import ExecutionAgent
+
+llm = init_chat_model(model="openai:gpt-5.4")
+agent = ExecutionAgent(llm=llm)
+
+result = agent.invoke({
+    "messages": [
+        HumanMessage(
+            content="Write and run a Python script that prints the first 10 prime numbers."
+        )
+    ],
+    "workspace": "./ursa-script-workspace",
+})
+
+print(result["messages"][-1].content)
+```
+
+The Python interface is particularly useful for integration with existing simulation codes, analysis pipelines, and high-performance computing workflows. It also provides the foundation for constructing new domain-specific agents by composing existing URSA components with custom tools, language models, and LangGraph workflows.
+
+
+## Agent Execution Environments
+
+URSA provides execution environments for composing multiple agents into larger scientific workflows. These environments define how agents exchange information and coordinate their execution while reusing the same underlying agent implementations. By separating agent behavior from orchestration, users can construct reusable workflows that combine planning, execution, literature review, simulation, and other domain-specific capabilities. Additional examples of these environments are provided in the URSA documentation: https://lanl.github.io/ursa/.
+
+### Agent Teams
+
+The Agent Teams environment allows multiple agents to collaborate on a common task by passing information between one another. Each agent performs a specific role within the workflow—for example, retrieving scientific literature, executing code, or analyzing results—before forwarding its output to downstream agents. This enables complex scientific workflows to be constructed by composing specialized agents into a single execution graph.
+
+The URSA documentation includes several examples of this execution model, including workflows that combine an ArXiv Agent with an Execution Agent for materials science and neutron star applications. These examples illustrate how the output of one agent can be used as input to another, enabling modular and reusable scientific pipelines. See https://lanl.github.io/ursa/ for additional examples.
+
+### Agent Symposia
+
+The Agent Symposia environment enables multiple agents to independently analyze the same scientific problem before discussing their conclusions in a structured peer-review process. Rather than assigning distinct tasks to different agents, each participant develops its own solution or recommendation, critiques the responses of the other participants, and iteratively refines its reasoning. The final response is then synthesized from the discussion.
+
+This environment is particularly well suited for scientific tasks that benefit from multiple independent perspectives, such as research planning, hypothesis generation, or evaluation of competing approaches. Additional examples and usage instructions are available in the URSA documentation: https://lanl.github.io/ursa/.
 
 # Research impact statement
 
