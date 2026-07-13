@@ -1,12 +1,57 @@
+from unittest.mock import MagicMock
+
 import yaml
 
-from ursa.cli import build_parser, resolve_config
+from ursa.cli import build_parser, main, resolve_config
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     ModelConfig,
     UrsaConfig,
 )
+
+
+def _stub_mcp_server(monkeypatch):
+    mcp = MagicMock()
+    hitl = MagicMock()
+    hitl.as_mcp_server.return_value = mcp
+    hitl_class = MagicMock(return_value=hitl)
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    return hitl, mcp
+
+
+def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
+    hitl, mcp = _stub_mcp_server(monkeypatch)
+
+    main(["mcp-server"])
+
+    hitl.as_mcp_server.assert_called_once_with()
+    mcp.run.assert_called_once_with(transport="stdio", log_level="INFO")
+
+
+def test_mcp_server_passes_http_options_when_running(monkeypatch):
+    hitl, mcp = _stub_mcp_server(monkeypatch)
+
+    main([
+        "mcp-server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "9001",
+        "--log_level",
+        "warning",
+    ])
+
+    hitl.as_mcp_server.assert_called_once_with()
+    mcp.run.assert_called_once_with(
+        transport="streamable-http",
+        log_level="WARNING",
+        host="127.0.0.1",
+        port=9001,
+    )
 
 
 def test_cli_parses_typed_flags(tmp_path):
