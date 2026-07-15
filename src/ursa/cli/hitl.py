@@ -1,3 +1,4 @@
+from ursa.util.events import configure_event_logging
 import asyncio
 import logging
 import os
@@ -258,8 +259,10 @@ class HITL:
         self.last_agent = agent._agent
         return msg
 
-    def as_mcp_server(self, **kwargs):
+    def as_mcp_server(self, log_level: int | str = logging.INFO, **kwargs):
         from ursa import __version__ as ursa_version
+
+        configure_event_logging(level=log_level)
 
         mcp = FastMCP(
             "URSA",

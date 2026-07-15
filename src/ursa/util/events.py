@@ -112,7 +112,7 @@ class EventConsoleFormatter(logging.Formatter):
 
 def configure_event_logging(
     *,
-    level: int = logging.INFO,
+    level: int | str = logging.INFO,
     formatter: logging.Formatter | None = None,
 ) -> None:
     """Enable console logging for URSA progress events.
