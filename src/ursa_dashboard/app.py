@@ -14,7 +14,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import (
     Depends,
@@ -63,6 +63,8 @@ from ursa.rag.persistence import (
 from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
 
 from .api_models import (
+    CredentialSetRequest,
+    CredentialStatusResponse,
     ErrorResponse,
     FileMetaResponse,
     RunCancelRequest,
@@ -85,6 +87,19 @@ from .api_models import (
     WorkspaceListResponse,
 )
 from .artifacts import scan_artifacts
+from .credentials import (
+    CredentialConfigurationError,
+    CredentialKind,
+    CredentialStore,
+    CredentialStoreError,
+    KeyringCredentialStore,
+    assert_no_credential_metadata,
+    assert_no_raw_api_key,
+    credential_id,
+    credential_status,
+    credential_target,
+    store_api_key,
+)
 from .environment_run_ui import (
     render_environment_run_detail_page,
     render_environment_runs_page,
@@ -118,10 +133,15 @@ from .sessions import (
 from .sessions import (
     update_session as session_update_session,
 )
-from .settings import AuthConfig, SettingsStore, apply_dashboard_config
+from .settings import (
+    AuthConfig,
+    SettingsStore,
+    apply_dashboard_config,
+    merge_global_settings_patch,
+)
 
 
-def create_app() -> FastAPI:
+def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     auth = AuthConfig.from_env()
 
     security = HTTPBearer(auto_error=False)
@@ -170,7 +190,11 @@ def create_app() -> FastAPI:
         ).strip()
         or "default"
     )
-    rm = RunManager()
+    credential_store = credential_store or KeyringCredentialStore()
+    rm = RunManager(
+        credential_store=credential_store,
+        dashboard_group=dashboard_group,
+    )
     settings_store = SettingsStore(rm.dashboard_root)
     dashboard_config = str(
         os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
@@ -342,8 +366,154 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def patch_settings(req: SettingsPatchRequest) -> SettingsResponse:
-        s = settings_store.patch(req.patch)
+        for section in ("llm", "embedding"):
+            section_patch = req.patch.get(section)
+            if isinstance(section_patch, dict):
+                try:
+                    assert_no_raw_api_key(
+                        section_patch, context=f"settings.{section}"
+                    )
+                    assert_no_credential_metadata(
+                        section_patch, context=f"settings.{section}"
+                    )
+                except CredentialConfigurationError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+
+        try:
+            s = merge_global_settings_patch(settings_store.load(), req.patch)
+            enforce_group_base_url_policy(s.llm.base_url, dashboard_group)
+            if s.embedding.model:
+                enforce_group_base_url_policy(
+                    s.embedding.base_url, dashboard_group
+                )
+        except (GroupBaseURLPolicyError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        settings_store.save(s)
         return SettingsResponse(settings=s.model_dump(mode="json"))
+
+    def _credential_config(
+        kind: CredentialKind,
+    ) -> tuple[Any, dict[str, Any]]:
+        settings = settings_store.load()
+        config = getattr(settings, kind)
+        return settings, config.model_dump(mode="json")
+
+    def _require_safe_credential_request(request: Request) -> None:
+        if auth.mode == "remote" and request.url.scheme != "https":
+            raise HTTPException(
+                status_code=400,
+                detail="Credential changes require HTTPS in remote mode.",
+            )
+        origin = str(request.headers.get("origin") or "").strip()
+        if not origin:
+            return
+        parsed = urlsplit(origin)
+        request_origin = f"{request.url.scheme}://{request.url.netloc}"
+        supplied_origin = f"{parsed.scheme}://{parsed.netloc}"
+        if supplied_origin != request_origin:
+            raise HTTPException(status_code=403, detail="Origin not allowed")
+
+    def _credential_status_response(
+        kind: CredentialKind,
+    ) -> CredentialStatusResponse:
+        _settings, config = _credential_config(kind)
+        try:
+            status = credential_status(
+                config,
+                group=dashboard_group,
+                kind=kind,
+                store=credential_store,
+            )
+        except (CredentialStoreError, CredentialConfigurationError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        return CredentialStatusResponse.model_validate(status)
+
+    @app.get(
+        "/credentials/status",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_credential_statuses(response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            kind: _credential_status_response(kind).model_dump(mode="json")
+            for kind in ("llm", "embedding")
+        }
+
+    @app.put(
+        "/credentials/{kind}",
+        response_model=CredentialStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    def set_credential(
+        kind: CredentialKind,
+        req: CredentialSetRequest,
+        request: Request,
+        response: Response,
+    ) -> CredentialStatusResponse:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        value = req.api_key.get_secret_value()
+        if not value.strip():
+            raise HTTPException(status_code=400, detail="API key is empty")
+        if len(value) > 65_536:
+            raise HTTPException(status_code=400, detail="API key is too large")
+
+        settings, config = _credential_config(kind)
+        try:
+            if kind == "llm" or config.get("model"):
+                enforce_group_base_url_policy(
+                    config.get("base_url"), dashboard_group
+                )
+            secret_id = credential_id(dashboard_group, kind)
+            target = credential_target(config)
+            store_api_key(
+                credential_store,
+                credential_id=secret_id,
+                target=target,
+                value=value,
+            )
+            updated = config | {
+                "credential_source": "stored",
+                "credential_id": secret_id,
+                "credential_target": target,
+            }
+            setattr(settings, kind, type(getattr(settings, kind))(**updated))
+            settings_store.save(settings)
+        except (
+            CredentialStoreError,
+            CredentialConfigurationError,
+            GroupBaseURLPolicyError,
+            ValueError,
+        ) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        finally:
+            value = ""
+
+        return _credential_status_response(kind)
+
+    @app.delete(
+        "/credentials/{kind}",
+        response_model=CredentialStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    def delete_credential(
+        kind: CredentialKind, request: Request, response: Response
+    ) -> CredentialStatusResponse:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        settings, config = _credential_config(kind)
+        try:
+            credential_store.delete_secret(credential_id(dashboard_group, kind))
+            updated = config | {
+                "credential_source": "none",
+                "credential_id": None,
+                "credential_target": None,
+            }
+            setattr(settings, kind, type(getattr(settings, kind))(**updated))
+            settings_store.save(settings)
+        except (CredentialStoreError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return _credential_status_response(kind)
 
     @app.get(
         "/rag-tools",
@@ -470,6 +640,13 @@ def create_app() -> FastAPI:
                 status_code=400, detail="No session changes provided"
             )
         if "llm" in patch:
+            try:
+                assert_no_raw_api_key(patch["llm"] or {}, context="session.llm")
+                assert_no_credential_metadata(
+                    patch["llm"] or {}, context="session.llm"
+                )
+            except CredentialConfigurationError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
             llm_patch = patch["llm"] or {}
             merged_llm = _deep_merge_dicts(
                 existing_session.get("llm") or {}, llm_patch
@@ -479,6 +656,12 @@ def create_app() -> FastAPI:
                 # remove keys from the JSON editor instead of keeping stale keys.
                 merged_llm["model_kwargs"] = llm_patch.get("model_kwargs") or {}
             patch["llm"] = merged_llm
+            try:
+                enforce_group_base_url_policy(
+                    merged_llm.get("base_url"), dashboard_group
+                )
+            except GroupBaseURLPolicyError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
         if "runner" in patch:
             patch["runner"] = _deep_merge_dicts(
                 existing_session.get("runner") or {}, patch["runner"] or {}
@@ -538,6 +721,12 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
+        try:
+            assert_no_raw_api_key(req.llm or {}, context="message.llm")
+            assert_no_credential_metadata(req.llm or {}, context="message.llm")
+        except CredentialConfigurationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
         agent_id = str(req.agent_id or sess.get("agent_id") or "")
         if agent_id not in REGISTRY:
             raise HTTPException(
@@ -573,6 +762,13 @@ def create_app() -> FastAPI:
         # Demo agents should work without external credentials.
         if agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
+
+        try:
+            await asyncio.to_thread(
+                rm.validate_credentials, llm=llm, embedding=embedding
+            )
+        except (CredentialConfigurationError, CredentialStoreError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
@@ -691,6 +887,12 @@ def create_app() -> FastAPI:
         ):
             raise HTTPException(status_code=404, detail="Unknown agent_id")
 
+        try:
+            assert_no_raw_api_key(req.llm or {}, context="run.llm")
+            assert_no_credential_metadata(req.llm or {}, context="run.llm")
+        except CredentialConfigurationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
         # Merge with global defaults (apply only if caller didn't provide)
         s = settings_store.load().model_dump(mode="json")
         llm = _deep_merge_dicts(s.get("llm") or {}, req.llm or {})
@@ -701,6 +903,13 @@ def create_app() -> FastAPI:
         # Demo agents should work without external credentials.
         if req.agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
+
+        try:
+            await asyncio.to_thread(
+                rm.validate_credentials, llm=llm, embedding=embedding
+            )
+        except (CredentialConfigurationError, CredentialStoreError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         agent_init = _agent_init_with_dashboard_defaults(
             req.agent_id, req.agent_init
@@ -2141,6 +2350,7 @@ def create_app() -> FastAPI:
     showArtifacts: true,
 
     settings: null,
+    credentialStatuses: {},
     _settingsMode: 'global',
     _settingsSessionId: null,
     _settingsSessionTitle: '',
@@ -3648,6 +3858,9 @@ def create_app() -> FastAPI:
     const sub = $('#settingsModalSubtitle');
     const uiBtn = document.querySelector('.settingsNavBtn[data-settings-section="ui"]');
     const mcpBtn = document.querySelector('.settingsNavBtn[data-settings-section="mcp"]');
+    $$('.globalCredentialOnly').forEach(el => {
+      el.style.display = mode === 'session' ? 'none' : '';
+    });
     if (mode === 'session') {
       if (title) title.textContent = 'Session settings';
       if (sub) sub.textContent = `Applies to this session only: ${session?.title || session?.session_id || ''}`;
@@ -3863,6 +4076,72 @@ def create_app() -> FastAPI:
     document.documentElement.setAttribute('data-theme', resolved);
   }
 
+  function renderCredentialStatus(kind) {
+    const status = state.credentialStatuses?.[kind] || {};
+    const el = $(`#set_${kind}_credential_status`);
+    if (!el) return;
+    if (status.needs_reentry) {
+      el.textContent = 'Saved key is not approved for this endpoint. Enter it again to rebind.';
+      return;
+    }
+    if (status.source === 'stored') {
+      el.textContent = status.usable ? 'Key saved securely.' : 'No usable saved key.';
+      return;
+    }
+    if (status.source === 'environment') {
+      el.textContent = status.configured ? 'Environment variable is available.' : 'Environment variable is not currently available.';
+      return;
+    }
+    if (status.source === 'llm') {
+      el.textContent = status.usable ? 'Using the saved LLM key.' : 'Saved LLM key is unavailable or bound to a different endpoint.';
+      return;
+    }
+    el.textContent = 'No API key will be used.';
+  }
+
+  function updateCredentialControls(kind) {
+    const source = $(`#set_${kind}_credential_source`)?.value || 'none';
+    const stored = $(`#set_${kind}_stored_fields`);
+    const env = $(`#set_${kind}_env_fields`);
+    if (stored) stored.style.display = source === 'stored' ? '' : 'none';
+    if (env) env.style.display = source === 'environment' ? '' : 'none';
+    renderCredentialStatus(kind);
+  }
+
+  async function refreshCredentialStatuses() {
+    try {
+      state.credentialStatuses = await api('GET', '/credentials/status');
+    } catch (e) {
+      state.credentialStatuses = {};
+      for (const kind of ['llm', 'embedding']) {
+        const el = $(`#set_${kind}_credential_status`);
+        if (el) el.textContent = 'Credential store unavailable: ' + e.message;
+      }
+      return;
+    }
+    renderCredentialStatus('llm');
+    renderCredentialStatus('embedding');
+  }
+
+  async function removeStoredCredential(kind) {
+    if (!confirm(`Remove the saved ${kind === 'llm' ? 'LLM' : 'embedding'} API key?`)) return;
+    try {
+      state.credentialStatuses[kind] = await api('DELETE', `/credentials/${kind}`);
+      const source = $(`#set_${kind}_credential_source`);
+      if (source) source.value = 'none';
+      const keyInput = $(`#set_${kind}_api_key`);
+      if (keyInput) keyInput.value = '';
+      updateCredentialControls(kind);
+      const res = await api('GET', '/settings');
+      state.settings = res.settings || state.settings;
+      await refreshCredentialStatuses();
+      updateCredentialControls('llm');
+      updateCredentialControls('embedding');
+    } catch (e) {
+      alert('Could not remove key: ' + e.message);
+    }
+  }
+
   async function loadSettings(opts={}) {
     const mode = opts.mode || state._settingsMode || 'global';
     const session = opts.session || null;
@@ -3888,16 +4167,23 @@ def create_app() -> FastAPI:
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
     $('#set_api_key_env').value = llm.api_key_env || '';
+    $('#set_llm_credential_source').value = llm.credential_source || (llm.api_key_env ? 'environment' : 'none');
+    $('#set_llm_api_key').value = '';
     const modelKwargs = llm.model_kwargs || {};
     $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
 
     $('#set_embedding_base_url').value = embedding.base_url || '';
     $('#set_embedding_model').value = embedding.model || '';
     $('#set_embedding_api_key_env').value = embedding.api_key_env || '';
+    $('#set_embedding_credential_source').value = embedding.credential_source || (embedding.api_key_env ? 'environment' : 'none');
+    $('#set_embedding_api_key').value = '';
     const embeddingModelKwargs = embedding.model_kwargs || {};
     $('#set_embedding_model_kwargs').value = Object.keys(embeddingModelKwargs).length ? JSON.stringify(embeddingModelKwargs, null, 2) : '';
 
     $('#set_timeout').value = runner.timeout_seconds ?? '';
+    updateCredentialControls('llm');
+    updateCredentialControls('embedding');
+    if (mode === 'global') await refreshCredentialStatuses();
 
     // MCP is global-only.
     state._mcpServers = _cloneJson(mcp.servers || {});
@@ -3999,12 +4285,41 @@ def create_app() -> FastAPI:
       return;
     }
 
+    let llmKey = '';
+    let embeddingKey = '';
+    if (state._settingsMode === 'global') {
+      llmKey = $('#set_llm_api_key').value || '';
+      embeddingKey = $('#set_embedding_api_key').value || '';
+      const llmSource = $('#set_llm_credential_source').value || 'none';
+      const embeddingSource = $('#set_embedding_credential_source').value || 'none';
+      const embeddingConfigured = Boolean(($('#set_embedding_model').value || '').trim());
+      if (llmSource === 'stored' && !llmKey && !state.credentialStatuses?.llm?.configured) {
+        alert('Enter an LLM API key before selecting secure storage.');
+        return;
+      }
+      if (embeddingConfigured && embeddingSource === 'stored' && !embeddingKey && !state.credentialStatuses?.embedding?.configured) {
+        alert('Enter an embedding API key before selecting secure storage.');
+        return;
+      }
+      if (embeddingConfigured && embeddingSource === 'llm' && !state.credentialStatuses?.llm?.configured) {
+        alert('Save an LLM API key before reusing it for embeddings.');
+        return;
+      }
+    }
+
+    const llmPatch = {
+      base_url: ($('#set_base_url').value || '').trim() || null,
+      model: ($('#set_model').value || '').trim() || null,
+      api_key_env: ($('#set_api_key_env').value || '').trim() || null,
+      model_kwargs: modelKwargs,
+    };
+    if (state._settingsMode === 'global') {
+      llmPatch.credential_source = llmKey ? 'none' : ($('#set_llm_credential_source').value || 'none');
+    }
+
     const common = {
       llm: {
-        base_url: ($('#set_base_url').value || '').trim() || null,
-        model: ($('#set_model').value || '').trim() || null,
-        api_key_env: ($('#set_api_key_env').value || '').trim() || null,
-        model_kwargs: modelKwargs,
+        ...llmPatch,
       },
       runner: {
         timeout_seconds: ($('#set_timeout').value === '' ? null : Number($('#set_timeout').value)),
@@ -4021,6 +4336,7 @@ def create_app() -> FastAPI:
         base_url: ($('#set_embedding_base_url').value || '').trim() || null,
         model: ($('#set_embedding_model').value || '').trim() || null,
         api_key_env: ($('#set_embedding_api_key_env').value || '').trim() || null,
+        credential_source: embeddingKey ? 'none' : ($('#set_embedding_credential_source').value || 'none'),
         model_kwargs: embeddingModelKwargs,
       },
       mcp: {
@@ -4062,8 +4378,29 @@ def create_app() -> FastAPI:
     } else {
       const res = await api('PATCH', '/settings', { patch: cleaned });
       state.settings = res.settings || {};
+      let credentialSaveError = null;
+      try {
+        if (llmKey) {
+          state.credentialStatuses.llm = await api('PUT', '/credentials/llm', { api_key: llmKey });
+        }
+        if (embeddingKey) {
+          state.credentialStatuses.embedding = await api('PUT', '/credentials/embedding', { api_key: embeddingKey });
+        }
+      } catch (e) {
+        credentialSaveError = e;
+        alert('Settings were saved, but the API key could not be stored: ' + e.message);
+      } finally {
+        llmKey = '';
+        embeddingKey = '';
+        $('#set_llm_api_key').value = '';
+        $('#set_embedding_api_key').value = '';
+      }
+      await refreshCredentialStatuses();
+      const refreshed = await api('GET', '/settings');
+      state.settings = refreshed.settings || state.settings;
       applyTheme(state.settings?.ui?.theme || 'system');
       await refreshSessions();
+      if (credentialSaveError) return;
     }
 
     const saved = $('#settingsSaved');
@@ -4220,6 +4557,10 @@ def create_app() -> FastAPI:
     if (mClr) mClr.onclick = clearMcpEditor;
     const ragRefresh = $('#ragRefreshBtn');
     if (ragRefresh) ragRefresh.onclick = refreshRagTools;
+    $('#set_llm_credential_source').onchange = () => updateCredentialControls('llm');
+    $('#set_embedding_credential_source').onchange = () => updateCredentialControls('embedding');
+    $('#set_llm_remove_key').onclick = () => removeStoredCredential('llm');
+    $('#set_embedding_remove_key').onclick = () => removeStoredCredential('embedding');
 
     $('#saveSettingsBtn').onclick = saveSettings;
 
@@ -5127,8 +5468,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="sectionHead">LLM</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
-            <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div>
-            <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
+            <div class="globalCredentialOnly">
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div id="set_llm_stored_fields">
+                <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_llm_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
+                <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_llm_remove_key" type="button">Remove saved key</button></div></div>
+              </div>
+              <div id="set_llm_env_fields"><div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div></div>
+              <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_llm_credential_status">Checking credential status…</div></div>
+            </div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model and base_url.</div>
           </div>
@@ -5140,8 +5488,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="muted small" style="margin: 2px 0 10px">Configure the embedding model used by RAG agents and persisted RAG tools. The dashboard stores only non-secret settings.</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_embedding_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_embedding_model" placeholder="openai:text-embedding-3-large" /></div>
-            <div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_embedding_api_key_env" placeholder="OPENAI_API_KEY" /></div>
-            <div class="muted small" style="margin: 2px 0 10px">Set the embedding API key in the dashboard server environment and reference its variable name here.</div>
+            <div class="globalCredentialOnly">
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div id="set_embedding_stored_fields">
+                <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_embedding_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
+                <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_embedding_remove_key" type="button">Remove saved key</button></div></div>
+              </div>
+              <div id="set_embedding_env_fields"><div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_embedding_api_key_env" placeholder="OPENAI_API_KEY" /></div></div>
+              <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_embedding_credential_status">Checking credential status…</div></div>
+            </div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_embedding_model_kwargs" rows="7" placeholder='{{"dimensions":1024}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_embeddings. Explicit fields above still take precedence for model and base_url.</div>
           </div>

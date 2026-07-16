@@ -30,6 +30,74 @@ def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
     mcp.run.assert_called_once_with(transport="stdio", log_level="INFO")
 
 
+def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
+    """`ursa mcp-server --config FILE` must configure the hosted URSA instance.
+
+    Regression: previously the mcp-server subparser had no --config option, so
+    `ursa mcp-server --config foo.yaml` failed with "Unrecognized arguments".
+    The subcommand-local --config should feed the LLM model/endpoint (and other
+    UrsaConfig fields) into the HITL instance backing the MCP server.
+    """
+    hitl_class = MagicMock()
+    hitl_class.return_value = MagicMock()
+    hitl_class.return_value.as_mcp_server.return_value = MagicMock()
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        yaml.safe_dump({
+            "llm_model": {
+                "model": "ollama:llama3.1",
+                "base_url": "http://localhost:11434",
+            }
+        })
+    )
+
+    main(["mcp-server", "--config", str(config_file)])
+
+    # HITL should be constructed with the config loaded from --config.
+    (ursa_config,), _ = hitl_class.call_args
+    assert ursa_config.llm_model.model == "ollama:llama3.1"
+    assert ursa_config.llm_model.base_url == "http://localhost:11434"
+
+
+def test_mcp_server_config_flag_parses_alongside_transport(
+    monkeypatch, tmp_path
+):
+    """--config coexists with MCP transport options on the subcommand."""
+    hitl_class = MagicMock()
+    hitl_class.return_value = MagicMock()
+    mcp = MagicMock()
+    hitl_class.return_value.as_mcp_server.return_value = mcp
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        yaml.safe_dump({"llm_model": {"model": "ollama:llama3.1"}})
+    )
+
+    main([
+        "mcp-server",
+        "--config",
+        str(config_file),
+        "--transport",
+        "streamable-http",
+        "--port",
+        "9001",
+    ])
+
+    (ursa_config,), _ = hitl_class.call_args
+    assert ursa_config.llm_model.model == "ollama:llama3.1"
+    mcp.run.assert_called_once_with(
+        transport="streamable-http",
+        log_level="INFO",
+        host="localhost",
+        port=9001,
+    )
+
+
 def test_mcp_server_passes_http_options_when_running(monkeypatch):
     hitl, mcp = _stub_mcp_server(monkeypatch)
 

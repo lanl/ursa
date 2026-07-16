@@ -7,9 +7,16 @@ import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .artifacts import scan_artifacts
+from .credentials import (
+    CredentialConfigurationError,
+    CredentialStore,
+    KeyringCredentialStore,
+    assert_no_raw_api_key,
+    resolve_api_key,
+)
 from .events import make_event
 from .retention import RetentionPolicy, enforce_retention
 from .security import dashboard_root_from_env, safe_join
@@ -51,10 +58,14 @@ class RunManager:
         dashboard_root: Path | None = None,
         config: RunConfig | None = None,
         retention: RetentionPolicy | None = None,
+        credential_store: CredentialStore | None = None,
+        dashboard_group: str = "default",
     ):
         self.dashboard_root = dashboard_root or dashboard_root_from_env()
         self.config = config or RunConfig()
         self.retention = retention or RetentionPolicy()
+        self.credential_store = credential_store or KeyringCredentialStore()
+        self.dashboard_group = dashboard_group
 
         self.dashboard_root.mkdir(parents=True, exist_ok=True)
         (self.dashboard_root / "_meta" / "runs").mkdir(
@@ -218,6 +229,9 @@ class RunManager:
         runner: dict[str, Any],
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        assert_no_raw_api_key(llm, context="run.llm")
+        if extra and isinstance(extra.get("embedding"), dict):
+            assert_no_raw_api_key(extra["embedding"], context="run.embedding")
         run_id = new_ulid()
         paths = self._run_paths(agent_id=agent_id, run_id=run_id)
         ensure_dirs(paths)
@@ -287,6 +301,12 @@ class RunManager:
 
         await self._queue.put(run_id)
         return rec
+
+    def validate_credentials(
+        self, *, llm: dict[str, Any], embedding: dict[str, Any]
+    ) -> None:
+        """Fail before run creation when required credentials are unavailable."""
+        self._resolve_credentials(llm=llm, embedding=embedding)
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         return self._read_run(run_id)
@@ -366,6 +386,140 @@ class RunManager:
     # Internals
     # ----------------------------
 
+    def _resolve_credentials(
+        self, *, llm: dict[str, Any], embedding: dict[str, Any]
+    ) -> dict[str, str | None]:
+        llm_disabled = bool(llm.get("disabled")) or str(
+            llm.get("model") or ""
+        ).strip().lower() in {"none", "disabled"}
+        llm_key = None
+        if not llm_disabled:
+            llm_key = resolve_api_key(
+                llm,
+                group=self.dashboard_group,
+                kind="llm",
+                store=self.credential_store,
+            )
+
+        embedding_key = None
+        embedding_model = str(embedding.get("model") or "").strip()
+        if embedding_model and embedding_model.lower() not in {
+            "none",
+            "disabled",
+        }:
+            embedding_key = resolve_api_key(
+                embedding,
+                group=self.dashboard_group,
+                kind="embedding",
+                store=self.credential_store,
+            )
+        return {
+            "llm_api_key": llm_key,
+            "embedding_api_key": embedding_key,
+        }
+
+    @staticmethod
+    def _worker_environment(
+        rec: dict[str, Any], *, project_root: str
+    ) -> dict[str, str]:
+        """Build the worker environment without model-provider credentials."""
+        env = dict(os.environ)
+        sensitive_names = {
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+            "MISTRAL_API_KEY",
+            "COHERE_API_KEY",
+            "GROQ_API_KEY",
+            "TOGETHER_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        }
+        for section in ("llm", "embedding"):
+            config = rec.get(section) or {}
+            env_name = str(config.get("api_key_env") or "").strip()
+            if env_name:
+                sensitive_names.add(env_name)
+        secret_markers = (
+            "api_key",
+            "apikey",
+            "access_token",
+            "refresh_token",
+            "secret",
+            "password",
+            "credential",
+            "bearer",
+        )
+        for name in list(env):
+            lowered = name.lower()
+            if (
+                name in sensitive_names
+                or any(marker in lowered for marker in secret_markers)
+                or lowered.endswith("_token")
+            ):
+                env.pop(name, None)
+
+        env["PYTHONUNBUFFERED"] = "1"
+        existing_pp = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            project_root
+            if not existing_pp
+            else (project_root + os.pathsep + existing_pp)
+        )
+        env.setdefault("TERM", "xterm-256color")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        return env
+
+    async def _fail_before_spawn(
+        self, run_id: str, *, error: Exception
+    ) -> None:
+        rec = self._read_run(run_id)
+        agent_id = rec["agent_id"]
+        previous = rec.get("status") or "starting"
+        rec["status"] = "failed"
+        rec["finished_at"] = utc_now()
+        rec["error"] = {
+            "error_type": error.__class__.__name__,
+            "message": str(error),
+        }
+        self._write_run(run_id, rec)
+        await self._emit(
+            run_id=run_id,
+            agent_id=agent_id,
+            type="state_change",
+            payload={
+                "from": previous,
+                "to": "failed",
+                "reason": "credential_preflight",
+            },
+            level="error",
+        )
+
+        session_id = rec.get("session_id")
+        if not session_id:
+            return
+        try:
+            from .sessions import append_message as _append_session_message
+            from .sessions import update_session as _update_session
+
+            _append_session_message(
+                self.dashboard_root,
+                session_id=str(session_id),
+                role="assistant",
+                text=f"(failed) {error}",
+                run_id=run_id,
+            )
+            _update_session(
+                self.dashboard_root,
+                str(session_id),
+                {"active_run_id": None, "last_run_id": run_id},
+            )
+        except Exception:
+            pass
+
     def _load_last_seq(self, events_path: Path) -> int:
         """Infer last seq from events.jsonl (best-effort)."""
         if not events_path.exists() or events_path.stat().st_size == 0:
@@ -440,6 +594,16 @@ class RunManager:
                 payload={"from": prev, "to": "starting", "reason": "dequeued"},
             )
 
+        try:
+            resolved_secrets = await asyncio.to_thread(
+                self._resolve_credentials,
+                llm=rec.get("llm") or {},
+                embedding=rec.get("embedding") or {},
+            )
+        except (CredentialConfigurationError, RuntimeError) as e:
+            await self._fail_before_spawn(run_id, error=e)
+            return
+
         # Write config JSON blobs for the worker.
         params_json = paths.run_dir / "params.json"
         agent_init_json = paths.run_dir / "agent_init.json"
@@ -508,26 +672,17 @@ class RunManager:
             str(mcp_json),
             "--output-json",
             str(output_json),
+            "--secrets-stdin",
         ]
 
-        env = dict(os.environ)
-        env["PYTHONUNBUFFERED"] = "1"
         # Ensure the worker can import `ursa_dashboard` even when the dashboard
         # is run from a source checkout (not installed as a package).
         project_root = str(Path(__file__).resolve().parent.parent)
-        existing_pp = env.get("PYTHONPATH")
-        env["PYTHONPATH"] = (
-            project_root
-            if not existing_pp
-            else (project_root + os.pathsep + existing_pp)
-        )
+        env = self._worker_environment(rec, project_root=project_root)
 
-        # Strongly discourage interactive behavior (no stdin). For log readability,
-        # prefer *plain* output when stdout/stderr are pipes (the default behavior of
-        # rich/tqdm). Users can opt-in to forced ANSI output if they want.
-        env.setdefault("TERM", "xterm-256color")
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-
+        # The worker reads one credential message from stdin and then the pipe is
+        # closed, preventing interactive behavior. Prefer plain output when logs
+        # are pipes; users can opt in to forced ANSI output.
         force_no_ansi = str(
             os.environ.get("URSA_DASHBOARD_NO_ANSI", "")
         ).strip().lower() in {
@@ -545,11 +700,45 @@ class RunManager:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(paths.run_dir),
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
+
+        if proc.stdin is None:  # pragma: no cover - asyncio contract
+            proc.kill()
+            await proc.wait()
+            await self._fail_before_spawn(
+                run_id,
+                error=RuntimeError("Worker secret channel is unavailable"),
+            )
+            return
+        pipe_error: Exception | None = None
+        try:
+            secret_message = (
+                json.dumps(resolved_secrets, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
+            proc.stdin.write(secret_message)
+            await proc.stdin.drain()
+        except Exception as e:
+            pipe_error = e
+        finally:
+            proc.stdin.close()
+            with contextlib.suppress(Exception):
+                await proc.stdin.wait_closed()
+            secret_message = b""
+            resolved_secrets = {}
+        if pipe_error is not None:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            await self._fail_before_spawn(
+                run_id,
+                error=RuntimeError("Could not deliver credentials to worker"),
+            )
+            return
 
         async with self._lock:
             rec = self._read_run(run_id)
@@ -753,7 +942,7 @@ class RunManager:
         run_id: str,
         agent_id: str,
         stream_name: str,
-        stream: Optional[asyncio.StreamReader],
+        stream: asyncio.StreamReader | None,
         log_path: Path,
         cap_bytes: int,
     ) -> None:

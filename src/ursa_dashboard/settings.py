@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from ursa.cli.config import UrsaConfig
 from ursa.security import enforce_group_base_url_policy
 
+from .credentials import assert_no_raw_api_key
 from .storage import read_json, utc_now, write_json
 
 
@@ -17,13 +18,16 @@ class LLMSettings(BaseModel):
     model: str = "openai:gpt-5.2"
     base_url: str | None = None
 
-    # Security: we intentionally do *not* store an API key in settings.json.
-    # Instead, we store the *name* of an environment variable that contains
-    # the key. The worker copies that value into OPENAI_API_KEY at runtime.
+    # Security: settings contain only a credential source/reference. Stored
+    # keys live in the OS credential store; environment variables remain an
+    # explicit compatibility option.
     api_key_env: str | None = Field(
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
     )
+    credential_source: Literal["environment", "stored", "none"] = "stored"
+    credential_id: str | None = None
+    credential_target: str | None = None
 
     model_kwargs: dict[str, Any] = Field(
         default_factory=dict,
@@ -37,6 +41,7 @@ class LLMSettings(BaseModel):
             return {}
         if not isinstance(v, dict):
             raise ValueError("llm.model_kwargs must be a JSON object")
+        assert_no_raw_api_key(v, context="llm.model_kwargs")
         return v
 
     @field_validator("api_key_env")
@@ -97,6 +102,11 @@ class EmbeddingSettings(BaseModel):
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the embedding API key (the secret is not stored).",
     )
+    credential_source: Literal["environment", "stored", "llm", "none"] = (
+        "stored"
+    )
+    credential_id: str | None = None
+    credential_target: str | None = None
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("model_kwargs")
@@ -106,6 +116,7 @@ class EmbeddingSettings(BaseModel):
             return {}
         if not isinstance(v, dict):
             raise ValueError("embedding.model_kwargs must be a JSON object")
+        assert_no_raw_api_key(v, context="embedding.model_kwargs")
         return v
 
     @field_validator("api_key_env")
@@ -173,6 +184,7 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
         patch["base_url"] = llm_cfg.base_url
     if llm_cfg.api_key_env is not None:
         patch["api_key_env"] = llm_cfg.api_key_env
+        patch["credential_source"] = "environment"
     if llm_cfg.max_completion_tokens is not None:
         patch["max_tokens"] = llm_cfg.max_completion_tokens
 
@@ -214,6 +226,7 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
             emb_patch["base_url"] = emb_cfg.base_url
         if emb_cfg.api_key_env is not None:
             emb_patch["api_key_env"] = emb_cfg.api_key_env
+            emb_patch["credential_source"] = "environment"
 
         emb_model_kwargs: dict[str, Any] = {}
         for key, value in (emb_cfg.model_extra or {}).items():
@@ -307,6 +320,18 @@ class SettingsStore:
             self.save(s)
             return s
         data = read_json(self.path)
+        # Settings created before secure storage existed used api_key_env.
+        # Preserve that behavior while letting fresh installs default to the
+        # operating system credential store.
+        for section in ("llm", "embedding"):
+            section_data = data.get(section)
+            if (
+                isinstance(section_data, dict)
+                and "credential_source" not in section_data
+            ):
+                section_data["credential_source"] = (
+                    "environment" if section_data.get("api_key_env") else "none"
+                )
         return GlobalSettings.model_validate(data)
 
     def save(self, settings: GlobalSettings) -> None:

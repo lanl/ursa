@@ -45,18 +45,6 @@ def _common_llm_params() -> list[AgentParam]:
             target="base_url",
         ),
         AgentParam(
-            name="llm_api_key",
-            title="LLM API Key",
-            description="API key (if required).",
-            type="string",
-            required=False,
-            default="",
-            advanced=True,
-            hidden=True,
-            source=ParamSource.llm,
-            target="api_key",
-        ),
-        AgentParam(
             name="llm_model",
             title="LLM Model",
             description="Model name.",

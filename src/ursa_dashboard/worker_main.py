@@ -11,66 +11,104 @@ from typing import Any
 
 from ursa.util.http import inject_truststore_into_ssl
 
+_UNSET = object()
 
-def _normalize_model(model: str) -> str:
+
+def _normalize_model(model: str, model_provider: Any = None) -> str:
     # Examples use "openai:gpt-5.4-mini".
+    #
+    # The dashboard targets an OpenAI-compatible client stack by default, so a
+    # bare model name (e.g. "llama3.1" or a custom endpoint model) is prefixed
+    # with "openai:" so LangChain can resolve a provider. However, we must NOT
+    # manufacture a provider prefix when the caller has already specified the
+    # provider explicitly via a `model_provider` kwarg: doing so would send a
+    # doubly-qualified name like "openai:llama3.1" to the endpoint (LangChain's
+    # init_chat_model only strips a provider prefix when model_provider is
+    # unset), which the provider then rejects as an unknown model.
+    #
+    # Behavior:
+    #   - already-prefixed model (contains ":")            -> unchanged
+    #   - bare model + explicit model_provider given       -> unchanged (bare)
+    #   - bare model + no model_provider                   -> prepend "openai:"
+    #
+    # Note: a user who supplies BOTH a provider-prefixed model (e.g.
+    # "openai:gpt-4o") AND a model_provider is genuinely double-specifying; we
+    # intentionally leave that as-is and let LangChain surface the error.
     if ":" in model:
+        return model
+    if model_provider is not None and str(model_provider).strip() != "":
         return model
     return f"openai:{model}"
 
 
-def _init_llm(llm_cfg: dict[str, Any]):
+def _api_key_from_config(
+    config: dict[str, Any],
+    *,
+    label: str,
+    override: str | None | object = _UNSET,
+) -> str | None:
+    if "api_key" in config:
+        raise ValueError(
+            f"Literal {label} API keys are not accepted in worker config"
+        )
+    if override is not _UNSET:
+        return str(override) if override else None
+
+    env_name = str(config.get("api_key_env") or "").strip()
+    if not env_name:
+        return None
+    env_val = os.environ.get(env_name)
+    if not env_val:
+        raise ValueError(
+            f"{label} api_key_env '{env_name}' is not set in the worker environment"
+        )
+    return env_val
+
+
+def _init_llm(
+    llm_cfg: dict[str, Any],
+    *,
+    api_key_override: str | None | object = _UNSET,
+):
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model  # type: ignore
 
     raw_base_url = llm_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
 
-    # Security: prefer reading the API key from an environment variable.
-    # - If llm_cfg.api_key is provided (advanced / legacy), it is used directly.
-    # - Otherwise, if llm_cfg.api_key_env is set, copy that env var's value
-    #   into OPENAI_API_KEY for the OpenAI-compatible client stack.
-    api_key = llm_cfg.get("api_key")
-    if api_key is not None and str(api_key).strip() != "":
-        os.environ["OPENAI_API_KEY"] = str(api_key)
-    else:
-        env_name = llm_cfg.get("api_key_env")
-        if env_name is not None:
-            env_name = str(env_name).strip()
-        if env_name:
-            env_val = os.environ.get(env_name)
-            if not env_val:
-                raise ValueError(
-                    f"LLM api_key_env '{env_name}' is not set in the dashboard environment"
-                )
-            os.environ["OPENAI_API_KEY"] = str(env_val)
-            api_key = str(env_val)
-    if base_url:
-        # Support multiple common env names.
-        os.environ["OPENAI_BASE_URL"] = str(base_url)
-        os.environ["OPENAI_API_BASE"] = str(base_url)
-
-    model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5.4-mini"))
+    api_key = _api_key_from_config(
+        llm_cfg, label="LLM", override=api_key_override
+    )
 
     model_kwargs = llm_cfg.get("model_kwargs") or {}
     if not isinstance(model_kwargs, dict):
         raise ValueError("llm.model_kwargs must be a JSON object")
 
+    model = _normalize_model(
+        str(llm_cfg.get("model") or "openai:gpt-5.4-mini"),
+        model_kwargs.get("model_provider"),
+    )
+
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
 
-    kwargs["api_key"] = api_key
+    if api_key is not None:
+        kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
 
     return init_chat_model(**kwargs)
 
 
-def _init_embedding(embedding_cfg: dict[str, Any]):
+def _init_embedding(
+    embedding_cfg: dict[str, Any],
+    *,
+    api_key_override: str | None | object = _UNSET,
+):
     """Initialize an embedding model from dashboard settings.
 
-    Returns None when no embedding model is configured. Mirrors the LLM worker
-    behavior: non-secret config is snapshotted into the run record, while the
-    actual secret is read from api_key_env at worker runtime.
+    Returns None when no embedding model is configured. Non-secret config is
+    snapshotted into the run record; the run manager delivers stored or
+    environment-backed secrets through the worker's one-time stdin channel.
     """
 
     model = str(embedding_cfg.get("model") or "").strip()
@@ -82,31 +120,18 @@ def _init_embedding(embedding_cfg: dict[str, Any]):
     raw_base_url = embedding_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
 
-    api_key = embedding_cfg.get("api_key")
-    if api_key is not None and str(api_key).strip() != "":
-        os.environ["OPENAI_API_KEY"] = str(api_key)
-    else:
-        env_name = embedding_cfg.get("api_key_env")
-        if env_name is not None:
-            env_name = str(env_name).strip()
-        if env_name:
-            env_val = os.environ.get(env_name)
-            if not env_val:
-                raise ValueError(
-                    f"Embedding api_key_env '{env_name}' is not set in the dashboard environment"
-                )
-            os.environ["OPENAI_API_KEY"] = str(env_val)
-            api_key = str(env_val)
-
-    if base_url:
-        os.environ["OPENAI_BASE_URL"] = str(base_url)
-        os.environ["OPENAI_API_BASE"] = str(base_url)
+    api_key = _api_key_from_config(
+        embedding_cfg, label="Embedding", override=api_key_override
+    )
 
     model_kwargs = embedding_cfg.get("model_kwargs") or {}
     if not isinstance(model_kwargs, dict):
         raise ValueError("embedding.model_kwargs must be a JSON object")
 
-    kwargs: dict[str, Any] = {**model_kwargs, "model": _normalize_model(model)}
+    kwargs: dict[str, Any] = {
+        **model_kwargs,
+        "model": _normalize_model(model, model_kwargs.get("model_provider")),
+    }
     if api_key is not None:
         kwargs["api_key"] = api_key
     if base_url:
@@ -119,6 +144,32 @@ def _maybe_run_async(result):
     if asyncio.iscoroutine(result):
         return asyncio.run(result)
     return result
+
+
+def _read_secrets_stdin(*, max_bytes: int = 65_536) -> dict[str, str | None]:
+    payload = sys.stdin.buffer.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise ValueError("Worker secret payload is too large")
+    if not payload.strip():
+        return {}
+    value = json.loads(payload.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("Worker secret payload must be an object")
+    allowed = {"llm_api_key", "embedding_api_key"}
+    if set(value) - allowed:
+        raise ValueError("Worker secret payload contains unknown fields")
+    return {
+        key: (str(item) if item is not None else None)
+        for key, item in value.items()
+    }
+
+
+def _redact_secrets(text: str, values: list[str]) -> str:
+    redacted = text
+    for value in values:
+        if value:
+            redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
 
 
 def main() -> int:
@@ -135,10 +186,18 @@ def main() -> int:
     ap.add_argument("--embedding-json", required=False)
     ap.add_argument("--mcp-json", required=False)
     ap.add_argument("--output-json", required=True)
+    ap.add_argument("--secrets-stdin", action="store_true")
     args = ap.parse_args()
 
     out_path = Path(args.output_json)
+    secret_values: list[str] = []
     try:
+        secrets_payload = _read_secrets_stdin() if args.secrets_stdin else {}
+        secret_values = [
+            value
+            for value in secrets_payload.values()
+            if isinstance(value, str) and value
+        ]
         params = json.loads(Path(args.params_json).read_text(encoding="utf-8"))
         agent_init = json.loads(
             Path(args.agent_init_json).read_text(encoding="utf-8")
@@ -173,8 +232,19 @@ def main() -> int:
         llm_disabled = bool(llm_cfg.get("disabled")) or str(
             llm_cfg.get("model") or ""
         ).strip().lower() in {"none", "disabled"}
-        llm = None if llm_disabled else _init_llm(llm_cfg)
-        embedding = _init_embedding(embedding_cfg)
+        llm = (
+            None
+            if llm_disabled
+            else _init_llm(
+                llm_cfg,
+                api_key_override=secrets_payload.get("llm_api_key"),
+            )
+        )
+        embedding = _init_embedding(
+            embedding_cfg,
+            api_key_override=secrets_payload.get("embedding_api_key"),
+        )
+        secrets_payload = {}
         # Ensure consistent cross-session threading.
         agent_init = dict(agent_init)
         agent_init["thread_id"] = "ursa"
@@ -272,13 +342,15 @@ def main() -> int:
         )
         return 0
     except Exception as e:
+        message = _redact_secrets(str(e), secret_values)
+        stack = _redact_secrets(traceback.format_exc(), secret_values)
         err = {
             "status": "failed",
             "content_type": "text/plain",
-            "text": f"Run failed: {e}",
+            "text": f"Run failed: {message}",
             "error_type": e.__class__.__name__,
-            "message": str(e),
-            "stack": traceback.format_exc(),
+            "message": message,
+            "stack": stack,
         }
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(

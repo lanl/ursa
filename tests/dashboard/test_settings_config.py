@@ -36,6 +36,7 @@ def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
             "model": "openai:gpt-test",
             "base_url": "https://models.example.org/v1",
             "api_key_env": "SAFE_API_KEY",
+            "credential_source": "environment",
             "max_tokens": 4096,
             "temperature": 0.3,
             "model_kwargs": {
@@ -69,6 +70,7 @@ def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(tmp_path):
         "model": "openai:text-embedding-3-large",
         "base_url": "https://models.example.org/v1",
         "api_key_env": "SAFE_EMBEDDING_KEY",
+        "credential_source": "environment",
         "model_kwargs": {"dimensions": 1024, "timeout": 60},
     }
 

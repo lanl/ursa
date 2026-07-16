@@ -76,9 +76,17 @@ MCP servers can expose powerful external tools. Only connect MCP servers that yo
 ## Protect secrets
 
 - Prefer `api_key_env` rather than literal API keys in YAML files.
+- In the desktop dashboard, prefer **Secure system storage** so keys are kept
+  in the operating system credential manager instead of configuration files.
 - Do not store API keys in persistent agent names or prompts.
 - Review shared agent archives before distributing them.
 - Avoid committing project-specific config files that contain endpoint secrets.
+
+Dashboard-stored model credentials are bound to their provider or endpoint
+origin. Changing the endpoint host requires saving the key again. The dashboard
+passes a key to its worker through a one-time private pipe and removes
+credential-like variables from the worker environment so agent-launched
+commands do not inherit model API keys.
 
 ## Containerization options
 

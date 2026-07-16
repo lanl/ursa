@@ -92,6 +92,16 @@ def build_parser() -> ArgumentParser:
 
     # Run Ursa as an MCP Server
     mcp_parser = ArgumentParser()
+    mcp_parser.add_argument(
+        "--config",
+        default=None,
+        type=Path,
+        help=(
+            "Path to a YAML/JSON file with additional configuration "
+            "(LLM model, endpoint, embedding model, MCP servers, etc.) "
+            "for the URSA instance hosted by the MCP server. CLI opts have priority."
+        ),
+    )
     mcp_parser.add_class_arguments(MCPServerConfig, help="MCP server options")
     subparsers.add_subcommand(
         "mcp-server",
