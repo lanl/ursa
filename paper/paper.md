@@ -56,6 +56,10 @@ authors:
     orcid: 0000-0002-9844-689X
     affiliation: 1
 
+  - name: Adela Habib 
+    orcid: 0000-0001-8351-4610
+    affiliation: 1
+
   - name: Earl Lawrence
     orcid: 0000-0002-6473-1887
     affiliation: 1
@@ -72,37 +76,31 @@ bibliography: paper.bib
 
 # Summary
 
-In recent years, Large Language Models (LLMs) [@zhao2026survey] have progressed beyond their traditional role as chatbots, finding application in the automation and acceleration of a wide range of tasks. Through the use of agentic frameworks and tool integration, LLMs are increasingly being employed for software engineering, code generation, information retrieval, and complex decision-making workflows. In parallel, the application of AI agents to scientific research is receiving growing attention, with the potential to assist researchers in activities such as hypothesis generation, experimental planning, code development, data analysis, and result validation. 
+Large language models (LLMs) [@zhao2026survey] are increasingly being integrated within agentic workflows to automate complex tasks beyond conversational AI, including software engineering, information retrieval, and scientific research. These developments have created new opportunities for AI systems that assist researchers with planning, computation, analysis, and validation.
 
-Here, we present URSA (Universal Research and Scientific Agent), an open-source ecosystem of modular and extensible AI agents designed for scientific workflows. URSA provides a framework for constructing and deploying research-oriented agents that integrate domain knowledge, computational tools, and large language models. The framework supports both general-purpose scientific reasoning and the development of specialized agents tailored to domain-specific research tasks.
+We present URSA (Universal Research and Scientific Agent), an open-source framework for building modular and extensible AI agents for scientific workflows. URSA enables researchers to compose domain-specific agents by integrating large language models with scientific computational tools and domain knowledge, supporting both general-purpose scientific reasoning and specialized research applications.
 
 # Statement of need
 
-Modern scientific research workflows involve a sequence of complex and interconnected tasks, including hypothesis generation, literature review, research planning, experiment execution, data analysis, and result validation. Depending on the scientific domain, these workflows may also require specialized capabilities such as large-scale numerical simulations, software development, code execution, and interaction with external scientific tools and databases.
+Scientific research increasingly requires AI systems that can integrate reasoning with external software, simulation codes, computational resources, and specialized literature. While existing agentic frameworks provide general-purpose planning and tool use, researchers often need specialized agents tailored to particular scientific domains.
 
-URSA has been designed to support this broad range of activities through a composable system of collaborating agents. A central goal of the project is to provide a unified framework that can support as much of the scientific research lifecycle as possible while remaining flexible enough to accommodate domain-specific requirements. For a given scientific problem, URSA can:
+URSA addresses this need through a collection of reusable core agents that implement common research capabilities such as planning, execution, and validation. These agents serve as the foundation for constructing AI-assisted scientific workflows while remaining independent of any particular scientific discipline.
 
-* Decompose high-level objectives into executable tasks.
-* Execute those tasks through interactions with external tools and services.
-* Validate and refine results using scientific literature and external knowledge sources.
+Building on these core agents, URSA includes several specialized agents that demonstrate how the framework can be extended to research applications by integrating scientific software, computational tools, and domain knowledge. These agents support tasks such as molecular dynamics simulations, large-scale scientific computing, and optimization. Beyond serving as end-user applications, they also act as reference implementations that illustrate how new scientific agents can be developed by composing URSA's reusable components with domain-specific tools and workflows.
 
-Many scientific workflows additionally require domain-specific capabilities, such as running simulation codes on high-performance computing (HPC) resources. URSA's modular architecture enables the construction of specialized agents by composing its core planning, execution, and validation components. The current codebase includes several examples of such agents, including:
-
-* Agents for interacting with scientific simulation codes using user-provided documentation and domain-specific knowledge.
-* Agents specialized for molecular dynamics simulations that aid in the design of novel materials.
-* Agents for optimization and inverse-design problems.
-
-In addition to the agents provided with the framework, users can create their own specialized agents by composing existing URSA components with domain-specific tools, knowledge sources, and workflows. By combining scientific reasoning, tool use, and domain-specific workflows within a common architecture, URSA aims to provide a comprehensive yet extensible framework for AI-assisted scientific research.
+URSA further provides multiple ways to deploy and orchestrate these agents. Researchers can interact with the framework through a command-line interface, web dashboard, or Python API, while execution environments such as Agent Teams and Agent Symposia enable agents to collaborate or independently evaluate scientific problems. Together, these capabilities make URSA an extensible ecosystem for building, deploying, and composing AI agents across a broad range of scientific domains.
 
 # State of the field                                                                                                                  
 
-Some of the most widely used agentic systems include Claude Code [@claude_code] and Codex [@codex]. These coding-focused agents have demonstrated the ability of LLM-based systems to support software engineering workflows, including repository exploration, code generation, debugging, code execution, and iterative software development. By combining language models with tool use and execution environments, these systems have shown that AI agents can autonomously perform complex multi-step tasks that traditionally required significant human effort. However, while such systems are highly effective for software engineering tasks, scientific research often requires additional capabilities, including literature review, domain-specific reasoning, interaction with scientific software, large-scale simulations, and specialized validation procedures.
+General-purpose agentic systems such as Claude Code [@claude_code] and Codex [@codex] have demonstrated the effectiveness of large language model agents for software engineering tasks, including code generation, debugging, repository exploration, and tool use. These systems excel at programming assistance but are not designed as extensible platforms for developing scientific agents.
 
-Several agentic systems have also been developed specifically for scientific research, including Sakana AI's AI Scientist [@lu2024ai], Google's Co-Scientist [@gottweis2026accelerating], SciAgents [@ghafarollahi2025sciagents], Agent Laboratory [@schmidgall2025agent], and OpenAI's Deep Research [@openai_deep_research_2025]. While these systems demonstrate the potential of AI-assisted scientific discovery, many are designed as end-to-end research assistants or focus on specific research tasks. In contrast, URSA emphasizes extensibility and composition, enabling users to construct customized scientific workflows and specialized agents that integrate domain knowledge, scientific software, simulation codes, and computational resources.
+Several systems have also been proposed specifically for scientific research, including Sakana AI's AI Scientist [@lu2024ai], Google's Co-Scientist [@gottweis2026accelerating], SciAgents [@ghafarollahi2025sciagents], Agent Laboratory [@schmidgall2025agent], and OpenAI's Deep Research [@openai_deep_research_2025]. While these systems demonstrate the growing potential of AI-assisted research, many are designed as end-to-end research assistants.
+
+In contrast, URSA is a software framework for constructing scientific agents rather than a single predefined assistant. It provides reusable core agents for common research capabilities, example implementations that demonstrate how these components can be extended to specialized applications, multiple user interfaces for deploying workflows, and execution environments such as Agent Symposia that support collaborative and deliberative multi-agent reasoning. Together, these capabilities enable researchers to build, deploy, and orchestrate customized AI-assisted workflows across scientific disciplines.
 
 # Software design
 
-URSA is built on top of LangGraph [@langgraph] and is agnostic to the underlying large language model. Its software architecture is organized around three main concepts: (i) reusable core and domain-specific agents, (ii) multiple user interfaces that expose a common execution engine, and (iii) execution environments that orchestrate collaboration among multiple agents.
+URSA is built on top of LangGraph [@langgraph] and is agnostic to the underlying LLM. Its software architecture is organized around three main concepts: (i) reusable core and domain-specific agents, (ii) multiple user interfaces that expose a common execution engine, and (iii) execution environments that orchestrate collaboration among multiple agents.
 
 ## Agent Framework
 
