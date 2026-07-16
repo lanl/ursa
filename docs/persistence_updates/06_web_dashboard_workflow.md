@@ -74,6 +74,14 @@ The dashboard can pass the dashboard web-access default into agents that opt int
 
 Tool availability still depends on the selected behavior and configuration.
 
+## API credentials
+
+Dashboard model and embedding keys can be saved through Settings using the
+operating system credential store. Dashboard persistence contains only an
+opaque credential reference and endpoint binding; raw keys are not included in
+session or run history. Environment-variable credentials remain available for
+headless deployments and automation.
+
 ## Practical workflow
 
 1. Create a group if needed:

@@ -111,7 +111,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 query,
                 text=True,
                 shell=True,
-                timeout=60000,
+                timeout=600000,
                 capture_output=True,
                 cwd=workspace_dir,
                 check=False,
