@@ -106,11 +106,6 @@ URSA's core agents include, but are not limited to, the following:
 
 * Execution Agent: This agent carries out research tasks specified either in natural language or in the structured JSON format produced by the Planning Agent. It interacts with tools through LangGraph tool calls and through the Model Context Protocol (MCP), allowing virtually any user-provided executable to be incorporated into agent workflows. The Execution Agent also includes built-in tools for code generation and execution, file reading and writing, and system command execution. To improve safety, proposed system commands are screened by an LLM-driven safety node before execution.
 
-* 
-<!--
-* ArXiv Agent: This agent supports literature-review by searching, downloading, and analyzing papers from the arXiv repository. Given a user query, it uses the arXiv search API to identify relevant papers and constructs a retrieval-augmented generation (RAG) database for each paper using a user-specified embedding model. LLM-backed nodes then generate summaries of the individual papers. When the underlying LLM supports multimodal input, the agent can summarize both textual content and figures from the papers. A final aggregator node synthesizes the individual summaries into a report tailored to the user's query.
--->
-
 ### Domain-Specific Agents
 
 * Simulation Agent: The Simulation Agent supports the use of computationally intensive simulation codes on high-performance computing resources. This agent is constructed by orchestrating multiple instances of the core Execution Agent within a LangGraph workflow. One execution agent is responsible for documentation and knowledge acquisition, while another is responsible for simulation setup, execution, debugging, and analysis. The documentation stage gathers information from user-provided manuals, web resources, scientific literature, and RAG-based knowledge bases [@gao2023retrieval] to construct a task-specific user guide. This guide is then passed to the simulation stage, which uses it to configure and execute simulation campaigns, analyze outputs, and iteratively resolve execution failures. 
