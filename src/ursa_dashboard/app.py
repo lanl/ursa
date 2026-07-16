@@ -2223,13 +2223,22 @@ def create_app() -> FastAPI:
     if (leftSplit) leftSplit.classList.toggle('hidden', !showMain);
     if (rightSplit) rightSplit.classList.toggle('hidden', !showMain || !showArtifacts);
 
-    // Update toggle button labels (all toggles live on the left panel).
+    // Keep stable labels and communicate visibility through pressed state.
     const tChat = $('#toggleChatBtn');
-    if (tChat) tChat.textContent = showChat ? 'Hide chat' : 'Show chat';
+    if (tChat) {
+      tChat.setAttribute('aria-pressed', String(showChat));
+      tChat.title = showChat ? 'Hide chat panel' : 'Show chat panel';
+    }
     const tLogs = $('#toggleLogsBtn');
-    if (tLogs) tLogs.textContent = showRunLogs ? 'Hide logs' : 'Show logs';
+    if (tLogs) {
+      tLogs.setAttribute('aria-pressed', String(showRunLogs));
+      tLogs.title = showRunLogs ? 'Hide logs panel' : 'Show logs panel';
+    }
     const tArt = $('#toggleArtifactsBtn');
-    if (tArt) tArt.textContent = showArtifacts ? 'Hide artifacts' : 'Show artifacts';
+    if (tArt) {
+      tArt.setAttribute('aria-pressed', String(showArtifacts));
+      tArt.title = showArtifacts ? 'Hide artifacts panel' : 'Show artifacts panel';
+    }
 
     savePref('ursa.ui.showChat', showChat);
     savePref('ursa.ui.showRunLogs', showRunLogs);
@@ -4450,12 +4459,29 @@ body::before {
 .topbar { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .topbarCol { flex-direction: column; align-items: stretch; justify-content: flex-start; }
 .topbarCol > .row { width: 100%; }
-.brandRow { display:flex; align-items:flex-start; gap: 12px; }
-.brandLogo { width: 75px; height: 75px; object-fit: contain; border-radius: 10px; background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.06); }
+.brandRow { display:flex; align-items:center; gap: 12px; }
+.brandLogo { width: 56px; height: 56px; object-fit: contain; border-radius: 12px; background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.06); }
 
 /* Brand sizing (left sidebar only) */
-#leftPanel .brand .title { font-size: 16pt; line-height: 1.15; }
-#leftPanel .brand .muted.small { font-size: 14pt; line-height: 1.2; }
+#leftPanel .brand .title { font-size: 15pt; line-height: 1.15; }
+#leftPanel .brand .muted.small { font-size: 12px; line-height: 1.35; margin-top: 3px; }
+
+.sidebarControls { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.panelControls { display: flex; flex-direction: column; gap: 6px; }
+.controlLabel { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.panelToggleGroup { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: rgba(0,0,0,0.035); }
+.panelToggle { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 8px; padding: 8px 6px; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
+.panelToggle:hover { color: var(--text); background: rgba(255,255,255,0.7); }
+.panelToggle[aria-pressed="true"] { color: #0b57d0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.sidebarNav { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.sidebarNavAction { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; line-height: 1.2; text-decoration: none; }
+.sidebarNavAction:hover { border-color: #bbb; background: rgba(255,255,255,0.7); }
+.controlIcon { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+:root[data-theme="dark"] .panelToggleGroup { background: rgba(255,255,255,0.04); }
+:root[data-theme="dark"] .panelToggle:hover { background: rgba(255,255,255,0.06); }
+:root[data-theme="dark"] .panelToggle[aria-pressed="true"] { color: #8ab4ff; background: #252b33; box-shadow: 0 1px 3px rgba(0,0,0,0.28); }
+:root[data-theme="dark"] .sidebarNavAction { color: var(--text); }
+:root[data-theme="dark"] .sidebarNavAction:hover { border-color: #596170; background: rgba(255,255,255,0.05); }
 
 .title { font-weight: 700; }
 .muted { color: var(--muted); }
@@ -4915,9 +4941,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         with contextlib.suppress(Exception):
             if list_environment_run_manifests(dashboard_group):
                 environment_runs_button = (
-                    '<button class="btn" type="button" '
-                    "onclick=\"window.location.href='/ui/environment-runs'\">"
-                    "Environment Runs</button>"
+                    '<a class="sidebarNavAction" href="/ui/environment-runs">'
+                    '<svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true">'
+                    '<path d="M4 19V9m8 10V5m8 14v-7"/>'
+                    '<path d="M2 19h20"/>'
+                    "</svg><span>Environment runs</span></a>"
                 )
 
         body = f"""
@@ -4934,12 +4962,31 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         </div>
       </div>
 
-      <div class="row" style="margin-top:10px; justify-content:flex-start; flex-wrap:wrap">
-        <button class="btn" id="toggleChatBtn" type="button">Hide chat</button>
-        <button class="btn" id="toggleLogsBtn" type="button">Hide logs</button>
-        <button class="btn" id="toggleArtifactsBtn" type="button">Hide artifacts</button>
-        <button class="btn" id="openSettingsBtn" type="button">Settings</button>
-        {environment_runs_button}
+      <div class="sidebarControls">
+        <div class="panelControls">
+          <div class="controlLabel">Visible panels</div>
+          <div class="panelToggleGroup" role="group" aria-label="Visible dashboard panels">
+            <button class="panelToggle" id="toggleChatBtn" type="button" aria-pressed="true" title="Hide chat panel">
+              <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+              <span>Chat</span>
+            </button>
+            <button class="panelToggle" id="toggleLogsBtn" type="button" aria-pressed="true" title="Hide logs panel">
+              <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 4 4-4 4m6 0h8"/><rect x="2" y="3" width="20" height="18" rx="3"/></svg>
+              <span>Logs</span>
+            </button>
+            <button class="panelToggle" id="toggleArtifactsBtn" type="button" aria-pressed="true" title="Hide artifacts panel">
+              <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <span>Artifacts</span>
+            </button>
+          </div>
+        </div>
+        <nav class="sidebarNav" aria-label="Dashboard actions">
+          <button class="sidebarNavAction" id="openSettingsBtn" type="button">
+            <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.95 4.6 1.7 1.7 0 0 0 9.97 3.04V3h4v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06L19.77 7l-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H21v4h-.08A1.7 1.7 0 0 0 19.4 15z"/></svg>
+            <span>Settings</span>
+          </button>
+          {environment_runs_button}
+        </nav>
       </div>
     </div>
 
@@ -5085,10 +5132,10 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
         <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
         <button class="settingsNavBtn" data-settings-section="embedding" type="button">Embedding/RAG</button>
-        <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
-        <button class="settingsNavBtn" data-settings-section="tools" type="button">Agent tools</button>
-        <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
         <button class="settingsNavBtn" data-settings-section="agents" type="button">Agent management</button>
+        <button class="settingsNavBtn" data-settings-section="tools" type="button">RAG tools</button>
+        <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
+        <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
       </div>
 
       <div class="settingsContent">
