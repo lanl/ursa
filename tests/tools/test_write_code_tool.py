@@ -1,17 +1,49 @@
 import time
 from pathlib import Path
 
+import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
 
 from tests.tools.utils import make_runtime
-from ursa.tools.write_code_tool import edit_code, write_code
+from ursa.tools.write_code_tool import (
+    edit_code,
+    write_code,
+    write_code_with_repo,
+)
+
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
+
+
+@pytest.fixture(autouse=True)
+def stub_event_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda *args, **kwargs: None,
+    )
 
 
 def test_write_code_records_store_entry(
-    tmp_path: Path, chat_model: BaseChatModel
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     store = InMemoryStore()
+    events = []
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda event_name, payload, config: events.append((
+            event_name,
+            payload,
+            config,
+        )),
+    )
     runtime = make_runtime(
         tmp_path,
         llm=chat_model,
@@ -27,6 +59,51 @@ def test_write_code_records_store_entry(
     assert item.value["tool_call_id"] == "tc-1"
     assert item.value["thread_id"] == "thread-1"
     assert item.value["modified"] <= time.time()
+    assert events[0] == (
+        "ursa_agent_progress",
+        {
+            "tool": "write_code",
+            "tool_call_id": "tc-1",
+            "stage": "write",
+            "message": "Writing file",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+            "phase": "start",
+            "filename": "sample.py",
+            "path": str(tmp_path / "sample.py"),
+        },
+        runtime.config,
+    )
+    event_name, payload, config = events[1]
+    assert event_name == "ursa_agent_progress"
+    assert config == runtime.config
+    assert payload["tool"] == "write_code"
+    assert payload["tool_call_id"] == "tc-1"
+    assert payload["stage"] == "write"
+    assert payload["message"] == "File written"
+    assert payload["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
+    assert payload["phase"] == "end"
+    assert payload["filename"] == "sample.py"
+    assert payload["path"] == str(tmp_path / "sample.py")
+    assert isinstance(payload["elapsed_ms"], float)
+
+
+def test_write_code_rejects_invalid_ascii_filename_without_cleaning(
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+):
+    existing = tmp_path / "caf.py"
+    existing.write_text("original", encoding="utf-8")
+    runtime = make_runtime(tmp_path, llm=chat_model)
+
+    result = write_code.func(
+        code="replacement",
+        filename="café.py",
+        runtime=runtime,
+    )
+
+    assert result.startswith("Invalid filename:")
+    assert "U+00E9" in result
+    assert existing.read_text(encoding="utf-8") == "original"
 
 
 def test_edit_code_updates_file_and_records(
@@ -83,6 +160,34 @@ def test_edit_code_noop_when_old_code_missing(
     assert "No changes made" in result
     assert target.read_text(encoding="utf-8") == "print('hello')\n"
     assert store.get(("workspace", "file_edit"), "script.py") is None
+
+
+def test_write_code_with_repo_records_store_entry(
+    tmp_path: Path, chat_model: BaseChatModel
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = InMemoryStore()
+    runtime = make_runtime(
+        tmp_path,
+        llm=chat_model,
+        store=store,
+        tool_call_id="tc-2",
+        thread_id="thread-2",
+    )
+
+    result = write_code_with_repo.func(
+        code="print(7)",
+        filename="repo/sample.py",
+        runtime=runtime,
+        repo_path=str(repo),
+    )
+
+    assert "written successfully" in result
+    item = store.get(("workspace", "file_edit"), "repo/sample.py")
+    assert item is not None
+    assert item.value["tool_call_id"] == "tc-2"
+    assert item.value["thread_id"] == "thread-2"
 
 
 def test_edit_code_missing_file(tmp_path: Path, chat_model: BaseChatModel):

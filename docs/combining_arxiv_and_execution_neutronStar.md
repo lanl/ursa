@@ -18,7 +18,7 @@ from ursa.agents import ArxivAgent, ExecutionAgent
 
 # Initialize the language model
 model = init_chat_model(
-    model="openai:gpt-5-mini",
+    model="openai:gpt-5.4-mini",
     max_tokens=50000,
 )
 

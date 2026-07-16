@@ -1,13 +1,23 @@
 from pathlib import Path
 
-from langchain_core.documents import Document
+import pytest
 
 from ursa.agents import RAGAgent
 
 
 async def test_rag_agent_retrieves_contextual_documents(
-    chat_model, embedding_model, monkeypatch, tmpdir
+    chat_model, embedding_model, monkeypatch, capsys, tmpdir
 ):
+    events = []
+
+    def capture_event(event_name, payload, config=None):
+        events.append((event_name, payload))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        capture_event,
+    )
+
     workspace = Path(tmpdir)
     database_dir = workspace / "database"
     summaries_dir = workspace / "summaries"
@@ -18,21 +28,16 @@ async def test_rag_agent_retrieves_contextual_documents(
 
     (database_dir / "mechanical_entanglement.pdf").write_bytes(b"%PDF-1.4\n")
 
-    doc_text = (
-        "Quantum entanglement between mechanical resonators enables "
-        "ultra-sensitive force detection in cryogenic setups."
-    )
-
-    class _FakePDFLoader:
-        def __init__(self, file_path: str):
-            self.file_path = file_path
-
-        def load(self):
-            return [Document(page_content=doc_text)]
+    def fakePDFLoader(path_name):
+        doc_text = (
+            "Quantum entanglement between mechanical resonators enables "
+            "ultra-sensitive force detection in cryogenic setups."
+        )
+        return doc_text
 
     monkeypatch.setattr(
-        "ursa.agents.rag_agent.PyPDFLoader",
-        _FakePDFLoader,
+        "ursa.agents.rag_agent.read_text_from_file",
+        fakePDFLoader,
     )
 
     agent = RAGAgent(
@@ -65,3 +70,29 @@ async def test_rag_agent_retrieves_contextual_documents(
 
     manifest_path = vectors_dir / "_ingested_ids.txt"
     assert manifest_path.exists()
+
+    payloads = [payload for _, payload in events]
+    stages = [payload["stage"] for payload in payloads]
+    assert "read_docs" in stages
+    assert "ingest_docs" in stages
+    assert "retrieve" in stages
+    assert "summarize" in stages
+    assert "retrieve_result" in stages
+    assert all(payload["agent"] == "RAGAgent" for payload in payloads)
+
+    stdout = capsys.readouterr().out
+    assert "[RAG Agent]" not in stdout
+    assert "RAG failed due to:" not in stdout
+
+
+def test_rag_agent_requires_explicit_embedding(chat_model, tmpdir):
+    with pytest.raises(
+        ValueError, match="requires an explicit embedding model"
+    ):
+        RAGAgent(
+            llm=chat_model,
+            workspace=tmpdir,
+            database_path="database",
+            summaries_path="summaries",
+            vectorstore_path="vectors",
+        )

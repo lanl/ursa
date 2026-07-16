@@ -6,9 +6,9 @@ instructions by invoking LLM tool calls and coordinating a controlled workflow.
 Key features:
 - Workspace management with optional symlinking for external sources.
 - Safety-checked shell execution via run_command with output size budgeting.
-- Code authoring and edits through write_code and edit_code with rich previews.
+- Code authoring and edits through write_code and edit_code.
 - Web search capability through DuckDuckGoSearchResults.
-- Summarization of the session and optional memory logging.
+- Summarization of the session
 - Configurable graph with nodes for agent, action, and summarize.
 
 Implementation notes:
@@ -32,7 +32,8 @@ from typing import (
     Annotated,
     Any,
     Literal,
-    Optional,
+    Mapping,
+    NotRequired,
     TypedDict,
 )
 
@@ -45,40 +46,48 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite
-
-# Rich
-from rich import get_console
-from rich.markdown import Markdown
-from rich.panel import Panel
+from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.prompt_library.execution_prompts import (
     executor_prompt,
+    get_review_prompt,
     recap_prompt,
 )
-from ursa.tools import edit_code, read_file, run_command, write_code
+from ursa.tools import (
+    download_file_tool,
+    edit_code,
+    edit_experience,
+    list_experiences,
+    read_experience,
+    read_file,
+    run_command,
+    write_code,
+    write_experience,
+)
+from ursa.tools.read_image_tool import read_image_tool
 from ursa.tools.search_tools import (
     run_arxiv_search,
     run_osti_search,
     run_web_search,
 )
-from ursa.util.memory_logger import AgentMemory
-
-console = get_console()  # always returns the same instance
-
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
+from ursa.util.structured_output import invoke_structured
 
 
 # Classes for typing
+class ReviewAssessment(BaseModel):
+    """Structured assessment of whether execution has addressed the request."""
+
+    is_complete: bool = Field(
+        description="Whether the work adequately addresses the request."
+    )
+    reason: str = Field(description="Brief rationale for the review decision.")
+
+
 class ExecutionState(TypedDict):
     """TypedDict representing the execution agent's mutable run state used by nodes.
 
@@ -86,30 +95,43 @@ class ExecutionState(TypedDict):
     - messages: list of messages (System/Human/AI/Tool).
     - symlinkdir: optional dict describing a symlink operation (source, dest,
       is_linked).
+    - review: optional structured review of whether the work is complete.
     """
 
     messages: Annotated[list[AnyMessage], add_messages]
     symlinkdir: dict
+    review: NotRequired[ReviewAssessment]
+    current_user_request: NotRequired[str]
 
 
-def should_continue(state: ExecutionState) -> Literal["recap", "continue"]:
-    """Return 'recap' if no tool calls in the last message, else 'continue'.
+def should_continue(state: ExecutionState) -> Literal["review", "continue"]:
+    """Return 'review' if no tool calls in the last message, else 'continue'.
 
     Args:
         state: The current execution state containing messages.
 
     Returns:
-        A literal "recap" if the last message has no tool calls,
+        A literal "review" if the last message has no tool calls,
         otherwise "continue".
     """
     messages = state["messages"]
     last_message = messages[-1]
-    # If there is no tool call, then we finish
+    # If there is no tool call, then review the work before finishing.
     if not last_message.tool_calls:
-        return "recap"
-    # Otherwise if there is, we continue
+        return "review"
+    # Otherwise if there is, we continue.
     else:
         return "continue"
+
+
+def review_complete(state: ExecutionState) -> Literal["recap", "continue"]:
+    """Route to recap when review passes, otherwise continue execution."""
+    review = state.get("review")
+    if isinstance(review, ReviewAssessment):
+        return "recap" if review.is_complete else "continue"
+    if isinstance(review, dict) and review.get("is_complete"):
+        return "recap"
+    return "continue"
 
 
 def command_safe(state: ExecutionState) -> Literal["safe", "unsafe"]:
@@ -144,16 +166,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     This agent wraps an LLM with a small execution graph that alternates
     between issuing model queries, invoking tools (read, run, write, edit, search),
     performing safety checks, and summarizing progress. It manages a
-    workspace on disk, optional symlinks, and an optional memory backend to
-    persist summaries.
+    workspace on disk, optional symlinks.
 
     Args:
         llm (BaseChatModel): Model identifier or bound chat model
             instance. If a string is provided, the BaseAgent initializer will
             resolve it.
-        agent_memory (Any | AgentMemory, optional): Memory backend used to
-            store summarized agent interactions. If provided, summaries are
-            saved here.
         log_state (bool): When True, the agent writes intermediate json state
             to disk for debugging and auditability.
         **kwargs: Passed through to the BaseAgent constructor (e.g., model
@@ -165,19 +183,19 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         executor_prompt (str): Prompt used when invoking the executor LLM
             loop.
         recap_prompt (str): Prompt used to request concise summaries for
-            memory or final output.
+            final output.
         tools (dict[str, Tool]): Tools available to the agent (run_command, write_code,
             edit_code, read_file, run_web_search, run_osti_search, run_arxiv_search),
             keyed by tool name for quick lookups.
         tool_node (ToolNode): Graph node that dispatches tool calls.
-        llm (BaseChatModel): LLM instance bound to the available tools.
+        llm (BaseChatModel): Base LLM instance used for summaries and recap.
+        tool_llm (BaseChatModel): Tool-bound LLM used for the execution loop.
 
     Methods:
         query_executor(state): Send messages to the executor LLM, ensure
             workspace exists, and handle symlink setup before returning the
             model response.
-        recap(state): Produce and optionally persist a summary of recent
-            interactions to the memory backend.
+        recap(state): Produce a summary of recent interactions.
         _build_graph(): Construct and compile the StateGraph for the agent
             loop.
 
@@ -191,12 +209,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def __init__(
         self,
         llm: BaseChatModel,
-        agent_memory: Optional[Any | AgentMemory] = None,
         log_state: bool = False,
-        extra_tools: Optional[list[BaseTool] | None] = None,
+        extra_tools: list[BaseTool] | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
-        safe_codes: Optional[list[str]] = None,
+        use_web: bool = False,
+        safe_codes: list[str] | None = None,
         **kwargs,
     ):
         default_tools = [
@@ -204,16 +222,28 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             write_code,
             edit_code,
             read_file,
-            run_web_search,
-            run_osti_search,
-            run_arxiv_search,
+            download_file_tool,
+            read_image_tool,
+            read_experience,
+            write_experience,
+            edit_experience,
+            list_experiences,
         ]
+        if use_web:
+            default_tools.extend([
+                run_web_search,
+                run_osti_search,
+                run_arxiv_search,
+            ])
         if extra_tools:
             default_tools.extend(extra_tools)
 
-        super().__init__(llm=llm, tools=default_tools, **kwargs)
-        self.agent_memory = agent_memory
-        self.safe_codes = set(safe_codes or ["python", "julia"])
+        super().__init__(
+            llm=llm,
+            tools=default_tools,
+            safe_codes=safe_codes or ["python", "julia"],
+            **kwargs,
+        )
         self.executor_prompt = executor_prompt
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
@@ -221,90 +251,62 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         self.tokens_before_summarize = tokens_before_summarize
         self.messages_to_keep = messages_to_keep
 
-    # Check message history length and summarize to shorten the token usage:
-    def _summarize_context(self, state: ExecutionState) -> ExecutionState:
-        new_state = state.copy()
-        summarized = False
-        tokens_before_summarize = count_tokens_approximately(
-            new_state["messages"][1:]
+    @staticmethod
+    def _message_text(msg: Any) -> str:
+        """Extract readable text from LangChain-style message inputs."""
+        text = getattr(msg, "text", None)
+        if text:
+            return str(text)
+        content = getattr(msg, "content", None)
+        if content is not None:
+            return str(content)
+        if isinstance(msg, Mapping):
+            content = msg.get("content")
+            if content is not None:
+                return str(content)
+        if isinstance(msg, tuple) and len(msg) >= 2:
+            return str(msg[1])
+        return ""
+
+    @classmethod
+    def _first_human_message_text(cls, messages: Any) -> str:
+        """Return text for the first human/user message in a message sequence."""
+        if not isinstance(messages, (list, tuple)):
+            return ""
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                return cls._message_text(msg)
+            if isinstance(msg, Mapping):
+                role = str(msg.get("role") or msg.get("type") or "").lower()
+                if role in {"human", "user"}:
+                    return cls._message_text(msg)
+            if isinstance(msg, tuple) and msg:
+                role = str(msg[0]).lower()
+                if role in {"human", "user"}:
+                    return cls._message_text(msg)
+        return ""
+
+    def _normalize_inputs(self, inputs):
+        """Normalize inputs and remember this invocation's user request.
+
+        Persistent LangGraph threads merge a new ``messages`` input with prior
+        checkpointed history. Capturing the first human/user message before that
+        merge gives review a stable request for the current invoke instead of the
+        first human message in the entire persisted conversation.
+        """
+        normalized = dict(super()._normalize_inputs(inputs))
+        user_request = self._first_human_message_text(
+            normalized.get("messages", [])
         )
-
-        if tokens_before_summarize > self.tokens_before_summarize:
-            # Start from 1 to skip system message.
-            conversation_to_summarize = new_state["messages"][
-                1 : -self.messages_to_keep
-            ]
-            conversation_to_keep = new_state["messages"][
-                -self.messages_to_keep :
-            ]
-            tool_ids = []
-            for msg in conversation_to_summarize:
-                if hasattr(msg, "tool_calls"):
-                    for call in msg.tool_calls:
-                        tool_ids.append(call["id"])
-                if isinstance(msg, ToolMessage):
-                    tool_ids.remove(msg.tool_call_id)
-            if tool_ids:
-                print(
-                    f"[Summarizing] The following tool IDs would be cut off:\n{tool_ids}"
-                )
-                for msg in conversation_to_keep:
-                    if (
-                        isinstance(msg, ToolMessage)
-                        and msg.tool_call_id in tool_ids
-                    ):
-                        conversation_to_summarize.append(msg)
-                        conversation_to_keep.remove(msg)
-                        tool_ids.remove(msg.tool_call_id)
-            if tool_ids:
-                # We may need to implement something here for if a tool has not
-                # responded but its tool call is far enough back that it is being
-                # summarized away. Likely an edge case for non-async, but async
-                # may cause a problem here.
-                print(
-                    f"Tool ID '{tool_ids}' was in the messages to summarize, but was not found in the responses. Could be dangling tool call."
-                )
-                pass
-
-            summarize_prompt = f"""
-            Your only tasks is to provide a detailed, comprehensive summary of the following
-            conversation.
-
-            Your summary will be the only information retained from the conversation, so ensure
-            it contains all details that need to be remembered to meet the goals of the work.
-
-            Conversation to summarize:
-            {conversation_to_summarize}
-            """
-            summary = self.llm.invoke(summarize_prompt)
-            summarized_messages = [
-                SystemMessage(content=self.executor_prompt),
-                summary,
-            ]
-            summarized_messages.extend(conversation_to_keep)
-            tokens_after_summarize = count_tokens_approximately(
-                summarized_messages
-            )
-            console.print(
-                Panel(
-                    (
-                        f"Summarized Conversation History:\n"
-                        f"Summary:\n{summary.text}\n"
-                        f"Approximate tokens before: {tokens_before_summarize}\n"
-                        f"Approximate tokens after: {tokens_after_summarize}\n"
-                    ),
-                    title="[bold yellow1 on black]Summarize Past Context",
-                    border_style="yellow1",
-                    style="bold yellow1 on black",
-                )
-            )
-            new_state["messages"] = summarized_messages
-            summarized = True
-        return new_state, summarized
+        normalized["current_user_request"] = user_request
+        return normalized
 
     # Define the function that calls the model
     def query_executor(
-        self, state: ExecutionState, runtime: Runtime[AgentContext]
+        self,
+        state: ExecutionState,
+        runtime: Runtime[AgentContext],
+        config: RunnableConfig | None = None,
     ) -> ExecutionState:
         """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
@@ -327,12 +329,15 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
+        events = self.events(config)
         new_state.setdefault("symlinkdir", {})
 
         full_overwrite = False
 
-        # 1.5) Check message history length and summarize to shorten the token usage:
-        new_state, full_overwrite = self._summarize_context(new_state)
+        # 1.5) Check message history length, summarize, and patch dangling tool calls.
+        new_state, full_overwrite = self.prepare_messages_context(
+            new_state, system_prompt=self.executor_prompt
+        )
 
         # 2) Optionally create a symlink if symlinkdir is provided and not yet linked.
         sd = new_state.get("symlinkdir")
@@ -352,7 +357,12 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
             # Create the symlink (tell pathlib if the target is a directory).
             dst.symlink_to(src, target_is_directory=src.is_dir())
-            print(f"{RED}Symlinked:{RESET} {src} (source) --> {dst} (dest)")
+            events.emit(
+                "Workspace symlink created",
+                stage="workspace_symlink",
+                source=str(src),
+                destination=str(dst),
+            )
             new_state["symlinkdir"]["is_linked"] = True
             full_overwrite = True
 
@@ -365,14 +375,20 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
 
         # 4) Invoke the LLM with the prepared message sequence.
         try:
-            response = self.llm.invoke(
+            response = self.tool_llm.invoke(
                 messages, self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             response = AIMessage(content=f"Response error {e}")
             msg = new_state["messages"][-1].text
-            print("Error: ", e, " ", msg)
+            events.emit(
+                "Executor response failed",
+                stage="executor_error",
+                error_type=type(e).__name__,
+                error=str(e),
+                latest_message=msg[:2000],
+            )
             new_state["messages"].append(response)
 
         # 5) Optionally persist the pre-invocation state for audit/debugging.
@@ -386,12 +402,113 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         else:
             return {"messages": response, "symlinkdir": new_state["symlinkdir"]}
 
-    def recap(self, state: ExecutionState) -> ExecutionState:
-        """Produce a concise summary of the conversation and optionally persist memory.
+    def _get_current_user_request(self, state: ExecutionState) -> str:
+        """Return the user request for the current invoke.
+
+        Prefer ``current_user_request``, which is captured from the entry input
+        before LangGraph merges new messages with any checkpointed history. If a
+        legacy/in-memory state does not have that field, fall back to the latest
+        human message rather than the first one in the full history.
+        """
+        current_request = state.get("current_user_request")
+        if current_request:
+            return str(current_request)
+        for msg in reversed(state.get("messages", [])):
+            if isinstance(msg, HumanMessage):
+                return self._message_text(msg)
+        messages = state.get("messages", [])
+        if messages:
+            return self._message_text(messages[-1])
+        return ""
+
+    def review_work(
+        self, state: ExecutionState, config: RunnableConfig | None = None
+    ) -> ExecutionState:
+        """Review whether the completed work adequately addresses the request.
+
+        This node runs after the executor emits an ordinary assistant response without
+        requesting any tool calls. It asks the LLM for a structured assessment of the
+        work so far. If the work is incomplete, the review rationale is appended as a
+        HumanMessage so the executor can continue with explicit feedback. If the work
+        is complete, only the structured review state is updated and the graph proceeds
+        to recap.
+        """
+        new_state = deepcopy(state)
+        events = self.events(config)
+        full_overwrite = False
+
+        new_state, full_overwrite = self.prepare_messages_context(
+            new_state, system_prompt=self.executor_prompt
+        )
+
+        user_request = self._get_current_user_request(new_state)
+        review_message = HumanMessage(content=get_review_prompt(user_request))
+        review_messages = list(new_state["messages"]) + [review_message]
+
+        review = invoke_structured(
+            self.llm,
+            ReviewAssessment,
+            review_messages,
+            config=self.build_config(tags=["review"]),
+            context="execution review assessment",
+            fallback=ReviewAssessment(
+                is_complete=True,
+                reason=(
+                    "Review step failed to produce a valid structured "
+                    "assessment. Proceeding to recap."
+                ),
+            ),
+            repair=3,
+        )
+
+        is_complete = bool(review.is_complete)
+        reason = str(review.reason)
+
+        events.emit(
+            "Execution Review: Complete"
+            if is_complete
+            else "Execution Review: Continue",
+            stage="review_work",
+            approved=is_complete,
+            reason=reason,
+        )
+
+        if is_complete:
+            if full_overwrite:
+                return {
+                    "messages": Overwrite(new_state["messages"]),
+                    "review": review,
+                    "symlinkdir": new_state.get("symlinkdir", {}),
+                }
+            return {"review": review}
+
+        feedback = HumanMessage(
+            content=(
+                "Review of the current work determined that the current user "
+                "request has not yet been adequately addressed. Continue working "
+                "and specifically address the following review feedback:\n\n"
+                f"{reason}"
+            )
+        )
+        return self.messages_update(
+            new_state,
+            [feedback],
+            full_overwrite=full_overwrite,
+            extra={
+                "review": review,
+                "symlinkdir": new_state.get("symlinkdir", {}),
+            },
+        )
+
+    def recap(
+        self,
+        state: ExecutionState,
+        config: RunnableConfig | None = None,
+    ) -> ExecutionState:
+        """Produce a concise summary of the conversation
 
         This method builds a summarization prompt, invokes the LLM to obtain a compact
-        summary of recent interactions, optionally logs salient details to the agent
-        memory backend, and writes debug state when logging is enabled.
+        summary of recent interactions and writes debug state when logging is enabled.
 
         Args:
             state (ExecutionState): The execution state containing message history.
@@ -401,10 +518,13 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 the recap.
         """
         new_state = deepcopy(state)
+        events = self.events(config)
         full_overwrite = False
 
-        # 0) Check message history length and summarize to shorten the token usage:
-        new_state, full_overwrite = self._summarize_context(new_state)
+        # 0) Check message history length, summarize, and patch dangling tool calls.
+        new_state, full_overwrite = self.prepare_messages_context(
+            new_state, system_prompt=self.executor_prompt
+        )
 
         # 1) Construct the summarization message list (system prompt + prior messages).
         recap_message = HumanMessage(content=self.recap_prompt)
@@ -417,46 +537,26 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
-        except Exception as e:
-            response_content = f"Response error {e}"
-            response = AIMessage(content=response_content)
-            print("Error: ", e, " ", new_state["messages"][-1].text)
-
-        console.print(
-            Panel(
-                Markdown(response_content),
-                title="[bold grey85 on black]Recap of Work",
-                border_style="grey85 on black",
-                style="grey85 on black",
-                expand=False,  # Make panel fit content width
-            )
-        )
-
-        # 3) Optionally persist salient details to the memory backend.
-        if self.agent_memory:
-            memories: list[str] = []
-            # Collect human/system/tool message content; for AI tool calls, store args.
-            for msg in new_state["messages"]:
-                msg_content = msg.text
-                if not isinstance(msg, AIMessage):
-                    memories.append(msg_content)
-                elif not msg.tool_calls:
-                    memories.append(msg_content)
-                else:
-                    tool_strings = []
-                    for tool in msg.tool_calls:
-                        tool_strings.append("Tool Name: " + tool["name"])
-                        for arg_name in tool["args"]:
-                            tool_strings.append(
-                                f"Arg: {str(arg_name)}\nValue: "
-                                f"{str(tool['args'][arg_name])}"
-                            )
-                    memories.append("\n".join(tool_strings))
-            memories.append(response_content)
-            self.agent_memory.add_memories(memories)
+        except Exception:
+            try:
+                response = self.tool_llm.invoke(
+                    input=new_state["messages"],
+                    config=self.build_config(tags=["recap"]),
+                )
+                response_content = response.text
+            except Exception as e:
+                response_content = f"Response error {e}"
+                response = AIMessage(content=response_content)
+                events.emit(
+                    "Recap failed",
+                    stage="recap_error",
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    latest_message=new_state["messages"][-1].text[:2000],
+                )
 
         if full_overwrite:
-            # 4) Optionally write state to disk for debugging/auditing.
+            # 3) Optionally write state to disk for debugging/auditing.
             new_state["messages"].append(response)
             if self.log_state:
                 self.write_state("execution_agent.json", new_state)
@@ -470,45 +570,45 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
     def _build_graph(self):
         """Construct and compile the agent's LangGraph state machine."""
 
-        # Bind tools to llm and context summarizer
-
-        self.llm = self.llm.bind_tools(self.tools.values())
+        # Keep self.llm unbound for summary/recap calls. The executor loop uses a
+        # separate tool-bound model so provider-specific tool transcripts cannot
+        # leak into summarization history.
+        self.tool_llm = self.tool_llm.bind_tools(self.tools.values())
 
         # Register nodes:
         # - "agent": LLM planning/execution step
         # - "action": tool dispatch (run_command, write_code, etc.)
+        # - "review": structured completeness review before final recap
         # - "recap": summary/finalization step
         self.add_node(self.query_executor, "agent")
         self.add_node(self.tool_node, "action")
+        self.add_node(self.review_work, "review")
         self.add_node(self.recap, "recap")
 
         # Set entrypoint: execution starts with the "agent" node.
         self.graph.set_entry_point("agent")
 
-        # From "agent", either continue (tools) or finish (recap),
+        # From "agent", either continue with tools or review the completed work,
         # based on presence of tool calls in the last message.
         self.graph.add_conditional_edges(
             "agent",
             self._wrap_cond(should_continue, "should_continue", "execution"),
-            {"continue": "action", "recap": "recap"},
+            {"continue": "action", "review": "review"},
         )
 
         # After tools run, return control to the agent for the next step.
         self.graph.add_edge("action", "agent")
+
+        # After review, either ask the executor to continue with review feedback or
+        # finish with the recap node.
+        self.graph.add_conditional_edges(
+            "review",
+            self._wrap_cond(review_complete, "review_complete", "execution"),
+            {"continue": "agent", "recap": "recap"},
+        )
 
         # The graph completes at the "recap" node.
         self.graph.set_finish_point("recap")
 
     def format_result(self, state: ExecutionState) -> str:
         return state["messages"][-1].text
-
-    def hook_storage_setup(self, store):
-        # Record the edit operation
-        if store is None:
-            return
-        for safe_code in self.safe_codes:
-            store.put(
-                ("workspace", "safe_codes"),
-                safe_code,
-                {},
-            )

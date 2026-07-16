@@ -1,27 +1,31 @@
+import os
 import subprocess
 from pathlib import Path
-from typing import TypedDict
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from rich import get_console
+from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext
-from ursa.prompt_library.execution_prompts import (
+from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
-from ursa.util.types import AsciiStr
+from ursa.util.events import ToolEvents
+from ursa.util.structured_output import invoke_structured
+from ursa.util.types import (
+    AsciiValidationError,
+    ascii_validation_message,
+    validate_ascii,
+)
 
-console = get_console()
 
-
-class SafetyAssessment(TypedDict):
-    is_safe: bool
-    reason: str
+class SafetyAssessment(BaseModel):
+    is_safe: bool = Field(description="Whether the command is safe to execute.")
+    reason: str = Field(description="Brief reason for the safety decision.")
 
 
 @tool
-def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
+def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Execute a shell command in the workspace and return its combined output.
 
     Runs the specified command using subprocess.run in the given workspace
@@ -36,6 +40,10 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
         A formatted string with "STDOUT:" followed by the truncated stdout and
         "STDERR:" followed by the truncated stderr.
     """
+    try:
+        query = validate_ascii(query)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("query", exc)
     workspace_dir = Path(runtime.context.workspace)
     if runtime.store is not None:
         search_results = runtime.store.search(
@@ -53,48 +61,82 @@ def run_command(query: AsciiStr, runtime: ToolRuntime[AgentContext]) -> str:
     else:
         safe_codes = []
 
+    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
     llm = runtime.context.llm
-    safety_result = llm.with_structured_output(SafetyAssessment).invoke(
-        get_safety_prompt(query, safe_codes, edited_files)
+    events = ToolEvents.from_runtime("run_command", runtime)
+    safety_result = invoke_structured(
+        llm,
+        SafetyAssessment,
+        get_safety_prompt(
+            query, safe_codes, edited_files, prompt_level=prompt_level
+        ),
+        context="run_command safety assessment",
+        fallback=SafetyAssessment(
+            is_safe=False,
+            reason=(
+                "Could not parse command safety assessment from the model. "
+                "Command blocked."
+            ),
+        ),
+        repair=1,
     )
 
-    if not safety_result["is_safe"]:
-        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result['reason']}"
-        console.print(
-            "[bold red][WARNING][/bold red] Command deemed unsafe:",
-            query,
+    if not safety_result.is_safe:
+        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
+        events.emit(
+            "Command deemed unsafe",
+            stage="safety_check",
+            query=query,
+            safe=False,
+            reason=safety_result.reason,
         )
-        # Also surface the model's rationale for transparency.
-        console.print("[bold red][WARNING][/bold red] REASON:", tool_response)
         return tool_response
-    else:
-        console.print(
-            f"[green]Command passed safety check:[/green] {query}\nFor reason: {safety_result['reason']}"
-        )
-
-    print("RUNNING: ", query)
+    events.emit(
+        "Command passed safety check",
+        stage="safety_check",
+        query=query,
+        safe=True,
+        reason=safety_result.reason,
+    )
 
     try:
-        result = subprocess.run(
-            query,
-            text=True,
-            shell=True,
-            timeout=60000,
-            capture_output=True,
-            cwd=workspace_dir,
-        )
-        stdout, stderr = result.stdout, result.stderr
+        with events.range(
+            "execute",
+            "Running command",
+            done="Command finished",
+            error="Command interrupted",
+            query=query,
+        ) as span:
+            result = subprocess.run(
+                query,
+                text=True,
+                shell=True,
+                timeout=60000,
+                capture_output=True,
+                cwd=workspace_dir,
+                check=False,
+            )
+            stdout, stderr = result.stdout, result.stderr
+            # Fit BOTH streams under a single overall cap
+            stdout_fit, stderr_fit = _fit_streams_to_budget(
+                stdout or "",
+                stderr or "",
+                runtime.context.tool_character_limit,
+            )
+            span.update(
+                returncode=getattr(result, "returncode", None),
+                stdout_chars=len(stdout or ""),
+                stderr_chars=len(stderr or ""),
+                stdout_truncated=stdout_fit != (stdout or ""),
+                stderr_truncated=stderr_fit != (stderr or ""),
+            )
     except KeyboardInterrupt:
-        print("Keyboard Interrupt of command: ", query)
         stdout, stderr = "", "KeyboardInterrupt:"
-
-    # Fit BOTH streams under a single overall cap
-    stdout_fit, stderr_fit = _fit_streams_to_budget(
-        stdout or "", stderr or "", runtime.context.tool_character_limit
-    )
-
-    print("STDOUT: ", stdout_fit)
-    print("STDERR: ", stderr_fit)
+        stdout_fit, stderr_fit = _fit_streams_to_budget(
+            stdout,
+            stderr,
+            runtime.context.tool_character_limit,
+        )
 
     return f"STDOUT:\n{stdout_fit}\nSTDERR:\n{stderr_fit}"
 

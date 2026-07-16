@@ -39,7 +39,7 @@ Optional:
 - `matplotlib` for plot generation (headless `Agg` backend)
 
 Model selection:
-- `URSA_MODEL` (default used by the runner: `openai:gpt-5-mini`)
+- `URSA_MODEL` (default used by the runner: `openai:gpt-5.4-mini`)
 
 ---
 

@@ -9,6 +9,7 @@ authors = [
     { name = "Rahul Somasundaram", email = "rsomasundaram@lanl.gov" },
     { name = "Isaac Michaud", email = "imichaud@lanl.gov" },
     { name = "Avanish Mishra", email = "avanish@lanl.gov" },
+    { name = "Pascal Grosset", email = "pascalgrosset@lanl.gov" },
     { name = "Arthur Lui", email = "alui@lanl.gov" },
     { name = "Russell Bent", email = "rbent@lanl.gov" },
     { name = "Alex Wadell", email = "awadell@lanl.gov" },
@@ -17,40 +18,39 @@ authors = [
 ]
 license = "BSD-3-Clause"
 license-files = [ "LICENSE" ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "arxiv>=2.2.0,<3.0",
     "beautifulsoup4>=4.13.4,<5.0",
     "randomname>=0.2.1,<0.3",
-    "pandas>=2.3.1,<3.0",
     "pillow>=11.3.0,<12.0",
-    "pymupdf>=1.26.0,<2.0",
-    "pypdf>=5.9.0,<6.0",
+    "pymupdf>=1.28.0,<2.0",
+    "pymupdf4llm>=0.3.4,<1.0",
     "rich>=13.9.4,<14.0",
-    "mp-api>=0.45.8,<0.45.13",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
-    "trafilatura>=1.6.1,<1.7",
+    "truststore>=0.10.4,<1.0",
     "selectolax>=0.4.0,<0.5",
-    # "langchain-google-genai>=2.1.9,<3.0",
-    # "langchain-anthropic>=0.3.19,<0.4",
-    "langchain>=1.0.3",
+    "langchain>=1.3.2",
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.4.1",
     "langchain-openai>=1.0.1",
-    "langgraph-checkpoint-sqlite>=3.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "aiosqlite>=0.20.0",
+    "langchain-anthropic>=1.4",
+    "langchain-google-genai>=4.2",
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
     "langchain-mcp-adapters>=0.1.12,<0.2",
     "pydantic>=2.12.0,<3.0",
     "mcp>=1.20.0,<2.0",
     "jsonargparse>=4.45.0",
-    "fastmcp>=2.13.3",
+    "fastmcp~=3.0",
     "pyyaml>=6.0.3",
+    "justext>=3.0.2",
 ]
 classifiers = [
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -59,6 +59,7 @@ classifiers = [
 
 [project.scripts]
 ursa = "ursa.cli:main"
+ursa-dashboard = "ursa_dashboard.main:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
@@ -67,9 +68,41 @@ Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
 [project.optional-dependencies]
-fm = ["torch>=2.9.0"] # Ursa's MCP FM interface
+dashboard = [
+    "fastapi>=0.120.0",
+    "uvicorn>=0.37.0",
+]
+fm = [
+    "torch>=2.9.0",
+] # Ursa's MCP FM interface
 lammps = [
     "atomman>=1.5.2",
+    "trafilatura>=1.6.1,<1.7",
+]
+office_readers = [
+    "python-docx>=1.2",
+    "python-pptx>=1.0.2",
+]
+opt = [
+    "ortools>=9.14,<9.15",
+]
+otel = [
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-sdk>=1.38.0",
+]
+dsi = [
+    "dsi-workflow>=1.1.4",
+]
+image = [
+    "pillow>=11.3.0,<12.0.0",
+]
+mp = [
+    "mp-api>=0.45.8,<0.45.13",
+]
+metric_plots = [
+    "matplotlib>=3.10.6",
+    "pandas>=2.3.1,<3.0",
+    "scipy>=1.16.2,<2.0.0",
 ]
 
 [build-system]
@@ -97,10 +130,15 @@ pycodestyle.max-doc-length = 80
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
+ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--numprocesses auto --dist worksteal"
+markers = [
+    "real_llm: test intentionally initializes a real chat or embedding model and may make network calls",
+    "slow: test is comparatively slow and may be omitted from quick local runs",
+]
 
 [dependency-groups]
 dev = [
@@ -117,11 +155,4 @@ docs = [
     "mkdocs-autorefs>=1.4.3",
     "mkdocs-material>=9.6.21",
     "mkdocstrings-python>=1.18.2",
-]
-opt = [
-    "ortools>=9.14,<9.15",
-]
-otel = [
-    "opentelemetry-exporter-otlp>=1.39.0",
-    "opentelemetry-sdk>=1.38.0",
 ]

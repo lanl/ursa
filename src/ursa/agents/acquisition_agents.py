@@ -23,13 +23,14 @@ from PIL import Image
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
+from ursa.util.http import build_httpx_client
 from ursa.util.parse import (
     _derive_filename_from_cd_or_url,
     _download_stream_to,
     _get_soup,
     _is_pdf_response,
     extract_main_text_only,
-    read_pdf_text,
+    read_pdf,
     resolve_pdf_from_osti_record,
 )
 
@@ -113,7 +114,7 @@ def _download(url: str, dest_path: str, timeout: int = 20) -> str:
 def describe_image(image: Image.Image) -> str:
     if OpenAI is None:
         return ""
-    client = OpenAI()
+    client = OpenAI(http_client=build_httpx_client())
     buf = BytesIO()
     image.save(buf, format="PNG")
     import base64
@@ -214,9 +215,9 @@ class BaseAcquisitionAgent(BaseAgent):
         self.rag_embedding = rag_embedding
         self.process_images = process_images
         self.max_results = max_results
-        self.database_path = self.workspace / database_path
-        self.summaries_path = self.workspace / summaries_path
-        self.vectorstore_path = self.workspace / vectorstore_path
+        self.database_path = self.den / database_path
+        self.summaries_path = self.den / summaries_path
+        self.vectorstore_path = self.den / vectorstore_path
         self.download = download
         self.num_threads = num_threads
 
@@ -270,7 +271,7 @@ class BaseAcquisitionAgent(BaseAgent):
                     full_text = ""
                     try:
                         if fname.lower().endswith(".pdf"):
-                            full_text = read_pdf_text(local_path)
+                            full_text = read_pdf(local_path)
                         else:
                             with open(
                                 local_path,
@@ -391,7 +392,7 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
-            workspace=self.workspace,
+            workspace=self.den,
             embedding=self.rag_embedding,
             vectorstore_path="rag_vectorstore",
             database_path=self.database_path.name,
@@ -523,7 +524,7 @@ class WebSearchAgent(BaseAcquisitionAgent):
                     self.database_path, _safe_filename(item_id) + ".pdf"
                 )
                 _download(url, local_path)
-                full_text = read_pdf_text(local_path)
+                full_text = read_pdf(local_path)
             else:
                 r = requests.get(url, headers=headers, timeout=20)
                 r.raise_for_status()
@@ -651,7 +652,7 @@ class OSTIAgent(BaseAcquisitionAgent):
                         _download_stream_to(local_path, r)
                         # Extract PDF text
                         try:
-                            full_text = read_pdf_text(local_path)
+                            full_text = read_pdf(local_path)
                         except Exception as e:
                             full_text = (
                                 f"[Downloaded but text extraction failed: {e}]"
@@ -788,7 +789,7 @@ class ArxivAgent(BaseAcquisitionAgent):
         full_text = ""
         try:
             _download(pdf_url, local_path)
-            full_text = read_pdf_text(local_path)
+            full_text = read_pdf(local_path)
         except Exception as e:
             full_text = f"[Error loading ArXiv {arxiv_id}: {e}]"
         full_text = self._postprocess_text(full_text, local_path)

@@ -9,6 +9,8 @@ from mcp.client.session_group import (
 )
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
+from ursa.util.http import build_mcp_httpx_async_client
+
 
 def validate_server_parameters(config: dict):
     if not isinstance(config, dict):
@@ -19,7 +21,7 @@ def validate_server_parameters(config: dict):
         return StdioServerParameters(**payload)
     elif transport_hint == "sse":
         return SseServerParameters(**payload)
-    elif transport_hint == "streamable_http":
+    elif transport_hint in ["streamable_http", "streamable-http"]:
         return StreamableHttpParameters(**payload)
     elif transport_hint is None:
         # Let Pydantic infer (backwards compatibility)
@@ -67,10 +69,13 @@ def start_mcp_client(
     for server, config in server_configs.items():
         if not isinstance(config, BaseModel):
             config = validate_server_parameters(dict(**config))
-        client_config[server] = {
+        connection = {
             **config.model_dump(),
             "transport": transport(config),
         }
+        if isinstance(config, (SseServerParameters, StreamableHttpParameters)):
+            connection["httpx_client_factory"] = build_mcp_httpx_async_client
+        client_config[server] = connection
     return MultiServerMCPClient(client_config)
 
 

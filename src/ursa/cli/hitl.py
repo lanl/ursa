@@ -1,16 +1,16 @@
 import asyncio
 import logging
 import os
-import platform
 import threading
 from cmd import Cmd
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any
 
 import aiosqlite
 from fastmcp import FastMCP
-from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.embeddings import init_embeddings
+from langchain.chat_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
@@ -22,9 +22,14 @@ from rich.theme import Theme
 from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
+from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
+from ursa.security import (
+    enforce_group_base_url_policy,
+    enforce_model_group_policy,
+)
+from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
-from ursa.util.memory_logger import AgentMemory
 
 ursa_banner = r"""
   __  ________________ _
@@ -68,15 +73,19 @@ class AgentHITL:
         return self._agent.__doc__
 
     async def __call__(
-        self, prompt: str, last_agent_result: str | None = None
+        self,
+        prompt: str,
+        last_agent_result: str | None = None,
+        last_agent: Any | None = None,
+        callbacks: Sequence[Any] | None = None,
     ) -> str:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
 
         # Inject the previous agent's response into the query
-        if last_agent_result is not None:
+        if (last_agent_result is not None) and (last_agent != agent):
             prompt = "\n".join([
-                f"The last agent output was: {last_agent_result}",
+                f"The last agent output was: {last_agent_result}\n\n",
                 f"The user stated: {prompt}",
             ])
 
@@ -84,7 +93,11 @@ class AgentHITL:
         # then invoke the agent and extract a final message from it's new state
         query = agent.format_query(prompt, state=self.state)
 
-        new_state = await agent.ainvoke(query)
+        invoke_config = None
+        if callbacks:
+            invoke_config = {"callbacks": list(callbacks)}
+
+        new_state = await agent.ainvoke(query, config=invoke_config)
         msg = agent.format_result(new_state)
         self.state = new_state
 
@@ -103,32 +116,33 @@ def get_base_url(model: BaseChatModel) -> str | None:
 class HITL:
     def __init__(self, config: UrsaConfig):
         self.config = config
-        self.thread_id = config.thread_id or "ursa_cli"
+        self.thread_id = config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
         agent_overrides = dict(config.agent_config or {})
-        memory_overrides = agent_overrides.pop("memory", None)
 
-        self.model: BaseChatModel = init_chat_model(
-            **self.config.llm_model.kwargs
+        self.agent_name = self.config.agent_name
+        self.group = self.config.group
+
+        enforce_group_base_url_policy(
+            self.config.llm_model.base_url, self.group
         )
+        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
+        enforce_model_group_policy(self.model, self.group)
+        if self.config.emb_model:
+            enforce_group_base_url_policy(
+                self.config.emb_model.base_url, self.group
+            )
         self.embedding = (
-            init_embeddings(**self.config.emb_model.kwargs)
+            self.config.emb_model.init_embedding()
             if self.config.emb_model
             else None
         )
+        enforce_model_group_policy(self.embedding, self.group)
+
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
-        self.memory = (
-            AgentMemory(
-                embedding_model=self.embedding,
-                path=str(self.workspace / "memory"),
-                **(memory_overrides or {}),
-            )
-            if self.embedding
-            else None
-        )
         if base_url := getattr(self.config.llm_model, "base_url"):
             if model_base_url := get_base_url(self.model):
                 if base_url != model_base_url:
@@ -144,24 +158,45 @@ class HITL:
                             f"Model base url ({model_base_url}) and config ({base_url}) do not match"
                         )
 
+        rag_tool_config = {
+            "rag_tools": self.config.rag_tools,
+            "rag_tool_embedding": self.embedding,
+        }
+
         self.agents: dict[str, AgentHITL] = {}
-        self.agents["chat"] = AgentHITL(agent_class=agents.ChatAgent)
+        self.agents["chat"] = AgentHITL(
+            agent_class=agents.ChatAgent,
+            config={"use_web": self.config.use_web, **rag_tool_config},
+        )
         self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
+        if has_optional_dep_group("dsi"):
+            self.agents["dsi"] = AgentHITL(
+                agent_class=agents.DSIAgent,
+                config=dict(rag_tool_config),
+            )
         self.agents["execute"] = AgentHITL(
             agent_class=agents.ExecutionAgent,
-            config={"agent_memory": self.memory},
+            config={
+                "use_web": self.config.use_web,
+                **rag_tool_config,
+            },
+        )
+        self.agents["deep_review"] = AgentHITL(
+            agent_class=agents.DeepReviewAgent,
+            config={"use_web": self.config.use_web, **rag_tool_config},
         )
         self.agents["hypothesize"] = AgentHITL(
             agent_class=agents.HypothesizerAgent
         )
         self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
+        self.agents["prompt"] = AgentHITL(
+            agent_class=agents.PromptingAgent,
+            config={"use_web": self.config.use_web},
+        )
         self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
 
-        if self.memory is not None:
-            self.agents["recall"] = AgentHITL(
-                agent_class=agents.RecallAgent,
-                config={"memory": self.memory},
-            )
+        if has_optional_dep_group("lammps"):
+            self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
 
         # Apply agent-specific configuration overrides
         for agent, agent_config in agent_overrides.items():
@@ -174,11 +209,12 @@ class HITL:
             )
 
         self.last_agent_result = None
+        self.last_agent = None
 
     async def _get_checkpointer(
-        self, name: str = "checkpoint"
+        self, checkpoint_path: Path
     ) -> AsyncSqliteSaver:
-        checkpoint_path = (self.config.workspace / name).with_suffix(".db")
+        checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(checkpoint_path))
         return AsyncSqliteSaver(conn)
@@ -188,24 +224,38 @@ class HITL:
 
         # Lazily instantiate the agents
         if agent._agent is None:
-            checkpointer = await self._get_checkpointer(name)
             await agent.instantiate(
                 llm=self.model,
                 workspace=self.workspace,
-                checkpointer=checkpointer,
+                agent_name=self.agent_name,
+                group=self.group,
                 mcp_client=self.mcp_client,
                 thread_id=f"{self.thread_id}",
             )
+            # Replacing the sync checkpointer with an async one for the hitl
+            async_checkpointer = await self._get_checkpointer(agent._agent.den)
+            agent._agent.checkpointer = async_checkpointer
 
         assert agent._agent is not None
         return agent
 
-    async def run_agent(self, name: str, prompt: str) -> str:
+    async def run_agent(
+        self,
+        name: str,
+        prompt: str,
+        callbacks: Sequence[Any] | None = None,
+    ) -> str:
         assert name in self.agents, f"Unknown agent {name}"
         agent = await self.get_agent(name)
-        msg = await agent(prompt, last_agent_result=self.last_agent_result)
+        msg = await agent(
+            prompt,
+            last_agent_result=self.last_agent_result,
+            last_agent=self.last_agent,
+            callbacks=callbacks,
+        )
         assert isinstance(msg, str)
         self.last_agent_result = msg
+        self.last_agent = agent._agent
         return msg
 
     def as_mcp_server(self, **kwargs):
@@ -214,9 +264,7 @@ class HITL:
         mcp = FastMCP(
             "URSA",
             version=ursa_version,
-            on_duplicate_tools="error",
-            on_duplicate_prompts="error",
-            on_duplicate_resources="error",
+            on_duplicate="error",
             **kwargs,
         )
 
@@ -254,7 +302,6 @@ class AsyncLoopThread:
 
 class UrsaRepl(Cmd):
     exit_message: str = "[dim]Exiting ursa..."
-    _help_message: str = "[dim]For help, type: ? or help. Exit with Ctrl+d."
     prompt: str = "ursa> "
 
     def __init__(self, hitl: HITL, **kwargs):
@@ -276,7 +323,10 @@ class UrsaRepl(Cmd):
         if not base_url:
             base_url = "Default"
 
-        model_name = self.hitl.model.model_name
+        try:
+            model_name = self.hitl.model.model_name
+        except Exception:
+            model_name = self.hitl.model.model
         self.llm_model_panel = Panel.fit(
             Text.from_markup(
                 f"[bold]LLM endpoint[/]: {base_url}\n"
@@ -315,6 +365,22 @@ class UrsaRepl(Cmd):
 
         return super().__getattribute__(name)
 
+    @staticmethod
+    def help_message():
+        if os.name == "nt":
+            exit_shortcut = "Crtl+Z"
+        elif os.name == "posix":
+            exit_shortcut = "Crtl+D"
+        else:
+            exit_shortcut = None
+
+        msg = "[dim]For help, type: ? or help."
+        if exit_shortcut is None:
+            msg += " Exit by typing 'exit'."
+        else:
+            msg += f" Exit with {exit_shortcut} or by typing exit."
+        return msg
+
     def get_names(self) -> list[str]:
         names = super().get_names()
         for name in self.hitl.agents.keys():
@@ -324,12 +390,23 @@ class UrsaRepl(Cmd):
     def run_agent(self, name: str, prompt: str | None = None):
         if not prompt:
             prompt = input(f"{name}: ")
-        with self.console.status("Generating response"):
-            result = self.hitl.run_agent(name, prompt)
-            result = self.ursa_loop.submit(result)
+        handler = HITLLogEventHandler(
+            console=self.console,
+            workspace=self.hitl.workspace,
+        )
+        result = self.hitl.run_agent(name, prompt, callbacks=[handler])
+        result = self.ursa_loop.submit(result)
 
         assert isinstance(result, str)
+        if handler.emitted_any:
+            self.console.print()
         self.show(result)
+
+    def run_prompt(self, prompt: str):
+        """Respond to a single prompt"""
+        prompt = self.precmd(prompt)
+        stop = self.onecmd(prompt)
+        return self.postcmd(stop, prompt)
 
     def show(self, msg: str, markdown: bool = True, **kwargs):
         self.console.print(Markdown(msg) if markdown else msg, **kwargs)
@@ -353,7 +430,7 @@ class UrsaRepl(Cmd):
 
     def do_clear(self, _: str):
         """Clear the screen. Same as pressing Ctrl+L."""
-        os.system("cls" if platform.system() == "Windows" else "clear")
+        os.system("cls" if os.name == "nt" else "clear")
 
     def emptyline(self):
         """Do nothing when an empty line is entered"""
@@ -366,7 +443,7 @@ class UrsaRepl(Cmd):
         self.show(self.llm_model_panel, markdown=False, highlight=False)
         if self.emb_model_panel:
             self.show(self.emb_model_panel, markdown=False, highlight=False)
-        self.show(self._help_message, markdown=False)
+        self.show(self.help_message(), markdown=False)
 
         while True:
             try:
@@ -411,7 +488,7 @@ class UrsaRepl(Cmd):
                 self.console.print(name + ": {}")
 
 
-def get_provider_and_model(model_str: Optional[str]):
+def get_provider_and_model(model_str: str | None):
     if model_str is None:
         return "none", "none"
 

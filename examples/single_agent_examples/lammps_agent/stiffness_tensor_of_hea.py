@@ -3,6 +3,9 @@ from langchain_openai import ChatOpenAI
 from rich import get_console
 
 from ursa.agents import LammpsAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 console = get_console()
 

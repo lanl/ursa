@@ -1,5 +1,5 @@
+import logging
 import os
-import pprint
 import subprocess
 from typing import Annotated, Literal, TypedDict
 
@@ -7,6 +7,7 @@ from langchain.chat_models import BaseChatModel
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START
@@ -25,15 +26,14 @@ from ursa.prompt_library.optimization_prompts import (
 from ursa.tools.feasibility_tools import feasibility_check_auto as fca
 from ursa.util.helperFunctions import extract_tool_calls, run_tool_calls
 from ursa.util.optimization_schema import ProblemSpec, SolverSpec
+from ursa.util.structured_output import (
+    StructuredOutputResult,
+    invoke_structured,
+)
 
 from .base import BaseAgent
 
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
+LOGGER = logging.getLogger(__name__)
 
 
 class OptimizerState(TypedDict):
@@ -66,8 +66,28 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
             for i, t in enumerate(self.tools)
         }
 
+    def _invoke_optimization_schema(
+        self,
+        schema: type,
+        messages: list,
+        *,
+        context: str,
+    ) -> StructuredOutputResult:
+        return invoke_structured(
+            self.llm,
+            schema,
+            messages,
+            include_raw=True,
+            context=context,
+            repair=1,
+        )
+
     # Define the function that calls the model
-    def extractor(self, state: OptimizerState) -> OptimizerState:
+    def extractor(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
         new_state["problem"] = StrOutputParser().invoke(
             self.llm.invoke([
@@ -78,48 +98,75 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
 
         new_state["problem_diagnostic"] = []
 
-        print("Extractor:\n")
-        pprint.pprint(new_state["problem"])
+        self.events(config).emit(
+            "Extracted optimization problem",
+            stage="extract",
+            problem_chars=len(str(new_state["problem"])),
+        )
         return new_state
 
-    def formulator(self, state: OptimizerState) -> OptimizerState:
+    def formulator(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            ProblemSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.math_formulator_prompt),
-            HumanMessage(content=state["problem"]),
-        ])
-        new_state["problem_spec"] = llm_out["parsed"]
-        new_state["problem_diagnostic"].extend(
-            extract_tool_calls(llm_out["raw"])
+        llm_out = self._invoke_optimization_schema(
+            ProblemSpec,
+            [
+                SystemMessage(content=self.math_formulator_prompt),
+                HumanMessage(content=state["problem"]),
+            ],
+            context="optimization problem formulation",
         )
+        new_state["problem_spec"] = llm_out.parsed
+        if llm_out.raw is not None:
+            new_state["problem_diagnostic"].extend(
+                extract_tool_calls(llm_out.raw)
+            )
 
-        print("Formulator:\n")
-        pprint.pprint(new_state["problem_spec"])
+        self.events(config).emit(
+            "Formulated optimization problem",
+            stage="formulate",
+            diagnostic_count=len(new_state["problem_diagnostic"]),
+        )
         return new_state
 
-    def discretizer(self, state: OptimizerState) -> OptimizerState:
+    def discretizer(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            ProblemSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.discretizer_prompt),
-            HumanMessage(content=state["problem"]),
-        ])
-        new_state["problem_spec"] = llm_out["parsed"]
-        new_state["problem_diagnostic"].extend(
-            extract_tool_calls(llm_out["raw"])
+        llm_out = self._invoke_optimization_schema(
+            ProblemSpec,
+            [
+                SystemMessage(content=self.discretizer_prompt),
+                HumanMessage(content=state["problem"]),
+            ],
+            context="optimization problem discretization",
         )
+        new_state["problem_spec"] = llm_out.parsed
+        if llm_out.raw is not None:
+            new_state["problem_diagnostic"].extend(
+                extract_tool_calls(llm_out.raw)
+            )
 
-        print("Discretizer:\n")
-        pprint.pprint(new_state["problem_spec"])
+        self.events(config).emit(
+            "Discretized optimization problem",
+            stage="discretize",
+            diagnostic_count=len(new_state["problem_diagnostic"]),
+        )
 
         return new_state
 
-    def tester(self, state: OptimizerState) -> OptimizerState:
+    def tester(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
         llm_out = self.llm.bind(tool_choice="required").invoke([
@@ -130,27 +177,38 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
         tool_log = run_tool_calls(llm_out, self.tool_maps)
         new_state["problem_diagnostic"].extend(tool_log)
 
-        print("Feasibility Tester:\n")
-        for msg in new_state["problem_diagnostic"]:
-            msg.pretty_print()
+        self.events(config).emit(
+            "Ran feasibility checks",
+            stage="feasibility",
+            diagnostic_count=len(new_state["problem_diagnostic"]),
+        )
         return new_state
 
-    def selector(self, state: OptimizerState) -> OptimizerState:
+    def selector(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            SolverSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.solver_selector_prompt),
-            HumanMessage(content=str(state["problem_spec"])),
-        ])
-        new_state["solver"] = llm_out["parsed"]
+        llm_out = self._invoke_optimization_schema(
+            SolverSpec,
+            [
+                SystemMessage(content=self.solver_selector_prompt),
+                HumanMessage(content=str(state["problem_spec"])),
+            ],
+            context="optimization solver selection",
+        )
+        new_state["solver"] = llm_out.parsed
 
-        print("Selector:\n ")
-        pprint.pprint(new_state["solver"])
+        self.events(config).emit("Selected solver", stage="select_solver")
         return new_state
 
-    def generator(self, state: OptimizerState) -> OptimizerState:
+    def generator(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
         new_state["code"] = StrOutputParser().invoke(
@@ -160,29 +218,47 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
             ])
         )
 
-        print("Generator:\n")
-        pprint.pprint(new_state["code"])
+        self.events(config).emit(
+            "Generated optimization code",
+            stage="generate_code",
+            code_chars=len(str(new_state["code"])),
+        )
         return new_state
 
-    def verifier(self, state: OptimizerState) -> OptimizerState:
+    def verifier(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
-        llm_out = self.llm.with_structured_output(
-            ProblemSpec, include_raw=True
-        ).invoke([
-            SystemMessage(content=self.verifier_prompt),
-            HumanMessage(content=str(state["problem_spec"]) + state["code"]),
-        ])
-        new_state["problem_spec"] = llm_out["parsed"]
-        if hasattr(llm_out, "tool_calls"):
-            tool_log = run_tool_calls(llm_out, self.tool_maps)
+        llm_out = self._invoke_optimization_schema(
+            ProblemSpec,
+            [
+                SystemMessage(content=self.verifier_prompt),
+                HumanMessage(
+                    content=str(state["problem_spec"]) + state["code"]
+                ),
+            ],
+            context="optimization problem verification",
+        )
+        new_state["problem_spec"] = llm_out.parsed
+        if llm_out.raw is not None and hasattr(llm_out.raw, "tool_calls"):
+            tool_log = run_tool_calls(llm_out.raw, self.tool_maps)
             new_state["problem_diagnostic"].extend(tool_log)
 
-        print("Verifier:\n ")
-        pprint.pprint(new_state["problem_spec"])
+        self.events(config).emit(
+            "Verified optimization problem",
+            stage="verify",
+            diagnostic_count=len(new_state["problem_diagnostic"]),
+        )
         return new_state
 
-    def explainer(self, state: OptimizerState) -> OptimizerState:
+    def explainer(
+        self,
+        state: OptimizerState,
+        config: RunnableConfig | None = None,
+    ) -> OptimizerState:
         new_state = state.copy()
 
         new_state["summary"] = StrOutputParser().invoke(
@@ -195,8 +271,11 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
             ])
         )
 
-        print("Summary:\n")
-        pprint.pprint(new_state["summary"])
+        self.events(config).emit(
+            "Summarized optimization result",
+            stage="summarize",
+            summary_chars=len(str(new_state["summary"])),
+        )
         return new_state
 
     def _build_graph(self):
@@ -228,19 +307,6 @@ class OptimizationAgent(BaseAgent[OptimizerState]):
         self.graph.add_edge("Explainer", END)
 
 
-#########  try:
-#########      png_bytes = compiled_graph.get_graph().draw_mermaid_png()
-#########      img = mpimg.imread(io.BytesIO(png_bytes), format='png')  # decode bytes -> array
-
-#########      plt.imshow(img)
-#########      plt.axis('off')
-#########      plt.show()
-#########  except Exception as e:
-#########      # This requires some extra dependencies and is optional
-#########      print(e)
-#########      pass
-
-
 @tool
 def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
     """
@@ -250,7 +316,7 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
         query: commandline command to be run as a string given to the subprocess.run command.
     """
     workspace_dir = state["workspace"]
-    print("RUNNING: ", query)
+    LOGGER.info("Running command: %s", query)
     try:
         process = subprocess.Popen(
             query.split(" "),
@@ -261,19 +327,24 @@ def run_cmd(query: str, state: Annotated[dict, InjectedState]) -> str:
         )
 
         stdout, stderr = process.communicate(timeout=60000)
+        LOGGER.info(
+            "Command finished: returncode=%s stdout_chars=%s stderr_chars=%s",
+            process.returncode,
+            len(stdout or ""),
+            len(stderr or ""),
+        )
     except KeyboardInterrupt:
-        print("Keyboard Interrupt of command: ", query)
+        LOGGER.warning("Keyboard interrupt while running command: %s", query)
         stdout, stderr = "", "KeyboardInterrupt:"
-
-    print("STDOUT: ", stdout)
-    print("STDERR: ", stderr)
 
     return f"STDOUT: {stdout} and STDERR: {stderr}"
 
 
 @tool
 def write_code(
-    code: str, filename: str, state: Annotated[dict, InjectedState]
+    code: str,
+    filename: str,
+    state: Annotated[dict, InjectedState],
 ) -> str:
     """
     Writes python or Julia code to a file in the given workspace as requested.
@@ -286,8 +357,8 @@ def write_code(
         Execution results
     """
     workspace_dir = state["workspace"]
-    print("Writing filename ", filename)
     try:
+        LOGGER.info("Writing file: %s", filename)
         # Extract code if wrapped in markdown code blocks
         if "```" in code:
             code_parts = code.split("```")
@@ -303,12 +374,12 @@ def write_code(
 
         with open(code_file, "w") as f:
             f.write(code)
-        print(f"Written code to file: {code_file}")
+        LOGGER.info("File written: %s", code_file)
 
         return f"File {filename} written successfully."
 
-    except Exception as e:
-        print(f"Error generating code: {str(e)}")
+    except Exception:
+        LOGGER.exception("Error generating code for %s", filename)
         # Return minimal code that prints the error
         return f"Failed to write {filename} successfully."
 
@@ -317,17 +388,23 @@ search_tool = DuckDuckGoSearchResults(output_format="json", num_results=10)
 # search_tool = TavilySearchResults(max_results=10, search_depth="advanced", include_answer=True)
 
 
+def _schema_field(value, name: str):
+    if isinstance(value, dict):
+        return value[name]
+    return getattr(value, name)
+
+
 # A function to test if discretization is needed
 def should_discretize(
     state: OptimizerState,
 ) -> Literal["Discretize", "continue"]:
-    cons = state["problem_spec"]["constraints"]
-    decs = state["problem_spec"]["decision_variables"]
+    spec = state["problem_spec"]
+    cons = _schema_field(spec, "constraints")
+    decs = _schema_field(spec, "decision_variables")
 
-    if any("infinite-dimensional" in t["tags"] for t in cons) or any(
-        "infinite-dimensional" in t["type"] for t in decs
-    ):
-        # print(f"Problem has infinite-dimensional constraints/decision variables. Needs to be discretized")
+    if any(
+        "infinite-dimensional" in _schema_field(t, "tags") for t in cons
+    ) or any("infinite-dimensional" in _schema_field(t, "type") for t in decs):
         return "discretize"
 
     return "continue"
@@ -337,8 +414,8 @@ def should_discretize(
 def should_continue(state: OptimizerState) -> Literal["error", "continue"]:
     spec = state["problem_spec"]
     try:
-        status = spec["status"].lower()
-    except KeyError:
+        status = _schema_field(spec, "status").lower()
+    except (AttributeError, KeyError):
         status = spec["spec"]["status"].lower()
     if "VERIFIED".lower() in status:
         return "continue"
@@ -386,7 +463,7 @@ def main():
     """
     inputs = {"user_input": problem_string}
     result = execution_agent.invoke(inputs)
-    print(result["messages"][-1].text)
+    LOGGER.info("%s", result["messages"][-1].text)
     return result
 
 

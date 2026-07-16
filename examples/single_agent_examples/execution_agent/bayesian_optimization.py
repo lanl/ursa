@@ -5,6 +5,9 @@ from langchain.chat_models import init_chat_model
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 ### Run a simple example of an Execution Agent.
 
@@ -18,7 +21,7 @@ Optimize the six-hump camel function.
 """
 
 model = init_chat_model(
-    model="openai:gpt-5-mini",
+    model="openai:gpt-5.4-mini",
     max_completion_tokens=30000,
 )
 

@@ -34,3 +34,6 @@ ursa_workspace/
 .vscode/settings.json
 scratch/
 
+# Jupyter-generated files
+.ipynb_checkpoints
+Untitled.*

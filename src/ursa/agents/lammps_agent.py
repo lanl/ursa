@@ -664,7 +664,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "Now handing things off to execution agent for summarization/visualization"
         )
         
-        executor = ExecutionAgent(llm=self.llm, workspace=self.workspace, thread_id="summarize_lammps")
+        executor = ExecutionAgent(llm=self.llm, workspace=self.workspace)
 
         exe_plan = f"""
         You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
@@ -674,9 +674,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         """
 
         exe_results = executor.invoke(exe_plan)
-
-        render_session_summary(executor.thread_id)
-
+        
         return state
 
     def _post_run(self, state: LammpsState) -> LammpsState:

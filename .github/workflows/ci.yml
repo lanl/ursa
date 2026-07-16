@@ -7,13 +7,18 @@ on:
   workflow_dispatch:
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv and set the python version
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
           enable-cache: true
           cache-dependency-glob: pyproject.toml
       - name: install project

@@ -36,16 +36,13 @@ MODEL_QUERY = {
         "ursa.agents.acquisition_agents.ArxivAgent",
         "ursa.agents.acquisition_agents.WebSearchAgent",
         "ursa.agents.acquisition_agents.OSTIAgent",
-        "ursa.agents.arxiv_agent.ArxivAgentLegacy",
         "ursa.agents.chat_agent.ChatAgent",
-        "ursa.agents.code_review_agent.CodeReviewAgent",
         "ursa.agents.execution_agent.ExecutionAgent",
+        "ursa.agents.deep_review_agent.DeepReviewAgent",
         "ursa.agents.hypothesizer_agent.HypothesizerAgent",
-        "ursa.agents.mp_agent.MaterialsProjectAgent",
         "ursa.agents.planning_agent.PlanningAgent",
         "ursa.agents.rag_agent.RAGAgent",
         "ursa.agents.recall_agent.RecallAgent",
-        "ursa.agents.websearch_agent.WebSearchAgentLegacy",
     ],
     ids=lambda agent_import: agent_import.rsplit(".", 1)[-1],
 )
@@ -58,6 +55,9 @@ def agent_instance(request, tmpdir: Path, chat_model, embedding_model):
 
     if request.param == "ursa.agents.recall_agent.RecallAgent":
         kwargs["memory"] = AgentMemory(embedding_model, Path(tmpdir / "memory"))
+
+    if request.param == "ursa.agents.rag_agent.RAGAgent":
+        kwargs["embedding"] = embedding_model
 
     kwargs["workspace"] = Path(tmpdir / ".ursa")
     for name, param in list(sig.parameters.items())[1:]:

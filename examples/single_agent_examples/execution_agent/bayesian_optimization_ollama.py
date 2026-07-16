@@ -3,7 +3,9 @@ from langchain.embeddings import init_embeddings
 from langchain_core.messages import HumanMessage
 
 from ursa.agents import ExecutionAgent
-from ursa.util.memory_logger import AgentMemory
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 ### Run a simple example of an Execution Agent.
 
@@ -20,11 +22,8 @@ model = init_chat_model(model="ollama:gpt-oss:20b")
 
 embedding_model = init_embeddings(model="ollama:nomic-embed-text:latest")
 
-memory = AgentMemory(embedding_model=embedding_model, path=".")
-
-
 # Initialize the agent
-executor = ExecutionAgent(agent_memory=memory, llm=model)
+executor = ExecutionAgent(llm=model)
 
 set_workspace = False
 

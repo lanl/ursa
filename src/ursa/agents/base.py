@@ -15,9 +15,13 @@ Agents built on this base class benefit from consistent behavior, observability,
 integration capabilities while only needing to implement the core _invoke method.
 """
 
+import asyncio
+import importlib.metadata
+import inspect
 import re
 import sqlite3
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -32,15 +36,24 @@ from typing import (
     TypeVar,
     final,
 )
-from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
+from langchain.embeddings import Embeddings
 from langchain.tools import BaseTool, ToolException
 from langchain_core.load import dumps
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.runnables import RunnableLambda
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.runnables.config import merge_configs
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import (
     CompiledStateGraph,
     StateGraph,
@@ -50,13 +63,30 @@ from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
+from langgraph.store.sqlite.aio import AsyncSqliteStore
+from langgraph.types import Overwrite
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
 )
+from ursa.security import (
+    DEFAULT_GROUP_NAME,
+    enforce_model_group_policy,
+    group_agents_dir,
+    group_root_dir,
+    validate_group_name,
+)
+from ursa.util import Checkpointer
+from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
+
+try:
+    URSA_VERSION = importlib.metadata.version("ursa-ai")
+except importlib.metadata.PackageNotFoundError:
+    # Fallback for local development if the package isn't installed via pip/uv yet
+    URSA_VERSION = "0.0.0-dev"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -69,8 +99,26 @@ class AgentContext:
     workspace: Path
     """ Workspace path for the agent """
 
+    agent_name: str
+    """ Name for persisting the agent """
+
+    group: str
+    """ Name for the group for the agent to operate in. Controls data and endpoint availability"""
+
+    den: Path
+    """ Path to the persistent storage for the agent"""
+
     tool_character_limit: int = 30000
     """ Suggested limit on tool call responses """
+
+    rag_tools: tuple[str, ...] = ()
+    """Persisted URSA RAG collections bound to this agent as tools."""
+
+    rag_tool_group: str | None = None
+    """Group used to resolve persisted RAG tool collections."""
+
+    rag_tool_return_k: int = 10
+    """Number of chunks retrieved by persisted RAG tools."""
 
 
 def _to_snake(s: str) -> str:
@@ -158,12 +206,21 @@ class BaseAgent(Generic[TState], ABC):
         self,
         llm: BaseChatModel,
         workspace: Optional[Path] = None,
+        agent_name: Optional[str] = None,
+        group: Optional[str] = "default",
         checkpointer: Optional[BaseCheckpointSaver] = None,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
         otel_metrics: bool = False,
         thread_id: Optional[str] = None,
+        tokens_before_summarize: int = 50000,
+        messages_to_keep: int = 20,
+        max_single_tool_message_tokens: int = 100000,
+        rag_tools: str | Sequence[str] | None = None,
+        rag_tool_group: str | None = None,
+        rag_tool_embedding: Embeddings | None = None,
+        rag_tool_return_k: int = 10,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -176,17 +233,72 @@ class BaseAgent(Generic[TState], ABC):
             thread_id: Unique identifier for this agent instance. Generated if not
                        provided.
         """
+        llm = llm.bind(
+            extra_headers={
+                "User-Agent": f"ursa/{URSA_VERSION}",
+                "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
+            }
+        )
         self.llm: BaseChatModel = llm
-        self.workspace = Path(workspace or "ursa_workspace")
-        self.thread_id = thread_id or uuid4().hex
+        self.workspace = Path(workspace or ".")
+        self.agent_name = agent_name
+        self.group = validate_group_name(group)
+        self.tokens_before_summarize = tokens_before_summarize
+        self.messages_to_keep = messages_to_keep
+        self.max_single_tool_message_tokens = max_single_tool_message_tokens
+        from ursa.rag.persistence import normalize_rag_tool_names
+
+        self.rag_tools = tuple(normalize_rag_tool_names(rag_tools))
+        self.rag_tool_group = rag_tool_group
+        self.rag_tool_embedding = rag_tool_embedding
+        self.rag_tool_return_k = rag_tool_return_k
+        enforce_model_group_policy(self.llm, self.group)
+        if (
+            not group_root_dir(self.group).exists()
+            and self.group != DEFAULT_GROUP_NAME
+        ):
+            raise ValueError(
+                (
+                    f"Group '{self.group}' does not exist. "
+                    f"Please use `ursa create-group {self.group} <group_config_file>` to create"
+                )
+            )
+        set_checkpointer = True if checkpointer else False
+        set_name = True if agent_name else False
         self.checkpointer = checkpointer
+        self._checkpointer_was_provided = set_checkpointer
+        self._async_checkpointer: BaseCheckpointSaver | None = None
+        self._async_storage: BaseStore | None = None
+        self._async_compiled_graph: CompiledStateGraph | None = None
+        persist_agent = (agent_name is not None) or set_checkpointer
+        if persist_agent:
+            if set_checkpointer:
+                if set_name:
+                    print(
+                        (
+                            "[WARNING]: Both checkpointer and den persistence set."
+                            " Using checkpointer, but only use one in the future."
+                        )
+                    )
+                self.den = self.workspace
+            else:
+                den_name = Path(self.group) / "agents" / agent_name
+                self.den = group_agents_dir(self.group) / agent_name
+                if not self.den.exists():
+                    print(f"[Agent Created]: {den_name}")
+                self.checkpointer = Checkpointer.from_workspace(self.den)
+        else:
+            # Keep current behavior if the user is not persisting.
+            self.den = self.workspace
+        self.thread_id = thread_id or "ursa"
         self.telemetry = Telemetry(
             enable=enable_metrics,
-            output_dir=self.workspace.joinpath(metrics_dir),
+            output_dir=self.den.joinpath(metrics_dir),
             save_json_default=autosave_metrics,
         )
 
         self.workspace.mkdir(exist_ok=True, parents=True)
+        self.den.mkdir(exist_ok=True, parents=True)
 
     @property
     def name(self) -> str:
@@ -196,7 +308,33 @@ class BaseAgent(Generic[TState], ABC):
     @property
     def context(self) -> AgentContext:
         """Immutable run-scoped information provided to the Agent's graph"""
-        return AgentContext(llm=self.llm, workspace=self.workspace)
+        return AgentContext(
+            llm=self.llm,
+            workspace=self.workspace,
+            agent_name=self.agent_name,
+            group=self.group,
+            den=self.den,
+            rag_tools=self.rag_tools,
+            rag_tool_group=self.rag_tool_group,
+            rag_tool_return_k=self.rag_tool_return_k,
+        )
+
+    @staticmethod
+    def _dedupe_callbacks(callbacks: list[Any]) -> list[Any]:
+        """Preserve callback order while removing duplicate handler instances."""
+        deduped: list[Any] = []
+        seen: set[int] = set()
+        for callback in callbacks:
+            marker = id(callback)
+            if marker in seen:
+                continue
+            deduped.append(callback)
+            seen.add(marker)
+        return deduped
+
+    def events(self, config: RunnableConfig | None = None) -> AgentEvents:
+        """Return a helper for emitting structured agent progress events."""
+        return AgentEvents(agent=self.name, config=config)
 
     def add_node(
         self,
@@ -263,7 +401,10 @@ class BaseAgent(Generic[TState], ABC):
                 "telemetry_run_id": self.telemetry.context.get("run_id"),
             },
             "tags": [self.name],
-            "callbacks": self.telemetry.callbacks,
+            "callbacks": [
+                *self.telemetry.callbacks,
+                DEFAULT_EVENT_LOGGING_HANDLER,
+            ],
         }
 
         # Try to determine the model name from either direct or nested attributes
@@ -291,6 +432,15 @@ class BaseAgent(Generic[TState], ABC):
                 t for t in overrides.pop("tags") if t not in base["tags"]
             ]
 
+        if "callbacks" in overrides:
+            callbacks = merge_configs(
+                {"callbacks": base["callbacks"]},
+                {"callbacks": overrides.pop("callbacks")},
+            ).get("callbacks")
+            if isinstance(callbacks, list):
+                callbacks = self._dedupe_callbacks(callbacks)
+            base["callbacks"] = callbacks
+
         # Apply any remaining overrides directly to the base configuration
         base.update(overrides)
 
@@ -312,6 +462,7 @@ class BaseAgent(Generic[TState], ABC):
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
+        invoke_config = dict(config or {})
 
         try:
             # Start telemetry tracking for the top-level invocation
@@ -351,13 +502,75 @@ class BaseAgent(Generic[TState], ABC):
 
             # Delegate to the subclass implementation with the normalized inputs
             # and any control parameters
-            return invoke_method(normalized, config=config, **kwargs)
+            return invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
             # Clean up the invocation depth tracking
             BaseAgent._invoke_depth -= 1
 
             # For the top-level invocation, finalize telemetry and generate outputs
+            if BaseAgent._invoke_depth == 0:
+                self.telemetry.render(
+                    raw=raw_debug,
+                    save_json=save_json,
+                    save_otel=save_otel,
+                    filepath=metrics_path,
+                    otel_endpoint=otel_endpoint,
+                    otel_headers=otel_headers,
+                    save_raw_snapshot=save_raw_snapshot,
+                    save_raw_records=save_raw_records,
+                )
+
+    async def _ainvoke_engine(
+        self,
+        invoke_method,
+        inputs: Optional[InputLike] = None,
+        raw_debug: bool = False,
+        save_json: Optional[bool] = None,
+        save_otel: Optional[bool] = None,
+        metrics_path: Optional[str] = None,
+        otel_endpoint: Optional[str] = None,
+        otel_headers: Optional[str] = None,
+        save_raw_snapshot: Optional[bool] = None,
+        save_raw_records: Optional[bool] = None,
+        config: Optional[dict] = None,
+        **kwargs: Any,
+    ):
+        BaseAgent._invoke_depth += 1
+        invoke_config = dict(config or {})
+
+        try:
+            if BaseAgent._invoke_depth == 1:
+                self.telemetry.begin_run(
+                    agent=self.name, thread_id=self.thread_id
+                )
+
+            if inputs is None:
+                kw_inputs: dict[str, Any] = {}
+                control_kwargs: dict[str, Any] = {}
+                for k, v in kwargs.items():
+                    if k in self._TELEMETRY_KW or k in self._CONTROL_KW:
+                        control_kwargs[k] = v
+                    else:
+                        kw_inputs[k] = v
+                inputs = kw_inputs
+                kwargs = control_kwargs
+            else:
+                for k in kwargs.keys():
+                    if not (k in self._TELEMETRY_KW or k in self._CONTROL_KW):
+                        raise TypeError(
+                            f"Unexpected keyword argument '{k}'. "
+                            "Pass inputs as a single mapping or omit the "
+                            "positional inputs and pass them as keyword "
+                            "arguments."
+                        )
+
+            normalized = self._normalize_inputs(inputs)
+            return await invoke_method(normalized, **invoke_config, **kwargs)
+
+        finally:
+            BaseAgent._invoke_depth -= 1
+
             if BaseAgent._invoke_depth == 0:
                 self.telemetry.render(
                     raw=raw_debug,
@@ -430,7 +643,7 @@ class BaseAgent(Generic[TState], ABC):
     # NOTE: The `ainvoke` method uses the PEP 570 `/,*` notation to explicitly state which
     # arguments can and cannot be passed as positional or keyword arguments.
     @final
-    def ainvoke(
+    async def ainvoke(
         self,
         inputs: Optional[InputLike] = None,
         /,
@@ -473,7 +686,7 @@ class BaseAgent(Generic[TState], ABC):
             TypeError: If both positional inputs and non-control keyword arguments are
                 provided simultaneously.
         """
-        return self._invoke_engine(
+        return await self._ainvoke_engine(
             invoke_method=self._ainvoke,
             inputs=inputs,
             raw_debug=raw_debug,
@@ -511,6 +724,249 @@ class BaseAgent(Generic[TState], ABC):
                 return result["messages"][-1].text
         raise NotImplementedError()
 
+    def _message_tool_call_ids(self, msg: Any) -> list[str]:
+        """Return LangChain tool-call IDs requested by a message, if any."""
+        return [
+            call["id"]
+            for call in getattr(msg, "tool_calls", []) or []
+            if "id" in call
+        ]
+
+    def _patch_dangling(
+        self,
+        state: Mapping[str, Any],
+        summarized: bool = False,
+        config: RunnableConfig | None = None,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Patch missing tool responses in a LangGraph message state.
+
+        Tool-calling chat models require every AI tool call to be followed by a
+        corresponding ``ToolMessage``. If a tool result is missing because a run
+        timed out, failed, or summarization trimmed it away, later model calls can
+        fail with provider-side message validation errors. This utility inserts a
+        synthetic response for any dangling tool call ID and truncates extremely
+        large tool messages.
+
+        Args:
+            state: A graph state containing a ``messages`` list.
+            summarized: Existing overwrite flag from prior state mutation.
+
+        Returns:
+            ``(new_state, full_overwrite_required)``. When the boolean is true,
+            callers using an ``add_messages`` reducer should return an
+            ``Overwrite(new_state["messages"])`` update rather than appending.
+        """
+        if "messages" not in state:
+            return state, summarized
+
+        new_state = deepcopy(state)
+        events = self.events(config)
+        dangling_response = (
+            "Response Not Found from tool. "
+            "May have timed out or been forgotten due to summarization."
+        )
+
+        pending_tool_ids: list[str] = []
+        for msg in new_state["messages"]:
+            if isinstance(msg, ToolMessage):
+                if (
+                    self.max_single_tool_message_tokens is not None
+                    and count_tokens_approximately([msg])
+                    > self.max_single_tool_message_tokens
+                ):
+                    msg.content = "Message too long - truncated."
+                    summarized = True
+                try:
+                    pending_tool_ids.remove(msg.tool_call_id)
+                except ValueError:
+                    # Orphan tool messages are not ideal, but do not create the
+                    # provider-side validation error that missing tool responses do.
+                    pass
+                continue
+
+            pending_tool_ids.extend(self._message_tool_call_ids(msg))
+
+        if pending_tool_ids:
+            summarized = True
+            events.emit(
+                "Dangling tool calls patched",
+                stage="dangling_tool_calls",
+                tool_call_ids=list(pending_tool_ids),
+            )
+            for tool_id in pending_tool_ids:
+                for msg_ind, msg in enumerate(new_state["messages"]):
+                    if tool_id in self._message_tool_call_ids(msg):
+                        new_state["messages"].insert(
+                            msg_ind + 1,
+                            ToolMessage(
+                                content=dangling_response,
+                                tool_call_id=tool_id,
+                            ),
+                        )
+                        break
+
+        return new_state, summarized
+
+    def _summarize_context(
+        self,
+        state: Mapping[str, Any],
+        *,
+        system_prompt: str | None = None,
+        summary_prompt: str | None = None,
+        config: RunnableConfig | None = None,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Summarize long ``state['messages']`` histories.
+
+        This preserves the first/system message and the last
+        ``self.messages_to_keep`` messages, replacing the middle of the
+        transcript with an LLM-generated summary when the approximate token count
+        exceeds ``self.tokens_before_summarize``.
+
+        The method also avoids creating dangling tool-call pairs when possible by
+        moving tool responses that correspond to summarized-away calls into the
+        summarized block.
+        """
+        if "messages" not in state:
+            return state, False
+
+        new_state = deepcopy(state)
+        events = self.events(config)
+        messages = list(new_state.get("messages") or [])
+        if len(messages) <= 1:
+            return new_state, False
+
+        tokens_before = count_tokens_approximately(messages[1:])
+        if tokens_before <= self.tokens_before_summarize:
+            return new_state, False
+
+        events.emit(
+            message=f"Summarizing ~{tokens_before} token history to compress context",
+            stage="summarize_context",
+        )
+        keep_count = max(0, int(self.messages_to_keep or 0))
+        body_messages = messages[1:]
+        if keep_count == 0:
+            conversation_to_summarize = body_messages
+            conversation_to_keep = []
+        elif len(body_messages) > keep_count:
+            conversation_to_summarize = body_messages[:-keep_count]
+            conversation_to_keep = body_messages[-keep_count:]
+        else:
+            # Nothing can be summarized while still preserving the requested tail.
+            return new_state, False
+
+        tool_ids: list[str] = []
+        for msg in conversation_to_summarize:
+            tool_ids.extend(self._message_tool_call_ids(msg))
+            if isinstance(msg, ToolMessage):
+                try:
+                    tool_ids.remove(msg.tool_call_id)
+                except ValueError:
+                    pass
+
+        if tool_ids:
+            events.emit(
+                "Preserving tool responses during summarization",
+                stage="summarize_context",
+                tool_call_ids=list(tool_ids),
+            )
+            keep_copy = list(conversation_to_keep)
+            for msg in keep_copy:
+                if (
+                    isinstance(msg, ToolMessage)
+                    and msg.tool_call_id in tool_ids
+                ):
+                    conversation_to_summarize.append(msg)
+                    conversation_to_keep.remove(msg)
+                    tool_ids.remove(msg.tool_call_id)
+
+        if tool_ids:
+            events.emit(
+                "Dangling tool calls found during summarization",
+                stage="summarize_context",
+                tool_call_ids=list(tool_ids),
+            )
+
+        summarize_system_message = SystemMessage(
+            content="""
+        Your only tasks is to provide a detailed, comprehensive summary of the following
+        conversation.
+
+        Your summary will be the only information retained from the conversation, so ensure
+        it contains all details that need to be remembered to meet the goals of the work.
+
+        The conversation to summarize is:
+        """
+        )
+        to_summarize = [summarize_system_message] + conversation_to_summarize
+        to_summarize += [
+            HumanMessage(
+                content="Summarize that conversation per your instruction."
+            )
+        ]
+        summary = self.tool_llm.invoke(to_summarize)
+
+        first_message = messages[0]
+        if system_prompt is not None:
+            first_message = SystemMessage(content=system_prompt)
+
+        new_state["messages"] = [first_message, summary] + conversation_to_keep
+        return new_state, True
+
+    def prepare_messages_context(
+        self,
+        state: Mapping[str, Any],
+        *,
+        system_prompt: str | None = None,
+        summary_prompt: str | None = None,
+        patch_dangling: bool = True,
+        summarize: bool = True,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Apply standard message-history maintenance before an LLM call.
+
+        Returns ``(new_state, full_overwrite_required)``. Graph nodes using the
+        ``add_messages`` reducer should use :meth:`messages_update` with the
+        returned flag to avoid appending duplicate history after summarization or
+        dangling-tool patching.
+        """
+        new_state = deepcopy(state)
+        full_overwrite = False
+        if summarize:
+            new_state, full_overwrite = self._summarize_context(
+                new_state,
+                system_prompt=system_prompt,
+                summary_prompt=summary_prompt,
+            )
+        if patch_dangling:
+            new_state, full_overwrite = self._patch_dangling(
+                new_state, full_overwrite
+            )
+        return new_state, full_overwrite
+
+    def messages_update(
+        self,
+        state: Mapping[str, Any],
+        message_update: Any,
+        *,
+        full_overwrite: bool = False,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build a LangGraph-safe update for states with a ``messages`` reducer."""
+        update = dict(extra or {})
+        if full_overwrite:
+            messages = list(state.get("messages") or [])
+            if message_update is None:
+                update["messages"] = Overwrite(messages)
+            else:
+                if isinstance(message_update, list):
+                    messages.extend(message_update)
+                else:
+                    messages.append(message_update)
+                update["messages"] = Overwrite(messages)
+        else:
+            update["messages"] = message_update
+        return update
+
     def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
         """Normalizes various input formats into a standardized mapping.
 
@@ -538,7 +994,7 @@ class BaseAgent(Generic[TState], ABC):
 
     @cached_property
     def compiled_graph(self) -> CompiledStateGraph:
-        """Return the compiled StateGraph application for the agent."""
+        """Return the sync compiled StateGraph application for the agent."""
         graph = self.build_graph()
         compiled = graph.compile(
             checkpointer=self.checkpointer,
@@ -546,10 +1002,72 @@ class BaseAgent(Generic[TState], ABC):
         ).with_config({"recursion_limit": 50000})
         return self._finalize_graph(compiled)
 
+    async def _aget_async_compiled_graph(self) -> CompiledStateGraph:
+        """Return an async-compatible compiled graph for the agent.
+
+        LangGraph SQLite checkpointers are not interchangeable between sync
+        and async execution. A graph compiled with ``SqliteSaver`` cannot be
+        awaited with ``ainvoke``. Build a separate graph using async SQLite
+        persistence resources for async runs.
+        """
+        if self._async_compiled_graph is None:
+            graph = self.build_graph()
+            compiled = graph.compile(
+                checkpointer=await self._aget_async_checkpointer(),
+                store=await self._aget_async_storage(),
+            ).with_config({"recursion_limit": 50000})
+            self._async_compiled_graph = self._finalize_graph(compiled)
+        return self._async_compiled_graph
+
+    async def _aget_async_checkpointer(self) -> BaseCheckpointSaver | None:
+        """Return an async-compatible checkpointer for async graph runs."""
+        if self.checkpointer is None:
+            return None
+
+        if isinstance(self.checkpointer, AsyncSqliteSaver):
+            return self.checkpointer
+
+        if self._async_checkpointer is not None:
+            return self._async_checkpointer
+
+        if isinstance(self.checkpointer, SqliteSaver):
+            if self._checkpointer_was_provided:
+                raise RuntimeError(
+                    "This agent was configured with a synchronous SqliteSaver "
+                    "checkpointer. Async agent execution requires an async "
+                    "checkpointer, such as AsyncSqliteSaver, or URSA-managed "
+                    "persistence via agent_name."
+                )
+            self._async_checkpointer = await Checkpointer.async_from_workspace(
+                self.den
+            )
+            return self._async_checkpointer
+
+        if self._checkpointer_has_async_methods(self.checkpointer):
+            return self.checkpointer
+
+        raise RuntimeError(
+            "The configured checkpointer does not appear to support LangGraph "
+            "async checkpoint methods. Use an async checkpointer for "
+            "agent.ainvoke(...), or use URSA-managed persistence via "
+            "agent_name."
+        )
+
+    @staticmethod
+    def _checkpointer_has_async_methods(checkpointer: Any) -> bool:
+        required = ("aget_tuple", "alist", "aput", "aput_writes")
+        return all(
+            inspect.iscoroutinefunction(getattr(type(checkpointer), name, None))
+            or inspect.isasyncgenfunction(
+                getattr(type(checkpointer), name, None)
+            )
+            for name in required
+        )
+
     @cached_property
     def storage(self) -> BaseStore:
-        """Create a SQLite-backed LangGraph store for persistent graph data."""
-        store_path = self.workspace / "graph_store.sqlite"
+        """Create a sync SQLite-backed LangGraph store."""
+        store_path = self.den / "graph_store.sqlite"
         conn = sqlite3.connect(
             store_path, check_same_thread=False, isolation_level=None
         )
@@ -558,8 +1076,43 @@ class BaseAgent(Generic[TState], ABC):
         self.hook_storage_setup(store)
         return store
 
+    async def _aget_async_storage(self) -> BaseStore:
+        """Create an async SQLite-backed LangGraph store."""
+        if self._async_storage is None:
+            import aiosqlite
+
+            store_path = self.den / "graph_store.sqlite"
+            conn = await aiosqlite.connect(store_path, isolation_level=None)
+            store = AsyncSqliteStore(conn)
+            await store.setup()
+            await self.ahook_storage_setup(store)
+            self._async_storage = store
+        return self._async_storage
+
     def hook_storage_setup(self, store: BaseStore) -> None:
         pass
+
+    async def ahook_storage_setup(self, store: BaseStore) -> None:
+        pass
+
+    def close(self) -> None:
+        """Close sync SQLite resources owned by this agent when possible."""
+        if "storage" in self.__dict__:
+            self.storage.conn.close()
+        if isinstance(self.checkpointer, SqliteSaver):
+            self.checkpointer.conn.close()
+
+    async def aclose(self) -> None:
+        """Close async SQLite resources owned by this agent when possible."""
+        if self._async_storage is not None:
+            await self._async_storage.__aexit__(None, None, None)
+            await self._async_storage.conn.close()
+            self._async_storage = None
+            self._async_compiled_graph = None
+        if isinstance(self._async_checkpointer, AsyncSqliteSaver):
+            await self._async_checkpointer.conn.close()
+            self._async_checkpointer = None
+            self._async_compiled_graph = None
 
     @final
     def build_graph(self) -> StateGraph:
@@ -591,17 +1144,76 @@ class BaseAgent(Generic[TState], ABC):
         """Hook for subclasses to wrap or modify the compiled graph."""
         return graph_app
 
+    def _tool_is_async_only(self, tool: Any) -> bool:
+        """Return True for tools that can only be invoked asynchronously.
+
+        MCP tools are commonly exposed as StructuredTool instances with a
+        coroutine implementation but no synchronous function implementation.
+        Those raise errors like:
+
+            "StructuredTool does not support sync invocation."
+
+        when called via `.invoke()`.
+        """
+
+        func = getattr(tool, "func", None)
+        coroutine = getattr(tool, "coroutine", None)
+        return func is None and coroutine is not None
+
+    def _has_async_only_tools(self) -> bool:
+        tools_obj = getattr(self, "tools", None)
+        if not tools_obj:
+            return False
+
+        try:
+            tool_iter = (
+                tools_obj.values() if isinstance(tools_obj, dict) else tools_obj
+            )
+        except Exception:
+            return False
+
+        return any(self._tool_is_async_only(t) for t in tool_iter)
+
     def _invoke(self, input, **config):
         config = self.build_config(**config)
-        return self.compiled_graph.invoke(
-            input, config=config, context=self.context
-        )
+
+        # If we have async-only tools (e.g. MCP StructuredTools), we must run the
+        # graph via `ainvoke` so ToolNode dispatches tools asynchronously.
+        if self._has_async_only_tools():
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(self._ainvoke(input, **config))
+
+            raise RuntimeError(
+                "This agent has async-only tools, but `.invoke()` was called "
+                "from an async context (a running event loop was detected). "
+                "Use `await agent.ainvoke(...)` instead."
+            )
+
+        try:
+            return self.compiled_graph.invoke(
+                input, config=config, context=self.context
+            )
+        except Exception as e:
+            # Fallback: if a tool raises the canonical sync-invoke error, retry
+            # with ainvoke for backwards compatibility.
+            if "does not support sync invocation" in str(e):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return asyncio.run(self._ainvoke(input, **config))
+            raise
 
     async def _ainvoke(self, input, **config):
         config = self.build_config(**config)
-        return await self.compiled_graph.ainvoke(
-            input, config=config, context=self.context
-        )
+        graph = await self._aget_async_compiled_graph()
+        try:
+            return await graph.ainvoke(
+                input, config=config, context=self.context
+            )
+        finally:
+            await self.aclose()
 
     def _stream(self, input, **config):
         config = self.build_config(**config)
@@ -687,7 +1299,8 @@ class BaseAgent(Generic[TState], ABC):
 
             # Normalize inputs and delegate to the actual streaming implementation
             normalized = self._normalize_inputs(inputs)
-            yield from self._stream(normalized, config=config, **kwargs)
+            stream_config = dict(config or {})
+            yield from self._stream(normalized, **stream_config, **kwargs)
 
         finally:
             # Decrement invocation depth when exiting
@@ -867,17 +1480,55 @@ class AgentWithTools:
         self,
         *args,
         tools: list[BaseTool] | dict[str, BaseTool] | None = None,
+        safe_codes: list[str] | None = None,
         handle_tool_errors=_default_tool_error_handler,
         **kwargs,
     ):
         self._tools: dict[str, BaseTool] = {}
+        self.safe_codes = set(safe_codes or [])
         self.handle_tool_errors = handle_tool_errors
         self.tool_node = ToolNode([])
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
+        self.tool_llm = self.llm.model_copy()
+
+        if getattr(self, "rag_tools", ()):
+            from ursa.rag.tools import build_rag_tools
+
+            rag_tools = build_rag_tools(
+                names=self.rag_tools,
+                group=self.rag_tool_group or self.group or "default",
+                llm=self.llm,
+                embedding=getattr(self, "rag_tool_embedding", None),
+                return_k=self.rag_tool_return_k,
+            )
+            if rag_tools:
+                merged = dict(self._tools)
+                merged.update({tool.name: tool for tool in rag_tools})
+                self._apply_tools(merged, rebuild_graph=False)
 
     def __post_init__(self):
         super().__post_init__()
+
+    def hook_storage_setup(self, store: BaseStore) -> None:
+        if store is None:
+            return
+        for safe_code in self.safe_codes:
+            store.put(
+                ("workspace", "safe_codes"),
+                safe_code,
+                {},
+            )
+
+    async def ahook_storage_setup(self, store: BaseStore) -> None:
+        if store is None:
+            return
+        for safe_code in self.safe_codes:
+            await store.aput(
+                ("workspace", "safe_codes"),
+                safe_code,
+                {},
+            )
 
     @property
     def tools(self) -> dict[str, BaseTool]:

@@ -14,6 +14,9 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 console = get_console()  # always returns the same instance
 
@@ -53,7 +56,7 @@ def main(mode: str):
 
         # 2. LLM & agents
         model = init_chat_model(
-            model="openai:gpt-5-mini"
+            model="openai:gpt-5.4-mini"
             if mode == "prod"
             else "ollama:llama3.1:8b",
             max_tokens=10000 if mode == "prod" else 4000,
@@ -201,7 +204,7 @@ def main(mode: str):
         return answer
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e!s}")
         import traceback
 
         traceback.print_exc()

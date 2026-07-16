@@ -1,0 +1,46 @@
+Field_glossary for DSI dataset: ocean_11_datasets
+
+Table: genesis_datacards
+  desc: Contains data about the resources available in the Ocean 11 dataset.
+Fields:
+  Title:
+    desc: Short human-readable name of the resource.
+
+  Keywords:
+    desc: Tags/keywords describing the content.
+
+  Update/Modification_Date:
+    desc: Last modification date.
+
+  Theme/Category_:_Domain:
+    desc: High-level domain or thematic category.
+
+  Description_:
+    desc: One-sentence summary of the resource.
+
+  Contact_Point_:
+    desc: Primary individual or group who own this dataset and can be contacted.
+
+  Formatted_Name:
+    desc: Structured contact name fields. e.g. { first: "Jane", middle: "A.", last: "Smith" }
+
+  Email:
+    desc: Contact email.
+
+  Access_Rights:
+    desc: Security or access classification.
+
+  CUI_Restriction:
+    desc: CUI status and restriction category.
+
+  CUI_Banner_Marking:
+    desc: Banner marking required for CUI data.
+
+  CUI_Designation_Indicator:
+    desc: Specific CUI category indicator.
+
+  Originating_Organization:
+    desc: Organization or project that produced the resource.
+
+  dsi_database:
+    desc: Path for associated DSI database that can be loaded. Use this path when asked to load/read in the dataset using the DSI tool.

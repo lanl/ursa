@@ -1,552 +1,448 @@
 import ast
-from datetime import datetime
-from operator import add, or_
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableConfig
 
-try:
-    from ddgs import DDGS  # pip install duckduckgo-search
-except Exception:
-    DDGS = None
-
-
-from ursa.prompt_library.hypothesizer_prompts import (
-    competitor_prompt,
-    critic_prompt,
-    hypothesizer_prompt,
-)
-
-# from langchain_core.runnables.graph import MermaidDrawMethod
 from .base import BaseAgent
 
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
 
-
-# Define our state schema
 class HypothesizerState(TypedDict, total=False):
-    question: str
-    question_search_query: str
-    current_iteration: int
-    max_iterations: int
-    agent1_solution: Annotated[list[str], add]
-    agent2_critiques: list[str]
-    agent3_perspectives: list[str]
-    solution: str
-    summary_report: str
-    visited_sites: Annotated[set[str], or_]
+    """State for persistent hypothesis-space maintenance.
+
+    The durable hypothesis space is intentionally offloaded to an experience file
+    rather than kept entirely in graph state. This makes it easy for other URSA
+    agent behaviors, such as chat and execution, to read the current hypothesis
+    space back into context via the existing experience tools.
+    """
+
+    query: str
+    """Original or current user question/topic."""
+
+    new_information: str
+    """New evidence, clarification, or instruction to incorporate."""
+
+    context: str
+    """Optional additional context from another agent behavior or user-provided notes."""
+
+    experience_filename: str
+    """Markdown experience file used as the durable hypothesis artifact."""
+
+    hypothesis_space_markdown: str
+    """Latest hypothesis-space artifact markdown."""
+
+    summary: str
+    """Compact state summary of the current hypothesis space."""
+
+    revision_history: list[str]
+    """Short descriptions of updates made during this run/thread."""
+
+    last_updated: str
+    """ISO timestamp for the latest update."""
+
+
+DEFAULT_HYPOTHESIS_EXPERIENCE = "hypothesis_space.md"
 
 
 class HypothesizerAgent(BaseAgent[HypothesizerState]):
+    """Maintain a persistent, shareable hypothesis space.
+
+    Unlike the legacy/current-review workflow, this agent tracks alternative
+    hypotheses, relative likelihoods, and evidence for/against each hypothesis.
+    The full artifact is stored in ``den/experiences/<experience_filename>`` so
+    other agents can bring it back into context with ``read_experience`` even if
+    conversational context has been summarized away.
+    """
+
     state_type = HypothesizerState
 
-    def __init__(self, llm: BaseChatModel, max_iterations: int = 3, **kwargs):
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        experience_filename: str = DEFAULT_HYPOTHESIS_EXPERIENCE,
+        **kwargs,
+    ):
         super().__init__(llm, **kwargs)
-        self.hypothesizer_prompt = hypothesizer_prompt
-        self.critic_prompt = critic_prompt
-        self.competitor_prompt = competitor_prompt
-        self.search_tool = DDGS()
-        self.strllm = self.llm | StrOutputParser()
-        self.max_iterations = max_iterations
+        self.experience_filename = self._validate_experience_filename(
+            experience_filename
+        )
 
     def _normalize_inputs(self, inputs) -> HypothesizerState:
         if isinstance(inputs, str):
             return HypothesizerState(
-                question=inputs,
-                max_iterations=self.max_iterations,
-                current_iteration=0,
+                query=inputs,
+                new_information=inputs,
+                experience_filename=self.experience_filename,
+                revision_history=[],
             )
-        return cast(HypothesizerState, inputs)
+
+        state = dict(cast(dict[str, Any], inputs))
+        if "query" not in state and "question" in state:
+            state["query"] = state["question"]
+        if "new_information" not in state:
+            state["new_information"] = state.get("query", "")
+        state.setdefault("experience_filename", self.experience_filename)
+        state.setdefault("revision_history", [])
+        return cast(HypothesizerState, state)
+
+    def format_query(
+        self,
+        prompt: str,
+        state: HypothesizerState | None = None,
+    ) -> HypothesizerState:
+        """Treat follow-up prompts as new information for the existing space."""
+        if state is None:
+            return self._normalize_inputs(prompt)
+        updated = dict(state)
+        updated["new_information"] = prompt
+        updated.setdefault("query", state.get("query", prompt))
+        updated.setdefault("experience_filename", self.experience_filename)
+        updated.setdefault("revision_history", [])
+        return cast(HypothesizerState, updated)
 
     def format_result(self, result: HypothesizerState) -> str:
-        return result.get(
-            "solution", "Hypothesizer failed to return a solution"
+        artifact = self._response_text(result.get("hypothesis_space_markdown"))
+        if artifact:
+            return artifact
+        summary = self._response_text(result.get("summary"))
+        return (
+            summary
+            or "Hypothesizer failed to produce a hypothesis-space artifact."
         )
 
-    def parse_visited_sites(self, raw_search_results) -> set[str]:
-        visited_sites = set()
+    @staticmethod
+    def _validate_experience_filename(filename: str) -> str:
+        name = filename.strip()
+        path = Path(name)
+        if not name:
+            raise ValueError("Experience filename must not be empty.")
+        if path.is_absolute() or path.name != name or name in {".", ".."}:
+            raise ValueError(
+                "Experience filename must be a simple relative file name."
+            )
+        if path.suffix.lower() != ".md":
+            raise ValueError("Experience filename must use the .md extension.")
+        return name
+
+    @property
+    def _experiences_dir(self) -> Path:
+        path = self.den / "experiences"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _experience_path(self, filename: str) -> Path:
+        safe_filename = self._validate_experience_filename(filename)
+        return self._experiences_dir / safe_filename
+
+    def _read_existing_hypothesis_space(self, filename: str) -> str:
+        path = self._experience_path(filename)
+        if not path.exists():
+            return ""
         try:
-            if isinstance(raw_search_results, str):
-                results_list = ast.literal_eval(raw_search_results)
-            else:
-                results_list = raw_search_results
-            # Each item typically might have "link", "title", "snippet"
-            for item in results_list:
-                link = item.get("link")
-                if link:
-                    visited_sites.add(link)
-        except (ValueError, SyntaxError, TypeError):
-            # If it's not valid Python syntax or something else goes wrong
-            print("[DEBUG] Could not parse search results as Python list.")
-            print("[DEBUG] raw_search_results:", raw_search_results)
+            return self._response_text(path.read_text(encoding="utf-8"))
+        except OSError:
+            return ""
 
-        return visited_sites
+    def _write_hypothesis_space(self, filename: str, content: str) -> Path:
+        path = self._experience_path(filename)
+        path.write_text(content.rstrip() + "\n", encoding="utf-8")
+        return path
 
-    async def agent1_generate_solution(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        """Agent 1: Hypothesizer."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering agent1_generate_solution. Iteration: {state['current_iteration']}"
-        )
+    @staticmethod
+    def _clean_markdown_text(text: str) -> str:
+        """Normalize markdown text returned by model/client layers."""
+        text = text.strip()
+        if "\\n" in text and text.count("\\n") >= text.count("\n"):
+            text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
+        return text.strip()
 
-        current_iter = state["current_iteration"]
-        user_content = f"Question: {state['question']}\n"
+    @classmethod
+    def _response_text(cls, value: Any) -> str:
+        """Extract user-visible text from LLM response content.
 
-        if current_iter > 0:
-            user_content += (
-                f"\nPrevious solution: {state['agent1_solution'][-1]}"
-            )
-            user_content += f"\nCritique: {state['agent2_critiques'][-1]}"
-            user_content += (
-                f"\nCompetitor perspective: {state['agent3_perspectives'][-1]}"
-            )
-
-            user_content += (
-                "\n\n**You must explicitly list how this new solution differs from the previous solution,** "
-                "point by point, explaining what changes were made in response to the critique and competitor perspective."
-                "\nAfterward, provide your updated solution."
-            )
-        else:
-            user_content += "Research this problem and generate a solution."
-
-        search_query = await self.strllm.ainvoke(
-            f"Here is a problem description: {state['question']}. Turn it into a short query to be fed into a search engine."
-        )
-        if '"' in search_query:
-            search_query = search_query.split('"')[1]
-        raw_search_results = self.search_tool.text(
-            search_query or state["question"]
-        )
-        user_content += f"\nSearch results: {raw_search_results}"
-
-        # Parse the results if possible, so we can collect URLs
-        visited_sites = self.parse_visited_sites(raw_search_results)
-
-        # Provide a system message to define this agent's role
-        messages = [
-            SystemMessage(content=self.hypothesizer_prompt),
-            HumanMessage(content=user_content),
-        ]
-        solution = await self.strllm.ainvoke(messages)
-
-        # Print the entire solution in green
-        print(f"{GREEN}[Agent1 - Hypothesizer solution]\n{solution}{RESET}")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting agent1_generate_solution."
-        )
-        return {
-            "agent1_solution": [solution],
-            "question_search_query": search_query,
-            "visited_sites": visited_sites,
-        }
-
-    async def agent2_critique(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        """Agent 2: Critic."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering agent2_critique."
-        )
-
-        solution = state["agent1_solution"][-1]
-        user_content = (
-            f"Question: {state['question']}\n"
-            f"Proposed solution: {solution}\n"
-            "Provide a detailed critique of this solution. Identify potential flaws, assumptions, and areas for improvement."
-        )
-
-        fact_check_query = f"fact check {state['question_search_query']} solution effectiveness"
-
-        fact_check_results = self.search_tool.text(fact_check_query)
-        visited_sites = self.parse_visited_sites(fact_check_results)
-        user_content += f"\nFact check results: {fact_check_results}"
-
-        messages = [
-            SystemMessage(content=self.critic_prompt),
-            HumanMessage(content=user_content),
-        ]
-        critique = await self.strllm.ainvoke(messages)
-
-        # Print the entire critique in blue
-        print(f"{BLUE}[Agent2 - Critic]\n{critique}{RESET}")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting agent2_critique."
-        )
-        return {
-            "agent2_critiques": [critique],
-            "visited_sites": visited_sites,
-        }
-
-    async def agent3_competitor_perspective(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        """Agent 3: Competitor/Stakeholder Simulator."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering agent3_competitor_perspective."
-        )
-
-        solution = state["agent1_solution"][-1]
-        critique = state["agent2_critiques"][-1]
-
-        user_content = (
-            f"Question: {state['question']}\n"
-            f"Proposed solution: {solution}\n"
-            f"Critique: {critique}\n"
-            "Simulate how a competitor, government agency, or other stakeholder might respond to this solution."
-        )
-
-        competitor_search_query = (
-            f"competitor responses to {state['question_search_query']}"
-        )
-
-        competitor_info = self.search_tool.text(competitor_search_query)
-        visited_sites = self.parse_visited_sites(competitor_info)
-        user_content += f"\nCompetitor information: {competitor_info}"
-
-        messages = [
-            SystemMessage(content=self.competitor_prompt),
-            HumanMessage(content=user_content),
-        ]
-        perspective = await self.strllm.ainvoke(messages)
-
-        # Print the entire perspective in red
-        print(
-            f"{RED}[Agent3 - Competitor/Stakeholder Perspective]\n{perspective}{RESET}"
-        )
-        print(
-            f"[iteration {state['current_iteration']}] Exiting agent3_competitor_perspective."
-        )
-        return {
-            "agent3_perspectives": [perspective],
-            "visited_sites": visited_sites,
-        }
-
-    def increment_iteration(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        current_iteration = state["current_iteration"] + 1
-        print(
-            f"[iteration {state['current_iteration']}] Iteration incremented to {current_iteration}"
-        )
-        return {"current_iteration": current_iteration}
-
-    async def generate_solution(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        """Generate the overall, refined solution based on all iterations."""
-        print(
-            f"[iteration {state['current_iteration']}] Entering generate_solution."
-        )
-        prompt = f"Original question: {state['question']}\n\n"
-        prompt += "Evolution of solutions:\n"
-
-        for i, (solution_text, critique_text, perspective_text) in enumerate(
-            zip(
-                state["agent1_solution"],
-                state["agent2_critiques"],
-                state["agent3_perspectives"],
-            ),
-            start=1,
-        ):
-            prompt += f"\nIteration {i}:\n"
-            prompt += f"Solution: {solution_text}\n"
-            prompt += f"Critique: {critique_text}\n"
-            prompt += f"Competitor perspective: {perspective_text}\n"
-
-        prompt += "\nBased on this iterative process, provide the overall, refined solution."
-
-        print(
-            f"[iteration {state['current_iteration']}] Generating overall solution with LLM..."
-        )
-        solution = await self.strllm.ainvoke(prompt)
-        print(
-            f"[iteration {state['current_iteration']}] Overall solution obtained. Preview:",
-            solution[:200],
-            "...",
-        )
-
-        print(
-            f"[iteration {state['current_iteration']}] Exiting generate_solution."
-        )
-        return {"solution": solution}
-
-    def print_visited_sites(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
-        new_state = state.copy()
-        # all_sites = list(new_state["visited_sites"])
-        # print("[DEBUG] Visited Sites:")
-        # for s in all_sites:
-        #     print("  ", s)
-        return new_state
-
-    async def summarize_process_as_latex(
-        self, state: HypothesizerState
-    ) -> HypothesizerState:
+        Some chat models return structured content blocks, e.g. reasoning blocks
+        plus text blocks. Avoid ``str(list_of_blocks)`` because that surfaces
+        Python/JSON-ish wrapper data to the CLI and hypothesis artifact.
         """
-        Summarize how the solution changed over time, referencing
-        each iteration's critique and competitor perspective,
-        then produce a final LaTeX document.
-        """
-        print("Entering summarize_process_as_latex.")
-        # Build a single string describing the entire iterative process
-        iteration_details = ""
-        for i, (sol, crit, comp) in enumerate(
-            zip(
-                state["agent1_solution"],
-                state["agent2_critiques"],
-                state["agent3_perspectives"],
-            ),
-            start=1,
-        ):
-            iteration_details += (
-                f"\\subsection*{{Iteration {i}}}\n\n"
-                f"\\textbf{{Solution:}}\\\\\n{sol}\n\n"
-                f"\\textbf{{Critique:}}\\\\\n{crit}\n\n"
-                f"\\textbf{{Competitor Perspective:}}\\\\\n{comp}\n\n"
+        content = getattr(value, "content", value)
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            raw_text = content.strip()
+            if (
+                raw_text.startswith(("[", "{"))
+                and "'type'" in raw_text
+                and "'text'" in raw_text
+            ):
+                try:
+                    parsed = ast.literal_eval(raw_text)
+                except (SyntaxError, ValueError):
+                    return cls._clean_markdown_text(raw_text)
+                parsed_text = cls._response_text(parsed)
+                return parsed_text or cls._clean_markdown_text(raw_text)
+            if (
+                raw_text.startswith(("[", "{"))
+                and '"type"' in raw_text
+                and '"text"' in raw_text
+            ):
+                try:
+                    parsed = ast.literal_eval(raw_text)
+                except (SyntaxError, ValueError):
+                    return cls._clean_markdown_text(raw_text)
+                parsed_text = cls._response_text(parsed)
+                return parsed_text or cls._clean_markdown_text(raw_text)
+            return cls._clean_markdown_text(raw_text)
+        if isinstance(content, list):
+            parts = [cls._response_text(item) for item in content]
+            return "\n\n".join(part for part in parts if part).strip()
+        if isinstance(content, dict):
+            block_type = content.get("type")
+            if block_type in {"text", "output_text"} and "text" in content:
+                return cls._response_text(content["text"])
+            if block_type == "reasoning":
+                return ""
+            if "text" in content:
+                return cls._response_text(content["text"])
+            if "content" in content:
+                return cls._response_text(content["content"])
+            return ""
+        return cls._clean_markdown_text(str(content))
+
+    def _fallback_hypothesis_space(
+        self,
+        *,
+        query: str,
+        new_information: str,
+        context: str,
+        previous: str,
+        now: str,
+    ) -> str:
+        basis = new_information or query or "the current user question"
+        context_note = (
+            context or "No additional cross-agent context was provided."
+        )
+        previous_note = (
+            "A prior hypothesis-space artifact existed and should remain part "
+            "of the ongoing context."
+            if previous.strip()
+            else "No previous hypothesis-space artifact was found."
+        )
+        return f"""# Hypothesis Space
+
+## Question / Topic
+
+{query or basis}
+
+## Current Update
+
+{basis}
+
+## Additional Context
+
+{context_note}
+
+## Hypotheses
+
+### H1: Primary working hypothesis
+
+- **Relative likelihood:** 0.34
+- **Rationale:** This is the most direct explanation currently available from the supplied prompt/context.
+- **Evidence for:**
+  - The current user-provided information is consistent with this hypothesis.
+- **Evidence against:**
+  - No explicit contradictory evidence has been recorded yet.
+- **Assumptions / uncertainties:**
+  - This likelihood is provisional and should be updated as more evidence is gathered.
+
+### H2: Alternative mechanism or explanation
+
+- **Relative likelihood:** 0.33
+- **Rationale:** A plausible alternative may explain the same observations through a different causal path.
+- **Evidence for:**
+  - The current evidence does not rule it out.
+- **Evidence against:**
+  - No specific supporting evidence has been isolated yet.
+- **Assumptions / uncertainties:**
+  - Additional targeted evidence is needed to compare it against H1.
+
+### H3: Null, mixed, or confounded explanation
+
+- **Relative likelihood:** 0.33
+- **Rationale:** The available observations may be incomplete, confounded, or explained by multiple factors.
+- **Evidence for:**
+  - {previous_note}
+- **Evidence against:**
+  - No decisive evidence yet.
+- **Assumptions / uncertainties:**
+  - More precise observations, source documents, experiments, or logs would reduce uncertainty.
+
+## Evidence Log
+
+- **E1:** {basis}
+  - Supports: H1, H2, H3 to varying degrees.
+  - Contradicts: none recorded yet.
+  - Strength: provisional.
+
+## Change Summary
+
+Initialized or updated the hypothesis space with the latest user-provided information. Treat all likelihoods as provisional until additional evidence is gathered.
+
+## Recommended Next Evidence
+
+- Identify observations that would distinguish H1 from H2.
+- Look for evidence that would falsify the primary working hypothesis.
+- Record source documents, commands, results, or experiments as future evidence updates.
+"""
+
+    def _build_update_prompt(
+        self,
+        *,
+        query: str,
+        new_information: str,
+        context: str,
+        previous: str,
+        now: str,
+        filename: str,
+    ) -> list:
+        system = SystemMessage(
+            content=(
+                "You are a persistent hypothesis-space maintainer for URSA. "
+                "Your job is to maintain a structured set of competing hypotheses, "
+                "relative likelihoods, and evidence for/against each hypothesis. "
+                "Return only Markdown. Do not use markdown code fences around the whole response. "
+                "The artifact will be written as an experience file so other agents can read it later."
+            )
+        )
+        human = HumanMessage(
+            content=f"""Update the hypothesis-space artifact.
+
+The artifact will be saved to the configured hypothesis-space experience file.
+Do not include implementation metadata such as file paths, timestamps, JSON, or HTML comments in the output.
+
+Question / topic:
+{query}
+
+New user information / evidence / instruction:
+{new_information}
+
+Additional context from another agent behavior or user-provided notes:
+{context or "(none provided)"}
+
+Previous hypothesis-space artifact:
+{previous or "(none found; initialize a new hypothesis space)"}
+
+Requirements:
+- Maintain clear hypothesis IDs such as H1, H2, H3.
+- Keep or update relative likelihoods.
+- State whether likelihoods are mutually exclusive probabilities or independent plausibility scores.
+- Track evidence for and against each hypothesis.
+- Preserve useful prior evidence unless contradicted.
+- Explain exactly what changed in this update.
+- Include recommended next evidence or work that chat/execution agents could gather.
+- Keep the artifact concise enough to be read back into context later, but complete enough to be useful.
+"""
+        )
+        return [system, human]
+
+    def _summarize_artifact(self, artifact: str, filename: str) -> str:
+        lines = [line.strip() for line in artifact.splitlines() if line.strip()]
+        hypotheses = [line for line in lines if line.startswith("### H")]
+        if hypotheses:
+            hyp_text = "; ".join(hypotheses[:5])
+            return (
+                f"Updated hypothesis space in experiences/{filename}. "
+                f"Current hypotheses: {hyp_text}"
+            )
+        return f"Updated hypothesis space in experiences/{filename}."
+
+    def update_hypothesis_space(
+        self,
+        state: HypothesizerState,
+        config: RunnableConfig | None = None,
+    ) -> HypothesizerState:
+        events = self.events(config)
+        filename = self._validate_experience_filename(
+            state.get("experience_filename", self.experience_filename)
+        )
+        query = state.get("query") or state.get("new_information", "")
+        new_information = state.get("new_information") or query
+        context = state.get("context", "")
+        now = datetime.now(UTC).isoformat()
+        previous = self._read_existing_hypothesis_space(filename)
+
+        events.emit(
+            "Updating hypothesis space",
+            stage="hypothesis_update",
+            experience_filename=filename,
+            has_existing_artifact=bool(previous.strip()),
+        )
+
+        messages = self._build_update_prompt(
+            query=query,
+            new_information=new_information,
+            context=context,
+            previous=previous,
+            now=now,
+            filename=filename,
+        )
+        response = self.llm.invoke(messages, config=config)
+        artifact = self._response_text(response)
+
+        if not artifact or artifact.lower() in {"ok", "stub"}:
+            artifact = self._fallback_hypothesis_space(
+                query=query,
+                new_information=new_information,
+                context=context,
+                previous=previous,
+                now=now,
             )
 
-        # -----------------------------
-        # Write iteration_details to disk as .txt
-        # -----------------------------
-        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        txt_filename = Path(
-            self.workspace,
-            f"iteration_details_{timestamp_str}_chat_history.txt",
+        if not artifact.lstrip().startswith("#"):
+            artifact = f"# Hypothesis Space\n\n{artifact}"
+
+        artifact = artifact.rstrip()
+
+        path = self._write_hypothesis_space(filename, artifact)
+        summary = self._summarize_artifact(artifact, filename)
+        revision_entry = (
+            f"{now}: updated {filename} with new information: "
+            f"{new_information[:160]}"
         )
-        with open(txt_filename, "w", encoding="utf-8") as f:
-            f.write(iteration_details)
+        revision_history = list(state.get("revision_history", []))
+        revision_history.append(revision_entry)
 
-        print(f"Wrote iteration details to {txt_filename}.")
-
-        # Prompt the LLM to produce a LaTeX doc
-        # We'll just pass it as a single string to the LLM;
-        # you could also do system+human messages if you prefer.
-        prompt = f"""\
-            You are a system that produces a FULL LaTeX document.
-            Here is information about a multi-iteration process:
-
-            Original question: {state["question"]}
-
-            Below are the solutions, critiques, and competitor perspectives from each iteration:
-
-            {iteration_details}
-
-            The solution we arrived at was:
-
-            {state["solution"]}
-
-            Now produce a valid LaTeX document.  Be sure to use a table of contents.
-            It must start with an Executive Summary (that may be multiple pages) which summarizes
-            the entire iterative process.  Following that, we should include the solution in full,
-            not summarized, but reformatted for appropriate LaTeX.  And then, finally (and this will be
-            quite long), we must take all the steps - solutions, critiques, and competitor perspectives
-            and *NOT SUMMARIZE THEM* but merely reformat them for the reader.  This will be in an Appendix
-            of the full content of the steps.  Finally, include a listing of all of the websites we
-            used in our research.
-
-            You must ONLY RETURN LaTeX, nothing else.  It must be valid LaTeX syntax!
-
-            Your output should start with:
-            \\documentclass{{article}}
-            \\usepackage[margin=1in]{{geometry}}
-            etc.
-
-            It must compile without errors under pdflatex.
-        """
-
-        # Now produce a valid LaTeX document that nicely summarizes this entire iterative process.
-        # It must include the overall solution in full, not summarized, but reformatted for appropriate
-        # LaTeX. The summarization is for the other steps.
-
-        # all_visited_sites = list(state["visited_sites"])
-        # (Optional) remove duplicates by converting to a set, then back to a list
-        # visited_sites_unique = list(set(all_visited_sites))
-        # if visited_sites_unique:
-        #     websites_latex = "\\section*{Websites Visited}\\begin{itemize}\n"
-        #     for url in visited_sites_unique:
-        #         print(f"We visited: {url}")
-        #         # Use \url{} to handle special characters in URLs
-        #         websites_latex += f"\\item \\url{{{url}}}\n"
-        #     websites_latex += "\\end{itemize}\n\n"
-        # else:
-        #     # If no sites visited, or the list is empty
-        #     websites_latex = (
-        #         "\\section*{Websites Visited}\nNo sites were visited.\n\n"
-        #     )
-        # print(websites_latex)
-        websites_latex = ""
-
-        # Ask the LLM to produce *only* LaTeX content
-        latex_response = await self.strllm.ainvoke(prompt)
-
-        latex_doc = latex_response
-
-        def inject_into_latex(original_tex: str, injection: str) -> str:
-            """
-            Find the last occurrence of '\\end{document}' in 'original_tex'
-            and insert 'injection' right before it.
-            If '\\end{document}' is not found, just append the injection at the end.
-            """
-            injection_index = original_tex.rfind(r"\end{document}")
-            if injection_index == -1:
-                # If the LLM didn't include \end{document}, just append
-                return original_tex + "\n" + injection
-            else:
-                # Insert right before \end{document}
-                return (
-                    original_tex[:injection_index]
-                    + "\n"
-                    + injection
-                    + "\n"
-                    + original_tex[injection_index:]
-                )
-
-        final_latex = inject_into_latex(latex_doc, websites_latex)
-
-        print(
-            f"[iteration {state['current_iteration']}] Received LaTeX from LLM. Preview:"
+        events.emit(
+            "Hypothesis space updated",
+            stage="hypothesis_update",
+            experience_filename=filename,
+            output_path=str(path),
+            summary=summary,
         )
-        print(latex_response[:300], "...")
-        print(
-            f"[iteration {state['current_iteration']}] Exiting summarize_process_as_latex."
+
+        return HypothesizerState(
+            query=query,
+            new_information=new_information,
+            context=context,
+            experience_filename=filename,
+            hypothesis_space_markdown=artifact,
+            summary=summary,
+            revision_history=revision_history,
+            last_updated=now,
         )
-        return {"summary_report": final_latex}
 
     def _build_graph(self):
-        # Add nodes
-        self.add_node(self.agent1_generate_solution, "agent1")
-        self.add_node(self.agent2_critique, "agent2")
-        self.add_node(self.agent3_competitor_perspective, "agent3")
-        self.add_node(self.increment_iteration, "increment_iteration")
-        self.add_node(self.generate_solution, "finalize")
-        self.add_node(self.print_visited_sites, "print_sites")
-        self.add_node(self.summarize_process_as_latex, "summarize_as_latex")
-
-        # Add simple edges for the known flow
-        self.graph.add_edge("agent1", "agent2")
-        self.graph.add_edge("agent2", "agent3")
-        self.graph.add_edge("agent3", "increment_iteration")
-
-        # Then from increment_iteration, we have a conditional:
-        # If we 'continue', we go back to agent1
-        # If we 'finish', we jump to the finalize node
-        self.graph.add_conditional_edges(
-            "increment_iteration",
-            should_continue,
-            {"continue": "agent1", "finish": "finalize"},
-        )
-
-        self.graph.add_edge("finalize", "summarize_as_latex")
-        self.graph.add_edge("summarize_as_latex", "print_sites")
-        # self.graph.add_edge("summarize_as_latex", "compile_pdf")
-        # self.graph.add_edge("compile_pdf", "print_sites")
-
-        # Set the entry point
-        self.graph.set_entry_point("agent1")
-        self.graph.set_finish_point("print_sites")
+        self.add_node(self.update_hypothesis_space, "update_hypothesis_space")
+        self.graph.set_entry_point("update_hypothesis_space")
+        self.graph.set_finish_point("update_hypothesis_space")
 
 
-def should_continue(state: HypothesizerState) -> Literal["continue", "finish"]:
-    if state["current_iteration"] >= state["max_iterations"]:
-        print(
-            f"[iteration {state['current_iteration']}] Reached max_iterations; finishing."
-        )
-        return "finish"
-    else:
-        print(
-            f"[iteration {state['current_iteration']}] Still under max_iterations; continuing."
-        )
-        return "continue"
+class LegacyHypothesizerAgentWarning(DeprecationWarning):
+    pass
 
 
-# def compile_summary_to_pdf(state: AgentState) -> AgentState:
-#     """
-#     Takes the LaTeX in state["summary_report"] and tries to compile it to a PDF
-#     named with the model and timestamp, e.g.:
-#     summary_report_gpt-5-mini_Mar_15_2025_8:59am.pdf
-#     """
-#     print(f"[DEBUG] Entering compile_summary_to_pdf.")
-
-#     llm_model = state["llm_model"]
-
-
-#     latex_code = state.get("summary_report", "")
-#     if not latex_code:
-#         print("[DEBUG] No LaTeX code found in summary_report.")
-#         return state
-
-#     # Create a dynamic filename using the LLM model name & a timestamp
-#     # e.g. "summary_report_gpt-5-mini_Mar_15_2025_08:59AM.pdf"
-#     # timestamp_str = datetime.now().strftime("%b_%d_%Y_%I:%M%p")
-#     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-#     pdf_filename = f"summary_report_{llm_model}_{timestamp_str}.pdf"
-
-#     tex_filename = "summary_report.tex"
-#     with open(tex_filename, "w", encoding="utf-8") as f:
-#         f.write(latex_code)
-
-#     try:
-#         subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_filename], check=True)
-#         subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_filename], check=True)
-#     except subprocess.CalledProcessError as e:
-#         print("Error compiling LaTeX:", e)
-
-#     if os.path.exists("summary_report.pdf"):
-#         os.rename("summary_report.pdf", pdf_filename)
-#         print(f"[DEBUG] Successfully compiled PDF -> {pdf_filename}")
-#     else:
-#         print("[DEBUG] PDF compilation failed; no summary_report.pdf found.")
-
-#     print("[DEBUG] Exiting compile_summary_to_pdf.")
-#     return state
-
-
-if __name__ == "__main__":
-    # Create the graph
-    hypothesizer_agent = HypothesizerAgent()
-
-    question = "Find a city with as least 10 vowels in its name."
-
-    # Initialize the state
-    initial_state: HypothesizerState = {
-        "question": question,
-        "question_search_query": "",
-        "current_iteration": 0,
-        "max_iterations": 3,
-        "agent1_solution": [],
-        "agent2_critiques": [],
-        "agent3_perspectives": [],
-        "solution": "",
-        "summary_report": "",
-        "visited_sites": [],
-    }
-
-    print("Invoking the graph...")
-    # Run the graph
-    result = hypothesizer_agent.invoke(
-        initial_state,
-        {
-            "recursion_limit": 999999,
-            "configurable": {"thread_id": 42},
-        },
-    )
-    summary_text = result["summary_report"]
-
-    print("Graph invocation complete.")
-
-    # Print the overall solution
-    print("Overall Solution:")
-    print(result["solution"])
-
-    # print("Summarized Report:")
-    # print(summary_text)
+def should_continue(state: HypothesizerState) -> Literal["finish"]:
+    """Compatibility helper for callers that imported the old symbol."""
+    return "finish"

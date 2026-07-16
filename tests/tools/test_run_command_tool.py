@@ -4,11 +4,23 @@ from types import SimpleNamespace
 import pytest
 from langchain.chat_models import BaseChatModel
 from langgraph.store.memory import InMemoryStore
-from pydantic import ValidationError
 
-from tests.tools.utils import make_runtime
+from tests.tools.utils import (
+    invoke_with_event_recorder,
+    invoke_with_parent_run,
+    make_runtime,
+)
 from ursa.tools.run_command_tool import SafetyAssessment, run_command
-from ursa.util.types import AsciiStr
+
+FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
+
+
+@pytest.fixture(autouse=True)
+def fixed_monotonic_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "ursa.util.events.monotonic_ns",
+        lambda: FIXED_MONOTONIC_TIMESTAMP_NS,
+    )
 
 
 def _patch_safety_result(
@@ -47,11 +59,12 @@ def test_run_command_invokes_subprocess_in_workspace(
     def fake_run(*args, **kwargs):
         recorded["args"] = args
         recorded["kwargs"] = kwargs
-        return SimpleNamespace(stdout="output", stderr="")
+        return SimpleNamespace(stdout="output", stderr="", returncode=0)
 
     monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
 
-    result = run_command.func(
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
         "echo hi",
         runtime=make_runtime(
             tmp_path,
@@ -60,10 +73,51 @@ def test_run_command_invokes_subprocess_in_workspace(
             tool_call_id="run-call",
         ),
     )
+    events = recorder.events
 
     assert result == "STDOUT:\noutput\nSTDERR:\n"
     assert recorded["kwargs"]["cwd"] == tmp_path
     assert recorded["kwargs"]["shell"] is True
+    assert events[0] == (
+        "ursa_agent_progress",
+        {
+            "tool": "run_command",
+            "tool_call_id": "run-call",
+            "stage": "safety_check",
+            "message": "Command passed safety check",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+            "query": "echo hi",
+            "safe": True,
+            "reason": "Evaluated in test",
+        },
+    )
+    assert events[1] == (
+        "ursa_agent_progress",
+        {
+            "tool": "run_command",
+            "tool_call_id": "run-call",
+            "stage": "execute",
+            "message": "Running command",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+            "phase": "start",
+            "query": "echo hi",
+        },
+    )
+    event_name, payload = events[2]
+    assert event_name == "ursa_agent_progress"
+    assert payload["tool"] == "run_command"
+    assert payload["tool_call_id"] == "run-call"
+    assert payload["stage"] == "execute"
+    assert payload["message"] == "Command finished"
+    assert payload["monotonic_timestamp_ns"] == FIXED_MONOTONIC_TIMESTAMP_NS
+    assert payload["phase"] == "end"
+    assert payload["query"] == "echo hi"
+    assert payload["returncode"] == 0
+    assert payload["stdout_chars"] == len("output")
+    assert payload["stderr_chars"] == 0
+    assert payload["stdout_truncated"] is False
+    assert payload["stderr_truncated"] is False
+    assert isinstance(payload["elapsed_ms"], float)
 
 
 def test_run_command_truncates_output(
@@ -80,15 +134,18 @@ def test_run_command_truncates_output(
         ),
     )
 
-    result = run_command.func(
-        "noop",
-        runtime=make_runtime(
-            tmp_path,
-            llm=chat_model,
-            limit=64,
-            tool_call_id="truncate",
-            thread_id="run-thread",
-        ),
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "noop",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                limit=64,
+                tool_call_id="truncate",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
     )
 
     stdout_part, stderr_part = result.split("STDERR:\n", maxsplit=1)
@@ -113,21 +170,24 @@ def test_run_command_handles_keyboard_interrupt(
         "ursa.tools.run_command_tool.subprocess.run", raise_interrupt
     )
 
-    result = run_command.func(
-        "sleep 1",
-        runtime=make_runtime(
-            tmp_path,
-            llm=chat_model,
-            tool_call_id="interrupt",
-            thread_id="run-thread",
-        ),
+    result = invoke_with_parent_run(
+        lambda config: run_command.func(
+            "sleep 1",
+            runtime=make_runtime(
+                tmp_path,
+                llm=chat_model,
+                tool_call_id="interrupt",
+                thread_id="run-thread",
+                config=config,
+            ),
+        )
     )
 
     assert "KeyboardInterrupt:" in result
 
 
-def test_run_command_rejects_unicode_input(
-    tmp_path: Path, chat_model: BaseChatModel
+def test_run_command_returns_message_for_unicode_input(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     runtime = make_runtime(
         tmp_path,
@@ -135,21 +195,18 @@ def test_run_command_rejects_unicode_input(
         thread_id="run-thread",
         tool_call_id="unicode",
     )
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.subprocess.run",
+        lambda *args, **kwargs: pytest.fail(
+            "subprocess should not run for invalid input"
+        ),
+    )
 
-    with pytest.raises(ValidationError):
-        run_command.invoke({"query": "ls café", "runtime": runtime})
+    result = run_command.func("ls café", runtime)
 
-
-def test_run_command_schema_has_regex_constraint():
-    field = run_command.args_schema.model_fields["query"]
-    assert field.annotation is str
-    constraints = [meta for meta in field.metadata if hasattr(meta, "pattern")]
-    assert constraints
-    ascii_constraints = [
-        meta for meta in AsciiStr.__metadata__ if hasattr(meta, "pattern")
-    ]
-    assert ascii_constraints
-    assert constraints[0].pattern == ascii_constraints[0].pattern
+    assert result.startswith("Invalid query:")
+    assert "U+00E9" in result
+    assert "corrected ASCII string" in result
 
 
 def test_run_command_blocks_commands_that_fail_safety_check(
@@ -180,7 +237,8 @@ def test_run_command_blocks_commands_that_fail_safety_check(
 
     monkeypatch.setattr(InMemoryStore, "search", tracked_search)
 
-    result = run_command.func(
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
         "rm -rf important_files",
         runtime=make_runtime(
             tmp_path,
@@ -201,4 +259,19 @@ def test_run_command_blocks_commands_that_fail_safety_check(
     assert search_calls == [
         (("workspace", "file_edit"), 1000),
         (("workspace", "safe_codes"), 1000),
+    ]
+    assert recorder.events == [
+        (
+            "ursa_agent_progress",
+            {
+                "tool": "run_command",
+                "tool_call_id": "unsafe",
+                "stage": "safety_check",
+                "message": "Command deemed unsafe",
+                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+                "query": "rm -rf important_files",
+                "safe": False,
+                "reason": "Not safe in test",
+            },
+        )
     ]

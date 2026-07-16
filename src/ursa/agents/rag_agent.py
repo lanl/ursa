@@ -2,19 +2,34 @@ import os
 import re
 import statistics
 from functools import cached_property
+from pathlib import Path
 from threading import Lock
 from typing import TypedDict
 
 from langchain.chat_models import BaseChatModel
-from langchain.embeddings import Embeddings, init_embeddings
+from langchain.embeddings import Embeddings
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
 
 from ursa.agents.base import BaseAgent
+from ursa.security import enforce_model_group_policy
+from ursa.util.parse import (
+    OFFICE_EXTENSIONS,
+    SPECIAL_TEXT_FILENAMES,
+    TEXT_EXTENSIONS,
+    read_text_from_file,
+)
+
+# Set a minimum number of characters in a file to
+#     to ingest it. Avoids files with minimal content
+#     that would be unlikely to give meaningful
+#     information to perform RAG on.
+MIN_CHARS = 30
+MAX_BATCH_SIZE = 200
 
 
 class RAGMetadata(TypedDict):
@@ -33,6 +48,10 @@ class RAGState(TypedDict, total=False):
 
 def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
+
+
+def _is_meaningful(text: str) -> bool:
+    return len(text) >= MIN_CHARS
 
 
 class RAGAgent(BaseAgent[RAGState]):
@@ -54,14 +73,23 @@ class RAGAgent(BaseAgent[RAGState]):
         self.retriever = None
         self._vs_lock = Lock()
         self.return_k = return_k
-        self.embedding = embedding or init_embeddings(
-            "openai:text-embedding-3-small"
-        )
+        if embedding is None:
+            raise ValueError(
+                "RAGAgent requires an explicit embedding model. Configure "
+                "emb_model in your URSA config when using RAG features."
+            )
+        self.embedding = embedding
+        enforce_model_group_policy(self.embedding, self.group)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.database_path = self.workspace / database_path
-        self.summaries_path = self.workspace / summaries_path
-        self.vectorstore_path = self.workspace / vectorstore_path
+        database_root = Path(database_path)
+        self.database_path = (
+            database_root
+            if database_root.is_absolute()
+            else self.den / database_root
+        )
+        self.summaries_path = self.den / summaries_path
+        self.vectorstore_path = self.den / vectorstore_path
 
         self.vectorstore_path.mkdir(exist_ok=True, parents=True)
         self.vectorstore = self._open_global_vectorstore()
@@ -94,7 +122,7 @@ class RAGAgent(BaseAgent[RAGState]):
             col = self.vectorstore._collection
             res = col.get(where={"id": doc_id}, limit=1)
             return len(res.get("ids", [])) > 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             if not self.manifest_exists:
                 return False
             with open(self.manifest_path, "r") as f:
@@ -122,47 +150,78 @@ class RAGAgent(BaseAgent[RAGState]):
             search_kwargs={"k": k}
         )
 
-    def _read_docs_node(self, state: RAGState) -> RAGState:
-        print("[RAG Agent] Reading Documents....")
-        papers = []
+    def _read_docs_node(
+        self,
+        state: RAGState,
+        config: RunnableConfig | None = None,
+    ) -> RAGState:
+        events = self.events(config)
+        events.emit(
+            "Reading documents",
+            stage="read_docs",
+            database_path=str(self.database_path),
+        )
         new_state = state.copy()
 
-        pdf_files = [
-            f
-            for f in os.listdir(self.database_path)
-            if f.lower().endswith(".pdf")
+        custom_extensions = [
+            item.strip()
+            for item in os.environ.get("URSA_TEXT_EXTENSIONS", "").split(",")
+        ]
+        custom_readable_files = [
+            item.strip()
+            for item in os.environ.get("URSA_SPECIAL_TEXT_FILENAMES", "").split(
+                ","
+            )
         ]
 
-        doc_ids = [
-            pdf_filename.rsplit(".pdf", 1)[0] for pdf_filename in pdf_files
-        ]
-        pdf_files = [
-            pdf_filename
-            for pdf_filename, id in zip(pdf_files, doc_ids)
-            if not self._paper_exists_in_vectorstore(id)
-        ]
+        base_path = Path(self.database_path)
+        ingestible_paths: list[Path] = []
 
-        for pdf_filename in tqdm(pdf_files, desc="RAG parsing text"):
-            full_text = ""
+        paths = [base_path] if base_path.is_file() else base_path.rglob("*")
+        for p in paths:
+            if not p.is_file():
+                continue
 
-            try:
-                loader = PyPDFLoader(
-                    os.path.join(self.database_path, pdf_filename)
-                )
-                pages = loader.load()
-                full_text = "\n".join([p.page_content for p in pages])
+            ext = p.suffix.lower()
 
-            except Exception as e:
-                full_text = f"Error loading paper: {e}"
+            if (
+                ext == ".pdf"
+                or ext in TEXT_EXTENSIONS
+                or ext in custom_extensions
+                or p.name.lower() in SPECIAL_TEXT_FILENAMES
+                or p.name.lower() in custom_readable_files
+                or ext in OFFICE_EXTENSIONS
+            ):
+                ingestible_paths.append(p)
 
+        candidates: list[tuple[Path, str]] = []
+        for p in ingestible_paths:
+            doc_id = str(p)
+            if not self._paper_exists_in_vectorstore(doc_id):
+                candidates.append((p, doc_id))
+
+        papers: list[str] = []
+        doc_ids: list[str] = []
+        for path, doc_id in tqdm(candidates, desc="RAG parsing text"):
+            full_text = read_text_from_file(path)
+            # skip files with very few characters to
+            #    avoid parsing/rag ingestion problems
+            if not _is_meaningful(full_text):
+                continue
             papers.append(full_text)
+            doc_ids.append(doc_id)
 
         new_state["doc_texts"] = papers
         new_state["doc_ids"] = doc_ids
 
         return new_state
 
-    def _ingest_docs_node(self, state: RAGState) -> RAGState:
+    def _ingest_docs_node(
+        self,
+        state: RAGState,
+        config: RunnableConfig | None = None,
+    ) -> RAGState:
+        events = self.events(config)
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap
         )
@@ -174,6 +233,7 @@ class RAGAgent(BaseAgent[RAGState]):
             raise RuntimeError("Unexpected error: doc_texts not in state!")
 
         batch_docs, batch_ids = [], []
+
         for paper, id in tqdm(
             zip(state["doc_texts"], state["doc_ids"]),
             total=len(state["doc_texts"]),
@@ -188,17 +248,35 @@ class RAGAgent(BaseAgent[RAGState]):
             batch_ids.extend(ids)
 
         if state["doc_texts"]:
-            print("[RAG Agent] Ingesting Documents Into RAG Database....")
+            events.emit(
+                "Ingesting documents into RAG database",
+                stage="ingest_docs",
+                document_count=len(state["doc_texts"]),
+                chunk_count=len(batch_docs),
+            )
             with self._vs_lock:
-                self.vectorstore.add_documents(batch_docs, ids=batch_ids)
-                for id in batch_ids:
-                    self._mark_paper_ingested(id)
+                for i in range(0, len(batch_docs), MAX_BATCH_SIZE):
+                    chunk_docs = batch_docs[i : i + MAX_BATCH_SIZE]
+                    chunk_ids = batch_ids[i : i + MAX_BATCH_SIZE]
+
+                    # Ingest the specific chunk
+                    self.vectorstore.add_documents(chunk_docs, ids=chunk_ids)
+
+                    # Mark these specific papers as ingested
+                    for id in chunk_ids:
+                        self._mark_paper_ingested(id)
 
         return state
 
-    def _retrieve_and_summarize_node(self, state: RAGState) -> RAGState:
-        print(
-            "[RAG Agent] Retrieving Contextually Relevant Information From Database..."
+    def _retrieve_and_summarize_node(
+        self,
+        state: RAGState,
+        config: RunnableConfig | None = None,
+    ) -> RAGState:
+        events = self.events(config)
+        events.emit(
+            "Retrieving contextually relevant information",
+            stage="retrieve",
         )
         prompt = ChatPromptTemplate.from_template("""
         You are a scientific assistant responsible for summarizing extracts from research papers, in the context of the following task: {context}
@@ -220,8 +298,13 @@ class RAGAgent(BaseAgent[RAGState]):
             )
 
             relevance_scores = [score for _, score in results]
-        except Exception as e:
-            print(f"RAG failed due to: {e}")
+        except Exception as e:  # noqa: BLE001
+            events.emit(
+                "RAG retrieval failed",
+                stage="retrieve_error",
+                error_type=type(e).__name__,
+                error=str(e),
+            )
             return {**state, "summary": ""}
 
         source_ids_list = []
@@ -237,7 +320,12 @@ class RAGAgent(BaseAgent[RAGState]):
             else ""
         )
 
-        print("[RAG Agent] Summarizing Retrieved Information From Database...")
+        events.emit(
+            "Summarizing retrieved information",
+            stage="summarize",
+            result_count=len(results),
+            source_ids=source_ids_list,
+        )
         # 3) One summary based on retrieved chunks
         rag_summary = chain.invoke({
             "retrieved_content": retrieved_content,
@@ -253,13 +341,20 @@ class RAGAgent(BaseAgent[RAGState]):
 
         # Diagnostics
         if relevance_scores:
-            print(f"\nMax Relevance Score: {max(relevance_scores):.4f}")
-            print(f"Min Relevance Score: {min(relevance_scores):.4f}")
-            print(
-                f"Median Relevance Score: {statistics.median(relevance_scores):.4f}\n"
+            events.emit(
+                "RAG retrieval scores ready",
+                stage="retrieve_result",
+                result_count=len(results),
+                max_relevance_score=max(relevance_scores),
+                min_relevance_score=min(relevance_scores),
+                median_relevance_score=statistics.median(relevance_scores),
             )
         else:
-            print("\nNo RAG results retrieved (score list empty).\n")
+            events.emit(
+                "No RAG results retrieved",
+                stage="retrieve_result",
+                result_count=0,
+            )
 
         # Return a single-element list by default (preferred)
         return {

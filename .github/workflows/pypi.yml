@@ -20,7 +20,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.8.11"
-          python-version: '3.10'
+          python-version: '3.11'
 
       # retrieve your distributions here
       - name: Publish package distributions to PyPI
