@@ -106,6 +106,7 @@ URSA's core agents include, but are not limited to, the following:
 
 * Execution Agent: This agent carries out research tasks specified either in natural language or in the structured JSON format produced by the Planning Agent. It interacts with tools through LangGraph tool calls and through the Model Context Protocol (MCP), allowing virtually any user-provided executable to be incorporated into agent workflows. The Execution Agent also includes built-in tools for code generation and execution, file reading and writing, and system command execution. To improve safety, proposed system commands are screened by an LLM-driven safety node before execution.
 
+* 
 <!--
 * ArXiv Agent: This agent supports literature-review by searching, downloading, and analyzing papers from the arXiv repository. Given a user query, it uses the arXiv search API to identify relevant papers and constructs a retrieval-augmented generation (RAG) database for each paper using a user-specified embedding model. LLM-backed nodes then generate summaries of the individual papers. When the underlying LLM supports multimodal input, the agent can summarize both textual content and figures from the papers. A final aggregator node synthesizes the individual summaries into a report tailored to the user's query.
 -->
@@ -114,7 +115,7 @@ URSA's core agents include, but are not limited to, the following:
 
 * Simulation Agent: The Simulation Agent supports the use of computationally intensive simulation codes on high-performance computing resources. This agent is constructed by orchestrating multiple instances of the core Execution Agent within a LangGraph workflow. One execution agent is responsible for documentation and knowledge acquisition, while another is responsible for simulation setup, execution, debugging, and analysis. The documentation stage gathers information from user-provided manuals, web resources, scientific literature, and RAG-based knowledge bases to construct a task-specific user guide. This guide is then passed to the simulation stage, which uses it to configure and execute simulation campaigns, analyze outputs, and iteratively resolve execution failures. 
 
-* LAMMPS Agent: The LAMMPS Agent [@somasundaram] is a domain-specific agent for atomistic simulations. The agent is capable of autonomously orchestrating the full lifecycle of a molecular dynamics simulation, including interatomic potential selection, generation of LAMMPS input scripts, simulation execution, iterative error recovery, and post-processing of results. The agent can operate in a highly autonomous mode requiring only a natural-language description of the desired simulation, or in an expert mode where users can provide simulation templates, interatomic potentials, and other domain-specific inputs. A key feature of the agent is its ability to iteratively refine simulation inputs in response to execution failures and to leverage other agents within the URSA ecosystem for tasks such as visualization, literature review, and validation against published results.
+* LAMMPS Agent: The LAMMPS Agent is a domain-specific agent for atomistic simulations. The agent is capable of autonomously orchestrating the full lifecycle of a molecular dynamics simulation, including interatomic potential selection, generation of LAMMPS input scripts, simulation execution, iterative error recovery, and post-processing of results. The agent can operate in a highly autonomous mode requiring only a natural-language description of the desired simulation, or in an expert mode where users can provide simulation templates, interatomic potentials, and other domain-specific inputs. A key feature of the agent is its ability to leverage other agents within the URSA ecosystem for tasks such as visualization, literature review, and validation against published results.
 
 * Optimization Agent: The Optimization Agent is a self-contained LangGraph workflow for formulating and solving optimization and inverse-design problems from natural-language input. The agent first extracts the optimization problem, converts it into a structured mathematical representation, and optionally discretizes the problem when infinite-dimensional variables or constraints are detected. It then selects an appropriate solver, generates executable optimization code, runs feasibility checks using a dedicated tool, verifies the resulting formulation, and produces a final explanation of the solution. If verification fails, the workflow loops back to the problem-extraction stage, allowing the agent to iteratively revise the formulation.
 
@@ -125,13 +126,10 @@ URSA's framework is exposed through multiple interfaces that share the same unde
 ### Command-Line Interface
 
 The command-line interface (CLI) provides an interactive REPL for executing agents and composing scientific workflows. A typical session is launched using
-
 ```bash
 ursa --config config.yaml
 ```
-
 where the YAML configuration specifies details such as the desired LLM and other runtime options. Within the REPL, users can invoke individual agents using commands such as
-
 ```text
 ursa> plan Write a workflow for computing elastic constants using a molecular dynamics simulation.
 ursa> execute Execute the plan.
@@ -140,13 +138,10 @@ ursa> execute Execute the plan.
 ### Web Dashboard
 
 URSA also provides a browser-based dashboard that exposes the same agent capabilities through a graphical interface. After installing the optional dashboard dependencies, the server can be started with
-
 ```bash
 ursa-dashboard
 ```
-
 or configured explicitly, for example,
-
 ```bash
 ursa-dashboard --host 127.0.0.1 --port 8080
 ```
@@ -154,11 +149,9 @@ ursa-dashboard --host 127.0.0.1 --port 8080
 ### Python Interface
 
 For integration into scientific software, URSA can be imported directly as a Python package. Agents may be instantiated, configured, and executed within Python scripts or Jupyter notebooks. A typical workflow consists of creating an agent instance and invoking it with a natural-language task:
-
 ```python
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-
 from ursa.agents import ExecutionAgent
 
 llm = init_chat_model(model="openai:gpt-5.4")
@@ -167,16 +160,14 @@ agent = ExecutionAgent(llm=llm)
 result = agent.invoke({
     "messages": [
         HumanMessage(
-            content="Write and run a Python script that prints the first 10 prime numbers."
+        content="Write and run a Python script that prints the first 10 prime numbers."
         )
     ],
     "workspace": "./ursa-script-workspace",
 })
-
 print(result["messages"][-1].content)
 ```
-
-The Python interface is particularly useful for integration with existing simulation codes, analysis pipelines, and high-performance computing workflows. 
+The Python interface is particularly useful for integration with existing simulation codes and high-performance computing workflows. 
 
 ## Agent Execution Environments
 
@@ -197,11 +188,11 @@ URSA is actively used in a growing number of scientific research applications, a
 
 As one example, \autoref{fig:helios} shows the use of URSA in the design of inertial confinement fusion (ICF) capsules. In this workflow, URSA's planning and execution agents were used to autonomously explore candidate designs and optimize neutron yield. More details of this application can be found in @grosskopf2025ursa.
 
-![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from @grosskopf2025ursa.\label{fig:helios}](helios.png){width=70%}
+![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from @grosskopf2025ursa.\label{fig:helios}](helios.png){width=65%}
 
-As a second example, \autoref{fig:lammps} shows atomistic calculations performed by URSA's LAMMPS Agent for a high-entropy alloy [@george2019high]. Such calculations are commonly employed in computational materials science to predict material properties and guide the design of novel materials. More details of the LAMMPS Agent can be found in [@somasundaram].
+As a second example, \autoref{fig:lammps} shows atomistic calculations performed by URSA's LAMMPS Agent for a high-entropy alloy [@george2019high]. Such calculations are commonly employed in computational materials science to predict material properties and guide the design of novel materials.
 
-![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](lammps.png){width=70%}
+![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](lammps.png){width=65%}
 
 These examples illustrate the breadth of scientific domains in which URSA can be applied, ranging from optimization-driven design problems to large-scale simulation and materials modeling workflows.
 
