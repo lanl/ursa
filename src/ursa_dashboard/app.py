@@ -2975,28 +2975,37 @@ def create_app() -> FastAPI:
     if (!list) return;
     list.innerHTML = '';
 
+    const groupPill = $('#dashboardGroupPill');
+    if (groupPill) groupPill.textContent = `Group: ${state.dashboardGroup || 'default'}`;
+
     const wrap = document.createElement('div');
-    wrap.style.display = 'grid';
-    wrap.style.gap = '10px';
+    wrap.className = 'sessionStartWrap';
 
     const form = document.createElement('div');
-    form.className = 'card';
-    form.style.padding = '12px';
+    form.className = 'sessionStartOption';
     form.innerHTML = `
-      <div class="small muted" style="margin-bottom:8px">New session in group: ${escHtml(state.dashboardGroup || 'default')}</div>
-      <button class="btn primary" id="createUnnamedSessionBtn" type="button" style="width:100%">Start New Session</button>
-      <div class="muted small" style="margin-top:8px">Start an unnamed session or create a new named agent session.</div>
+      <div class="sessionStartOptionTitle">New or temporary agent</div>
+      <!-- <div class="sessionStartOptionCopy">Create a named agent you can return to, or begin a non-persistent session.</div> -->
+      <div class="sessionStartOptionCopy"> </div>
+      <button class="btn sessionStartAction" id="createNewSessionBtn" type="button">Choose session type</button>
     `;
     wrap.appendChild(form);
 
+    const divider = document.createElement('div');
+    divider.className = 'sessionStartDivider';
+    divider.innerHTML = '<span>or</span>';
+    wrap.appendChild(divider);
+
     const existing = document.createElement('div');
-    existing.className = 'card';
-    existing.style.padding = '12px';
+    existing.className = 'sessionStartOption';
     const items = (state.agentNames || []);
     existing.innerHTML = `
-      <div style="margin-bottom:8px; font-size:1rem; font-weight:600;">Continue with an agent by name</div>
-      <input id="agentSearchInput" placeholder="Type an agent name to search..." style="width:100%; margin-bottom:8px" />
-      <div id="agentSearchResults"></div>
+      <div class="sessionStartOptionTitle">Existing named agent</div>
+      <!-- <div class="sessionStartOptionCopy">Start a new session with an agent you have worked with before.</div> -->
+      <div class="sessionStartOptionCopy"> </div>
+      <!-- <label class="agentSearchLabel" for="agentSearchInput">Agent name</label> -->
+      <input class="input sessionAgentSearch" id="agentSearchInput" placeholder="Search named agents..." autocomplete="off" />
+      <div class="agentSearchResults" id="agentSearchResults"></div>
     `;
 
     const search = existing.querySelector('#agentSearchInput');
@@ -3006,7 +3015,9 @@ def create_app() -> FastAPI:
       const q = String(filterText || '').trim().toLowerCase();
       listWrap.innerHTML = '';
       if (!q) {
-        listWrap.innerHTML = '<div class="small muted">Search results will appear as you type.</div>';
+        listWrap.innerHTML = items.length
+          ? '<div class="small muted">Type a name, then select an agent to start a session.</div>'
+          : '<div class="small muted">No named agents yet. Create one using the option above.</div>';
         return;
       }
       const filtered = items.filter(item => String(item.agent_name || '').toLowerCase().includes(q));
@@ -3028,7 +3039,7 @@ def create_app() -> FastAPI:
         top.appendChild(name);
         const start = document.createElement('span');
         start.className = 'pill action';
-        start.textContent = 'New session';
+        start.textContent = 'Start session';
         top.appendChild(start);
 
         const desc = document.createElement('div');
@@ -3046,7 +3057,7 @@ def create_app() -> FastAPI:
     wrap.appendChild(existing);
     list.appendChild(wrap);
 
-    const createBtn = $('#createUnnamedSessionBtn');
+    const createBtn = $('#createNewSessionBtn');
     if (createBtn) {
       createBtn.onclick = async () => {
         const sessionType = await chooseNewSessionType();
@@ -3185,7 +3196,7 @@ def create_app() -> FastAPI:
     }
 
     if (!state.sessions.length) {
-        list.innerHTML = '<div class="muted">No sessions yet. Start one from the Agents list.</div>';
+        list.innerHTML = '<div class="muted">No sessions yet. Choose an option above to start one.</div>';
     }
   }
 
@@ -4299,6 +4310,8 @@ def create_app() -> FastAPI:
 :root[data-theme="dark"] .settingsNavBtn.active { background: #233247; border-color: #355070; }
 :root[data-theme="dark"] .settingsNavBtn { color: #b7bda6; }
 :root[data-theme="dark"] .settingsNavBtn.active { color: #eef4ff; }
+:root[data-theme="dark"] .sessionStartOption { background: rgba(255,255,255,0.05); }
+:root[data-theme="dark"] #dashboardGroupPill { background: rgba(255,255,255,0.05); }
 :root {
   --bg: #ffffff;
   --panel: rgba(250, 250, 250, 0.92);
@@ -4498,6 +4511,19 @@ body::before {
 .btn.primary { background: #0b57d0; border-color: #0b57d0; color: #fff; }
 .btn.danger { border-color: #cc3a3a; color: #cc3a3a; }
 .btn.danger:hover { background: rgba(204,58,58,0.06); }
+
+.sessionStartWrap { display: flex; flex-direction: column; }
+.sessionStartHeader { margin-bottom: 8px; }
+.sessionStartOption { border: 1px solid var(--border); border-radius: 11px; padding: 11px; background: #f4f5f6; }
+.sessionStartOptionTitle { font-size: 14px; font-weight: 700; line-height: 1.25; }
+.sessionStartOptionCopy { margin: 4px 0 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.sessionStartAction { width: 100%; font-weight: 450; }
+.sessionStartDivider { display: flex; align-items: center; gap: 8px; margin: 5px 3px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.sessionStartDivider::before, .sessionStartDivider::after { content: ""; height: 1px; flex: 1 1 auto; background: var(--border); }
+.agentSearchLabel { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.sessionAgentSearch { width: 100%; }
+.agentSearchResults { margin-top: 9px; }
+.agentSearchResults .agentBtn:last-child { margin-bottom: 0; }
 
 .agentBtn { width: 100%; text-align: left; border: 1px solid var(--border); background: #fff; padding: 10px; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
 .agentName { font-weight: 650; }
@@ -4991,7 +5017,10 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     </div>
 
     <div class="section">
-      <div class="sectionHead">Agents</div>
+      <div class="row sessionStartHeader">
+        <div class="sectionHead" style="margin:0">Start a session</div>
+        <span class="pill" id="dashboardGroupPill">Group: default</span>
+      </div>
       <div id="agentList"></div>
     </div>
 
