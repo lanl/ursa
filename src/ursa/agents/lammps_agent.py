@@ -6,7 +6,6 @@ from typing import Any, Optional, TypedDict
 
 import tiktoken
 from langchain.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END
@@ -16,7 +15,6 @@ from rich.rule import Rule
 from rich.syntax import Syntax
 
 from ursa.agents.execution_agent import ExecutionAgent
-from ursa.observability.timing import render_session_summary
 
 from .base import BaseAgent
 
@@ -238,20 +236,18 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self.console.print(
             Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan")
         )
-        
+
     def _normalize_pair_info(self, pair_info: str) -> str:
         return "\n".join(
             " ".join(
-                f"./{os.path.basename(p)}"
-                if ("/" in p or "\\" in p)
-                else p
+                f"./{os.path.basename(p)}" if ("/" in p or "\\" in p) else p
                 for p in line.split()
             )
             if line.strip().startswith("pair_coeff")
             else line
             for line in pair_info.splitlines()
         )
-        
+
     @staticmethod
     def _safe_json_loads(s: str) -> dict[str, Any]:
         s = s.strip()
@@ -487,7 +483,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
             state["chosen_potential"].download_files(self.workspace)
         pair_info = state["chosen_potential"].pair_info()
         pair_info = self._normalize_pair_info(pair_info)
-        
+
         data_content = ""
         if self.data_file:
             data_content = self._read_and_trim_data_file(self.data_file)
@@ -609,7 +605,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
     def _fix(self, state: LammpsState) -> LammpsState:
         pair_info = state["chosen_potential"].pair_info()
         pair_info = self._normalize_pair_info(pair_info)
-        
+
         hist = state.get("run_history", [])
         if not hist:
             hist = [
@@ -663,7 +659,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         self._section(
             "Now handing things off to execution agent for summarization/visualization"
         )
-        
+
         executor = ExecutionAgent(llm=self.llm, workspace=self.workspace)
 
         exe_plan = f"""
@@ -673,8 +669,8 @@ class LammpsAgent(BaseAgent[LammpsState]):
         Summarize the outcome of this simulation in a markdown document. Include plots, if relevent.
         """
 
-        exe_results = executor.invoke(exe_plan)
-        
+        executor.invoke(exe_plan)
+
         return state
 
     def _post_run(self, state: LammpsState) -> LammpsState:

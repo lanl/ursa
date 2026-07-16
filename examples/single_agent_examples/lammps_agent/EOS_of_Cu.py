@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from langchain_openai import ChatOpenAI
 from rich import get_console
 
