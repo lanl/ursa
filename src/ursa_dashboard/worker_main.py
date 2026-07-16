@@ -14,9 +14,29 @@ from ursa.util.http import inject_truststore_into_ssl
 _UNSET = object()
 
 
-def _normalize_model(model: str) -> str:
+def _normalize_model(model: str, model_provider: Any = None) -> str:
     # Examples use "openai:gpt-5.4-mini".
+    #
+    # The dashboard targets an OpenAI-compatible client stack by default, so a
+    # bare model name (e.g. "llama3.1" or a custom endpoint model) is prefixed
+    # with "openai:" so LangChain can resolve a provider. However, we must NOT
+    # manufacture a provider prefix when the caller has already specified the
+    # provider explicitly via a `model_provider` kwarg: doing so would send a
+    # doubly-qualified name like "openai:llama3.1" to the endpoint (LangChain's
+    # init_chat_model only strips a provider prefix when model_provider is
+    # unset), which the provider then rejects as an unknown model.
+    #
+    # Behavior:
+    #   - already-prefixed model (contains ":")            -> unchanged
+    #   - bare model + explicit model_provider given       -> unchanged (bare)
+    #   - bare model + no model_provider                   -> prepend "openai:"
+    #
+    # Note: a user who supplies BOTH a provider-prefixed model (e.g.
+    # "openai:gpt-4o") AND a model_provider is genuinely double-specifying; we
+    # intentionally leave that as-is and let LangChain surface the error.
     if ":" in model:
+        return model
+    if model_provider is not None and str(model_provider).strip() != "":
         return model
     return f"openai:{model}"
 
@@ -60,11 +80,14 @@ def _init_llm(
         llm_cfg, label="LLM", override=api_key_override
     )
 
-    model = _normalize_model(str(llm_cfg.get("model") or "openai:gpt-5.4-mini"))
-
     model_kwargs = llm_cfg.get("model_kwargs") or {}
     if not isinstance(model_kwargs, dict):
         raise ValueError("llm.model_kwargs must be a JSON object")
+
+    model = _normalize_model(
+        str(llm_cfg.get("model") or "openai:gpt-5.4-mini"),
+        model_kwargs.get("model_provider"),
+    )
 
     kwargs: dict[str, Any] = {**model_kwargs, "model": model}
 
@@ -105,7 +128,10 @@ def _init_embedding(
     if not isinstance(model_kwargs, dict):
         raise ValueError("embedding.model_kwargs must be a JSON object")
 
-    kwargs: dict[str, Any] = {**model_kwargs, "model": _normalize_model(model)}
+    kwargs: dict[str, Any] = {
+        **model_kwargs,
+        "model": _normalize_model(model, model_kwargs.get("model_provider")),
+    }
     if api_key is not None:
         kwargs["api_key"] = api_key
     if base_url:
