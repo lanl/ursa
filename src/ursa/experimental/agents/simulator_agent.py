@@ -8,22 +8,12 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import ToolRuntime, tool
 from langgraph.graph.message import add_messages
-from rich import get_console
 
 from ursa.agents import ChatAgent, RAGAgent
 from ursa.agents.base import BaseAgent
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util import Checkpointer
-from ursa.util.events import ToolEvents
-
-# --- ANSI color codes ---
-GREEN = "\033[92m"
-BLUE = "\033[94m"
-RED = "\033[91m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
-
-console = get_console()
+from ursa.util.events import AgentEvents, ToolEvents
 
 documenter_prompt = """
 You are a responsible and efficient agent tasked ensuring adequate documentation to pass 
@@ -204,15 +194,19 @@ class SimulatorAgent(BaseAgent):
     # Define the function that calls the model
     def _documenter(self, state: State) -> State:
         goal = state["messages"][-1].text
-        console.rule(
-            "[bold black] Beginning Documentation Assessment [/bold black]"
+        AgentEvents(agent=self.name, config=self.build_config()).emit(
+            "Beginning documentation assessment",
+            stage="document",
         )
         response = self.documenter.invoke(state)
         return {"messages": response["messages"], "goal": goal}
 
     # Define the function that calls the model
     def _runner(self, state: State) -> State:
-        console.rule("[bold black] Begin Carrying Out Simulation [/bold black]")
+        AgentEvents(agent=self.name, config=self.build_config()).emit(
+            "Beginning simulation",
+            stage="simulate",
+        )
         response = self.runner.invoke(state["goal"])
         return {"messages": response["messages"]}
 
@@ -235,11 +229,22 @@ class SimulatorAgent(BaseAgent):
             except Exception as e:
                 response_content = f"Response errors {ee} and {e}"
                 response = AIMessage(content=response_content)
-                console.rule(
-                    f"[bold black] Recap #1 failed: {type(ee).__name__}:\n{ee} [/bold black]"
+                events = AgentEvents(
+                    agent=self.name, config=self.build_config()
                 )
-                console.rule(
-                    f"[bold black] Recap #2 failed: {type(e).__name__}:\n{e} [/bold black]"
+                events.emit(
+                    "Primary recap failed",
+                    stage="recap",
+                    phase="error",
+                    error_type=type(ee).__name__,
+                    error=str(ee),
+                )
+                events.emit(
+                    "Fallback recap failed",
+                    stage="recap",
+                    phase="error",
+                    error_type=type(e).__name__,
+                    error=str(e),
                 )
 
         updated_messages = [*state["messages"], response]
