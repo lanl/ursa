@@ -124,11 +124,12 @@ pycodestyle.max-doc-length = 80
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing_extensions" = { msg = "Use standard typing features instead of `typing_extensions`." }
+"rich" = { msg = "Rich is restricted to presentation modules; use logging or events instead." }
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**/*.py" = ["D", "T201"]
-"examples/**/*.py" = ["T201"]
+"examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
