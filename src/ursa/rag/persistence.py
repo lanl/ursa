@@ -197,22 +197,22 @@ def build_persistent_rag_agent(
 
 def show_rag_agent(name: str, group_name: str = "default") -> None:
     path = require_rag_agent_dir(group_name, name)
-    print(f"name: {path.name}")
-    print(f"group: {validate_rag_group_name(group_name)}")
-    print(f"path: {path}")
+    print(f"name: {path.name}")  # noqa: T201
+    print(f"group: {validate_rag_group_name(group_name)}")  # noqa: T201
+    print(f"path: {path}")  # noqa: T201
     for subdir in ("database", "summaries", "vectorstore"):
         p = path / subdir
         if p.exists():
             entries = list(p.rglob("*")) if p.is_dir() else []
             files = sum(1 for item in entries if item.is_file())
-            print(f"{subdir}: {p} ({files} files)")
+            print(f"{subdir}: {p} ({files} files)")  # noqa: T201
 
 
 def delete_rag_agent(name: str, group_name: str = "default") -> None:
     path = require_rag_agent_dir(group_name, name)
     shutil.rmtree(path)
-    print(f"Deleted RAG agent '{name}' from group '{group_name}'")
-    print(f"Path: {path}")
+    print(f"Deleted RAG agent '{name}' from group '{group_name}'")  # noqa: T201
+    print(f"Path: {path}")  # noqa: T201
 
 
 def save_rag_agent(name: str, group_name: str = "default") -> None:
@@ -223,6 +223,6 @@ def save_rag_agent(name: str, group_name: str = "default") -> None:
     if dst.exists():
         raise FileExistsError(f"Destination already exists: {dst}")
     shutil.copytree(src, dst)
-    print(f"Saved RAG agent checkpoint: {checkpoint_name}")
-    print(f"Source: {src}")
-    print(f"Checkpoint: {dst}")
+    print(f"Saved RAG agent checkpoint: {checkpoint_name}")  # noqa: T201
+    print(f"Source: {src}")  # noqa: T201
+    print(f"Checkpoint: {dst}")  # noqa: T201

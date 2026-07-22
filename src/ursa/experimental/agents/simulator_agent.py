@@ -6,7 +6,7 @@ from langchain_core.messages import (
     AIMessage,
     HumanMessage,
 )
-from langchain_core.tools import tool
+from langchain_core.tools import ToolRuntime, tool
 from langgraph.graph.message import add_messages
 from rich import get_console
 
@@ -14,6 +14,7 @@ from ursa.agents import ChatAgent, RAGAgent
 from ursa.agents.base import BaseAgent
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util import Checkpointer
+from ursa.util.events import ToolEvents
 
 # --- ANSI color codes ---
 GREEN = "\033[92m"
@@ -159,7 +160,10 @@ class SimulatorAgent(BaseAgent):
             )
 
             @tool
-            def documentation_rag(query: str) -> str:
+            def documentation_rag(
+                query: str,
+                runtime: ToolRuntime,
+            ) -> str:
                 """
                 Query a RAG database for information from documentation on the scientific computing model.
 
@@ -169,6 +173,11 @@ class SimulatorAgent(BaseAgent):
                 Returns:
                     summary: string summary of the information in the RAG database relevant to the query
                 """
+                ToolEvents.from_runtime("documentation_rag", runtime).emit(
+                    "Querying simulation documentation",
+                    stage="query",
+                    query=query,
+                )
                 return self.doc_rag(query)
 
             self.documenter.add_tool(documentation_rag)
@@ -184,7 +193,6 @@ class SimulatorAgent(BaseAgent):
         Returns:
             summary: string summary of the information in the RAG database relevant to the query
         """
-        print(f"[RAG QUERY]: {query}")
         if self.embedding:
             result = self.rag_agent.invoke(
                 context=query,
@@ -276,7 +284,7 @@ def main():
 
     agent = SimulatorAgent(llm=model, log_state=True, workspace=workspace)
     result = agent.invoke(problem)
-    print(result["messages"][-1].text)
+    print(result["messages"][-1].text)  # noqa: T201
 
 
 if __name__ == "__main__":

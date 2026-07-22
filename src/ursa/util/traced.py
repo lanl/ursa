@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -8,6 +9,8 @@ from langchain.messages import AnyMessage, HumanMessage
 from langchain_core.messages import BaseMessage
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
+
+logger = logging.getLogger(__name__)
 
 
 class HasModelInfo(Protocol):
@@ -33,7 +36,9 @@ class _Traced:
                 for m in msg:
                     self._append_message(m)
             case _:
-                print(f"Skipping as msg is of type {type(msg)}")
+                logger.warning(
+                    "Skipping unsupported message type: %s", type(msg)
+                )
 
     def save_messages(self, path: Path, indent: int | None = None):
         """Save all messages to json

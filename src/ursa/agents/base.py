@@ -18,6 +18,7 @@ integration capabilities while only needing to implement the core _invoke method
 import asyncio
 import importlib.metadata
 import inspect
+import logging
 import re
 import sqlite3
 from abc import ABC, abstractmethod
@@ -78,6 +79,8 @@ from ursa.security import (
 )
 from ursa.util import Checkpointer
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
+
+logger = logging.getLogger(__name__)
 
 InputLike = str | Mapping[str, Any]
 TState = TypeVar("TState", bound=Mapping[str, Any])
@@ -274,18 +277,16 @@ class BaseAgent(Generic[TState], ABC):
         if persist_agent:
             if set_checkpointer:
                 if set_name:
-                    print(
-                        (
-                            "[WARNING]: Both checkpointer and den persistence set."
-                            " Using checkpointer, but only use one in the future."
-                        )
+                    logger.warning(
+                        "Both checkpointer and den persistence are set. "
+                        "Using checkpointer; only use one in the future."
                     )
                 self.den = self.workspace
             else:
                 den_name = Path(self.group) / "agents" / agent_name
                 self.den = group_agents_dir(self.group) / agent_name
                 if not self.den.exists():
-                    print(f"[Agent Created]: {den_name}")
+                    logger.info("Agent created: %s", den_name)
                 self.checkpointer = Checkpointer.from_workspace(self.den)
         else:
             # Keep current behavior if the user is not persisting.

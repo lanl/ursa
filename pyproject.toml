@@ -129,7 +129,6 @@ pycodestyle.max-doc-length = 80
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**/*.py" = ["D", "T201"]
 "examples/**/*.py" = ["T201"]
-"scripts/**/*.py" = ["T201"]
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]

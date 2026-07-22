@@ -240,7 +240,7 @@ def main(args=None):
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
     if cfg["print_config"]:
-        print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))
+        print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))  # noqa: T201
         exit(0)
 
     match subcommand:

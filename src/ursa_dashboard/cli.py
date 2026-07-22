@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         config_path = os.path.abspath(os.path.expanduser(str(args.config)))
         if not os.path.isfile(config_path):
-            print(
+            print(  # noqa: T201
                 f"Dashboard config file not found: {args.config}",
                 file=sys.stderr,
             )
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import uvicorn  # type: ignore
     except Exception:
-        print(
+        print(  # noqa: T201
             "uvicorn is required to run the server. Install with: pip install uvicorn",
             file=sys.stderr,
         )
