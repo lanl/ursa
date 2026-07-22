@@ -25,7 +25,12 @@ MAX_INLINE_FILE_BYTES = 1_000_000
 
 
 class EventArtifact(TypedDict):
-    """Renderer-neutral content attached to an URSA progress event."""
+    """Renderer-neutral content attached to an URSA progress event.
+
+    ``content`` may contain any renderer-supported value. ``mime_type`` selects
+    a renderer, and optional scalar metadata supplies presentation hints such
+    as ``title``, ``path``, and ``content_mime_type``.
+    """
 
     content: Any
     mime_type: str
@@ -42,7 +47,26 @@ def event_artifact(
     *,
     metadata: Mapping[str, str | float | int] | None = None,
 ) -> EventArtifact:
-    """Build an artifact payload for a progress event."""
+    """Build a MIME-typed artifact payload.
+
+    Parameters
+    ----------
+    content:
+        Value consumed by the MIME renderer. Keep it serializable when events
+        cross process or persistence boundaries.
+    mime_type:
+        Media type that selects the artifact renderer, for example
+        ``"text/plain"``, ``"text/x-diff"``, or ``"application/json"``.
+    metadata:
+        Optional scalar presentation hints. ``title`` and ``path`` are
+        recognized by the standard renderer.
+
+    Returns
+    -------
+    EventArtifact
+        A dictionary suitable for an event's ``artifact`` or ``artifacts``
+        field.
+    """
     artifact: EventArtifact = {"content": content, "mime_type": mime_type}
     if metadata:
         artifact["metadata"] = dict(metadata)
@@ -66,7 +90,26 @@ def file_content_mime_type(path: str | Path) -> str:
 
 
 def file_artifact(path: str | Path, *, title: str = "File") -> EventArtifact:
-    """Build a lightweight artifact that references a file by path."""
+    """Build an artifact that references a file without reading it.
+
+    The payload contains only the path plus its inferred content MIME type.
+    Rendering may later dereference small textual files for syntax-highlighted
+    display; binary, missing, oversized, and undecodable files display as a
+    path instead.
+
+    Parameters
+    ----------
+    path:
+        File path stored in both artifact content and metadata.
+    title:
+        Panel title used by the standard renderer.
+
+    Returns
+    -------
+    EventArtifact
+        A file-reference artifact with MIME type
+        ``application/vnd.ursa.file-reference``.
+    """
     path = str(path)
     return event_artifact(
         path,
@@ -158,12 +201,43 @@ ARTIFACT_RENDERERS: dict[str, ArtifactRenderer] = {
 def register_artifact_renderer(
     mime_type: str, renderer: ArtifactRenderer
 ) -> None:
-    """Register or replace the Rich renderer for an artifact MIME type."""
+    """Register or replace the renderer for an artifact MIME type.
+
+    Parameters
+    ----------
+    mime_type:
+        Exact media type used to select the renderer. Parameters such as a
+        charset are removed before lookup.
+    renderer:
+        Callable receiving artifact content and metadata and returning a Rich
+        renderable.
+
+    Notes
+    -----
+    Registration mutates the process-wide renderer registry. Register custom
+    renderers during application startup.
+    """
     ARTIFACT_RENDERERS[mime_type] = renderer
 
 
 def render_event_artifact(artifact: Mapping[str, Any]) -> RenderableType:
-    """Render an artifact according to its MIME type using Rich primitives."""
+    """Render one artifact as a titled Rich panel.
+
+    A registered MIME renderer produces the panel body. Unknown media types
+    fall back to syntax- or plain-text rendering. File-reference artifacts are
+    dereferenced only when they identify a readable textual file no larger
+    than ``MAX_INLINE_FILE_BYTES``.
+
+    Parameters
+    ----------
+    artifact:
+        Mapping containing ``content``, ``mime_type``, and optional metadata.
+
+    Returns
+    -------
+    RenderableType
+        A Rich panel ready for a console, table, or callback interface.
+    """
     raw_content = artifact.get("content", "")
     mime_type = str(artifact.get("mime_type") or "text/plain").split(";", 1)[0]
     metadata = artifact.get("metadata")
@@ -191,7 +265,24 @@ def render_event_artifact(artifact: Mapping[str, Any]) -> RenderableType:
 def render_event_artifacts(
     artifacts: list[Mapping[str, Any]],
 ) -> RenderableType:
-    """Render one artifact or a fixed side-by-side row of artifacts."""
+    """Render artifacts as one panel or an equal-width horizontal row.
+
+    Parameters
+    ----------
+    artifacts:
+        Ordered artifact mappings to render.
+
+    Returns
+    -------
+    RenderableType
+        The single artifact panel, or a Rich table that constrains multiple
+        panels to side-by-side columns.
+
+    Notes
+    -----
+    Passing an empty list produces an empty Rich table. Event consumers
+    normally call this function only after confirming artifacts are present.
+    """
     rendered = [render_event_artifact(artifact) for artifact in artifacts]
     if len(rendered) == 1:
         return rendered[0]
@@ -204,7 +295,22 @@ def render_event_artifacts(
 
 
 class EventConsoleFormatter(logging.Formatter):
-    """Render URSA progress events as compact console messages."""
+    """Format structured URSA log records for a terminal.
+
+    Records carrying an ``ursa_event_payload`` dictionary are formatted as a
+    compact source/stage/phase summary. MIME artifacts are appended using the
+    standard Rich renderers. Other records fall back to
+    ``logging.Formatter`` behavior.
+
+    Parameters
+    ----------
+    force_terminal:
+        Override Rich terminal detection. Use ``False`` for deterministic
+        plain-text output in tests or redirected streams.
+    render_artifacts:
+        Include rendered artifact bodies after the event summary. When
+        ``False``, only the compact summary is returned.
+    """
 
     DETAIL_KEYS = (
         "path",

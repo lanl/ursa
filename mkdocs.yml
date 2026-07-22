@@ -22,6 +22,9 @@ plugins:
       handlers:
         python:
           paths: [src]
+          inventories:
+            - url: https://docs.python.org/3/objects.inv
+              domains: [py, std]
           options:
             show_source: true  # link back to your code
             show_submodules: true
@@ -81,7 +84,7 @@ nav:
   - Reference:
       - CLI reference: reference/cli.md
       - MCP reference: reference/mcp.md
-      - Event logging: logging_events.md
+      - Event logging: reference/logging_events.md
       - Metrics: Metrics-Guide.md
       - Plan-Execute checkpointing: Plan-Execute-Runner-Checkpointing-Guide.md
       - Tutorials and examples:

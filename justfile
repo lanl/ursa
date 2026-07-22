@@ -32,6 +32,10 @@ lint-stats:
 lint-watch:
     just lint-check --watch
 
+# Serve the documentation with automatic rebuilds and live reload.
+docs *flags:
+    uv run --group docs mkdocs serve {{ flags }}
+
 test-rag-agent:
     uv run pytest -s tests/agents/test_rag_agent
 
