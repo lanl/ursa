@@ -19,4 +19,4 @@ jobs:
           cache-dependency-glob: uv.lock
           cache-suffix: lint
       - name: Run lint checks
-        run: uv run --group dev just lint
+        run: uv run --with 'rust-just~=1.42' --group dev just lint
