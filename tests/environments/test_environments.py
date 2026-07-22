@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
@@ -188,8 +189,9 @@ def test_environment_default_workspace_uses_group_cache(monkeypatch, tmp_path):
 
 
 def test_team_pi_receives_member_delegation_tool_and_invokes_member(
-    tmp_path, capsys
+    tmp_path, caplog
 ):
+    caplog.set_level(logging.INFO, logger="ursa.environments.agent_team")
     config = {
         "name": "team_test",
         "pi": {
@@ -225,7 +227,7 @@ def test_team_pi_receives_member_delegation_tool_and_invokes_member(
     )
     assert "User task:\nsolve the user problem" in team.pi.invocations[0]
     assert "clean, coherent, easily shareable answer" in team.pi.invocations[0]
-    trace_output = capsys.readouterr().out
+    trace_output = caplog.text
     assert "[AgentTeam:team_test] PI -> analyst" in trace_output
     assert "[AgentTeam:team_test] analyst -> PI" in trace_output
 

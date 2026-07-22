@@ -478,7 +478,7 @@ class AgentTeamEnvironment(BaseEnvironment):
         )
 
     def _trace_delegation(self, label: str, message: str) -> None:
-        """Print a small, explicit delegation trace until full event logging exists."""
+        """Log a small, explicit delegation trace."""
         if not self.trace_delegation:
             return
         text = message

@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -187,7 +188,9 @@ def test_rag_ingest_passes_source_path_without_copying(
     )
 
 
-def test_build_rag_tools_wraps_persisted_agent(monkeypatch, capsys):
+def test_build_rag_tools_wraps_persisted_agent(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="ursa.rag.tools")
+
     class FakeRAG:
         def invoke(self, payload):
             assert payload["context"] == "What is in the docs?"
@@ -215,10 +218,7 @@ def test_build_rag_tools_wraps_persisted_agent(monkeypatch, capsys):
     assert (
         tool.invoke({"query": "What is in the docs?"}) == "The docs say hello."
     )
-    assert (
-        "[Request to policy-docs]: What is in the docs?"
-        in capsys.readouterr().out
-    )
+    assert "[Request to policy-docs]: What is in the docs?" in caplog.text
 
 
 def test_rag_group_uses_shared_group_config(monkeypatch, tmp_path: Path):
