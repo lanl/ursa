@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 """
 Shared utilities for plan_execute workflows.
 
