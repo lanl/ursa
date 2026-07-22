@@ -81,4 +81,4 @@ For Python scripting, prefer a project or virtual environment installation so yo
 
 ## Next step
 
-Continue with [Getting Started - CLI](../getting-started/cli.md).
+Continue with [Getting Started - CLI][getting-started-cli].

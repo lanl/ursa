@@ -1,6 +1,9 @@
 # DSIAgent Documentation
 
-`DSIAgent` is a class that manages access to DSI owned databases and also manages path location of databases. The [DSI](https://github.com/lanl/dsi) framework support a number of databases, such as Sqlite, DuckDB, ... . More information is available [here](https://lanl.github.io/dsi/introduction.html).
+[`DSIAgent`][ursa.agents.dsi_agent.DSIAgent] manages access to DSI-owned
+databases and their locations. The [DSI](https://github.com/lanl/dsi) framework
+supports databases such as SQLite and DuckDB. See the
+[DSI documentation](https://lanl.github.io/dsi/introduction.html) for details.
 
 
 ## Basic Usage
@@ -19,7 +22,9 @@ response = ai.ask("Tell me about the datasets you have.")
 print(response)
 ```
 
-See more examples in the [DSI examples folder](../examples/single_agent_examples/dsi_agent/) and [below](#using-python).
+See more examples in the
+[DSI examples folder](https://github.com/lanl/ursa/tree/main/examples/single_agent_examples/dsi_agent)
+and [below](#using-python).
 
 
 ## Parameters
@@ -139,6 +144,3 @@ print("\nQuery: Tell me about the datasets you have.")
 response = ai.ask("Tell me about the datasets you have.")
 print(response)
 ```
-
-
-

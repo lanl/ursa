@@ -1,6 +1,9 @@
 # GitGoAgent Documentation
 
-`GitGoAgent` is a specialized execution agent for git-managed Go repositories. It combines git control, Go development tools, code linting, and file operations to enable autonomous development workflows on Go projects.
+[`GitGoAgent`][ursa.agents.git_go_agent.GitGoAgent] is a specialized execution
+agent for git-managed Go repositories. It combines git control, Go development
+tools, code linting, and file operations to enable autonomous development
+workflows on Go projects.
 
 ## Basic Usage
 

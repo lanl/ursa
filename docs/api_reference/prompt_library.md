@@ -1,2 +1,0 @@
-
-::: ursa.prompt_library

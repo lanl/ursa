@@ -60,19 +60,19 @@ nav:
       - Quick reference: persistence/quick-reference.md
   - Agents:
       - Overview: agents/index.md
-      - Chat Agent: chat_agent.md
+      - Chat Agent: agents/chat.md
       - Acquisition Agents:
-          - Overview: acquisition_agents.md
-          - arXiv Agent: arxiv_agent.md
-          - OSTI Agent: osti_agent.md
-          - Web Search Agent: web_search_agent.md
-      - Deep Review Agent: deep_review_agent.md
-      - DSI Agent: dsi_agent.md
-      - Execution Agent: execution_agent.md
-      - Git Go Agent: git_go_agent.md
-      - Hypothesizer Agent: hypothesizer_agent.md
-      - LAMMPS Agent: lammps_agent.md
-      - Planning Agent: planning_agent.md
+          - Overview: agents/acquisition/index.md
+          - arXiv Agent: agents/acquisition/arxiv.md
+          - OSTI Agent: agents/acquisition/osti.md
+          - Web Search Agent: agents/acquisition/web-search.md
+      - Deep Review Agent: agents/deep-review.md
+      - DSI Agent: agents/dsi.md
+      - Execution Agent: agents/execution.md
+      - Git Go Agent: agents/git-go.md
+      - Hypothesizer Agent: agents/hypothesizer.md
+      - LAMMPS Agent: agents/lammps.md
+      - Planning Agent: agents/planning.md
   - Environments:
       - Overview: environments/index.md
       - Agent Teams: environments/agent-teams.md
@@ -85,14 +85,15 @@ nav:
       - CLI reference: reference/cli.md
       - MCP reference: reference/mcp.md
       - Event logging: reference/logging_events.md
-      - Metrics: Metrics-Guide.md
-      - Plan-Execute checkpointing: Plan-Execute-Runner-Checkpointing-Guide.md
+      - Metrics: reference/metrics.md
+      - Plan-Execute checkpointing: reference/plan-execute-checkpointing.md
       - Tutorials and examples:
-          - Combining arXiv agent and execution agent: combining_arxiv_and_execution.md
-          - Human in the Loop: humanInTheLoop_example.md
-          - Neutron Star: combining_arxiv_and_execution_neutronStar.md
+          - Combining arXiv agent and execution agent: reference/tutorials/arxiv-execution.md
+          - Human in the Loop: reference/tutorials/human-in-the-loop.md
+          - Neutron Star: reference/tutorials/neutron-star.md
       - API Reference:
-          - agents: api_reference/agents.md
-          - prompt_library: api_reference/prompt_library.md
-          - tools: api_reference/tools.md
-          - util: api_reference/util.md
+          - agents: reference/api/agents.md
+          - environments: reference/api/environments.md
+          - prompt_library: reference/api/prompt-library.md
+          - tools: reference/api/tools.md
+          - util: reference/api/util.md

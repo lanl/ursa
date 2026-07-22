@@ -1,8 +1,16 @@
 # DeepReviewAgent Documentation
 
-`DeepReviewAgent` is the renamed and reworked version of the older “Hypothesizer” adversarial review workflow. It runs an iterative three-role process—solution generation, critique, and competitor/stakeholder perspective—then synthesizes a final answer and a LaTeX report.
+[`DeepReviewAgent`][ursa.agents.deep_review_agent.DeepReviewAgent] is the renamed
+and reworked version of the older “Hypothesizer” adversarial review workflow. It
+runs an iterative three-role process—solution generation, critique, and
+competitor/stakeholder perspective—then synthesizes a final answer and a LaTeX
+report.
 
-Do not confuse this agent with [`HypothesizerAgent`](hypothesizer_agent.md). The current `HypothesizerAgent` maintains a persistent hypothesis-space Markdown artifact. `DeepReviewAgent` performs a multi-pass adversarial review.
+Do not confuse this agent with
+[`HypothesizerAgent`][ursa.agents.hypothesizer_agent.HypothesizerAgent]. The
+current HypothesizerAgent maintains a persistent hypothesis-space Markdown
+artifact. DeepReviewAgent performs a multi-pass adversarial review. See the
+[HypothesizerAgent guide][hypothesizeragent-documentation].
 
 ## Basic usage
 

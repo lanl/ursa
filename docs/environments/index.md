@@ -39,7 +39,7 @@ URSA currently includes two multi-agent environment patterns.
 
     Use a team when you want one agent to manage a small group of specialists.
 
-    [:octicons-arrow-right-24: Agent Teams](agent-teams.md)
+    [:octicons-arrow-right-24: Agent Teams][agent-teams]
 
 -   :material-forum: **Agent Symposia**
 
@@ -53,7 +53,7 @@ URSA currently includes two multi-agent environment patterns.
     Use a symposium when you want independent approaches, critique, comparison,
     and revision before the final answer.
 
-    [:octicons-arrow-right-24: Agent Symposia](agent-symposia.md)
+    [:octicons-arrow-right-24: Agent Symposia][agent-symposia]
 
 </div>
 
@@ -66,7 +66,7 @@ major phases, delegation events, tool activity, errors, and final results.
 Use visualization when you want to debug or audit how a team or symposium reached
 its answer.
 
-[:octicons-arrow-right-24: Visualizing Environment Runs](visualization.md)
+[:octicons-arrow-right-24: Visualizing Environment Runs][visualizing-environment-runs]
 
 ## Why use an environment instead of one larger prompt?
 
@@ -137,8 +137,10 @@ team file names the team, the PI, the member agents, their roles, and optional
 member-specific guidance. A symposium file names an organizer, the participants,
 and how many review/revision rounds to run.
 
-Each member can use a short built-in class name such as `ChatAgent`,
-`ExecutionAgent`, or `AgentTeamEnvironment`, or a fully qualified Python class path
+Each member can use a short built-in class name such as
+[`ChatAgent`][ursa.agents.chat_agent.ChatAgent],
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent], or
+[`AgentTeamEnvironment`][ursa.environments.AgentTeamEnvironment], or a fully qualified Python class path
 for custom agents. Members can also receive their own model configuration, which
 lets you vary model providers or model sizes across the group.
 
@@ -164,6 +166,8 @@ environment with its configured workspace behavior.
 Environments can contain agents that use web access, write files, or run commands.
 Treat the whole environment as powerful as its most capable member. Use dedicated
 workspaces, review generated code and commands, and apply the same sandboxing
-practices you would use for an `ExecutionAgent`.
+practices you would use for an
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent].
 
-Next, read about [Agent Teams](agent-teams.md) or [Agent Symposia](agent-symposia.md).
+Next, read about [Agent Teams][agent-teams] or
+[Agent Symposia][agent-symposia].
