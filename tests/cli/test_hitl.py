@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 import asyncio
 import io
 import logging
@@ -19,6 +21,7 @@ from ursa.cli.config import EmbModelConfig, UrsaConfig
 from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.rendering import event_artifact
 
 LOGGER = logging.getLogger(__name__)
 
@@ -279,11 +282,55 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
         )
     )
     asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "edit_code",
+                "stage": "edit",
+                "phase": "end",
+                "message": "File updated",
+                "artifact": event_artifact(
+                    "--- app.py\n+++ app.py\n-old\n+new",
+                    "text/x-diff",
+                    metadata={
+                        "title": "Edit diff",
+                        "path": "repo/app.py",
+                    },
+                ),
+            },
+            run_id="edit-tool-artifact-run",
+        )
+    )
+    asyncio.run(
         handler.on_tool_start(
             {"name": "run_command"},
             '{"query":"uname -s"}',
             run_id="tool-run",
             inputs={"query": "uname -s"},
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_command",
+                "stage": "execute",
+                "phase": "end",
+                "message": "Command finished",
+                "artifacts": [
+                    event_artifact(
+                        "Darwin",
+                        "text/plain",
+                        metadata={"title": "stdout"},
+                    ),
+                    event_artifact(
+                        "warning",
+                        "text/plain",
+                        metadata={"title": "stderr"},
+                    ),
+                ],
+            },
+            run_id="tool-run",
         )
     )
     asyncio.run(
@@ -360,6 +407,10 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
 
     rendered = output.getvalue()
 
+    assert "Edit diff" in rendered
+    assert "-old" in rendered
+    assert "+new" in rendered
+
     repo_app_string = str(
         Path("repo") / "app.py"
     )  # Rendering OS specific path string
@@ -369,6 +420,12 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     assert "Need one more concrete step." in rendered
     assert "Running command: uname -s" in rendered
     assert "Command finished: uname -s" in rendered
+    assert "stdout" in rendered
+    assert "stderr" in rendered
+    assert "warning" in rendered
+    assert any(
+        "stdout" in line and "stderr" in line for line in rendered.splitlines()
+    )
     assert "Darwin" in rendered
     assert f"Writing file: {repo_app_string}" in rendered
     assert f"File written: {repo_app_string}" in rendered

@@ -38,6 +38,10 @@ Main helpers:
 - `events.range(...)`: context manager that emits start/end/error lifecycle events.
 - `configure_event_logging()`: simple console logging setup for scripts and examples.
 
+MIME-typed artifacts and their Rich presentation helpers live in
+`ursa.util.rendering`. Core code may attach artifacts to events without importing
+Rich directly.
+
 ## Event payload shape
 
 All progress payloads should be small, structured dictionaries.
@@ -79,6 +83,8 @@ Recommended fields:
 | `monotonic_timestamp_ns` | Added automatically for ordering. |
 | `elapsed_ms` | Added automatically to terminal range events. |
 | `error`, `error_type` | Use on failure events. |
+| `artifact` | One MIME-typed payload to render with the event. |
+| `artifacts` | Multiple MIME-typed payloads; console rendering places them side by side. |
 
 Extra fields are allowed, but keep them simple and safe: strings, numbers, booleans, lists, or dictionaries.
 
@@ -101,6 +107,9 @@ This causes URSA progress events to be logged in a compact readable form, for ex
 ```
 
 Use this in examples where developers should see progress without writing a custom callback.
+Pass `rich=False` to retain compact event summaries without rendering artifact
+bodies. The setup enables URSA events at the requested level while leaving
+unrelated libraries at the default warning level.
 
 ## Subscribing to events in applications
 

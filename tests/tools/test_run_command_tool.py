@@ -117,6 +117,13 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert payload["stderr_chars"] == 0
     assert payload["stdout_truncated"] is False
     assert payload["stderr_truncated"] is False
+    assert payload["artifacts"] == [
+        {
+            "content": "output",
+            "mime_type": "text/plain",
+            "metadata": {"title": "stdout"},
+        }
+    ]
     assert isinstance(payload["elapsed_ms"], float)
 
 

@@ -61,59 +61,17 @@ from langchain_core.callbacks.manager import (
 )
 from langchain_core.runnables import RunnableConfig
 
+from ursa.util.rendering import EventConsoleFormatter, event_artifacts
+
 DEFAULT_EVENT_NAME = "ursa_agent_progress"
 LOGGER = logging.getLogger(__name__)
-
-
-class EventConsoleFormatter(logging.Formatter):
-    """Render URSA progress events as compact console messages."""
-
-    DETAIL_KEYS = (
-        "path",
-        "filename",
-        "query",
-        "output_path",
-        "returncode",
-        "stdout_chars",
-        "stderr_chars",
-        "result_chars",
-        "error",
-    )
-
-    def format(self, record: logging.LogRecord) -> str:
-        payload = getattr(record, "ursa_event_payload", None)
-        if not isinstance(payload, dict):
-            return super().format(record)
-
-        source = (
-            payload.get("agent")
-            or payload.get("tool")
-            or payload.get("name")
-            or "ursa"
-        )
-        stage = payload.get("stage")
-        phase = payload.get("phase")
-        message = payload.get("message") or record.getMessage()
-
-        label = str(source)
-        if stage:
-            label += f" {stage}"
-        if phase:
-            label += f"/{phase}"
-
-        details = [
-            f"{key}={payload[key]}"
-            for key in self.DETAIL_KEYS
-            if payload.get(key) not in (None, "")
-        ]
-        suffix = f" ({', '.join(details)})" if details else ""
-        return f"[ursa] {label}: {message}{suffix}"
 
 
 def configure_event_logging(
     *,
     level: int = logging.INFO,
     formatter: logging.Formatter | None = None,
+    rich: bool = True,
 ) -> None:
     """Enable console logging for URSA progress events.
 
@@ -121,15 +79,25 @@ def configure_event_logging(
     by ``BaseAgent`` is visible without requiring users to configure Python
     logging manually.
     """
-    formatter = formatter or EventConsoleFormatter()
-    LOGGER.setLevel(level)
-    LOGGER.propagate = False
-    LOGGER.handlers.clear()
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.WARNING)
+    root_logger.handlers.clear()
+
+    # Keep URSA progress visible at the requested level without enabling noisy
+    # INFO logs from dependencies such as HTTP clients.
+    logging.getLogger("ursa").setLevel(level)
 
     handler = logging.StreamHandler()
     handler.setLevel(level)
+    if formatter is None:
+        stream = handler.stream
+        is_terminal = bool(hasattr(stream, "isatty") and stream.isatty())
+        formatter = EventConsoleFormatter(
+            force_terminal=is_terminal,
+            render_artifacts=rich,
+        )
     handler.setFormatter(formatter)
-    LOGGER.addHandler(handler)
+    root_logger.addHandler(handler)
 
 
 class EventLoggingHandler(BaseCallbackHandler):
@@ -184,8 +152,30 @@ class EventLoggingHandler(BaseCallbackHandler):
         extras = {
             key: value
             for key, value in data.items()
-            if key not in {"agent", "tool", "name", "stage", "phase", "message"}
+            if key
+            not in {
+                "agent",
+                "artifact",
+                "artifacts",
+                "tool",
+                "name",
+                "stage",
+                "phase",
+                "message",
+            }
         }
+        artifacts = event_artifacts(data)
+        if artifacts:
+            extras["artifact_mime_types"] = [
+                artifact.get("mime_type") for artifact in artifacts
+            ]
+        if len(artifacts) == 1:
+            artifact = artifacts[0]
+            content = artifact.get("content")
+            if isinstance(content, str):
+                extras["artifact_chars"] = len(content)
+            else:
+                extras["artifact_type"] = type(content).__name__
         if extras:
             parts.append(
                 "data="

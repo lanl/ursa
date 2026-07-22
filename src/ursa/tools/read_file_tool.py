@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_from_file
+from ursa.util.rendering import file_artifact
 from ursa.util.types import (
     AsciiValidationError,
     ascii_validation_message,
@@ -30,13 +31,17 @@ def read_file(filename: str, runtime: ToolRuntime[AgentContext]) -> str:
         Extracted text content.
     """
     full_filename = runtime.context.workspace.joinpath(filename)
-    ToolEvents.from_runtime("read_file", runtime).emit(
+    events = ToolEvents.from_runtime("read_file", runtime)
+    with events.range(
+        "read",
         "Reading file",
-        stage="read",
+        done="File read",
+        error="Failed to read file",
         path=str(full_filename),
-    )
-    # Move all the reading to a function in the parse util
-    text = read_text_from_file(full_filename)
+    ) as span:
+        # Move all the reading to a function in the parse util
+        text = read_text_from_file(full_filename)
+        span.update(artifact=file_artifact(full_filename, title="File read"))
     return text
 
 
