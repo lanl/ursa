@@ -63,6 +63,20 @@ The raw key is never written to dashboard settings, sessions, run records, or
 worker configuration files. In remote dashboard mode, credential changes must
 be served over HTTPS.
 
+## Launch an agent team or symposium
+
+Open **Environment runs** from the dashboard sidebar. The page provides **New
+team** and **New symposium** actions that let you edit a starter YAML definition,
+enter the task prompt, validate the configuration, and launch it directly from
+the browser.
+
+The run is queued in the background and appears on the page immediately. Open it
+to follow the environment graph and work timeline live, inspect the final result,
+or cancel a dashboard-launched run. The dashboard uses the LLM, credential, and
+timeout settings configured under **Settings**. Member-specific model blocks may
+refer to API-key environment variable names, but literal API keys are rejected
+and never stored in YAML or run metadata.
+
 !!! note "Headless Linux"
     Secure system storage requires an available desktop keyring service.
     Headless deployments should continue to use environment variables or a

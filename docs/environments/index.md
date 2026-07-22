@@ -125,10 +125,11 @@ result = symposium.invoke("Solve this complex problem and compare alternatives."
 print(result["final"])
 ```
 
-!!! note "No separate environment CLI yet"
-    Environments are currently used from Python. They load from YAML and expose
-    `invoke(...)` and `ainvoke(...)`, but the implementation inspected here does
-    not add a dedicated `ursa environments ...` command.
+!!! note "Python and dashboard entry points"
+    Environments load from YAML and expose `invoke(...)` and `ainvoke(...)` for
+    Python callers. The dashboard's **Environment Runs** page can also validate,
+    launch, monitor, and cancel a team or symposium without a Python wrapper. A
+    separate `ursa environments ...` CLI is not currently provided.
 
 ## YAML as the collaboration plan
 

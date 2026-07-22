@@ -18,6 +18,36 @@ class RunCancelRequest(BaseModel):
     reason: str = "user_request"
 
 
+class EnvironmentRunCreateRequest(BaseModel):
+    environment_type: Literal["agent_team", "agent_symposium"]
+    config_yaml: str = Field(min_length=1, max_length=500_000)
+    prompt: str = Field(min_length=1, max_length=500_000)
+    replace_existing: bool = False
+
+
+class EnvironmentConfigValidateRequest(BaseModel):
+    environment_type: Literal["agent_team", "agent_symposium"]
+    config_yaml: str = Field(min_length=1, max_length=500_000)
+
+
+class EnvironmentRunCancelRequest(BaseModel):
+    reason: str = "user_request"
+
+
+class EnvironmentRunRecord(BaseModel):
+    run_id: str
+    group: str
+    environment_name: str
+    environment_type: str
+    status: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    task_preview: str | None = None
+    error: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class RunRecord(BaseModel):
     run_id: str
     agent_id: str
