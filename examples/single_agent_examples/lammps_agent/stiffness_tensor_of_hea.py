@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from langchain_openai import ChatOpenAI
 from rich import get_console
 
@@ -12,7 +14,7 @@ model = "gpt-5"
 
 llm = ChatOpenAI(model=model, timeout=None, max_retries=2)
 
-workspace = "./workspace_stiffness_tensor"
+workspace = Path("./workspace_stiffness_tensor")
 
 wf = LammpsAgent(
     llm=llm,
