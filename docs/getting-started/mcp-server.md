@@ -80,6 +80,6 @@ Current options include:
 
 ## Where next?
 
-- [MCP server configuration](../configuration/mcp.md)
-- [MCP reference](../reference/mcp.md)
-- [Sandboxing and information control](../best-practices/sandboxing.md)
+- [MCP server configuration][mcp-server-configuration]
+- [MCP reference][mcp-reference]
+- [Sandboxing and information control][sandboxing-and-information-control]

@@ -36,3 +36,10 @@ Current URSA installations include subcommands for:
 - non-interactive execution.
 
 Use `ursa --help` to confirm the exact set in your installed version.
+
+## Python callback API
+
+::: ursa.cli.callbacks.HITLLogEventHandler
+    options:
+      show_root_heading: true
+      show_source: true

@@ -4,9 +4,15 @@ URSA's acquisition agents are related agents that acquire external documents or 
 
 The current concrete acquisition agents are:
 
-- [`ArxivAgent`](arxiv_agent.md) — searches arXiv, downloads paper PDFs, extracts text, and summarizes or indexes them.
-- [`OSTIAgent`](osti_agent.md) — searches OSTI records, resolves available full text or landing-page content, and summarizes or indexes it.
-- [`WebSearchAgent`](web_search_agent.md) — searches the open web with DDGS, retrieves HTML/PDF content, and summarizes or indexes it.
+- [`ArxivAgent`][ursa.agents.acquisition_agents.ArxivAgent] — searches arXiv,
+  downloads paper PDFs, extracts text, and summarizes or indexes them. See the
+  [ArxivAgent guide][arxivagent-documentation].
+- [`OSTIAgent`][ursa.agents.acquisition_agents.OSTIAgent] — searches OSTI
+  records, resolves available full text or landing-page content, and summarizes
+  or indexes it. See the [OSTIAgent guide][ostiagent-documentation].
+- [`WebSearchAgent`][ursa.agents.acquisition_agents.WebSearchAgent] — searches
+  the open web with DDGS, retrieves HTML/PDF content, and summarizes or indexes
+  it. See the [WebSearchAgent guide][websearchagent-documentation].
 
 All three are built on the same `BaseAcquisitionAgent` workflow and are integrated as optional tools for other agents. 
 

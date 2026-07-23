@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 # ursa/util/logo_generator.py
 from __future__ import annotations
 

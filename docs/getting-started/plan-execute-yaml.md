@@ -54,10 +54,11 @@ The workspace contains generated code, outputs, checkpoints, and artifacts creat
 
 ## 5. Resume or inspect a run
 
-For detailed checkpointing, resume behavior, and troubleshooting, see the [Plan-Execute checkpointing reference](../Plan-Execute-Runner-Checkpointing-Guide.md).
+For detailed checkpointing, resume behavior, and troubleshooting, see the
+[Plan-Execute checkpointing reference][planexecute-runner-checkpointing-resume-guide].
 
 ## Where next?
 
-- [Plan-Execute checkpointing reference](../Plan-Execute-Runner-Checkpointing-Guide.md)
-- [Python scripts guide](python-scripts.md)
-- [Sandboxing and information control](../best-practices/sandboxing.md)
+- [Plan-Execute checkpointing reference][planexecute-runner-checkpointing-resume-guide]
+- [Python scripts guide][getting-started-python-scripts]
+- [Sandboxing and information control][sandboxing-and-information-control]

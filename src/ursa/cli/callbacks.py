@@ -1,10 +1,11 @@
+# ruff: noqa: TID251
+
 import json
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping
 
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import ToolMessage
-from pygments.util import ClassNotFound
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -13,6 +14,10 @@ from rich.syntax import Syntax
 
 from ursa.util.diff_renderer import DiffRenderer
 from ursa.util.events import DEFAULT_EVENT_NAME
+from ursa.util.rendering import (
+    event_artifacts,
+    render_event_artifacts,
+)
 
 FILE_TOOL_NAMES = {
     "edit_code",
@@ -278,21 +283,6 @@ class CallbackRenderingMixin:
     def _tool_path(self, data: dict[str, Any]) -> str | None:
         return self._display_path(data.get("path") or data.get("filename"))
 
-    def _read_file_language(self, display_path: str | None, text: str) -> str:
-        suffix = Path(display_path or "file.txt").suffix.lower()
-        try:
-            lexer_name = str(
-                Syntax.guess_lexer(Path(display_path or "file.txt").name, text)
-            ).lower()
-        except (ClassNotFound, TypeError, ValueError):
-            lexer_name = ""
-
-        if suffix == ".py" or lexer_name == "python":
-            return "python"
-        if suffix == ".json" or lexer_name == "json":
-            return "json5"
-        return "text"
-
     def _print_read_file_start(self, path: str | None) -> None:
         detail = self._display_path(path)
         self.console.print(
@@ -312,39 +302,6 @@ class CallbackRenderingMixin:
             else "[success]📖 File read[/]"
         )
         self.emitted_any = True
-        if not has_content(payload):
-            return
-
-        language = self._read_file_language(detail, str(payload))
-        self._print_panel(
-            self._render_value(
-                payload,
-                language=language,
-            ),
-            title="read_file output",
-            border_style=self._tool_style("read_file"),
-        )
-
-    def _print_write_code_preview(
-        self, filename: str | None, code: Any
-    ) -> None:
-        if not has_content(code):
-            return
-        try:
-            lexer_name = Syntax.guess_lexer(
-                str(filename or "file.txt"), str(code)
-            )
-        except (ClassNotFound, TypeError, ValueError):
-            lexer_name = "text"
-        self._print_panel(
-            Syntax(
-                str(code),
-                lexer_name,
-                line_numbers=True,
-            ),
-            title="File Preview",
-            border_style=self._tool_style("write_code"),
-        )
 
     def _print_write_code_start(
         self, filename: str | None, path: str | None, code: Any = None
@@ -356,7 +313,6 @@ class CallbackRenderingMixin:
             else "[success]✏️ Writing file[/]"
         )
         self.emitted_any = True
-        self._print_write_code_preview(filename or path, code)
 
     def _print_write_code_end(
         self,
@@ -417,11 +373,14 @@ class CallbackRenderingMixin:
             else "[success]✏️ Editing file[/]"
         )
         self.emitted_any = True
-        self._print_edit_diff(
-            filename=path or filename,
-            old_code=old_code,
-            new_code=new_code,
-        )
+
+    def _print_event_artifact(self, data: Mapping[str, Any]) -> bool:
+        artifacts = event_artifacts(data)
+        if not artifacts:
+            return False
+        self.console.print(render_event_artifacts(artifacts))
+        self.emitted_any = True
+        return True
 
     def _print_edit_code_end(
         self,
@@ -589,19 +548,6 @@ class CallbackRenderingMixin:
             )
         self.emitted_any = True
 
-        if stdout := result.get("stdout"):
-            self._print_panel(
-                self._render_value(stdout),
-                title="stdout",
-                border_style=self._tool_style("run_command"),
-            )
-        if stderr := result.get("stderr"):
-            self._print_panel(
-                self._render_value(stderr),
-                title="stderr",
-                border_style="red",
-            )
-
 
 class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
     """Render structured agent/tool progress events to the REPL console."""
@@ -760,6 +706,7 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
             self._print_agent_event(data)
         elif "tool" in data:
             tool = self._clean(data.get("tool"))
+            self._print_event_artifact(data)
             if tool == "run_command":
                 return
             if not self._is_rendered_tool(tool):

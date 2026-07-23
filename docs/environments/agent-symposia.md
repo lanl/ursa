@@ -45,7 +45,7 @@ Use an Agent Symposium when you want:
 - a final answer that reports consensus, disagreement, uncertainty, and evidence
   quality.
 
-Use an [Agent Team](agent-teams.md) instead when one PI should assign specialist
+Use an [Agent Team][agent-teams] instead when one PI should assign specialist
 subtasks and produce one integrated answer without independent peer-review rounds.
 
 ## What happens during a symposium run
@@ -99,7 +99,9 @@ members:
 
 The repository also includes an example at
 `examples/environments/agent_symposium.yaml`. That example demonstrates a nested
-`AgentTeamEnvironment` as one symposium member and an independent `ExecutionAgent`
+[`AgentTeamEnvironment`][ursa.environments.AgentTeamEnvironment] as one
+symposium member and an independent
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent]
 as another member.
 
 ## Run a symposium from Python

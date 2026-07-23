@@ -67,7 +67,8 @@ ursa create-group research allowed_urls.yaml
 ursa --config config.yaml --group research --name research-agent
 ```
 
-Use narrow allowlists for sensitive projects. See [Groups and endpoint security](../persistence/groups-and-security.md).
+Use narrow allowlists for sensitive projects. See
+[Groups and endpoint security](../persistence/groups-and-security.md).
 
 ## Be careful with MCP servers
 

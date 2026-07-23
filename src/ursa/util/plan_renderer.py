@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 from rich import box, get_console
 from rich.table import Table
 from rich.text import Text

@@ -167,9 +167,9 @@ def handle_rag_command(
     if command == "list-rag-agents":
         names = list_rag_agent_names(cmd_args.group)
         if names:
-            print("\n".join(names))
+            print("\n".join(names))  # noqa: T201
         else:
-            print(f"No RAG agents found in group '{cmd_args.group}'")
+            print(f"No RAG agents found in group '{cmd_args.group}'")  # noqa: T201
         return True
 
     if command == "show-rag-agent":
@@ -206,16 +206,16 @@ def handle_rag_command(
             "context": "Ingest documents.",
             "query": "Ingest documents.",
         })
-        print(f"RAG agent: {name}")
-        print(f"Group: {cmd_args.group}")
-        print(f"Path: {rag_root}")
-        print(f"Source: {source}")
+        print(f"RAG agent: {name}")  # noqa: T201
+        print(f"Group: {cmd_args.group}")  # noqa: T201
+        print(f"Path: {rag_root}")  # noqa: T201
+        print(f"Source: {source}")  # noqa: T201
         # print("Raw documents copied: no")
         metadata = (
             result.get("rag_metadata", {}) if isinstance(result, dict) else {}
         )
         if metadata:
-            print(
+            print(  # noqa: T201
                 f"Indexed/retrieved results: {metadata.get('num_results', 0)}"
             )
         return True
@@ -233,26 +233,26 @@ def handle_rag_command(
         )
         if query_text:
             result = agent.invoke({"context": query_text, "query": query_text})
-            print(
+            print(  # noqa: T201
                 result.get("summary", result)
                 if isinstance(result, dict)
                 else result
             )
             return True
 
-        print(
+        print(  # noqa: T201
             f"Entering RAG query loop for '{cmd_args.name}'. Press Ctrl-D or enter blank line to exit."
         )
         while True:
             try:
                 query_text = input("rag> ").strip()
             except EOFError:
-                print()
+                print()  # noqa: T201
                 break
             if not query_text:
                 break
             result = agent.invoke({"context": query_text, "query": query_text})
-            print(
+            print(  # noqa: T201
                 result.get("summary", result)
                 if isinstance(result, dict)
                 else result

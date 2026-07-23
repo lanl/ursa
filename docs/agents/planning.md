@@ -1,6 +1,8 @@
 # PlanningAgent Documentation
 
-`PlanningAgent` generates a structured plan for a user request, optionally reflects on that plan, and regenerates it until the reflection budget is exhausted or the plan is approved.
+[`PlanningAgent`][ursa.agents.planning_agent.PlanningAgent] generates a
+structured plan for a user request, optionally reflects on that plan, and
+regenerates it until the reflection budget is exhausted or the plan is approved.
 
 Use it when you want an ordered, model-generated plan before handing work to another agent such as `ExecutionAgent`.
 

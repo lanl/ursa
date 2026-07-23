@@ -1,21 +1,19 @@
+import difflib
 import time
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from rich import get_console
-from rich.panel import Panel
 
 from ursa.agents.base import AgentContext
-from ursa.util.diff_renderer import DiffRenderer
+from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_file, read_text_from_file
+from ursa.util.rendering import event_artifact, file_artifact
 from ursa.util.types import (
     AsciiValidationError,
     ascii_validation_message,
     validate_ascii,
 )
-
-console = get_console()
 
 EXPERIENCES_DIRNAME = "experiences"
 
@@ -90,6 +88,7 @@ def write_experience(
     except AsciiValidationError as exc:
         return ascii_validation_message("filename", exc)
     experience_file = _experience_path(filename, runtime)
+    events = ToolEvents.from_runtime("write_experience", runtime)
     experience_file.parent.mkdir(parents=True, exist_ok=True)
 
     existing_text = ""
@@ -108,8 +107,23 @@ def write_experience(
         updated_text = text_to_write
         action = "overwritten"
 
-    with open(experience_file, "w", encoding="utf-8") as f:
-        f.write(updated_text)
+    try:
+        with events.range(
+            "write",
+            "Writing experience",
+            done="Experience written",
+            error="Failed to write experience",
+            path=str(experience_file),
+        ) as span:
+            with open(experience_file, "w", encoding="utf-8") as f:
+                f.write(updated_text)
+            span.update(
+                artifact=file_artifact(
+                    experience_file, title="Experience written"
+                )
+            )
+    except OSError as exc:
+        return f"Failed to write {filename}: {exc}"
 
     if (store := runtime.store) is not None:
         store.put(
@@ -125,7 +139,6 @@ def write_experience(
             },
         )
 
-    console.print("[cyan]Writing experience file:[/]", experience_file)
     return f"Experience file {_relative_to_den(experience_file, runtime)} {action} successfully."
 
 
@@ -151,47 +164,88 @@ def edit_experience(
     except AsciiValidationError as exc:
         return ascii_validation_message("filename", exc)
     experience_file = _experience_path(filename, runtime)
-    console.print("[cyan]Editing experience file:[/cyan]", filename)
+    events = ToolEvents.from_runtime("edit_experience", runtime)
+    events.emit(
+        "Editing experience",
+        stage="edit",
+        phase="start",
+        path=str(experience_file),
+    )
 
     try:
         content = read_text_file(experience_file)
     except FileNotFoundError:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Experience file not found:[/]",
+        events.emit(
+            "Experience file not found",
+            stage="edit",
+            phase="error",
+            path=str(experience_file),
         )
         return f"Failed: {filename} not found."
     except ValueError as exc:
+        events.emit(
+            "Failed to read experience",
+            stage="edit",
+            phase="error",
+            path=str(experience_file),
+            error=str(exc),
+        )
         return f"Failed to edit {filename}: {exc}"
     except OSError as exc:
+        events.emit(
+            "Failed to read experience",
+            stage="edit",
+            phase="error",
+            path=str(experience_file),
+            error=str(exc),
+        )
         return f"Failed to edit {filename}: Could not read file: {exc}"
 
     if old_content not in content:
-        console.print(
-            "[yellow] ⚠️ 'old_content' not found in experience file; no changes made.[/]"
+        events.emit(
+            "No changes made",
+            stage="edit",
+            phase="end",
+            path=str(experience_file),
+            reason="'old_content' not found in experience file.",
         )
         return f"No changes made to {filename}: 'old_content' not found in experience file."
 
     updated = content.replace(old_content, new_content, 1)
 
-    console.print(
-        Panel(
-            DiffRenderer(content, updated, filename),
-            title="Experience Diff Preview",
-            border_style="cyan",
+    diff = "".join(
+        difflib.unified_diff(
+            content.splitlines(keepends=True),
+            updated.splitlines(keepends=True),
+            fromfile=filename,
+            tofile=filename,
         )
     )
 
     try:
         with open(experience_file, "w", encoding="utf-8") as f:
             f.write(updated)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write experience file:[/]",
-            exc,
+    except OSError as exc:
+        events.emit(
+            "Failed to edit experience",
+            stage="edit",
+            phase="error",
+            path=str(experience_file),
+            error=str(exc),
         )
         return f"Failed to edit {filename}: {exc}"
+
+    events.emit(
+        "Experience updated",
+        stage="edit",
+        phase="end",
+        path=str(experience_file),
+        artifact=event_artifact(
+            diff,
+            "text/x-diff",
+            metadata={"title": "Experience diff", "path": filename},
+        ),
+    )
 
     if (store := runtime.store) is not None:
         store.put(
@@ -231,14 +285,38 @@ def read_experience(
     except AsciiValidationError as exc:
         return ascii_validation_message("filename", exc)
     experience_file = _experience_path(filename, runtime)
+    events = ToolEvents.from_runtime("read_experience", runtime)
     if not experience_file.exists() or not experience_file.is_file():
+        events.emit(
+            "Experience file not found",
+            stage="read",
+            phase="error",
+            path=str(experience_file),
+        )
         return (
             "Experience file not found: "
             f"{_relative_to_den(experience_file, runtime)}"
         )
 
-    console.print("[cyan]Reading experience:[/]", experience_file)
-    return read_text_from_file(experience_file)
+    try:
+        content = read_text_from_file(experience_file)
+    except (OSError, ValueError) as exc:
+        events.emit(
+            "Failed to read experience",
+            stage="read",
+            phase="error",
+            path=str(experience_file),
+            error=str(exc),
+        )
+        return f"Failed to read {filename}: {exc}"
+    events.emit(
+        "Experience read",
+        stage="read",
+        phase="end",
+        path=str(experience_file),
+        artifact=file_artifact(experience_file, title="Experience read"),
+    )
+    return content
 
 
 @tool
@@ -251,6 +329,7 @@ def list_experiences(runtime: ToolRuntime[AgentContext]) -> str:
         A newline-separated list of available experience filenames, or a message if none exist.
     """
     experiences_dir = _experiences_dir(runtime)
+    events = ToolEvents.from_runtime("list_experiences", runtime)
     files = sorted(
         path.name
         for path in experiences_dir.iterdir()
@@ -258,9 +337,19 @@ def list_experiences(runtime: ToolRuntime[AgentContext]) -> str:
     )
 
     if not files:
+        events.emit("No experience files found", stage="list", count=0)
         return "No experience files found in experiences/."
 
-    console.print("[cyan]Listing experience files...")
+    events.emit(
+        "Experience files listed",
+        stage="list",
+        count=len(files),
+        artifact=event_artifact(
+            "\n".join(files),
+            "text/plain",
+            metadata={"title": "Experiences"},
+        ),
+    )
     return "Available experience files:\n" + "\n".join(
         f"- {name}" for name in files
     )

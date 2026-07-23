@@ -98,8 +98,8 @@ Then set the key in your shell or secret manager.
 
 ## More configuration topics
 
-- [OpenAI-compatible endpoints](openai-compatible.md)
-- [Ollama and local endpoints](ollama.md)
-- [LangChain providers](langchain-providers.md)
-- [Configuration files, CLI flags, and environment variables](files-and-env.md)
-- [MCP server configuration](mcp.md)
+- [OpenAI-compatible endpoints][openai-compatible-endpoints]
+- [Ollama and local endpoints][ollama-and-local-endpoints]
+- [LangChain providers][langchain-providers]
+- [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+- [MCP server configuration][mcp-server-configuration]

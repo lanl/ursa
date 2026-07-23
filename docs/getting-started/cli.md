@@ -86,7 +86,8 @@ The execution agent can write files and run commands in the configured workspace
 ursa> execute Write and run a Python script that prints the first 10 prime numbers.
 ```
 
-Review the actions and outputs carefully. For more safety guidance, see [Sandboxing and information control](../best-practices/sandboxing.md).
+Review the actions and outputs carefully. For more safety guidance, see
+[Sandboxing and information control][sandboxing-and-information-control].
 
 ## 6. Optional: use a named agent
 
@@ -114,5 +115,5 @@ Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA
 
 - [Configure model endpoints](../configuration/index.md)
 - [Learn about persistence](../persistence/index.md)
-- [Use URSA from Python scripts](python-scripts.md)
-- [Run URSA as an MCP server](mcp-server.md)
+- [Use URSA from Python scripts][getting-started-python-scripts]
+- [Run URSA as an MCP server][getting-started-mcp-server]

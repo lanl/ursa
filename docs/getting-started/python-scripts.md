@@ -70,7 +70,11 @@ llm = init_chat_model(
 
 ## Compose agents with environments
 
-When one agent is not the right shape for the work, URSA environments let you run multiple agents behind one Python object. An [Agent Team](../environments/agent-teams.md) gives a PI delegation tools for specialist members. An [Agent Symposium](../environments/agent-symposia.md) asks multiple members or nested teams to work independently, review one another, revise, and then synthesize a final answer.
+When one agent is not the right shape for the work, URSA environments let you
+run multiple agents behind one Python object. An [Agent Team][agent-teams] gives
+a PI delegation tools for specialist members. An
+[Agent Symposium][agent-symposia] asks multiple members or nested teams to work
+independently, review one another, revise, and then synthesize a final answer.
 
 ```python
 from langchain.chat_models import init_chat_model
@@ -86,7 +90,8 @@ result = symposium.invoke("Compare two solution strategies and recommend one.")
 print(result["final"])
 ```
 
-See [Environments](../environments/index.md) for narrative guides and YAML examples.
+See [Environments][environments-agents-working-together] for narrative guides
+and YAML examples.
 
 ## Checkpointing and longer examples
 
@@ -95,11 +100,11 @@ Many of the examples in the repository show checkpointing and multi-step workflo
 - `examples/single_agent_examples/`
 - `examples/two_agent_examples/`
 - `examples/environments/`
-- [Plan-Execute From YAML](plan-execute-yaml.md)
-- [Plan-Execute checkpointing reference](../Plan-Execute-Runner-Checkpointing-Guide.md)
+- [Plan-Execute From YAML][getting-started-plan-execute-from-yaml]
+- [Plan-Execute checkpointing reference][planexecute-runner-checkpointing-resume-guide]
 
 ## Where next?
 
-- [Agents overview](../agents/index.md)
+- [Agents overview][agents]
 - [Configuration](../configuration/index.md)
-- [Sandboxing and information control](../best-practices/sandboxing.md)
+- [Sandboxing and information control][sandboxing-and-information-control]

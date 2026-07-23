@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 from rich import get_console
 from rich.panel import Panel
 
