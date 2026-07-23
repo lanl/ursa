@@ -8,7 +8,7 @@ authors:
     orcid: 0000-0002-7838-3609
     affiliation: 1
     
-  - name: Nathan Debardeleben
+  - name: Nathan DeBardeleben
     orcid: 0000-0002-5593-9205
     affiliation: 1
 
