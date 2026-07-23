@@ -1,6 +1,10 @@
 # ChatAgent Documentation
 
-`ChatAgent` is URSA's general conversational agent. Unlike `BasicChatAgent`, the current public `ChatAgent` is tool-capable: it can answer conversationally, call workspace/file tools when useful, and optionally use web/literature search tools.
+[`ChatAgent`][ursa.agents.chat_agent.ChatAgent] is URSA's general conversational
+agent. Unlike [`BasicChatAgent`][ursa.agents.chat_agent.BasicChatAgent], the
+current public ChatAgent is tool-capable: it can answer conversationally, call
+workspace/file tools when useful, and optionally use web/literature search
+tools.
 
 Use `ChatAgent` when you want an interactive assistant that can inspect files, record experience notes, download/read artifacts, or use configured retrieval tools while staying conversational. Use `ExecutionAgent` when you want a more execution-focused workflow with explicit completeness review and final recap.
 

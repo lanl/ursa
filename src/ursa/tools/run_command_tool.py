@@ -11,6 +11,7 @@ from ursa.prompt_library.safety_prompts import (
     get_safety_prompt,
 )
 from ursa.util.events import ToolEvents
+from ursa.util.rendering import event_artifact
 from ursa.util.structured_output import invoke_structured
 from ursa.util.types import (
     AsciiValidationError,
@@ -123,12 +124,25 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
                 stderr or "",
                 runtime.context.tool_character_limit,
             )
+            artifacts = [
+                event_artifact(
+                    content,
+                    "text/plain",
+                    metadata={"title": stream},
+                )
+                for stream, content in (
+                    ("stdout", stdout_fit),
+                    ("stderr", stderr_fit),
+                )
+                if content
+            ]
             span.update(
                 returncode=getattr(result, "returncode", None),
                 stdout_chars=len(stdout or ""),
                 stderr_chars=len(stderr or ""),
                 stdout_truncated=stdout_fit != (stdout or ""),
                 stderr_truncated=stderr_fit != (stderr or ""),
+                **({"artifacts": artifacts} if artifacts else {}),
             )
     except KeyboardInterrupt:
         stdout, stderr = "", "KeyboardInterrupt:"

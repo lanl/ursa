@@ -42,4 +42,6 @@ Only disable SSL verification when you understand the risk.
 
 ## Endpoint allowlists and groups
 
-For controlled environments, combine custom endpoints with URSA groups and allowed base URLs. See [Groups and endpoint security](../persistence/groups-and-security.md).
+For controlled environments, combine custom endpoints with URSA groups and
+allowed base URLs. See
+[Groups and endpoint security](../persistence/groups-and-security.md).

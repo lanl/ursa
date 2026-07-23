@@ -8,13 +8,16 @@ from langchain.tools import ToolRuntime
 
 from ursa.agents.base import AgentContext
 from ursa.util.events import (
-    LOGGER,
     AgentEvents,
     EnvironmentEvents,
-    EventConsoleFormatter,
     EventLoggingHandler,
     ToolEvents,
     configure_event_logging,
+)
+from ursa.util.rendering import (
+    EventConsoleFormatter,
+    event_artifact,
+    file_artifact,
 )
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
@@ -124,22 +127,48 @@ def test_event_logging_handler_logs_structured_payload(
 def test_configure_event_logging_sets_console_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_handlers = list(LOGGER.handlers)
-    original_level = LOGGER.level
-    original_propagate = LOGGER.propagate
-    monkeypatch.setattr(LOGGER, "handlers", [])
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    ursa_logger = logging.getLogger("ursa")
+    original_ursa_level = ursa_logger.level
+    monkeypatch.setattr(root_logger, "handlers", [])
 
     try:
         configure_event_logging()
 
-        assert len(LOGGER.handlers) == 1
-        assert isinstance(LOGGER.handlers[0].formatter, EventConsoleFormatter)
-        assert LOGGER.level == logging.INFO
-        assert LOGGER.propagate is False
+        assert len(root_logger.handlers) == 1
+        assert isinstance(
+            root_logger.handlers[0].formatter, EventConsoleFormatter
+        )
+        assert root_logger.level == logging.WARNING
+        assert ursa_logger.level == logging.INFO
     finally:
-        LOGGER.handlers = original_handlers
-        LOGGER.setLevel(original_level)
-        LOGGER.propagate = original_propagate
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_level)
+        ursa_logger.setLevel(original_ursa_level)
+
+
+def test_configure_event_logging_can_disable_rich_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    ursa_logger = logging.getLogger("ursa")
+    original_ursa_level = ursa_logger.level
+    monkeypatch.setattr(root_logger, "handlers", [])
+
+    try:
+        configure_event_logging(rich=False)
+
+        formatter = root_logger.handlers[0].formatter
+        assert isinstance(formatter, EventConsoleFormatter)
+        assert formatter.render_artifacts is False
+    finally:
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_level)
+        ursa_logger.setLevel(original_ursa_level)
 
 
 def test_event_console_formatter_renders_readable_event() -> None:
@@ -173,6 +202,165 @@ def test_event_console_formatter_renders_readable_event() -> None:
     finally:
         logger.handlers = []
         logger.propagate = True
+
+
+def test_event_console_formatter_renders_mime_artifact() -> None:
+    formatter = EventConsoleFormatter()
+    record = logging.LogRecord(
+        name="ursa.util.events",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="raw event message",
+        args=(),
+        exc_info=None,
+    )
+    record.ursa_event_payload = {
+        "tool": "edit_code",
+        "stage": "edit",
+        "phase": "end",
+        "message": "File updated",
+        "artifact": event_artifact(
+            "--- app.py\n+++ app.py\n-old\n+new",
+            "text/x-diff",
+            metadata={"title": "Edit diff", "path": "app.py"},
+        ),
+    }
+
+    rendered = formatter.format(record)
+
+    assert "[ursa] edit_code edit/end: File updated" in rendered
+    assert "Edit diff" in rendered
+    assert "-old" in rendered
+    assert "+new" in rendered
+
+
+def test_event_console_formatter_can_omit_mime_artifact() -> None:
+    formatter = EventConsoleFormatter(render_artifacts=False)
+    record = logging.LogRecord(
+        name="ursa.util.events",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="raw event message",
+        args=(),
+        exc_info=None,
+    )
+    record.ursa_event_payload = {
+        "tool": "edit_code",
+        "stage": "edit",
+        "phase": "end",
+        "message": "File updated",
+        "artifact": event_artifact(
+            "--- app.py\n+++ app.py\n-old\n+new",
+            "text/x-diff",
+            metadata={"title": "Edit diff", "path": "app.py"},
+        ),
+    }
+
+    rendered = formatter.format(record)
+
+    assert rendered == "[ursa] edit_code edit/end: File updated"
+
+
+def test_event_console_formatter_renders_multiple_artifacts_side_by_side() -> (
+    None
+):
+    formatter = EventConsoleFormatter(force_terminal=False)
+    record = logging.LogRecord(
+        name="ursa.util.events",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="raw event message",
+        args=(),
+        exc_info=None,
+    )
+    record.ursa_event_payload = {
+        "tool": "run_command",
+        "stage": "execute",
+        "phase": "end",
+        "message": "Command finished",
+        "artifacts": [
+            event_artifact(
+                "command output " * 20,
+                "text/plain",
+                metadata={"title": "stdout"},
+            ),
+            event_artifact(
+                "command warning " * 20,
+                "text/plain",
+                metadata={"title": "stderr"},
+            ),
+        ],
+    }
+
+    rendered = formatter.format(record)
+
+    assert any(
+        "stdout" in line and "stderr" in line for line in rendered.splitlines()
+    )
+    assert any(
+        "command output" in line and "command warning" in line
+        for line in rendered.splitlines()
+    )
+
+
+def test_event_console_formatter_renders_structured_json_content() -> None:
+    formatter = EventConsoleFormatter()
+    record = logging.LogRecord(
+        name="ursa.util.events",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="raw event message",
+        args=(),
+        exc_info=None,
+    )
+    record.ursa_event_payload = {
+        "tool": "inspect",
+        "stage": "result",
+        "message": "Inspection complete",
+        "artifact": event_artifact(
+            {"answer": 42},
+            "application/json",
+            metadata={"title": "Result"},
+        ),
+    }
+
+    rendered = formatter.format(record)
+
+    assert "Result" in rendered
+    assert '"answer": 42' in rendered
+
+
+def test_event_console_formatter_renders_referenced_file_contents(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "example.py"
+    target.write_text("print('highlight me')\n", encoding="utf-8")
+    formatter = EventConsoleFormatter()
+    record = logging.LogRecord(
+        name="ursa.util.events",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="raw event message",
+        args=(),
+        exc_info=None,
+    )
+    record.ursa_event_payload = {
+        "tool": "read_file",
+        "stage": "read",
+        "phase": "end",
+        "message": "File read",
+        "artifact": file_artifact(target, title="File read"),
+    }
+
+    rendered = formatter.format(record)
+
+    assert "File read" in rendered
+    assert "print('highlight me')" in rendered
 
 
 def test_environment_events_include_environment_metadata(

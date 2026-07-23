@@ -1,3 +1,5 @@
+import logging
+import sys
 import threading
 import time
 import webbrowser
@@ -6,6 +8,8 @@ from pathlib import Path
 import typer
 
 from ursa.util.http import inject_truststore_into_ssl
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="Ursa Dashboard Runner")
 
@@ -27,6 +31,7 @@ def main(
     ),
 ):
     """Launch the Ursa Web Dashboard."""
+    logging.basicConfig(level=logging.INFO)
     inject_truststore_into_ssl()
     try:
         import os
@@ -49,9 +54,11 @@ def main(
             "ursa_dashboard.app:create_app", factory=True, host=host, port=port
         )
     except ImportError:
-        print("Error: Dashboard dependencies not found.")
-        print("Please install them with: pip install 'ursa-ai[dashboard]'")
-        return
+        logger.error("Dashboard dependencies not found")
+        logger.error(
+            "Please install them with: pip install 'ursa-ai[dashboard]'"
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

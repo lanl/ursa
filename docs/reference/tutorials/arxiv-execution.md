@@ -1,6 +1,9 @@
 # Using ArxivAgent and ExecutionAgent Together
 
-This guide demonstrates how to combine the `ArxivAgent` and `ExecutionAgent` for comprehensive research and analysis workflows.
+This guide demonstrates how to combine
+[`ArxivAgent`][ursa.agents.acquisition_agents.ArxivAgent] and
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent] for
+comprehensive research and analysis workflows.
 
 ## Overview
 

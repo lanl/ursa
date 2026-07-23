@@ -1,5 +1,6 @@
 # Sandboxing
-The [Execution Agent](execution_agent.md) is allowed to run system commands and write/run code. Being able to execute arbitrary system commands or write
+The [Execution Agent][executionagent-documentation] is allowed to run system
+commands and write/run code. Being able to execute arbitrary system commands or write
 and execute code has the potential to cause problems like:
 
 - Damage code or data on the computer
@@ -65,4 +66,3 @@ ch-run -W ursa \
     -- bash -c \
     "uv run --no-sync my_script.py"
 ```
-

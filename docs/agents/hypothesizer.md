@@ -1,6 +1,10 @@
 # HypothesizerAgent Documentation
 
-`HypothesizerAgent` maintains a persistent Markdown **hypothesis space** for an ongoing question or investigation. The current implementation is not the old three-agent debate workflow; that adversarial review behavior has been renamed and reworked as [`DeepReviewAgent`](deep_review_agent.md).
+[`HypothesizerAgent`][ursa.agents.hypothesizer_agent.HypothesizerAgent]
+maintains a persistent Markdown **hypothesis space** for an ongoing question or
+investigation. The current implementation is not the old three-agent debate
+workflow; that adversarial review behavior has been renamed and reworked as
+[`DeepReviewAgent`][ursa.agents.deep_review_agent.DeepReviewAgent].
 
 Use `HypothesizerAgent` when you want a durable, shareable artifact that records competing hypotheses, relative likelihoods, evidence for and against each hypothesis, uncertainties, change summaries, and recommended next evidence.
 
@@ -152,7 +156,10 @@ That node:
 
 ## Relationship to DeepReviewAgent
 
-Older docs used “HypothesizerAgent” to mean a three-role iterative debate system: solution generator, critic, and competitor/stakeholder simulator. That workflow now lives in [`DeepReviewAgent`](deep_review_agent.md).
+Older docs used “HypothesizerAgent” to mean a three-role iterative debate
+system: solution generator, critic, and competitor/stakeholder simulator. That
+workflow now lives in
+[`DeepReviewAgent`][ursa.agents.deep_review_agent.DeepReviewAgent].
 
 Choose between them as follows:
 

@@ -63,4 +63,5 @@ then the group allowlist should include the approved base URL domain.
 - Prefer local endpoints such as Ollama for data that should not leave a machine.
 - Review group policy before sharing/importing persistent agents.
 
-See also [Sandboxing and information control](../best-practices/sandboxing.md).
+See also
+[Sandboxing and information control][sandboxing-and-information-control].

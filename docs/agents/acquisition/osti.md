@@ -1,10 +1,14 @@
 # OSTIAgent Documentation
 
-`OSTIAgent` is an acquisition agent for OSTI records. It subclasses `BaseAcquisitionAgent`, so it uses the same acquire-then-summarize/RAG graph as `ArxivAgent` and `WebSearchAgent`.
+[`OSTIAgent`][ursa.agents.acquisition_agents.OSTIAgent] is an acquisition agent
+for OSTI records. It subclasses
+[`BaseAcquisitionAgent`][ursa.agents.acquisition_agents.BaseAcquisitionAgent],
+so it uses the same acquire-then-summarize/RAG graph as ArxivAgent and
+WebSearchAgent.
 
 `OSTIAgent` searches an OSTI records API, resolves available full-text or landing-page content, caches acquired PDFs/HTML, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.
 
-See also: [Acquisition Agents](acquisition_agents.md).
+See also: [Acquisition Agents][acquisition-agents].
 
 ## Basic usage
 

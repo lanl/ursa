@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import traceback
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from ursa.util.http import inject_truststore_into_ssl
+
+logger = logging.getLogger(__name__)
 
 _UNSET = object()
 
@@ -292,9 +295,9 @@ def main() -> int:
 
                 targets = _targets(agent_obj)
                 if not targets:
-                    print(
-                        "[mcp] No compatible AgentWithTools target found; skipping MCP tool attachment",
-                        file=sys.stderr,
+                    logger.warning(
+                        "No compatible AgentWithTools target found; "
+                        "skipping MCP tool attachment"
                     )
                     return
 

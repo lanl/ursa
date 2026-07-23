@@ -88,4 +88,4 @@ and never stored in YAML or run metadata.
 
 - [Configuration](../configuration/index.md)
 - [Persistence](../persistence/index.md)
-- [Sandboxing and information control](../best-practices/sandboxing.md)
+- [Sandboxing and information control][sandboxing-and-information-control]

@@ -84,6 +84,15 @@ def test_write_code_records_store_entry(
     assert payload["phase"] == "end"
     assert payload["filename"] == "sample.py"
     assert payload["path"] == str(tmp_path / "sample.py")
+    assert payload["artifact"] == {
+        "content": str(tmp_path / "sample.py"),
+        "mime_type": "application/vnd.ursa.file-reference",
+        "metadata": {
+            "title": "File written",
+            "path": str(tmp_path / "sample.py"),
+            "content_mime_type": "text/x-python",
+        },
+    }
     assert isinstance(payload["elapsed_ms"], float)
 
 
@@ -107,7 +116,7 @@ def test_write_code_rejects_invalid_ascii_filename_without_cleaning(
 
 
 def test_edit_code_updates_file_and_records(
-    tmp_path: Path, chat_model: BaseChatModel
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     target = tmp_path / "app.py"
     target.write_text("print('hello')\nprint('hello')\n", encoding="utf-8")
@@ -118,6 +127,11 @@ def test_edit_code_updates_file_and_records(
         store=store,
         tool_call_id="tc-edit",
         thread_id="thread-7",
+    )
+    events = []
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        lambda event_name, payload, config: events.append(payload),
     )
 
     result = edit_code.func(
@@ -135,6 +149,11 @@ def test_edit_code_updates_file_and_records(
     assert item is not None
     assert item.value["tool_call_id"] == "tc-edit"
     assert item.value["thread_id"] == "thread-7"
+    artifact = events[-1]["artifact"]
+    assert artifact["mime_type"] == "text/x-diff"
+    assert artifact["metadata"]["title"] == "Edit diff"
+    assert "-print('hello')" in artifact["content"]
+    assert "+print('bye')" in artifact["content"]
 
 
 def test_edit_code_noop_when_old_code_missing(

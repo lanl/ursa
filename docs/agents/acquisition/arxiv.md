@@ -1,10 +1,14 @@
 # ArxivAgent Documentation
 
-`ArxivAgent` is an acquisition agent for arXiv papers. It subclasses `BaseAcquisitionAgent`, so it uses the same acquire-then-summarize/RAG graph as `WebSearchAgent` and `OSTIAgent`.
+[`ArxivAgent`][ursa.agents.acquisition_agents.ArxivAgent] is an acquisition
+agent for arXiv papers. It subclasses
+[`BaseAcquisitionAgent`][ursa.agents.acquisition_agents.BaseAcquisitionAgent],
+so it uses the same acquire-then-summarize/RAG graph as WebSearchAgent and
+OSTIAgent.
 
 `ArxivAgent` searches the arXiv API, downloads matching paper PDFs, extracts text, optionally augments PDF text with image descriptions, and then summarizes the acquired papers or runs the RAG path when an embedding model is configured.
 
-See also: [Acquisition Agents](acquisition_agents.md).
+See also: [Acquisition Agents][acquisition-agents].
 
 ## Basic usage
 
