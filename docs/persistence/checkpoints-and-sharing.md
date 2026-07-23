@@ -56,4 +56,4 @@ ursa save-rag-agent papers --group chemistry
 ursa delete-rag-agent papers --group chemistry
 ```
 
-See [RAG collections](rag.md).
+See [RAG collections][persistent-rag-collections].

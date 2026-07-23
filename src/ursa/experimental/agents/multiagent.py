@@ -7,11 +7,12 @@ import yaml
 from langchain.agents import create_agent
 from langchain.chat_models import BaseChatModel
 from langchain.messages import HumanMessage
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from ursa.agents import ExecutionAgent, PlanningAgent
 from ursa.util import Checkpointer
+from ursa.util.events import ToolEvents
 
 system_prompt = """\
 You are a data scientist with multiple tools.
@@ -63,10 +64,11 @@ def make_execute_plan_tool(
         "execute_plan_tool",
         description="Execute a plan from the planning agent tool.",
     )
-    def execute_plan(plan: str):
+    def execute_plan(plan: str, runtime: ToolRuntime):
         """Execute plan item by item."""
 
-        print("EXECUTING PLAN")
+        events = ToolEvents.from_runtime("execute_plan_tool", runtime)
+        events.emit("Executing plan", stage="execute_plan")
         if plan.startswith("<PLAN>") and plan.endswith("</PLAN>"):
             summaries = []
 
@@ -99,7 +101,11 @@ def make_execute_plan_tool(
                     )
 
                 step_prompt += tag("NEXT_STEP", yaml.dump(step).strip())
-                print(step_prompt)
+                events.emit(
+                    "Executing plan step",
+                    stage="execute_plan_step",
+                    step=step,
+                )
 
                 result = execution_agent.invoke(step_prompt)
                 last_step_summary = result["messages"][-1].text
@@ -133,7 +139,7 @@ def make_planning_tool(
         "planning_agent",
         description="Create plans for arbitrary tasks",
     )
-    def call_agent(query: str):
+    def call_agent(query: str, runtime: ToolRuntime):
         result = planning_agent.invoke({
             "messages": [HumanMessage(query)],
             "reflection_steps": max_reflection_steps,
@@ -150,7 +156,11 @@ def make_planning_tool(
         ]
 
         plan = f"<PLAN>\n{json.dumps(plan_steps)}\n</PLAN>"
-        print(yaml.dump(plan_steps))
+        ToolEvents.from_runtime("planning_agent", runtime).emit(
+            "Plan created",
+            stage="create_plan",
+            plan_steps=plan_steps,
+        )
         return plan
 
     return call_agent

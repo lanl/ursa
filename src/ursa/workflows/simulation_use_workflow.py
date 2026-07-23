@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 # planning_executor.py
 from rich import get_console
 from rich.panel import Panel

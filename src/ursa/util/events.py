@@ -61,75 +61,64 @@ from langchain_core.callbacks.manager import (
 )
 from langchain_core.runnables import RunnableConfig
 
+from ursa.util.rendering import EventConsoleFormatter, event_artifacts
+
 DEFAULT_EVENT_NAME = "ursa_agent_progress"
+"""Name used for every structured URSA progress event."""
 LOGGER = logging.getLogger(__name__)
-
-
-class EventConsoleFormatter(logging.Formatter):
-    """Render URSA progress events as compact console messages."""
-
-    DETAIL_KEYS = (
-        "path",
-        "filename",
-        "query",
-        "output_path",
-        "returncode",
-        "stdout_chars",
-        "stderr_chars",
-        "result_chars",
-        "error",
-    )
-
-    def format(self, record: logging.LogRecord) -> str:
-        payload = getattr(record, "ursa_event_payload", None)
-        if not isinstance(payload, dict):
-            return super().format(record)
-
-        source = (
-            payload.get("agent")
-            or payload.get("tool")
-            or payload.get("name")
-            or "ursa"
-        )
-        stage = payload.get("stage")
-        phase = payload.get("phase")
-        message = payload.get("message") or record.getMessage()
-
-        label = str(source)
-        if stage:
-            label += f" {stage}"
-        if phase:
-            label += f"/{phase}"
-
-        details = [
-            f"{key}={payload[key]}"
-            for key in self.DETAIL_KEYS
-            if payload.get(key) not in (None, "")
-        ]
-        suffix = f" ({', '.join(details)})" if details else ""
-        return f"[ursa] {label}: {message}{suffix}"
 
 
 def configure_event_logging(
     *,
     level: int = logging.INFO,
     formatter: logging.Formatter | None = None,
+    rich: bool = True,
 ) -> None:
-    """Enable console logging for URSA progress events.
+    """Configure Python logging for URSA progress events.
 
-    Examples call this helper so the default event logging callback installed
-    by ``BaseAgent`` is visible without requiring users to configure Python
-    logging manually.
+    The root logger is reset to ``WARNING`` and receives one stream handler.
+    The ``ursa`` logger is enabled at ``level`` so URSA progress remains
+    visible without enabling noisy ``INFO`` records from dependencies. When no
+    formatter is supplied, ``EventConsoleFormatter`` renders structured
+    event summaries and, optionally, MIME-typed artifacts.
+
+    Parameters
+    ----------
+    level:
+        Logging level for the ``ursa`` logger and installed stream handler.
+    formatter:
+        Formatter for the installed handler. When omitted, an
+        ``EventConsoleFormatter`` configured for the handler's terminal
+        capability is used.
+    rich:
+        Render artifact bodies with Rich when using the default formatter.
+        This option has no effect when ``formatter`` is provided.
+
+    Notes
+    -----
+    This function clears existing root handlers. Call it once during
+    application startup, or configure logging manually when handler ownership
+    must remain with the embedding application.
     """
-    formatter = formatter or EventConsoleFormatter()
-    LOGGER.setLevel(level)
-    LOGGER.propagate = False
-    LOGGER.handlers.clear()
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.WARNING)
+    root_logger.handlers.clear()
+
+    # Keep URSA progress visible at the requested level without enabling noisy
+    # INFO logs from dependencies such as HTTP clients.
+    logging.getLogger("ursa").setLevel(level)
 
     handler = logging.StreamHandler()
     handler.setLevel(level)
+    if formatter is None:
+        stream = handler.stream
+        is_terminal = bool(hasattr(stream, "isatty") and stream.isatty())
+        formatter = EventConsoleFormatter(
+            force_terminal=is_terminal,
+            render_artifacts=rich,
+        )
     handler.setFormatter(formatter)
-    LOGGER.addHandler(handler)
+    root_logger.addHandler(handler)
 
 
 class EventLoggingHandler(BaseCallbackHandler):
@@ -139,6 +128,20 @@ class EventLoggingHandler(BaseCallbackHandler):
     progress events and ignores all other callback activity. The emitted log
     line keeps a compact summary for humans while preserving any remaining
     payload fields as JSON for debugging and ingestion.
+
+    Parameters
+    ----------
+    event_name:
+        Custom event name accepted by the handler. Other custom events are
+        ignored.
+    logger:
+        Logger that receives accepted events. Defaults to the module logger.
+
+    Notes
+    -----
+    The original structured payload is attached to each log record as
+    ``ursa_event_payload``. Artifact bodies are summarized by MIME type and
+    size rather than copied into the textual log message.
     """
 
     def __init__(
@@ -160,7 +163,13 @@ class EventLoggingHandler(BaseCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Log matching progress events at ``INFO`` level."""
+        """Log one matching structured event at ``INFO`` level.
+
+        Events whose name differs from ``event_name`` or whose payload is not
+        a dictionary are ignored. ``run_id``, tags, and callback metadata are
+        accepted for LangChain callback compatibility but are not included in
+        the formatted message.
+        """
         if name != self.event_name or not isinstance(data, dict):
             return
         if not self.logger.isEnabledFor(logging.INFO):
@@ -184,8 +193,30 @@ class EventLoggingHandler(BaseCallbackHandler):
         extras = {
             key: value
             for key, value in data.items()
-            if key not in {"agent", "tool", "name", "stage", "phase", "message"}
+            if key
+            not in {
+                "agent",
+                "artifact",
+                "artifacts",
+                "tool",
+                "name",
+                "stage",
+                "phase",
+                "message",
+            }
         }
+        artifacts = event_artifacts(data)
+        if artifacts:
+            extras["artifact_mime_types"] = [
+                artifact.get("mime_type") for artifact in artifacts
+            ]
+        if len(artifacts) == 1:
+            artifact = artifacts[0]
+            content = artifact.get("content")
+            if isinstance(content, str):
+                extras["artifact_chars"] = len(content)
+            else:
+                extras["artifact_type"] = type(content).__name__
         if extras:
             parts.append(
                 "data="
@@ -236,7 +267,23 @@ class ProgressEvents:
         stage: str,
         **payload: Any,
     ) -> dict[str, Any] | None:
-        """Emit a single synchronous progress event."""
+        """Emit one synchronous progress event.
+
+        Parameters
+        ----------
+        message:
+            Concise human-readable description of the progress update.
+        stage:
+            Stable machine-readable stage name.
+        **payload:
+            Additional serializable fields merged into the event payload.
+
+        Returns
+        -------
+        dict or None
+            The dispatched payload, or ``None`` when no runnable config was
+            supplied and event emission is disabled.
+        """
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
@@ -250,7 +297,11 @@ class ProgressEvents:
         stage: str,
         **payload: Any,
     ) -> dict[str, Any] | None:
-        """Emit a single asynchronous progress event."""
+        """Asynchronously emit one progress event.
+
+        Parameters and return behavior match ``emit``. Dispatch waits for
+        LangChain's asynchronous custom-event manager to complete.
+        """
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
@@ -270,7 +321,30 @@ class ProgressEvents:
         error: str | None = None,
         **payload: Any,
     ) -> EventRange:
-        """Create a scoped range that emits start/end/error events."""
+        """Create a context manager for an operation lifecycle.
+
+        Parameters
+        ----------
+        stage:
+            Stable stage included in every range event.
+        start:
+            Message emitted with ``phase="start"`` on entry.
+        done:
+            Message emitted with ``phase="end"`` after successful completion.
+            Defaults to ``start``.
+        error:
+            Message emitted with ``phase="error"`` when an exception escapes.
+            Defaults to ``start``.
+        **payload:
+            Fields included in the start event and initial terminal payload.
+
+        Returns
+        -------
+        EventRange
+            A synchronous and asynchronous context manager. Call
+            ``EventRange.update`` inside the block to add terminal-only
+            fields such as results or artifacts.
+        """
         return EventRange(
             events=self,
             stage=stage,
@@ -298,7 +372,18 @@ class ProgressEvents:
 
 
 class AgentEvents(ProgressEvents):
-    """Emit standardized URSA progress events for a single agent."""
+    """Emit standardized progress events for one agent.
+
+    Parameters
+    ----------
+    agent:
+        Stable agent name stored in the ``agent`` payload field.
+    config:
+        Active LangChain runnable configuration. Without a config, emission
+        methods are safe no-ops.
+    event_name:
+        Custom event channel, normally ``DEFAULT_EVENT_NAME``.
+    """
 
     def __init__(
         self,
@@ -323,6 +408,21 @@ class EnvironmentEvents(ProgressEvents):
     LangChain runnable. In that case LangChain refuses ad-hoc custom events
     because there is no parent run ID, so this helper falls back to directly
     notifying callbacks from the runnable config.
+
+    Parameters
+    ----------
+    environment:
+        Stable environment name stored in the ``environment`` payload field.
+    config:
+        Active runnable configuration and callback collection.
+    event_name:
+        Custom event channel, normally ``DEFAULT_EVENT_NAME``.
+    environment_type:
+        Optional environment kind added to every payload.
+    environment_id:
+        Optional stable environment identifier added to every payload.
+    path:
+        Optional hierarchical environment path added to every payload.
     """
 
     def __init__(
@@ -357,6 +457,13 @@ class EnvironmentEvents(ProgressEvents):
         stage: str,
         **payload: Any,
     ) -> dict[str, Any] | None:
+        """Emit an environment event synchronously.
+
+        When LangChain reports that no parent run exists, the event is sent
+        directly to callbacks in ``config``. This supports environments that
+        are invoked outside a runnable while preserving the normal custom-event
+        path for nested runs.
+        """
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
@@ -375,6 +482,11 @@ class EnvironmentEvents(ProgressEvents):
         stage: str,
         **payload: Any,
     ) -> dict[str, Any] | None:
+        """Asynchronously emit an environment event.
+
+        This method provides the same direct-callback fallback as ``emit`` and
+        awaits asynchronous callback implementations when necessary.
+        """
         if self.config is None:
             return None
         body = self._payload(message=message, stage=stage, **payload)
@@ -427,7 +539,22 @@ class EnvironmentEvents(ProgressEvents):
 
 
 class ToolEvents(ProgressEvents):
-    """Emit standardized URSA progress events for a single tool."""
+    """Emit standardized progress events for one tool invocation.
+
+    Parameters
+    ----------
+    tool:
+        Stable tool name stored in the ``tool`` payload field.
+    config:
+        Active runnable configuration. Without a config, emission methods are
+        safe no-ops.
+    event_name:
+        Custom event channel, normally ``DEFAULT_EVENT_NAME``.
+    tool_call_id:
+        Optional LangGraph tool-call identifier added to every payload.
+    owner_payload:
+        Optional agent or environment identity fields added to every payload.
+    """
 
     def __init__(
         self,
@@ -500,7 +627,26 @@ class ToolEvents(ProgressEvents):
         *,
         event_name: str = DEFAULT_EVENT_NAME,
     ) -> ToolEvents:
-        """Create a tool event helper from a LangGraph ``ToolRuntime``."""
+        """Create a tool event helper from a LangGraph runtime.
+
+        The runtime supplies the runnable config, tool-call ID, and owning
+        agent or environment metadata. Passing ``None`` returns a helper with
+        emission disabled, which is useful for optional runtime integrations.
+
+        Parameters
+        ----------
+        tool:
+            Stable tool name stored in emitted payloads.
+        runtime:
+            Current tool runtime, or ``None`` when no runtime is available.
+        event_name:
+            Custom event channel, normally ``DEFAULT_EVENT_NAME``.
+
+        Returns
+        -------
+        ToolEvents
+            A helper configured from the runtime metadata.
+        """
         if runtime is None:
             return cls(tool=tool, event_name=event_name)
         return cls(
@@ -536,7 +682,11 @@ class EventRange:
     _started_at: float | None = field(default=None, init=False, repr=False)
 
     def update(self, **payload: Any) -> EventRange:
-        """Merge additional payload fields into the terminal event."""
+        """Merge fields into the terminal event payload.
+
+        Updated fields do not alter the already-emitted start event. The
+        method returns the range to support fluent updates.
+        """
         self.payload.update(payload)
         return self
 

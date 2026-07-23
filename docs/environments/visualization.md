@@ -1,7 +1,9 @@
 # Visualizing environment runs
 
-URSA environments can record a structured replay of an `AgentTeamEnvironment` or
-`AgentSymposiumEnvironment` run. The replay captures the environment topology,
+URSA environments can record a structured replay of an
+[`AgentTeamEnvironment`][ursa.environments.AgentTeamEnvironment] or
+[`AgentSymposiumEnvironment`][ursa.environments.AgentSymposiumEnvironment] run.
+The replay captures the environment topology,
 major phases, delegation events, tool activity, errors, and final results so you
 can inspect how the group worked after the run completes or while it is still
 running.

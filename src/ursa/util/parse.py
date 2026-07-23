@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -16,6 +17,8 @@ import justext
 import pymupdf
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 with contextlib.redirect_stdout(io.StringIO()):
     import pymupdf4llm
@@ -320,8 +323,8 @@ def _pdf_page_count(path: Path) -> int:
     try:
         with pymupdf.open(str(path)) as doc:
             return len(doc)
-    except Exception as e:  # noqa: BLE001
-        print("[Error]: ", e)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to count document pages")
         return 0
 
 
@@ -582,14 +585,14 @@ def read_pdf(path: str | Path) -> str:
                 if not os.path.exists(ocr_pdf) or os.path.getmtime(
                     ocr_pdf
                 ) < os.path.getmtime(full_filename):
-                    print(
+                    logger.info(
                         f"[OCR]: mode={first_mode} ({len(text)} chars, {pages} pages) -> {ocr_pdf}"
                     )
                     _ocr_to_searchable_pdf(
                         full_filename, ocr_pdf, mode=first_mode
                     )
                 else:
-                    print(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
+                    logger.info(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
 
                 text2 = read_text_pdf(ocr_pdf) or ""
                 if len(text2) > len(text):
@@ -607,14 +610,14 @@ def read_pdf(path: str | Path) -> str:
                     if not os.path.exists(force_pdf) or os.path.getmtime(
                         force_pdf
                     ) < os.path.getmtime(full_filename):
-                        print(
+                        logger.info(
                             f"[OCR]: still low after skip-text; retrying with force-ocr -> {force_pdf}"
                         )
                         _ocr_to_searchable_pdf(
                             full_filename, force_pdf, mode="force"
                         )
                     else:
-                        print(
+                        logger.info(
                             f"[OCR]: using cached force OCR PDF -> {force_pdf}"
                         )
 
@@ -624,20 +627,20 @@ def read_pdf(path: str | Path) -> str:
 
             except (FileNotFoundError, subprocess.CalledProcessError) as e:
                 # Missing ocrmypdf or OCR failed: keep original extraction
-                print(f"[OCR Error]: {e}")
+                logger.warning("OCR failed; using original extraction: %s", e)
             except Exception as e:  # noqa: BLE001
                 # Any other OCR-related failure: keep original extraction
-                print(f"[OCR Error]: {e}")
+                logger.warning("OCR failed; using original extraction: %s", e)
 
         return text  # noqa: TRY300
 
     except subprocess.CalledProcessError as e:
         # OCR failed; return whatever we got from normal extraction
         err = (e.stderr or "")[:500]
-        print(f"[OCR Error]: {err}")
+        logger.error("OCR failed: %s", err)
         return text if text else f"[Error]: OCR failed: {err}"
     except Exception as e:  # noqa: BLE001
-        print(f"[Error]: {e}")
+        logger.exception("Document parsing failed")
         return f"[Error]: {e}"
 
 

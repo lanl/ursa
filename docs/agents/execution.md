@@ -1,6 +1,10 @@
 # ExecutionAgent Documentation
 
-`ExecutionAgent` is URSA's execution-focused agent for carrying out concrete tasks in a workspace. It can write files, edit code, read artifacts, download data, execute safe shell commands, and use optional search/RAG/MCP tools. Current implementations also include a structured **review-until-complete** loop before the final recap.
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent] is URSA's
+execution-focused agent for carrying out concrete tasks in a workspace. It can
+write files, edit code, read artifacts, download data, execute safe shell
+commands, and use optional search/RAG/MCP tools. Current implementations also
+include a structured **review-until-complete** loop before the final recap.
 
 Use `ExecutionAgent` when the request is action-oriented: create or modify files, run code, inspect command output, perform analyses, or assemble artifacts. Use `ChatAgent` for lighter conversational assistance with tools.
 

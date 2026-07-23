@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from time import perf_counter
@@ -27,6 +28,8 @@ from .config import (
     load_team_config,
     make_llm,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DelegateInput(BaseModel):
@@ -475,7 +478,7 @@ class AgentTeamEnvironment(BaseEnvironment):
         )
 
     def _trace_delegation(self, label: str, message: str) -> None:
-        """Print a small, explicit delegation trace until full event logging exists."""
+        """Log a small, explicit delegation trace."""
         if not self.trace_delegation:
             return
         text = message
@@ -484,7 +487,7 @@ class AgentTeamEnvironment(BaseEnvironment):
             and len(text) > self.trace_character_limit
         ):
             text = text[: self.trace_character_limit] + "\n... [truncated]"
-        print(f"\n[AgentTeam:{self.name}] {label}\n{text}\n")
+        logger.info(f"\n[AgentTeam:{self.name}] {label}\n{text}\n")
 
     def _delegation_prompt(
         self,

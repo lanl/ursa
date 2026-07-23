@@ -57,4 +57,4 @@ python -m pip install "ursa-ai[dashboard]"
 
 ## Next step
 
-Continue with [Getting Started - CLI](../getting-started/cli.md).
+Continue with [Getting Started - CLI][getting-started-cli].

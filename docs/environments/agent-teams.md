@@ -32,7 +32,7 @@ Good fits include:
 - building reusable named specialists that share a workspace and accumulate state.
 
 A team is less suitable when you want several fully independent solutions before
-comparison. For that, use an [Agent Symposium](agent-symposia.md).
+comparison. For that, use an [Agent Symposium][agent-symposia].
 
 ## What happens during a team run
 
@@ -152,7 +152,8 @@ team = AgentTeamEnvironment(
 
 ## Choosing the PI
 
-`ExecutionAgent` is the preferred PI implementation because it accepts the team's
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent] is the preferred
+PI implementation because it accepts the team's
 member-delegation tools during construction. Other tool-capable agents may work if
 they expose an `add_tool(...)` method. If the configured PI cannot accept
 delegation tools, team construction raises a `TypeError`.

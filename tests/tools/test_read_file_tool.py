@@ -40,19 +40,23 @@ def test_read_file_reads_text_from_workspace(
     )
 
     assert result == "sample text"
-    assert recorder.events == [
-        (
-            "ursa_agent_progress",
-            {
-                "tool": "read_file",
-                "tool_call_id": "read-file-call",
-                "stage": "read",
-                "message": "Reading file",
-                "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
-                "path": str(target),
-            },
-        )
-    ]
+    assert len(recorder.events) == 2
+    _, started = recorder.events[0]
+    assert started["phase"] == "start"
+    assert started["message"] == "Reading file"
+    _, finished = recorder.events[1]
+    assert finished["phase"] == "end"
+    assert finished["message"] == "File read"
+    assert finished["artifact"] == {
+        "content": str(target),
+        "mime_type": "application/vnd.ursa.file-reference",
+        "metadata": {
+            "title": "File read",
+            "path": str(target),
+            "content_mime_type": "text/plain",
+        },
+    }
+    assert isinstance(finished["elapsed_ms"], float)
 
 
 def test_read_file_uses_pdf_reader(

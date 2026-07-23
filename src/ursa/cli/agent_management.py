@@ -290,18 +290,18 @@ def _import_checkpoint_db(
         shutil.rmtree(dst, ignore_errors=True)
         raise
 
-    print(
+    print(  # noqa: T201
         f"Imported checkpoint database as agent '{final_name}' into group '{group_name}'"
     )
-    print(f"Source database: {db_file}")
-    print(f"Destination: {dst}")
-    print(f"Checkpoint: {checkpoint_path}")
+    print(f"Source database: {db_file}")  # noqa: T201
+    print(f"Destination: {dst}")  # noqa: T201
+    print(f"Checkpoint: {checkpoint_path}")  # noqa: T201
 
 
 def list_agents(group_name: str = "default") -> None:
     group_dir = ensure_group_dir(group_name)
     for path in sorted(p for p in group_dir.iterdir() if p.is_dir()):
-        print(path.name)
+        print(path.name)  # noqa: T201
 
 
 def show_agent(agent_name: str, group_name: str = "default") -> None:
@@ -311,16 +311,16 @@ def show_agent(agent_name: str, group_name: str = "default") -> None:
             f"Agent does not exist: {agent_name} in group {group_name}"
         )
 
-    print(f"name: {path.name}")
-    print(f"group: {group_name}")
-    print(f"path: {path}")
+    print(f"name: {path.name}")  # noqa: T201
+    print(f"group: {group_name}")  # noqa: T201
+    print(f"path: {path}")  # noqa: T201
 
     entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name))
     if entries:
-        print("contents:")
+        print("contents:")  # noqa: T201
         for entry in entries:
             kind = "dir" if entry.is_dir() else "file"
-            print(f"  - [{kind}] {entry.name}")
+            print(f"  - [{kind}] {entry.name}")  # noqa: T201
 
 
 def delete_agent(agent_name: str, group_name: str = "default") -> None:
@@ -331,8 +331,8 @@ def delete_agent(agent_name: str, group_name: str = "default") -> None:
         )
 
     shutil.rmtree(path)
-    print(f"Deleted agent '{agent_name}' from group '{group_name}'")
-    print(f"Path: {path}")
+    print(f"Deleted agent '{agent_name}' from group '{group_name}'")  # noqa: T201
+    print(f"Path: {path}")  # noqa: T201
 
 
 def save_agent(agent_name: str, group_name: str = "default") -> None:
@@ -346,9 +346,9 @@ def save_agent(agent_name: str, group_name: str = "default") -> None:
     checkpoint_name = f"{validate_agent_name(agent_name)}.{timestamp}"
     dst = src.parent / checkpoint_name
     _copy_directory(src, dst)
-    print(f"Saved agent checkpoint: {checkpoint_name}")
-    print(f"Source: {src}")
-    print(f"Checkpoint: {dst}")
+    print(f"Saved agent checkpoint: {checkpoint_name}")  # noqa: T201
+    print(f"Source: {src}")  # noqa: T201
+    print(f"Checkpoint: {dst}")  # noqa: T201
 
 
 def copy_agent(
@@ -366,9 +366,9 @@ def copy_agent(
     dst_group = ensure_group_dir(group_name)
     dst = dst_group / validate_agent_name(new_agent_name)
     _copy_directory(src, dst)
-    print(f"Copied agent '{source_agent_name}' to '{new_agent_name}'")
-    print(f"Source: {src}")
-    print(f"Destination: {dst}")
+    print(f"Copied agent '{source_agent_name}' to '{new_agent_name}'")  # noqa: T201
+    print(f"Source: {src}")  # noqa: T201
+    print(f"Destination: {dst}")  # noqa: T201
 
 
 def share_agent(
@@ -414,7 +414,7 @@ def share_agent(
         with tarfile.open(archive_path, "w:gz") as tar:
             tar.add(export_root, arcname=export_root.name)
 
-    print(f"Created shared agent archive: {archive_path}")
+    print(f"Created shared agent archive: {archive_path}")  # noqa: T201
 
 
 def import_agent(
@@ -456,6 +456,6 @@ def import_agent(
 
         shutil.copytree(src_root, dst)
 
-    print(f"Imported shared agent '{final_name}' into group '{group_name}'")
-    print(f"Source archive: {archive_file}")
-    print(f"Destination: {dst}")
+    print(f"Imported shared agent '{final_name}' into group '{group_name}'")  # noqa: T201
+    print(f"Source archive: {archive_file}")  # noqa: T201
+    print(f"Destination: {dst}")  # noqa: T201

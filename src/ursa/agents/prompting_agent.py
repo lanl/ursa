@@ -3,6 +3,7 @@ from typing import Annotated, Literal, TypedDict, cast
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END
 from langgraph.graph.message import add_messages
 
@@ -193,9 +194,13 @@ class PromptingAgent(BaseAgent[PromptingState]):
         """No-op entry node used to route approval before invoking the LLM."""
         return {}
 
-    def proposal_node(self, state: PromptingState) -> PromptingState:
+    def proposal_node(
+        self,
+        state: PromptingState,
+        config: RunnableConfig,
+    ) -> PromptingState:
         """Generate or revise a downstream-agent prompt."""
-        print("PromptingAgent: refining prompt . . .")
+        self.events(config).emit("Refining prompt", stage="refine_prompt")
 
         new_state, full_overwrite = self.prepare_messages_context(
             state,
@@ -226,7 +231,11 @@ class PromptingAgent(BaseAgent[PromptingState]):
             extra={"prompt": proposed_prompt, "approved": False},
         )
 
-    def approval_node(self, state: PromptingState) -> PromptingState:
+    def approval_node(
+        self,
+        state: PromptingState,
+        config: RunnableConfig,
+    ) -> PromptingState:
         """Record human approval of the current prompt.
 
         Human review happens outside the graph: the user either invokes the agent
@@ -234,7 +243,7 @@ class PromptingAgent(BaseAgent[PromptingState]):
         clear approval phrase, causing the existing prompt to be finalized.
         """
         prompt = state.get("prompt", "")
-        print("PromptingAgent: prompt approved")
+        self.events(config).emit("Prompt approved", stage="approve_prompt")
         return {
             "prompt": prompt,
             "approved": True,

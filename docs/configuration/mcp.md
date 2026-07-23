@@ -2,7 +2,8 @@
 
 URSA can connect to external MCP servers and can also run as an MCP server itself.
 
-This page covers configuring external MCP servers for URSA to use. To serve URSA over MCP, see [Getting Started - MCP Server](../getting-started/mcp-server.md).
+This page covers configuring external MCP servers for URSA to use. To serve
+URSA over MCP, see [Getting Started - MCP Server][getting-started-mcp-server].
 
 ## External stdio MCP server
 
@@ -37,4 +38,4 @@ ursa --config config.yaml
 
 MCP servers can expose powerful tools. Only connect MCP servers that you trust, and prefer dedicated workspaces and endpoint allowlists for sensitive workflows.
 
-See [Sandboxing and information control](../best-practices/sandboxing.md).
+See [Sandboxing and information control][sandboxing-and-information-control].

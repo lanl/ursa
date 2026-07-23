@@ -1,3 +1,4 @@
+import difflib
 import os
 import time
 from pathlib import Path
@@ -8,6 +9,7 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_file
+from ursa.util.rendering import event_artifact, file_artifact
 from ursa.util.types import (
     AsciiStr,
     AsciiValidationError,
@@ -76,10 +78,11 @@ def _write_code_file(
             error="Failed to write file",
             filename=filename,
             path=str(code_file),
-        ):
+        ) as span:
             code_file.parent.mkdir(parents=True, exist_ok=True)
             with open(code_file, "w", encoding="utf-8") as f:
                 f.write(code)
+            span.update(artifact=file_artifact(code_file, title="File written"))
     except OSError as exc:
         return f"Failed to write {filename}: {exc}"
     if (store := runtime.store) is not None:
@@ -334,6 +337,15 @@ def edit_code(
         return f"No changes made to {filename}: 'old_code' not found in file."
 
     updated = content.replace(old_code_clean, new_code_clean, 1)
+    diff = "\n".join(
+        difflib.unified_diff(
+            content.splitlines(),
+            updated.splitlines(),
+            fromfile=f"{filename} (original)",
+            tofile=f"{filename} (modified)",
+            lineterm="",
+        )
+    )
 
     try:
         with (
@@ -344,10 +356,20 @@ def edit_code(
                 error="Failed to edit file",
                 filename=filename,
                 path=str(code_file),
-            ),
+            ) as span,
             open(code_file, "w", encoding="utf-8") as f,
         ):
             f.write(updated)
+            span.update(
+                artifact=event_artifact(
+                    diff,
+                    "text/x-diff",
+                    metadata={
+                        "title": "Edit diff",
+                        "path": str(code_file),
+                    },
+                )
+            )
     except OSError as exc:
         return f"Failed to edit {filename}: {exc}"
 

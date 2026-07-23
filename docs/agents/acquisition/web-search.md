@@ -1,10 +1,14 @@
 # WebSearchAgent Documentation
 
-`WebSearchAgent` is an acquisition agent for open-web research. It subclasses `BaseAcquisitionAgent`, so it uses the same acquire-then-summarize/RAG graph as `ArxivAgent` and `OSTIAgent`.
+[`WebSearchAgent`][ursa.agents.acquisition_agents.WebSearchAgent] is an
+acquisition agent for open-web research. It subclasses
+[`BaseAcquisitionAgent`][ursa.agents.acquisition_agents.BaseAcquisitionAgent],
+so it uses the same acquire-then-summarize/RAG graph as ArxivAgent and
+OSTIAgent.
 
 `WebSearchAgent` uses DDGS search, retrieves HTML or PDF content from result URLs, extracts readable text, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.
 
-See also: [Acquisition Agents](acquisition_agents.md).
+See also: [Acquisition Agents][acquisition-agents].
 
 ## Basic usage
 

@@ -1,6 +1,9 @@
 # Using ArxivAgent and ExecutionAgent for Astrophysics Research
 
-This guide demonstrates how to use the `ArxivAgent` and `ExecutionAgent` together to research neutron star properties and generate a comprehensive analysis.
+This guide demonstrates how to use
+[`ArxivAgent`][ursa.agents.acquisition_agents.ArxivAgent] and
+[`ExecutionAgent`][ursa.agents.execution_agent.ExecutionAgent] together to
+research neutron star properties and generate a comprehensive analysis.
 
 ## Overview
 

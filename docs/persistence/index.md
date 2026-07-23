@@ -34,6 +34,6 @@ Persistent RAG collections let you ingest documents once and query them later di
 
 - [Named agents](named-agents.md)
 - [Groups and endpoint security](groups-and-security.md)
-- [RAG collections](rag.md)
-- [Checkpoints, sharing, import, and export](checkpoints-and-sharing.md)
-- [Quick reference](quick-reference.md)
+- [RAG collections][persistent-rag-collections]
+- [Checkpoints, sharing, import, and export][checkpoints-sharing-import-and-export]
+- [Quick reference][persistence-quick-reference]

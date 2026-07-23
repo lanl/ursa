@@ -118,16 +118,18 @@ line-length = 80
 preview = true
 
 [tool.ruff.lint]
-extend-select = ["I", "TID", "UP006", "UP007"]  # W505 (doc-line-too-long); D (pydocstyle)
+extend-select = ["I", "TID", "UP006", "UP007", "T201"]  # W505 (doc-line-too-long); D (pydocstyle);
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing_extensions" = { msg = "Use standard typing features instead of `typing_extensions`." }
+"rich" = { msg = "Rich is restricted to presentation modules; use logging or events instead." }
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]
-"tests/**/*.py" = ["D"]
+"tests/**/*.py" = ["D", "T201"]
+"examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
@@ -150,6 +152,7 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-xdist",
     "scikit-optimize>=0.10.2",
+    "ruff==0.12.10",
 ]
 docs = [
     "mkdocs>=1.6.1",

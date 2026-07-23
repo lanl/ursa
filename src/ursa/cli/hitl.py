@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 import asyncio
 import logging
 import os
@@ -450,7 +452,7 @@ class UrsaRepl(Cmd):
                 self.cmdloop()
                 break  # Allows breaking out of loop if EOF is triggered.
             except KeyboardInterrupt:
-                print(
+                print(  # noqa: T201
                     "\n(Interrupted) Press Ctrl+D to exit or continue typing."
                 )
 

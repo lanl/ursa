@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Sequence
 
@@ -14,6 +15,8 @@ from ursa.rag.persistence import (
     normalize_rag_tool_names,
     validate_rag_group_name,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def rag_tool_name(rag_agent_name: str) -> str:
@@ -46,7 +49,7 @@ def build_rag_tool(
 
     def query_rag(query: str) -> str:
         """Query the persisted RAG collection and return its summary."""
-        print(f"[Request to {name}]: {query}")
+        logger.info(f"[Request to {name}]: {query}")
         result = rag_agent.invoke({"context": query, "query": query})
         summary = result.get("summary") if isinstance(result, dict) else None
         if summary:

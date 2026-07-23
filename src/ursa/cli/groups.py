@@ -130,7 +130,7 @@ def list_groups() -> None:
     _ensure_group_subdirs("default")
 
     for path in sorted(p for p in URSA_CACHE_DIR.iterdir() if p.is_dir()):
-        print(path.name)
+        print(path.name)  # noqa: T201
 
 
 def create_group(group_name: str, config_file: Path) -> None:
@@ -150,8 +150,8 @@ def create_group(group_name: str, config_file: Path) -> None:
     _ensure_group_subdirs(group_name)
     destination = group_dir / GROUP_CONFIG_FILENAME
     shutil.copy2(config_file, destination)
-    print(f"Created group '{group_name}' at {group_dir}")
-    print(f"Stored group config at {destination}")
+    print(f"Created group '{group_name}' at {group_dir}")  # noqa: T201
+    print(f"Stored group config at {destination}")  # noqa: T201
 
 
 def delete_group(group_name: str) -> None:
@@ -164,7 +164,7 @@ def delete_group(group_name: str) -> None:
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
     shutil.rmtree(group_dir)
-    print(f"Deleted group '{group_name}'")
+    print(f"Deleted group '{group_name}'")  # noqa: T201
 
 
 def show_group(group_name: str) -> None:
@@ -174,16 +174,16 @@ def show_group(group_name: str) -> None:
     if not group_dir.exists() or not group_dir.is_dir():
         raise FileNotFoundError(f"Group does not exist: {group_name}")
 
-    print(f"name: {group_name}")
-    print(f"path: {group_dir}")
+    print(f"name: {group_name}")  # noqa: T201
+    print(f"path: {group_dir}")  # noqa: T201
     entries = sorted(
         group_dir.iterdir(), key=lambda p: (not p.is_dir(), p.name)
     )
     if entries:
-        print("contents:")
+        print("contents:")  # noqa: T201
         for entry in entries:
             kind = "dir" if entry.is_dir() else "file"
-            print(f"  - [{kind}] {entry.name}")
+            print(f"  - [{kind}] {entry.name}")  # noqa: T201
 
 
 def update_group(group_name: str, config_file: Path) -> None:
@@ -197,4 +197,4 @@ def update_group(group_name: str, config_file: Path) -> None:
 
     destination = _group_config_file(group_name)
     shutil.copy2(config_file, destination)
-    print(f"Updated group '{group_name}' config at {destination}")
+    print(f"Updated group '{group_name}' config at {destination}")  # noqa: T201

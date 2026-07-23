@@ -5,9 +5,11 @@ URSA supports MCP in two directions:
 1. URSA can run as an MCP server.
 2. URSA can connect to external MCP servers configured in YAML.
 
-For a guided first run, see [Getting Started - MCP Server](../getting-started/mcp-server.md).
+For a guided first run, see
+[Getting Started - MCP Server][getting-started-mcp-server].
 
-For external server configuration, see [MCP server configuration](../configuration/mcp.md).
+For external server configuration, see
+[MCP server configuration][mcp-server-configuration].
 
 ## URSA MCP server command
 

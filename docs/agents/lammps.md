@@ -1,6 +1,7 @@
 # LammpsAgent Documentation
 
-`LammpsAgent` is a class that helps set up and run a LAMMPS simulation workflow. At the highest level, it can:
+[`LammpsAgent`][ursa.agents.lammps_agent.LammpsAgent] helps set up and run a
+LAMMPS simulation workflow. At the highest level, it can:
 
 - discover candidate interatomic potentials from the NIST database for a set of elements,
 - summarize and choose a potential for the simulation task at hand,
@@ -196,4 +197,3 @@ Inside `workspace/`:
   - `Rationale.txt` — rationale for the selected potential
 - downloaded potential files (from atomman or copied from user paths)
 - copied `data_file` (if provided)
-

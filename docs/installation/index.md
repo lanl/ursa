@@ -15,8 +15,9 @@ URSA requires Python 3.11 or newer. For most users, Python 3.12 or newer is a go
 
 ## Choose an installation path
 
-- [Install with uv](uv.md) — recommended for most new URSA projects.
-- [Install with pip](pip.md) — useful if you already use `venv`, Conda, or another Python environment manager.
+- [Install with uv][install-with-uv] — recommended for most new URSA projects.
+- [Install with pip][install-with-pip] — useful if you already use `venv`,
+  Conda, or another Python environment manager.
 
 ## Optional extras
 
@@ -48,4 +49,5 @@ ursa-dashboard --help
 
 ## Next steps
 
-After installation, create a reusable model configuration file and run the [CLI getting-started guide](../getting-started/cli.md).
+After installation, create a reusable model configuration file and run the
+[CLI getting-started guide][getting-started-cli].
