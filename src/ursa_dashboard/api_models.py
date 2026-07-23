@@ -22,6 +22,7 @@ class EnvironmentRunCreateRequest(BaseModel):
     environment_type: Literal["agent_team", "agent_symposium"]
     config_yaml: str = Field(min_length=1, max_length=500_000)
     prompt: str = Field(min_length=1, max_length=500_000)
+    run_id: str | None = Field(default=None, min_length=1, max_length=64)
     replace_existing: bool = False
 
 

@@ -234,6 +234,7 @@ def render_environment_runs_page(
       <header class='modal-head'><div><h2 id='environmentModalTitle'>New team</h2><p id='environmentModalCopy'>Configure the team and the task it should complete.</p></div><button class='icon-btn' id='closeEnvironmentModal' type='button' aria-label='Close dialog'><svg class='icon' viewBox='0 0 24 24' aria-hidden='true'><path d='m6 6 12 12M18 6 6 18'/></svg></button></header>
       <div class='modal-body'>
         <div class='field'><label for='environmentYaml'>Environment YAML</label><div class='field-help'>Use built-in URSA agent classes. The dashboard group is applied automatically.</div><textarea class='input' id='environmentYaml' spellcheck='false'></textarea></div>
+        <div class='field'><label for='environmentRunId'>Run ID <span class='muted'>(optional)</span></label><div class='field-help'>Give follow-on runs a descriptive unique ID. Leave blank to generate one automatically; the environment name continues to select the shared workspace.</div><input class='input' id='environmentRunId' maxlength='64' placeholder='For example: research-team-follow-up-2' /></div>
         <div class='field'><label for='environmentPrompt'>Task prompt</label><textarea class='input' id='environmentPrompt' placeholder='Describe the problem, desired output, constraints, and success criteria.'></textarea></div>
         <label class='replace-row'><input id='replaceExisting' type='checkbox' />Replace an existing saved definition with the same name. Existing run history is not changed.</label>
         <div class='form-message' id='environmentFormMessage' role='status' aria-live='polite'></div>
@@ -247,6 +248,7 @@ def render_environment_runs_page(
     const SYMPOSIUM_YAML = {symposium_json};
     const modal = document.getElementById('environmentModal');
     const yamlInput = document.getElementById('environmentYaml');
+    const runIdInput = document.getElementById('environmentRunId');
     const promptInput = document.getElementById('environmentPrompt');
     const message = document.getElementById('environmentFormMessage');
     const validateBtn = document.getElementById('validateEnvironment');
@@ -262,7 +264,7 @@ def render_environment_runs_page(
       if (!response.ok) {{ const detail = Array.isArray(data.detail) ? data.detail.map(item => item.msg || String(item)).join('; ') : data.detail; throw new Error(detail || `Request failed (${{response.status}})`); }}
       return data;
     }}
-    function payload() {{ return {{environment_type:environmentType, config_yaml:yamlInput.value, prompt:promptInput.value, replace_existing:document.getElementById('replaceExisting').checked}}; }}
+    function payload() {{ return {{environment_type:environmentType, config_yaml:yamlInput.value, prompt:promptInput.value, run_id:runIdInput.value.trim() || null, replace_existing:document.getElementById('replaceExisting').checked}}; }}
     function openModal(type) {{
       environmentType = type; priorFocus = document.activeElement;
       const symposium = type === 'agent_symposium';
@@ -270,7 +272,7 @@ def render_environment_runs_page(
       document.getElementById('environmentModalCopy').textContent = symposium ? 'Configure independent participants, peer review, and the task.' : 'Configure the team, its members, and the task it should complete.';
       launchBtn.textContent = symposium ? 'Launch symposium' : 'Launch team';
       yamlInput.value = symposium ? SYMPOSIUM_YAML : TEAM_YAML;
-      promptInput.value = ''; document.getElementById('replaceExisting').checked = false; setMessage('');
+      runIdInput.value = ''; promptInput.value = ''; document.getElementById('replaceExisting').checked = false; setMessage('');
       modal.hidden = false; document.body.style.overflow = 'hidden'; yamlInput.focus();
     }}
     function closeModal() {{ modal.hidden = true; document.body.style.overflow = ''; setMessage(''); if (priorFocus) priorFocus.focus(); }}

@@ -103,6 +103,14 @@ class _InFlight:
     cancel_requested: bool = False
 
 
+class EnvironmentDefinitionExistsError(FileExistsError):
+    pass
+
+
+class EnvironmentRunExistsError(FileExistsError):
+    pass
+
+
 def _allow_custom_classes() -> bool:
     return str(
         os.environ.get("URSA_DASHBOARD_ALLOW_CUSTOM_ENVIRONMENT_CLASSES", "")
@@ -361,6 +369,7 @@ class EnvironmentRunManager:
         prompt: str,
         llm: dict[str, Any],
         runner: dict[str, Any],
+        run_id: str | None = None,
         replace_existing: bool = False,
     ) -> dict[str, Any]:
         name = launch.config.name
@@ -369,17 +378,42 @@ class EnvironmentRunManager:
             if launch.environment_type == "agent_team"
             else symposium_cache_dir(self.group, name) / "symposium.yaml"
         )
-        if definition_path.exists() and not replace_existing:
-            raise FileExistsError(definition_path)
+        definition_matches = False
+        if definition_path.exists():
+            with contextlib.suppress(Exception):
+                existing = yaml.safe_load(
+                    definition_path.read_text(encoding="utf-8")
+                )
+                if isinstance(existing, Mapping):
+                    existing_mapping = dict(existing)
+                    existing_mapping["group"] = self.group
+                    existing_config = (
+                        AgentTeamConfig.from_mapping(existing_mapping)
+                        if launch.environment_type == "agent_team"
+                        else AgentSymposiumConfig.from_mapping(existing_mapping)
+                    )
+                    definition_matches = (
+                        _plain(existing_config) == launch.config_mapping
+                    )
+            if not replace_existing and not definition_matches:
+                raise EnvironmentDefinitionExistsError(definition_path)
         if launch.environment_type == "agent_team":
-            save_team_config(launch.config, definition_path)
+            if replace_existing or not definition_path.exists():
+                save_team_config(launch.config, definition_path)
             class_name = "AgentTeamEnvironment"
         else:
-            save_symposium_config(launch.config, definition_path)
+            if replace_existing or not definition_path.exists():
+                save_symposium_config(launch.config, definition_path)
             class_name = "AgentSymposiumEnvironment"
 
-        run_id = new_run_id()
-        paths = get_environment_run_paths(self.group, run_id)
+        effective_run_id = (
+            _validate_simple_name(run_id, label="Run ID")
+            if run_id is not None
+            else new_run_id()
+        )
+        paths = get_environment_run_paths(self.group, effective_run_id)
+        if paths.run_dir.exists():
+            raise EnvironmentRunExistsError(paths.run_dir)
         paths.run_dir.mkdir(parents=True, exist_ok=False)
         paths.artifacts_dir.mkdir()
         paths.logs_dir.mkdir()
@@ -410,14 +444,14 @@ class EnvironmentRunManager:
             encoding="utf-8",
         )
         recorder = EnvironmentEventRecorder(
-            run_id=run_id,
+            run_id=effective_run_id,
             group=self.group,
             environment_name=name,
             environment_type=class_name,
         )
         recorder.write_manifest(status="queued", task=prompt)
         self._update_manifest(
-            run_id,
+            effective_run_id,
             {
                 "launch_source": "dashboard",
                 "definition_path": str(definition_path),
@@ -425,8 +459,8 @@ class EnvironmentRunManager:
                 "task_path": "task.json",
             },
         )
-        await self._queue.put(run_id)
-        return read_environment_run_manifest(self.group, run_id)
+        await self._queue.put(effective_run_id)
+        return read_environment_run_manifest(self.group, effective_run_id)
 
     async def cancel(self, run_id: str, *, reason: str) -> dict[str, Any]:
         _validate_simple_name(run_id, label="Run ID")

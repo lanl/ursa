@@ -67,8 +67,10 @@ be served over HTTPS.
 
 Open **Environment runs** from the dashboard sidebar. The page provides **New
 team** and **New symposium** actions that let you edit a starter YAML definition,
-enter the task prompt, validate the configuration, and launch it directly from
-the browser.
+optionally choose a unique Run ID, enter the task prompt, validate the
+configuration, and launch it directly from the browser. Reuse the same
+environment name with a new Run ID for follow-on work that should retain the
+team or symposium workspace while creating a separate replay.
 
 The run is queued in the background and appears on the page immediately. Open it
 to follow the environment graph and work timeline live, inspect the final result,

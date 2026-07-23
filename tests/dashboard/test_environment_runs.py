@@ -191,6 +191,7 @@ def test_dashboard_can_validate_create_and_replace_environment_run(
         "environment_type": "agent_team",
         "config_yaml": _team_yaml("api_team"),
         "prompt": "Analyze the supplied evidence.",
+        "run_id": "api-team-initial",
     }
     with TestClient(
         create_app(credential_store=MemoryCredentialStore())
@@ -208,6 +209,7 @@ def test_dashboard_can_validate_create_and_replace_environment_run(
         created = client.post("/environment-runs", json=payload)
         assert created.status_code == 201
         record = created.json()
+        assert record["run_id"] == "api-team-initial"
         assert record["status"] == "queued"
         assert record["group"] == "default"
         assert created.headers["location"].endswith(record["run_id"])
@@ -232,10 +234,37 @@ def test_dashboard_can_validate_create_and_replace_environment_run(
             / "team.yaml"
         ).exists()
 
-        duplicate = client.post("/environment-runs", json=payload)
-        assert duplicate.status_code == 409
+        follow_up = client.post(
+            "/environment-runs",
+            json={**payload, "run_id": "api-team-follow-up"},
+        )
+        assert follow_up.status_code == 201
+        assert follow_up.json()["run_id"] == "api-team-follow-up"
+
+        duplicate_run_id = client.post("/environment-runs", json=payload)
+        assert duplicate_run_id.status_code == 409
+        assert "Run ID already exists" in duplicate_run_id.json()["detail"]
+
+        invalid_run_id = client.post(
+            "/environment-runs", json={**payload, "run_id": "../outside"}
+        )
+        assert invalid_run_id.status_code == 400
+        assert "Run ID" in invalid_run_id.json()["detail"]
+
+        changed_payload = {
+            **payload,
+            "run_id": "api-team-reconfigured",
+            "config_yaml": payload["config_yaml"].replace(
+                "role: Analyst", "role: Senior analyst"
+            ),
+        }
+        duplicate_definition = client.post(
+            "/environment-runs", json=changed_payload
+        )
+        assert duplicate_definition.status_code == 409
         replaced = client.post(
-            "/environment-runs", json={**payload, "replace_existing": True}
+            "/environment-runs",
+            json={**changed_payload, "replace_existing": True},
         )
         assert replaced.status_code == 201
 
@@ -244,6 +273,7 @@ def test_dashboard_can_validate_create_and_replace_environment_run(
         assert "New symposium" in page.text
         assert "environmentModal" in page.text
         assert "Search environment runs" in page.text
+        assert "Run ID" in page.text
 
 
 async def test_environment_run_manager_cancels_queued_run(

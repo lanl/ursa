@@ -107,6 +107,8 @@ from .credentials import (
 from .environment_run_manager import (
     SYMPOSIUM_STARTER_YAML,
     TEAM_STARTER_YAML,
+    EnvironmentDefinitionExistsError,
+    EnvironmentRunExistsError,
     EnvironmentRunManager,
     validate_environment_launch,
 )
@@ -5144,14 +5146,23 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 prompt=req.prompt,
                 llm=llm,
                 runner=runner,
+                run_id=req.run_id,
                 replace_existing=req.replace_existing,
             )
-        except FileExistsError as exc:
+        except EnvironmentDefinitionExistsError as exc:
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "An environment definition with this name already exists. "
                     "Confirm replacement to update it and launch a new run."
+                ),
+            ) from exc
+        except EnvironmentRunExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An environment run with this Run ID already exists. "
+                    "Choose a new Run ID to preserve the earlier replay."
                 ),
             ) from exc
         except (
