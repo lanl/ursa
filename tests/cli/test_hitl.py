@@ -101,6 +101,56 @@ async def test_agents_use_configured_workspace(ursa_config, tmp_path):
     assert agent._agent.workspace == workspace
 
 
+@pytest.mark.asyncio
+async def test_unnamed_cli_agent_does_not_create_checkpointer(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    workspace = tmp_path / "ephemeral-workspace"
+    hitl = HITL(UrsaConfig(workspace=workspace))
+
+    async def unexpected_checkpointer(_checkpoint_path):
+        pytest.fail("Unnamed CLI sessions must not create a checkpointer")
+
+    monkeypatch.setattr(hitl, "_get_checkpointer", unexpected_checkpointer)
+
+    agent = await hitl.get_agent("chat")
+
+    assert agent._agent is not None
+    assert agent._agent.checkpointer is None
+    assert not (workspace / "db" / "checkpointer.db").exists()
+
+
+@pytest.mark.asyncio
+async def test_named_cli_agent_still_gets_async_checkpointer(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    workspace = tmp_path / "workspace"
+    hitl = HITL(UrsaConfig(workspace=workspace, agent_name="persistent-agent"))
+    persistent_den = tmp_path / "persistent-agent-den"
+    expected_checkpointer = object()
+    requested_paths = []
+
+    class DummyPersistentAgent:
+        def __init__(self, **_kwargs):
+            self.den = persistent_den
+            self.checkpointer = None
+
+    async def fake_get_checkpointer(checkpoint_path):
+        requested_paths.append(checkpoint_path)
+        return expected_checkpointer
+
+    hitl.agents["chat"] = AgentHITL(agent_class=DummyPersistentAgent)
+    monkeypatch.setattr(hitl, "_get_checkpointer", fake_get_checkpointer)
+
+    agent = await hitl.get_agent("chat")
+
+    assert agent._agent is not None
+    assert requested_paths == [persistent_den]
+    assert agent._agent.checkpointer is expected_checkpointer
+
+
 def _stub_hitl_dependencies(monkeypatch):
     fake_llm = MagicMock(name="llm")
     fake_embedding = MagicMock(name="embedding")
