@@ -45,4 +45,4 @@ final_lammps_state = wf.invoke(
 if final_lammps_state.get("run_returncode") == 0:
     console.print(
         "\n[green]LAMMPS Workflow completed successfully.[/green] Exiting....."
-    )
+    )  # noqa: T201
