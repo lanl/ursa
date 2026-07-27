@@ -9,6 +9,7 @@ from ursa import security
 from ursa_dashboard.app import create_app
 from ursa_dashboard.credentials import MemoryCredentialStore
 from ursa_dashboard.sessions import create_session, read_session, session_paths
+from ursa_dashboard.storage import write_json
 
 
 @pytest.fixture
@@ -86,11 +87,22 @@ def test_unconfigured_legacy_session_is_guarded_until_workspace_is_set(
     dashboard_root = tmp_path / "ursa-cache" / "default" / "dashboard"
     session = create_session(dashboard_root, agent_id="chat_agent")
     session_id = session["session_id"]
+    paths = session_paths(dashboard_root, session_id)
+    paths.workspace_dir.mkdir(parents=True)
+    (paths.workspace_dir / "previous-work.txt").write_text(
+        "keep me", encoding="utf-8"
+    )
+    session.pop("workspace_path")
+    session.pop("workspace_mode")
+    write_json(paths.meta_path, session)
 
     info = test_client.get(f"/sessions/{session_id}/workspace")
     assert info.status_code == 200
     assert info.json()["configured"] is False
     assert info.json()["workspace_path"] is None
+    assert info.json()["default_workspace_path"] == str(
+        paths.workspace_dir.resolve()
+    )
 
     blocked = test_client.post(
         f"/sessions/{session_id}/message", json={"text": "hello"}
@@ -100,11 +112,16 @@ def test_unconfigured_legacy_session_is_guarded_until_workspace_is_set(
     assert test_client.get(f"/sessions/{session_id}/messages").json() == []
 
     configured = test_client.patch(
-        f"/sessions/{session_id}/workspace", json={"mode": "temporary"}
+        f"/sessions/{session_id}/workspace",
+        json={"mode": "folder", "path": str(paths.workspace_dir)},
     )
     assert configured.status_code == 200
-    assert configured.json()["workspace_mode"] == "temporary"
+    assert configured.json()["workspace_mode"] == "folder"
     assert configured.json()["configured"] is True
+    assert configured.json()["default_workspace_path"] is None
+    assert (paths.workspace_dir / "previous-work.txt").read_text(
+        encoding="utf-8"
+    ) == "keep me"
 
 
 def test_replacing_temporary_workspace_removes_it(client) -> None:
@@ -157,4 +174,5 @@ def test_dashboard_contains_workspace_choice_dialog(client) -> None:
     assert 'id="workspaceChoiceModal"' in html
     assert "Use temporary workspace" in html
     assert "chooseWorkspaceSelection" in html
+    assert "state.workspaceInfo?.default_workspace_path" in html
     assert "dashboard-managed default workspace" not in html

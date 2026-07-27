@@ -74,7 +74,9 @@ the session is deleted or the dashboard stops.
 The dashboard no longer creates a hidden default session workspace under
 `~/.cache/ursa`. Older sessions without an explicit workspace remain available,
 but the dashboard prompts for a folder or temporary workspace before their next
-run. A user-selected folder is never deleted when its dashboard session is
+run. When an older session still has its former UUID-named cached workspace, the
+folder field is prefilled with that path so existing work remains easy to
+recover. A user-selected folder is never deleted when its dashboard session is
 deleted.
 
 ## Launch an agent team or symposium

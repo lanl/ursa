@@ -127,6 +127,7 @@ from .sessions import (
     build_prompt_from_messages,
     create_temporary_workspace,
     delete_temporary_workspace,
+    session_paths,
 )
 from .sessions import (
     create_session as session_create_session,
@@ -1740,10 +1741,27 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             )
         return workspace
 
+    def _legacy_session_workspace_suggestion(
+        session_id: str, sess: dict[str, Any]
+    ) -> Path | None:
+        """Return the former cached workspace only for pre-migration sessions."""
+
+        if "workspace_path" in sess or "workspace_mode" in sess:
+            return None
+        legacy_workspace = session_paths(
+            rm.dashboard_root, session_id
+        ).workspace_dir.resolve()
+        if legacy_workspace.is_dir():
+            return legacy_workspace
+        return None
+
     def _workspace_response(
         session_id: str, sess: dict[str, Any], files: list[dict[str, Any]]
     ) -> SessionWorkspaceListResponse:
         ws = _session_workspace_dir(session_id, sess)
+        legacy_suggestion = _legacy_session_workspace_suggestion(
+            session_id, sess
+        )
         configured = ws is not None
         mode = str(sess.get("workspace_mode") or "").strip() or None
         if configured and mode not in {"folder", "temporary"}:
@@ -1755,7 +1773,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             "agent_id": str(sess.get("agent_id") or ""),
             "files": files,
             "workspace_path": str(ws) if ws is not None else None,
-            "default_workspace_path": None,
+            "default_workspace_path": (
+                str(legacy_suggestion)
+                if legacy_suggestion is not None
+                else None
+            ),
             "is_default_workspace": False,
             "workspace_mode": mode,
             "configured": configured,
@@ -3621,8 +3643,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!el) return;
     const info = state.workspaceInfo || {};
     if (!state.activeSessionId || !info.workspace_path) {
-      el.textContent = state.activeSessionId ? 'Workspace not configured' : '';
-      el.title = '';
+      const legacyPath = info.default_workspace_path || '';
+      el.textContent = state.activeSessionId
+        ? (legacyPath ? `Workspace not configured · Previous workspace: ${legacyPath}` : 'Workspace not configured')
+        : '';
+      el.title = legacyPath;
       return;
     }
     const prefix = info.workspace_mode === 'temporary' ? 'Temporary workspace' : 'Workspace';
@@ -3975,7 +4000,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
     const selection = await chooseWorkspaceSelection({
       title: state.workspaceInfo?.configured ? 'Change session workspace' : 'Choose a session workspace',
-      currentPath: state.workspaceInfo?.workspace_mode === 'folder' ? (state.workspaceInfo?.workspace_path || '') : '',
+      currentPath: state.workspaceInfo?.workspace_mode === 'folder'
+        ? (state.workspaceInfo?.workspace_path || '')
+        : (state.workspaceInfo?.default_workspace_path || ''),
     });
     if (!selection) return;
     try {
