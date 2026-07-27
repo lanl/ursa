@@ -31,7 +31,7 @@ Adjust commands to match the current project configuration.
 ## Build documentation locally
 
 ```bash
-uv run mkdocs serve
+just docs
 ```
 
 Then open the local URL printed by MkDocs.
@@ -41,6 +41,18 @@ To build once:
 ```bash
 uv run mkdocs build
 ```
+
+Published documentation is versioned with Mike. To preview the versions already
+present on the local `gh-pages` branch, run:
+
+```bash
+uv run mike serve
+```
+
+The documentation workflow publishes `main` after documentation changes land on
+the main branch. Stable `v*` tags publish a version without the leading `v`, move
+the `latest` alias to that release, and make `latest` the default site version.
+Pre-release tags are not published.
 
 ## Documentation style
 

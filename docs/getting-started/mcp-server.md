@@ -2,6 +2,9 @@
 
 URSA can run as a [Model Context Protocol](https://modelcontextprotocol.io/) server so other MCP-compatible clients or agent frameworks can use URSA capabilities.
 
+!!! note
+    This guide assumes basic familiarity with the [Model Context Protocol](https://modelcontextprotocol.io/docs/learn/architecture).
+
 ## Prerequisites
 
 - URSA is installed.
@@ -19,7 +22,6 @@ Create `config.yaml`:
 llm_model:
   model: openai:gpt-5.4
   api_key_env: OPENAI_API_KEY
-
 workspace: ./ursa-mcp-workspace
 ```
 

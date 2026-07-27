@@ -1,10 +1,18 @@
 site_name: URSA
+site_url: https://lanl.github.io/ursa/
 repo_url: https://github.com/lanl/ursa
 
 theme:
   name: material
+  custom_dir: docs/overrides
   logo: assets/favicon.png
   favicon: assets/favicon.png
+
+extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true
 
 markdown_extensions:
   - admonition
