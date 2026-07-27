@@ -512,6 +512,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#choose-a-session-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      Choose a session workspace
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#launch-an-agent-team-or-symposium" class="md-nav__link">
     <span class="md-ellipsis">
       Launch an agent team or symposium
@@ -2088,6 +2097,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#choose-a-session-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      Choose a session workspace
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#launch-an-agent-team-or-symposium" class="md-nav__link">
     <span class="md-ellipsis">
       Launch an agent team or symposium
@@ -2175,6 +2193,19 @@ endpoint host, save the key again to approve its use with that host.</p>
 <p>The raw key is never written to dashboard settings, sessions, run records, or
 worker configuration files. In remote dashboard mode, credential changes must
 be served over HTTPS.</p>
+<h2 id="choose-a-session-workspace">Choose a session workspace<a class="headerlink" href="#choose-a-session-workspace" title="Permanent link">&para;</a></h2>
+<p>Every new dashboard session requires an explicit workspace choice. Select a
+folder you can find and reuse, or choose <strong>Temporary workspace</strong> for disposable
+work. Temporary mode behaves like <code>ursa --workspace tmp</code>: the dashboard creates
+the workspace in the operating system's temporary directory and removes it when
+the session is deleted or the dashboard stops.</p>
+<p>The dashboard no longer creates a hidden default session workspace under
+<code>~/.cache/ursa</code>. Older sessions without an explicit workspace remain available,
+but the dashboard prompts for a folder or temporary workspace before their next
+run. When an older session still has its former UUID-named cached workspace, the
+folder field is prefilled with that path so existing work remains easy to
+recover. A user-selected folder is never deleted when its dashboard session is
+deleted.</p>
 <h2 id="launch-an-agent-team-or-symposium">Launch an agent team or symposium<a class="headerlink" href="#launch-an-agent-team-or-symposium" title="Permanent link">&para;</a></h2>
 <p>Open <strong>Environment runs</strong> from the dashboard sidebar. The page provides <strong>New
 team</strong> and <strong>New symposium</strong> actions that let you edit a starter YAML definition,
