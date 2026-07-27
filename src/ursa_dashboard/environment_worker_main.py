@@ -150,7 +150,7 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        print(trace, file=sys.stderr)
+        print(trace, file=sys.stderr)  # noqa: T201
         return 1
 
 
