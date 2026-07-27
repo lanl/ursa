@@ -65,6 +65,10 @@ from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
 from .api_models import (
     CredentialSetRequest,
     CredentialStatusResponse,
+    EnvironmentConfigValidateRequest,
+    EnvironmentRunCancelRequest,
+    EnvironmentRunCreateRequest,
+    EnvironmentRunRecord,
     ErrorResponse,
     FileMetaResponse,
     RunCancelRequest,
@@ -99,6 +103,14 @@ from .credentials import (
     credential_status,
     credential_target,
     store_api_key,
+)
+from .environment_run_manager import (
+    SYMPOSIUM_STARTER_YAML,
+    TEAM_STARTER_YAML,
+    EnvironmentDefinitionExistsError,
+    EnvironmentRunExistsError,
+    EnvironmentRunManager,
+    validate_environment_launch,
 )
 from .environment_run_ui import (
     render_environment_run_detail_page,
@@ -195,6 +207,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         credential_store=credential_store,
         dashboard_group=dashboard_group,
     )
+    environment_rm = EnvironmentRunManager(
+        group=dashboard_group,
+        credential_store=credential_store,
+    )
     settings_store = SettingsStore(rm.dashboard_root)
     dashboard_config = str(
         os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
@@ -250,6 +266,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 "URSA_DASHBOARD_MODE=remote requires URSA_DASHBOARD_TOKEN"
             )
         await rm.start()
+        await environment_rm.start()
         settings = settings_store.load()
         try:
             enforce_group_base_url_policy(
@@ -273,6 +290,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        await environment_rm.shutdown()
         await rm.shutdown()
 
     # ----------------------------
@@ -5099,6 +5117,88 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         })
         return manifest
 
+    @app.post(
+        "/environment-runs",
+        response_model=EnvironmentRunRecord,
+        status_code=201,
+        dependencies=[Depends(require_auth)],
+    )
+    async def create_environment_run(
+        req: EnvironmentRunCreateRequest,
+        response: Response,
+    ) -> EnvironmentRunRecord:
+        try:
+            launch = validate_environment_launch(
+                req.environment_type,
+                req.config_yaml,
+                group=dashboard_group,
+            )
+            settings = settings_store.load().model_dump(mode="json")
+            llm = settings.get("llm") or {}
+            runner = settings.get("runner") or {}
+            await asyncio.to_thread(
+                environment_rm.validate_credentials,
+                llm=llm,
+                config_mapping=launch.config_mapping,
+            )
+            manifest = await environment_rm.create_run(
+                launch=launch,
+                prompt=req.prompt,
+                llm=llm,
+                runner=runner,
+                run_id=req.run_id,
+                replace_existing=req.replace_existing,
+            )
+        except EnvironmentDefinitionExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An environment definition with this name already exists. "
+                    "Confirm replacement to update it and launch a new run."
+                ),
+            ) from exc
+        except EnvironmentRunExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An environment run with this Run ID already exists. "
+                    "Choose a new Run ID to preserve the earlier replay."
+                ),
+            ) from exc
+        except (
+            CredentialConfigurationError,
+            CredentialStoreError,
+            GroupBaseURLPolicyError,
+            ValueError,
+        ) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        response.headers["Location"] = (
+            f"/ui/environment-runs/{manifest['run_id']}"
+        )
+        return EnvironmentRunRecord.model_validate(manifest)
+
+    @app.post(
+        "/environment-runs/validate",
+        dependencies=[Depends(require_auth)],
+    )
+    async def validate_environment_run(
+        req: EnvironmentConfigValidateRequest,
+    ) -> dict[str, Any]:
+        try:
+            launch = validate_environment_launch(
+                req.environment_type,
+                req.config_yaml,
+                group=dashboard_group,
+            )
+        except (GroupBaseURLPolicyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "environment_type": launch.environment_type,
+            "environment_name": launch.config.name,
+            "group": dashboard_group,
+        }
+
     @app.get("/environment-runs", dependencies=[Depends(require_auth)])
     async def list_environment_runs() -> dict[str, Any]:
         return {
@@ -5114,6 +5214,25 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             raise HTTPException(
                 status_code=404, detail="Run not found"
             ) from exc
+
+    @app.post(
+        "/environment-runs/{run_id}/cancel",
+        response_model=EnvironmentRunRecord,
+        dependencies=[Depends(require_auth)],
+    )
+    async def cancel_environment_run(
+        run_id: str,
+        req: EnvironmentRunCancelRequest,
+    ) -> EnvironmentRunRecord:
+        try:
+            manifest = await environment_rm.cancel(run_id, reason=req.reason)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        except (PermissionError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return EnvironmentRunRecord.model_validate(manifest)
 
     @app.get(
         "/environment-runs/{run_id}/events",
@@ -5248,6 +5367,8 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             render_environment_runs_page(
                 dashboard_group=dashboard_group,
                 runs=runs,
+                team_starter_yaml=TEAM_STARTER_YAML,
+                symposium_starter_yaml=SYMPOSIUM_STARTER_YAML,
             )
         )
 
@@ -5304,16 +5425,13 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         logo_img_style = "" if str(logo_img_src).strip() else "display:none"
 
-        environment_runs_button = ""
-        with contextlib.suppress(Exception):
-            if list_environment_run_manifests(dashboard_group):
-                environment_runs_button = (
-                    '<a class="sidebarNavAction" href="/ui/environment-runs">'
-                    '<svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true">'
-                    '<path d="M4 19V9m8 10V5m8 14v-7"/>'
-                    '<path d="M2 19h20"/>'
-                    "</svg><span>Environment runs</span></a>"
-                )
+        environment_runs_button = (
+            '<a class="sidebarNavAction" href="/ui/environment-runs">'
+            '<svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true">'
+            '<path d="M4 19V9m8 10V5m8 14v-7"/>'
+            '<path d="M2 19h20"/>'
+            "</svg><span>Environment runs</span></a>"
+        )
 
         body = f"""
 <div class="app">

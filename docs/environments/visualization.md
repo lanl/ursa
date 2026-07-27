@@ -192,6 +192,38 @@ the dashboard toolbar. You can also navigate directly to:
 /ui/environment-runs
 ```
 
+The dashboard can also create and launch environments without a Python wrapper:
+
+1. Select **New team** or **New symposium**.
+2. Edit the starter YAML to describe the lead, members, roles, tools, and any
+   member-specific models.
+3. Optionally enter a unique, descriptive Run ID for the replay.
+4. Enter the task prompt, then use **Validate** to check the configuration.
+5. Select **Launch team** or **Launch symposium**.
+
+The dialog closes and the new run appears immediately with a queued status. The
+dashboard supervises the run in a subprocess, captures its logs, applies the
+configured timeout, and updates the same visualization manifest used by
+`arun_with_visualization(...)`. Dashboard-launched runs can be cancelled from
+their detail page.
+
+The submitted definition is saved in the normal group-scoped team or symposium
+configuration directory and an exact YAML/task snapshot is retained with the
+run. Replacing an existing named definition requires explicit confirmation in
+the dialog and does not alter earlier run history.
+
+An unchanged saved definition can be launched repeatedly without replacing it.
+Each launch needs a unique Run ID; leaving the field blank generates a UUID. The
+environment name, rather than the Run ID, determines the default team or
+symposium workspace, so follow-on runs with the same environment name retain the
+same workspace and persistent members while keeping separate replay histories.
+
+For safety, dashboard YAML accepts built-in URSA agent and environment classes by
+default. Deployments that intentionally need arbitrary fully qualified Python
+classes can set `URSA_DASHBOARD_ALLOW_CUSTOM_ENVIRONMENT_CLASSES=1`. Only enable
+that option for trusted dashboard users because importing custom classes can
+execute local Python code.
+
 The environment run list shows recorded runs for the dashboard group. Opening a
 run displays a replay page with:
 
@@ -214,9 +246,12 @@ The dashboard also exposes authenticated JSON endpoints for recorded runs:
 
 ```text
 GET /environment-runs
+POST /environment-runs
+POST /environment-runs/validate
 GET /environment-runs/{run_id}
 GET /environment-runs/{run_id}/events
 GET /environment-runs/{run_id}/stream
+POST /environment-runs/{run_id}/cancel
 ```
 
 Use the events endpoint with `after_seq` and `limit` to page through the event
