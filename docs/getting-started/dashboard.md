@@ -63,6 +63,22 @@ The raw key is never written to dashboard settings, sessions, run records, or
 worker configuration files. In remote dashboard mode, credential changes must
 be served over HTTPS.
 
+## Choose a session workspace
+
+Every new dashboard session requires an explicit workspace choice. Select a
+folder you can find and reuse, or choose **Temporary workspace** for disposable
+work. Temporary mode behaves like `ursa --workspace tmp`: the dashboard creates
+the workspace in the operating system's temporary directory and removes it when
+the session is deleted or the dashboard stops.
+
+The dashboard no longer creates a hidden default session workspace under
+`~/.cache/ursa`. Older sessions without an explicit workspace remain available,
+but the dashboard prompts for a folder or temporary workspace before their next
+run. When an older session still has its former UUID-named cached workspace, the
+folder field is prefilled with that path so existing work remains easy to
+recover. A user-selected folder is never deleted when its dashboard session is
+deleted.
+
 ## Launch an agent team or symposium
 
 Open **Environment runs** from the dashboard sidebar. The page provides **New

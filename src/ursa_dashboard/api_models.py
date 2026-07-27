@@ -143,6 +143,8 @@ class SessionCreateRequest(BaseModel):
     agent_id: str | None = None
     agent_name: str | None = None
     title: str | None = None
+    workspace_path: str | None = None
+    workspace_mode: Literal["folder", "temporary"] | None = None
 
 
 class SessionPatchRequest(BaseModel):
@@ -162,8 +164,9 @@ class SessionMessageRequest(BaseModel):
 
 
 class SessionWorkspaceSetRequest(BaseModel):
-    # Absolute path to use as this session's workspace. Pass null or an empty
-    # string to reset to the dashboard-managed default session workspace.
+    # ``folder`` requires an absolute path; ``temporary`` creates an OS-temp
+    # workspace; ``unset`` removes the selection without choosing a fallback.
+    mode: Literal["folder", "temporary", "unset"] = "folder"
     path: str | None = None
 
 
@@ -211,7 +214,9 @@ class SessionWorkspaceListResponse(BaseModel):
     files: list[dict[str, Any]]
     workspace_path: str | None = None
     default_workspace_path: str | None = None
-    is_default_workspace: bool = True
+    is_default_workspace: bool = False
+    workspace_mode: Literal["folder", "temporary"] | None = None
+    configured: bool = False
 
 
 class SessionFileMetaResponse(BaseModel):
