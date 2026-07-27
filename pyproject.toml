@@ -63,7 +63,7 @@ ursa-dashboard = "ursa_dashboard.main:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
-Documentation = "https://github.com/lanl/ursa/tree/main/docs"
+Documentation = "https://lanl.github.io/ursa/"
 Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
@@ -155,6 +155,7 @@ dev = [
     "ruff==0.12.10",
 ]
 docs = [
+    "mike>=2.1.3,<3",
     "mkdocs>=1.6.1",
     "mkdocs-autorefs>=1.4.3",
     "mkdocs-material>=9.6.21",
