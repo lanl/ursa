@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -46,10 +47,12 @@ def create_session(
     agent_id: str,
     agent_name: str | None = None,
     title: str | None = None,
+    workspace_path: str | Path | None = None,
+    workspace_mode: str | None = None,
 ) -> dict[str, Any]:
     session_id = new_ulid()
     paths = session_paths(dashboard_root, session_id)
-    paths.workspace_dir.mkdir(parents=True, exist_ok=True)
+    paths.session_dir.mkdir(parents=True, exist_ok=True)
 
     now = utc_now()
     resolved_agent_name = str(agent_name or "").strip() or None
@@ -67,6 +70,12 @@ def create_session(
         "updated_at": now,
         "active_run_id": None,
         "last_run_id": None,
+        "workspace_path": (
+            str(Path(workspace_path).expanduser().resolve())
+            if workspace_path is not None
+            else None
+        ),
+        "workspace_mode": workspace_mode,
     }
     write_json(paths.meta_path, rec)
     return rec
@@ -110,10 +119,36 @@ def list_sessions(
     return recs[:limit]
 
 
-def delete_session(dashboard_root: Path, session_id: str) -> None:
-    """Delete the session directory (messages + per-session workspace).
+def create_temporary_workspace() -> Path:
+    """Create a workspace with the same system-temp semantics as CLI ``tmp``."""
 
-    Note: does not delete global run records; runs are stored separately.
+    return Path(tempfile.mkdtemp(prefix="ursa")).resolve()
+
+
+def delete_temporary_workspace(session: dict[str, Any]) -> None:
+    """Delete a dashboard-created temporary workspace, never a user folder."""
+
+    if session.get("workspace_mode") != "temporary":
+        return
+    raw = str(session.get("workspace_path") or "").strip()
+    if not raw:
+        return
+
+    path = Path(raw).expanduser()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    try:
+        path.resolve().relative_to(temp_root)
+    except (OSError, ValueError):
+        return
+    if not path.name.startswith("ursa") or path.is_symlink():
+        return
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def delete_session(dashboard_root: Path, session_id: str) -> None:
+    """Delete session metadata and any dashboard-created temporary workspace.
+
+    User-selected external workspace folders and global run records are retained.
     """
 
     paths = session_paths(dashboard_root, session_id)
@@ -127,6 +162,8 @@ def delete_session(dashboard_root: Path, session_id: str) -> None:
     except Exception:
         raise ValueError("Refusing to delete outside sessions root")
 
+    session = read_json(paths.meta_path)
+    delete_temporary_workspace(session)
     shutil.rmtree(sess_real)
 
 
