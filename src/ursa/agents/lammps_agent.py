@@ -344,7 +344,7 @@ class LammpsAgent(BaseAgent[LammpsState]):
         config: RunnableConfig | None = None,
     ) -> LammpsState:
         """Create a wrapper object for user-provided potential to match atomman interface."""
-        self._copy_user_potential_files()
+        self._copy_user_potential_files(config)
 
         # Create a simple object that mimics the atomman potential interface
         class UserPotential:
