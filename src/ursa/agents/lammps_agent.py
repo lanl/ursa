@@ -1,4 +1,3 @@
-import difflib
 import json
 import logging
 import os
@@ -12,10 +11,6 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END
-from rich.console import Console
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.syntax import Syntax
 
 from ursa.agents.execution_agent import ExecutionAgent
 
@@ -109,7 +104,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             raise Exception(
                 "Cannot set find_potential_only=True when providing your own potential!"
             )
-        self.console = Console()
 
         self.pair_styles = [
             "eam",
@@ -203,47 +197,6 @@ class LammpsAgent(BaseAgent[LammpsState]):
             )
             | self.llm
             | self.str_parser
-        )
-
-    def _section(self, title: str):
-        self.console.print(Rule(f"[bold cyan]{title}[/bold cyan]"))
-
-    def _panel(self, title: str, body: str, style: str = "cyan"):
-        self.console.print(
-            Panel(body, title=f"[bold]{title}[/bold]", border_style=style)
-        )
-
-    def _code_panel(
-        self,
-        title: str,
-        code: str,
-        language: str = "bash",
-        style: str = "magenta",
-    ):
-        syn = Syntax(
-            code, language, theme="monokai", line_numbers=True, word_wrap=True
-        )
-        self.console.print(
-            Panel(syn, title=f"[bold]{title}[/bold]", border_style=style)
-        )
-
-    def _diff_panel(self, old: str, new: str, title: str = "LAMMPS input diff"):
-        diff = "\n".join(
-            difflib.unified_diff(
-                old.splitlines(),
-                new.splitlines(),
-                fromfile="in.lammps (before)",
-                tofile="in.lammps (after)",
-                lineterm="",
-            )
-        )
-        if not diff.strip():
-            diff = "(no changes)"
-        syn = Syntax(
-            diff, "diff", theme="monokai", line_numbers=False, word_wrap=True
-        )
-        self.console.print(
-            Panel(syn, title=f"[bold]{title}[/bold]", border_style="cyan")
         )
 
     def _normalize_pair_info(self, pair_info: str) -> str:
@@ -453,33 +406,49 @@ class LammpsAgent(BaseAgent[LammpsState]):
             return "summarize_one"
         return "summarize_done"
 
-    def _summarize_one(self, state: LammpsState) -> LammpsState:
+    def _summarize_one(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
         i = state["idx"]
-        self._section(f"Summarizing potential #{i}")
-        match = state["matches"][i]
-        md = match.metadata()
+        events = self.events(config)
+        with events.range(
+            "summarize_potential",
+            f"Summarizing potential #{i}",
+            done=f"Potential #{i} summarized",
+            error=f"Failed to summarize potential #{i}",
+            potential_index=i,
+        ) as span:
+            match = state["matches"][i]
+            md = match.metadata()
 
-        if md.get("comments") is None:
-            text = "No metadata available"
-            summary = "No summary available"
-        else:
-            lines = md["comments"].split("\n")
-            url = lines[1] if len(lines) > 1 else ""
-            text = (
-                self._fetch_and_trim_text(url)
-                if url
-                else "No metadata available"
+            if md.get("comments") is None:
+                text = "No metadata available"
+                summary = "No summary available"
+            else:
+                lines = md["comments"].split("\n")
+                url = lines[1] if len(lines) > 1 else ""
+                text = (
+                    self._fetch_and_trim_text(url)
+                    if url
+                    else "No metadata available"
+                )
+                summary = self.summ_chain.invoke({
+                    "metadata": text,
+                    "simulation_task": state["simulation_task"],
+                })
+
+            summary_file = os.path.join(
+                self.potential_summaries_dir, "potential_" + str(i) + ".txt"
             )
-            summary = self.summ_chain.invoke({
-                "metadata": text,
-                "simulation_task": state["simulation_task"],
-            })
-
-        summary_file = os.path.join(
-            self.potential_summaries_dir, "potential_" + str(i) + ".txt"
-        )
-        with open(summary_file, "w") as f:
-            f.write(summary)
+            with open(summary_file, "w") as f:
+                f.write(summary)
+            span.update(
+                potential_id=str(match.id),
+                output_path=summary_file,
+                result_chars=len(summary),
+            )
 
         return {
             **state,
@@ -495,30 +464,43 @@ class LammpsAgent(BaseAgent[LammpsState]):
             parts.append(f"\nSummary of potential #{i}: {rec.id}\n{s}\n")
         return {**state, "summaries_combined": "".join(parts)}
 
-    def _choose(self, state: LammpsState) -> LammpsState:
-        self._section("Choosing potential")
-        choice = self.choose_chain.invoke({
-            "summaries_combined": state["summaries_combined"],
-            "simulation_task": state["simulation_task"],
-        })
-        choice_dict = self._safe_json_loads(choice)
-        chosen_index = int(choice_dict["Chosen index"])
+    def _choose(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
+        events = self.events(config)
+        with events.range(
+            "choose_potential",
+            "Choosing potential",
+            done="Potential chosen",
+            error="Failed to choose potential",
+        ) as span:
+            choice = self.choose_chain.invoke({
+                "summaries_combined": state["summaries_combined"],
+                "simulation_task": state["simulation_task"],
+            })
+            choice_dict = self._safe_json_loads(choice)
+            chosen_index = int(choice_dict["Chosen index"])
 
-        chosen_potential = state["matches"][chosen_index]
+            chosen_potential = state["matches"][chosen_index]
+            rationale = choice_dict["rationale"]
 
-        self._panel(
-            "Chosen Potential",
-            f"[bold]Index:[/bold] {chosen_index}\n[bold]ID:[/bold] {chosen_potential.id}\n\n[bold]Rationale:[/bold]\n{choice_dict['rationale']}",
-            style="green",
-        )
-
-        out_file = os.path.join(self.potential_summaries_dir, "Rationale.txt")
-        with open(out_file, "w") as f:
-            f.write(f"Chosen potential #{chosen_index}")
-            f.write("\n")
-            f.write("Rationale for choosing this potential:")
-            f.write("\n")
-            f.write(choice_dict["rationale"])
+            out_file = os.path.join(
+                self.potential_summaries_dir, "Rationale.txt"
+            )
+            with open(out_file, "w") as f:
+                f.write(f"Chosen potential #{chosen_index}")
+                f.write("\n")
+                f.write("Rationale for choosing this potential:")
+                f.write("\n")
+                f.write(rationale)
+            span.update(
+                chosen_index=chosen_index,
+                potential_id=str(chosen_potential.id),
+                rationale=rationale,
+                output_path=out_file,
+            )
 
         return {**state, "chosen_potential": chosen_potential}
 
@@ -532,36 +514,43 @@ class LammpsAgent(BaseAgent[LammpsState]):
         state: LammpsState,
         config: RunnableConfig | None = None,
     ) -> LammpsState:
-        self._section("First attempt at writing LAMMPS input file")
+        events = self.events(config)
+        with events.range(
+            "author_input",
+            "Writing initial LAMMPS input",
+            done="LAMMPS input authored",
+            error="Failed to author LAMMPS input",
+        ) as span:
+            if not self.use_user_potential:
+                state["chosen_potential"].download_files(self.workspace)
+            pair_info = state["chosen_potential"].pair_info()
+            pair_info = self._normalize_pair_info(pair_info)
 
-        if not self.use_user_potential:
-            state["chosen_potential"].download_files(self.workspace)
-        pair_info = state["chosen_potential"].pair_info()
-        pair_info = self._normalize_pair_info(pair_info)
+            data_content = ""
+            if self.data_file:
+                data_content = self._read_and_trim_data_file(
+                    self.data_file,
+                    config,
+                )
 
-        data_content = ""
-        if self.data_file:
-            data_content = self._read_and_trim_data_file(
-                self.data_file,
-                config,
+            authored_json = self.author_chain.invoke({
+                "simulation_task": state["simulation_task"],
+                "pair_info": pair_info,
+                "template": state["template"],
+                "data_file": self.data_file,
+                "data_content": data_content,
+            })
+            script_dict = self._safe_json_loads(authored_json)
+            input_script = script_dict["input_script"]
+            input_path = os.path.join(self.workspace, "in.lammps")
+            with open(input_path, "w") as f:
+                f.write(input_script)
+            span.update(
+                path=input_path,
+                preview=input_script,
+                language="bash",
+                result_chars=len(input_script),
             )
-
-        authored_json = self.author_chain.invoke({
-            "simulation_task": state["simulation_task"],
-            "pair_info": pair_info,
-            "template": state["template"],
-            "data_file": self.data_file,
-            "data_content": data_content,
-        })
-        script_dict = self._safe_json_loads(authored_json)
-        input_script = script_dict["input_script"]
-        with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
-            f.write(input_script)
-
-        self._section("Authored LAMMPS input")
-        self._code_panel(
-            "in.lammps", input_script, language="bash", style="magenta"
-        )
 
         return {**state, "input_script": input_script}
 
@@ -570,72 +559,92 @@ class LammpsAgent(BaseAgent[LammpsState]):
         state: LammpsState,
         config: RunnableConfig | None = None,
     ) -> LammpsState:
-        self._section("Running LAMMPS")
-
-        if self.ngpus >= 0:
-            result = subprocess.run(
-                [
-                    self.mpirun_cmd,
-                    "-np",
-                    str(self.mpi_procs),
-                    self.lammps_cmd,
-                    "-in",
-                    "in.lammps",
-                    "-k",
-                    "on",
-                    "g",
-                    str(self.ngpus),
-                    "-sf",
-                    "kk",
-                    "-pk",
-                    "kokkos",
-                    "neigh",
-                    "half",
-                    "newton",
-                    "on",
-                ],
-                cwd=self.workspace,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-            self.events(config).emit(
-                "LAMMPS command finished",
-                stage="run",
-                returncode=result.returncode,
-                stdout_chars=len(result.stdout or ""),
-                stderr_chars=len(result.stderr or ""),
-            )
-        else:
-            result = subprocess.run(
-                [
-                    self.mpirun_cmd,
-                    "-np",
-                    str(self.mpi_procs),
-                    self.lammps_cmd,
-                    "-in",
-                    "in.lammps",
-                ],
-                cwd=self.workspace,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-
-        status_style = "green" if result.returncode == 0 else "red"
-        self._panel(
-            "Run Result",
-            f"returncode = {result.returncode}",
-            style=status_style,
+        events = self.events(config)
+        events.emit(
+            "Running LAMMPS",
+            stage="run",
+            phase="start",
+            attempt=state.get("fix_attempts", 0),
+            execution_mode="gpu" if self.ngpus >= 0 else "cpu",
         )
 
+        try:
+            if self.ngpus >= 0:
+                result = subprocess.run(
+                    [
+                        self.mpirun_cmd,
+                        "-np",
+                        str(self.mpi_procs),
+                        self.lammps_cmd,
+                        "-in",
+                        "in.lammps",
+                        "-k",
+                        "on",
+                        "g",
+                        str(self.ngpus),
+                        "-sf",
+                        "kk",
+                        "-pk",
+                        "kokkos",
+                        "neigh",
+                        "half",
+                        "newton",
+                        "on",
+                    ],
+                    cwd=self.workspace,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+            else:
+                result = subprocess.run(
+                    [
+                        self.mpirun_cmd,
+                        "-np",
+                        str(self.mpi_procs),
+                        self.lammps_cmd,
+                        "-in",
+                        "in.lammps",
+                    ],
+                    cwd=self.workspace,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+        except Exception as exc:
+            events.emit(
+                "LAMMPS command failed to start",
+                stage="run",
+                phase="error",
+                attempt=state.get("fix_attempts", 0),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+
+        event_payload: dict[str, Any] = {
+            "phase": "end" if result.returncode == 0 else "error",
+            "attempt": state.get("fix_attempts", 0),
+            "returncode": result.returncode,
+            "stdout_chars": len(result.stdout or ""),
+            "stderr_chars": len(result.stderr or ""),
+        }
         if result.returncode != 0:
-            err_view = (
-                result.stderr.strip() + "\n" + result.stdout.strip()
+            error_output = (
+                (result.stderr or "").strip()
+                + "\n"
+                + (result.stdout or "").strip()
             ).strip() or "(no output captured)"
-            self._panel("Run error/output", err_view[-6000:], style="red")
+            event_payload["error_output"] = error_output[-6000:]
+        events.emit(
+            "LAMMPS run succeeded"
+            if result.returncode == 0
+            else "LAMMPS run failed",
+            stage="run",
+            **event_payload,
+        )
 
         hist = list(state.get("run_history", []))
         hist.append({
@@ -654,19 +663,40 @@ class LammpsAgent(BaseAgent[LammpsState]):
             "run_history": hist,
         }
 
-    def _route_run(self, state: LammpsState) -> str:
+    def _route_run(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> str:
         rc = state.get("run_returncode", 0)
         attempts = state.get("fix_attempts", 0)
+        events = self.events(config)
         if rc == 0:
-            self._section("LAMMPS run successful! Exiting...")
+            events.emit(
+                "LAMMPS run complete",
+                stage="run_result",
+                phase="end",
+                returncode=rc,
+                attempts=attempts,
+            )
             return "done_success"
         if attempts < self.max_fix_attempts:
-            self._section(
-                "LAMMPS run Failed. Attempting to rewrite input file..."
+            events.emit(
+                "LAMMPS run failed; rewriting input file",
+                stage="run_result",
+                phase="error",
+                returncode=rc,
+                attempts=attempts,
+                max_fix_attempts=self.max_fix_attempts,
             )
             return "need_fix"
-        self._section(
-            "LAMMPS run Failed and maximum fix attempts reached. Exiting.."
+        events.emit(
+            "LAMMPS run failed; maximum fix attempts reached",
+            stage="run_result",
+            phase="error",
+            returncode=rc,
+            attempts=attempts,
+            max_fix_attempts=self.max_fix_attempts,
         )
         return "done_failed"
 
@@ -675,76 +705,97 @@ class LammpsAgent(BaseAgent[LammpsState]):
         state: LammpsState,
         config: RunnableConfig | None = None,
     ) -> LammpsState:
-        pair_info = state["chosen_potential"].pair_info()
-        pair_info = self._normalize_pair_info(pair_info)
+        attempt = state.get("fix_attempts", 0) + 1
+        events = self.events(config)
+        with events.range(
+            "fix_input",
+            f"Rewriting LAMMPS input for attempt #{attempt}",
+            done="LAMMPS input rewritten",
+            error="Failed to rewrite LAMMPS input",
+            attempt=attempt,
+        ) as span:
+            pair_info = state["chosen_potential"].pair_info()
+            pair_info = self._normalize_pair_info(pair_info)
 
-        hist = state.get("run_history", [])
-        if not hist:
-            hist = [
-                {
-                    "attempt": state.get("fix_attempts", 0),
-                    "input_script": state.get("input_script", ""),
-                    "returncode": state.get("run_returncode"),
-                    "stdout": state.get("run_stdout", ""),
-                    "stderr": state.get("run_stderr", ""),
-                }
-            ]
+            hist = state.get("run_history", [])
+            if not hist:
+                hist = [
+                    {
+                        "attempt": state.get("fix_attempts", 0),
+                        "input_script": state.get("input_script", ""),
+                        "returncode": state.get("run_returncode"),
+                        "stdout": state.get("run_stdout", ""),
+                        "stderr": state.get("run_stderr", ""),
+                    }
+                ]
 
-        parts = []
-        for h in hist:
-            parts.append(
-                "=== Attempt {attempt} | returncode={returncode} ===\n"
-                "--- input_script ---\n{input_script}\n"
-                "--- stdout ---\n{stdout}\n"
-                "--- stderr ---\n{stderr}\n".format(**h)
+            parts = []
+            for h in hist:
+                parts.append(
+                    "=== Attempt {attempt} | returncode={returncode} ===\n"
+                    "--- input_script ---\n{input_script}\n"
+                    "--- stdout ---\n{stdout}\n"
+                    "--- stderr ---\n{stderr}\n".format(**h)
+                )
+            err_blob = "\n".join(parts)
+
+            data_content = ""
+            if self.data_file:
+                data_content = self._read_and_trim_data_file(
+                    self.data_file,
+                    config,
+                )
+
+            fixed_json = self.fix_chain.invoke({
+                "simulation_task": state["simulation_task"],
+                "err_message": err_blob,
+                "pair_info": pair_info,
+                "template": state["template"],
+                "data_file": self.data_file,
+                "data_content": data_content,
+            })
+            script_dict = self._safe_json_loads(fixed_json)
+
+            new_input = script_dict["input_script"]
+            old_input = state["input_script"]
+            input_path = os.path.join(self.workspace, "in.lammps")
+            with open(input_path, "w") as f:
+                f.write(new_input)
+            span.update(
+                path=input_path,
+                old_code=old_input,
+                new_code=new_input,
             )
-        err_blob = "\n".join(parts)
-
-        data_content = ""
-        if self.data_file:
-            data_content = self._read_and_trim_data_file(
-                self.data_file,
-                config,
-            )
-
-        fixed_json = self.fix_chain.invoke({
-            "simulation_task": state["simulation_task"],
-            "err_message": err_blob,
-            "pair_info": pair_info,
-            "template": state["template"],
-            "data_file": self.data_file,
-            "data_content": data_content,
-        })
-        script_dict = self._safe_json_loads(fixed_json)
-
-        new_input = script_dict["input_script"]
-        old_input = state["input_script"]
-        self._diff_panel(old_input, new_input)
-
-        with open(os.path.join(self.workspace, "in.lammps"), "w") as f:
-            f.write(new_input)
 
         return {
             **state,
             "input_script": new_input,
-            "fix_attempts": state.get("fix_attempts", 0) + 1,
+            "fix_attempts": attempt,
         }
 
-    def _summarize(self, state: LammpsState) -> LammpsState:
-        self._section(
-            "Now handing things off to execution agent for summarization/visualization"
-        )
+    def _summarize(
+        self,
+        state: LammpsState,
+        config: RunnableConfig | None = None,
+    ) -> LammpsState:
+        events = self.events(config)
+        with events.range(
+            "summarize_results",
+            "Handing LAMMPS results to execution agent",
+            done="LAMMPS result summarization complete",
+            error="LAMMPS result summarization failed",
+            workspace=str(self.workspace),
+        ):
+            executor = ExecutionAgent(llm=self.llm, workspace=self.workspace)
 
-        executor = ExecutionAgent(llm=self.llm, workspace=self.workspace)
+            exe_plan = f"""
+            You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
+            A LAMMPS simulation has been done and all output files are located in the current workspace directory.
+            The simulation logs are recorded in the file 'log.lammps'.
+            Summarize the outcome of this simulation in a markdown document. Include plots, if relevant.
+            """
 
-        exe_plan = f"""
-        You are part of a larger scientific workflow whose purpose is to accomplish this task: {state["simulation_task"]}
-        A LAMMPS simulation has been done and all output files are located in the current workspace directory. 
-        The simulation logs are recorded in the file 'log.lammps'.
-        Summarize the outcome of this simulation in a markdown document. Include plots, if relevent.
-        """
-
-        executor.invoke(exe_plan)
+            executor.invoke(exe_plan, config=dict(config or {}))
 
         return state
 
