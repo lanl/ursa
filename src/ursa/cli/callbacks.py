@@ -55,23 +55,27 @@ class CallbackRenderingMixin:
     """Rendering helpers for the HITL callback handler.
 
     This intentionally covers only the event families shown in the CLI:
-    read/write/edit file tools, plus execute/plan/hypothesis agent progress.
+    read/write/edit file tools, plus execute/plan/hypothesis/LAMMPS agent
+    progress.
     """
 
     AGENT_KEYS: ClassVar[dict[str, str]] = {
         "ExecutionAgent": "executor",
         "DeepReviewAgent": "deep_review",
         "HypothesizerAgent": "hypothesizer",
+        "LammpsAgent": "lammps",
         "PlanningAgent": "planner",
         "executor": "executor",
         "deep_review": "deep_review",
         "hypothesizer": "hypothesizer",
+        "lammps": "lammps",
         "planner": "planner",
     }
     AGENT_RULE_TITLES: ClassVar[dict[str, str]] = {
         "executor": "⚙️ Execute",
         "deep_review": "🔎 Deep Review",
         "hypothesizer": "💡 Hypothesize",
+        "lammps": "⚛️ LAMMPS",
         "planner": "🗺️ Plan",
     }
 
@@ -200,11 +204,76 @@ class CallbackRenderingMixin:
                 "summarize": "📝",
                 "summarize_result": "📚",
             }.get(stage, "💡")
+        if agent == "lammps":
+            return {
+                "author_input": "📝",
+                "choose_potential": "🧲",
+                "fix_input": "🛠️",
+                "run": "▶",
+                "run_result": "✅" if data.get("returncode") == 0 else "✖",
+                "summarize_potential": "🔬",
+                "summarize_results": "📊",
+            }.get(stage, "⚛️")
         return "⚙️"
 
     def _print_agent_rule(self, agent: str) -> None:
         title = self.AGENT_RULE_TITLES.get(agent, agent)
         self.console.print(Rule(f"[blue]{title}[/]", style="blue"))
+
+    def _print_lammps_event_details(self, data: dict[str, Any]) -> None:
+        stage = self._clean(data.get("stage"))
+        phase = self._clean(data.get("phase"))
+        if stage == "choose_potential" and phase == "end":
+            chosen_index = data.get("chosen_index")
+            potential_id = self._clean(data.get("potential_id"))
+            rationale = str(data.get("rationale") or "").strip()
+            details = [
+                f"Index: {chosen_index}",
+                f"ID: {potential_id}",
+            ]
+            if rationale:
+                details.extend(("", "Rationale:", rationale))
+            self._print_panel(
+                "\n".join(details),
+                title="Chosen Potential",
+                border_style="green",
+            )
+        elif stage == "author_input" and phase == "end":
+            preview = data.get("preview")
+            if has_content(preview):
+                self._print_panel(
+                    self._render_value(
+                        preview,
+                        language=self._clean(data.get("language")) or "text",
+                        line_numbers=True,
+                    ),
+                    title="in.lammps",
+                    border_style="magenta",
+                )
+        elif stage == "run" and phase == "error":
+            error_output = data.get("error_output")
+            if has_content(error_output):
+                self._print_panel(
+                    self._render_value(error_output),
+                    title="Run error/output",
+                    border_style="red",
+                )
+        elif stage == "fix_input" and phase == "end":
+            old_code = data.get("old_code")
+            new_code = data.get("new_code")
+            if has_content(old_code) or has_content(new_code):
+                display_path = (
+                    self._display_path(data.get("path")) or "in.lammps"
+                )
+                self._print_panel(
+                    DiffRenderer(
+                        str(old_code or ""),
+                        str(new_code or ""),
+                        display_path,
+                    ),
+                    title="LAMMPS input diff",
+                    border_style="cyan",
+                )
 
     def _print_agent_event(self, data: dict[str, Any]) -> None:
         agent = self._agent_key(data.get("agent"))
@@ -232,6 +301,8 @@ class CallbackRenderingMixin:
         elif agent == "executor" and stage == "step":
             for line in self._display_lines(data.get("preview")):
                 self.console.print(line)
+        elif agent == "lammps":
+            self._print_lammps_event_details(data)
         elif stage == "reflect_result":
             if reason := data.get("reason"):
                 self.console.print(Markdown(reason))

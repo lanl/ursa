@@ -454,6 +454,65 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
             run_id="search-tool-result-run",
         )
     )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "choose_potential",
+                "phase": "end",
+                "message": "Potential chosen",
+                "chosen_index": 2,
+                "potential_id": "pot-2",
+                "rationale": "Best fit for the requested elements.",
+            },
+            run_id="lammps-choice-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "author_input",
+                "phase": "end",
+                "message": "LAMMPS input authored",
+                "preview": "units metal\nrun 100",
+                "language": "bash",
+                "path": str(tmp_path / "in.lammps"),
+            },
+            run_id="lammps-author-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "fix_input",
+                "phase": "end",
+                "message": "LAMMPS input rewritten",
+                "old_code": "run 100",
+                "new_code": "run 200",
+                "path": str(tmp_path / "in.lammps"),
+            },
+            run_id="lammps-fix-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "run",
+                "phase": "error",
+                "message": "LAMMPS run failed",
+                "returncode": 1,
+                "error_output": "ERROR: Invalid pair style",
+            },
+            run_id="lammps-failed-run",
+        )
+    )
 
     rendered = output.getvalue()
 
@@ -485,6 +544,17 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     assert "Searching Web: ursa events" in rendered
     assert "Web search complete: ursa events" in rendered
     assert "42 chars" in rendered
+    assert "LAMMPS" in rendered
+    assert "Chosen Potential" in rendered
+    assert "pot-2" in rendered
+    assert "Best fit for the requested elements." in rendered
+    assert "LAMMPS input authored" in rendered
+    assert "units metal" in rendered
+    assert "LAMMPS input diff" in rendered
+    assert "run 100" in rendered
+    assert "run 200" in rendered
+    assert "Run error/output" in rendered
+    assert "ERROR: Invalid pair style" in rendered
 
 
 def test_hitl_log_event_handler_renders_named_agent_tool_artifacts(tmp_path):
