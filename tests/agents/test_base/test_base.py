@@ -17,6 +17,8 @@ from langgraph.runtime import Runtime
 
 # Your project imports
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
+from ursa.util import Checkpointer
+from ursa.util.checkpoint_retention import CheckpointPruneResult
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER
 
 FIXED_MONOTONIC_TIMESTAMP_NS = 123456789
@@ -428,6 +430,92 @@ def test_persistent_async_only_agent_sync_invoke_uses_async_sqlite_resources(
         agent.close()
 
     assert result["messages"][-1].text == "done"
+
+
+def test_persistent_agent_prunes_after_sync_terminal_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    calls: list[str] = []
+
+    def record_prune(_saver, thread_id):
+        calls.append(thread_id)
+        return CheckpointPruneResult(pruned=False)
+
+    monkeypatch.setattr(
+        "ursa.agents.base.prune_sqlite_checkpoints", record_prune
+    )
+    agent = Agent(
+        llm=TinyCountingModel(),
+        agent_name="persistent_sync_retention_agent",
+        enable_metrics=False,
+    )
+
+    try:
+        agent.invoke(
+            "terminal sync run",
+            config={"configurable": {"thread_id": "custom-thread"}},
+        )
+    finally:
+        agent.close()
+
+    assert calls == ["custom-thread"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_agent_prunes_after_async_terminal_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    calls: list[str] = []
+
+    async def record_prune(_saver, thread_id):
+        calls.append(thread_id)
+        return CheckpointPruneResult(pruned=False)
+
+    monkeypatch.setattr(
+        "ursa.agents.base.aprune_sqlite_checkpoints", record_prune
+    )
+    agent = Agent(
+        llm=TinyCountingModel(),
+        agent_name="persistent_async_retention_agent",
+        enable_metrics=False,
+    )
+
+    try:
+        await agent.ainvoke("terminal async run")
+    finally:
+        await agent.aclose()
+        agent.close()
+
+    assert calls == ["ursa"]
+
+
+def test_user_supplied_checkpointer_is_not_automatically_pruned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls: list[str] = []
+
+    def record_prune(_saver, thread_id):
+        calls.append(thread_id)
+        return CheckpointPruneResult(pruned=False)
+
+    monkeypatch.setattr(
+        "ursa.agents.base.prune_sqlite_checkpoints", record_prune
+    )
+    checkpointer = Checkpointer.from_workspace(tmp_path / "provided")
+    agent = Agent(
+        llm=TinyCountingModel(),
+        checkpointer=checkpointer,
+        enable_metrics=False,
+    )
+
+    try:
+        agent.invoke("terminal provided-checkpointer run")
+    finally:
+        agent.close()
+
+    assert calls == []
 
 
 @pytest.mark.asyncio

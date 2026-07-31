@@ -78,6 +78,11 @@ from ursa.security import (
     validate_group_name,
 )
 from ursa.util import Checkpointer
+from ursa.util.checkpoint_retention import (
+    aprune_sqlite_checkpoints,
+    is_terminal_checkpoint,
+    prune_sqlite_checkpoints,
+)
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
 logger = logging.getLogger(__name__)
@@ -273,6 +278,7 @@ class BaseAgent(Generic[TState], ABC):
         self._async_checkpointer: BaseCheckpointSaver | None = None
         self._async_storage: BaseStore | None = None
         self._async_compiled_graph: CompiledStateGraph | None = None
+        self._checkpoint_retention_enabled = False
         persist_agent = (agent_name is not None) or set_checkpointer
         if persist_agent:
             if set_checkpointer:
@@ -288,6 +294,7 @@ class BaseAgent(Generic[TState], ABC):
                 if not self.den.exists():
                     logger.info("Agent created: %s", den_name)
                 self.checkpointer = Checkpointer.from_workspace(self.den)
+                self._checkpoint_retention_enabled = True
         else:
             # Keep current behavior if the user is not persisting.
             self.den = self.workspace
@@ -1193,9 +1200,10 @@ class BaseAgent(Generic[TState], ABC):
             )
 
         try:
-            return self.compiled_graph.invoke(
-                input, config=config, context=self.context
-            )
+            graph = self.compiled_graph
+            result = graph.invoke(input, config=config, context=self.context)
+            self._prune_checkpoints_after_terminal_success(graph, config)
+            return result
         except Exception as e:
             # Fallback: if a tool raises the canonical sync-invoke error, retry
             # with ainvoke for backwards compatibility.
@@ -1210,17 +1218,81 @@ class BaseAgent(Generic[TState], ABC):
         config = self.build_config(**config)
         graph = await self._aget_async_compiled_graph()
         try:
-            return await graph.ainvoke(
+            result = await graph.ainvoke(
                 input, config=config, context=self.context
             )
+            await self._aprune_checkpoints_after_terminal_success(graph, config)
+            return result
         finally:
             await self.aclose()
 
     def _stream(self, input, **config):
         config = self.build_config(**config)
-        yield from self.compiled_graph.stream(
-            input, config=config, context=self.context
-        )
+        graph = self.compiled_graph
+        yield from graph.stream(input, config=config, context=self.context)
+        self._prune_checkpoints_after_terminal_success(graph, config)
+
+    def _prune_checkpoints_after_terminal_success(
+        self, graph: CompiledStateGraph, config: RunnableConfig
+    ) -> None:
+        """Prune completed history for URSA-managed sync SQLite agents."""
+        if not self._checkpoint_retention_enabled:
+            return
+        checkpointer = graph.checkpointer
+        if not isinstance(checkpointer, SqliteSaver):
+            return
+        try:
+            snapshot = graph.get_state(config)
+            if not is_terminal_checkpoint(snapshot):
+                return
+            thread_id = str(
+                config.get("configurable", {}).get("thread_id", self.thread_id)
+            )
+            result = prune_sqlite_checkpoints(checkpointer, thread_id)
+            if result.pruned:
+                logger.info(
+                    "Pruned %d checkpoints and %d writes for thread %s "
+                    "(%d -> %d bytes)",
+                    result.checkpoints_deleted,
+                    result.writes_deleted,
+                    thread_id,
+                    result.size_before,
+                    result.size_after,
+                )
+        except Exception:
+            # Retention is maintenance. It must not convert a successful agent
+            # result into a failed invocation.
+            logger.warning("Checkpoint pruning failed", exc_info=True)
+
+    async def _aprune_checkpoints_after_terminal_success(
+        self, graph: CompiledStateGraph, config: RunnableConfig
+    ) -> None:
+        """Prune completed history for URSA-managed async SQLite agents."""
+        if not self._checkpoint_retention_enabled:
+            return
+        checkpointer = graph.checkpointer
+        if not isinstance(checkpointer, AsyncSqliteSaver):
+            return
+        try:
+            snapshot = await graph.aget_state(config)
+            if not is_terminal_checkpoint(snapshot):
+                return
+            thread_id = str(
+                config.get("configurable", {}).get("thread_id", self.thread_id)
+            )
+            result = await aprune_sqlite_checkpoints(checkpointer, thread_id)
+            if result.pruned:
+                logger.info(
+                    "Pruned %d checkpoints and %d writes for thread %s "
+                    "(%d -> %d bytes)",
+                    result.checkpoints_deleted,
+                    result.writes_deleted,
+                    thread_id,
+                    result.size_before,
+                    result.size_after,
+                )
+        except Exception:
+            logger.warning("Checkpoint pruning failed", exc_info=True)
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""
