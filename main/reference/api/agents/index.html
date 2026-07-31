@@ -19689,7 +19689,8 @@ space back into context via the existing experience tools.</p>
 
               <details class="quote">
                 <summary>Source code in <code>src/ursa/agents/lammps_agent.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 51</span>
+                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 50</span>
+<span class="normal"> 51</span>
 <span class="normal"> 52</span>
 <span class="normal"> 53</span>
 <span class="normal"> 54</span>
@@ -20460,7 +20461,75 @@ space back into context via the existing experience tools.</p>
 <span class="normal">819</span>
 <span class="normal">820</span>
 <span class="normal">821</span>
-<span class="normal">822</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">LammpsAgent</span><span class="p">(</span><span class="n">BaseAgent</span><span class="p">[</span><span class="n">LammpsState</span><span class="p">]):</span>
+<span class="normal">822</span>
+<span class="normal">823</span>
+<span class="normal">824</span>
+<span class="normal">825</span>
+<span class="normal">826</span>
+<span class="normal">827</span>
+<span class="normal">828</span>
+<span class="normal">829</span>
+<span class="normal">830</span>
+<span class="normal">831</span>
+<span class="normal">832</span>
+<span class="normal">833</span>
+<span class="normal">834</span>
+<span class="normal">835</span>
+<span class="normal">836</span>
+<span class="normal">837</span>
+<span class="normal">838</span>
+<span class="normal">839</span>
+<span class="normal">840</span>
+<span class="normal">841</span>
+<span class="normal">842</span>
+<span class="normal">843</span>
+<span class="normal">844</span>
+<span class="normal">845</span>
+<span class="normal">846</span>
+<span class="normal">847</span>
+<span class="normal">848</span>
+<span class="normal">849</span>
+<span class="normal">850</span>
+<span class="normal">851</span>
+<span class="normal">852</span>
+<span class="normal">853</span>
+<span class="normal">854</span>
+<span class="normal">855</span>
+<span class="normal">856</span>
+<span class="normal">857</span>
+<span class="normal">858</span>
+<span class="normal">859</span>
+<span class="normal">860</span>
+<span class="normal">861</span>
+<span class="normal">862</span>
+<span class="normal">863</span>
+<span class="normal">864</span>
+<span class="normal">865</span>
+<span class="normal">866</span>
+<span class="normal">867</span>
+<span class="normal">868</span>
+<span class="normal">869</span>
+<span class="normal">870</span>
+<span class="normal">871</span>
+<span class="normal">872</span>
+<span class="normal">873</span>
+<span class="normal">874</span>
+<span class="normal">875</span>
+<span class="normal">876</span>
+<span class="normal">877</span>
+<span class="normal">878</span>
+<span class="normal">879</span>
+<span class="normal">880</span>
+<span class="normal">881</span>
+<span class="normal">882</span>
+<span class="normal">883</span>
+<span class="normal">884</span>
+<span class="normal">885</span>
+<span class="normal">886</span>
+<span class="normal">887</span>
+<span class="normal">888</span>
+<span class="normal">889</span>
+<span class="normal">890</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">LammpsAgent</span><span class="p">(</span><span class="n">BaseAgent</span><span class="p">[</span><span class="n">LammpsState</span><span class="p">]):</span>
     <span class="n">state_type</span> <span class="o">=</span> <span class="n">LammpsState</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
@@ -20512,6 +20581,11 @@ space back into context via the existing experience tools.</p>
         <span class="bp">self</span><span class="o">.</span><span class="n">tiktoken_model</span> <span class="o">=</span> <span class="n">tiktoken_model</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">max_tokens</span> <span class="o">=</span> <span class="n">max_tokens</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">summarize_results</span> <span class="o">=</span> <span class="n">summarize_results</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_user_potential</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_potential_only</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span>
+                <span class="s2">&quot;Cannot set find_potential_only=True when providing your own potential!&quot;</span>
+            <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">pair_styles</span> <span class="o">=</span> <span class="p">[</span>
             <span class="s2">&quot;eam&quot;</span><span class="p">,</span>
@@ -20607,34 +20681,16 @@ space back into context via the existing experience tools.</p>
             <span class="o">|</span> <span class="bp">self</span><span class="o">.</span><span class="n">str_parser</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_section</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">title</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_panel</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">body</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">style</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cyan&quot;</span><span class="p">):</span>
-        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%s</span><span class="se">\n</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">body</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_code_panel</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span>
-        <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-        <span class="n">code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-        <span class="n">language</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;bash&quot;</span><span class="p">,</span>
-        <span class="n">style</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;magenta&quot;</span><span class="p">,</span>
-    <span class="p">):</span>
-        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%s</span><span class="se">\n</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">code</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_diff_panel</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">old</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">new</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;LAMMPS input diff&quot;</span><span class="p">):</span>
-        <span class="n">diff</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
-            <span class="n">difflib</span><span class="o">.</span><span class="n">unified_diff</span><span class="p">(</span>
-                <span class="n">old</span><span class="o">.</span><span class="n">splitlines</span><span class="p">(),</span>
-                <span class="n">new</span><span class="o">.</span><span class="n">splitlines</span><span class="p">(),</span>
-                <span class="n">fromfile</span><span class="o">=</span><span class="s2">&quot;in.lammps (before)&quot;</span><span class="p">,</span>
-                <span class="n">tofile</span><span class="o">=</span><span class="s2">&quot;in.lammps (after)&quot;</span><span class="p">,</span>
-                <span class="n">lineterm</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_normalize_pair_info</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pair_info</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+            <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;./</span><span class="si">{</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">if</span> <span class="p">(</span><span class="s2">&quot;/&quot;</span> <span class="ow">in</span> <span class="n">p</span> <span class="ow">or</span> <span class="s2">&quot;</span><span class="se">\\</span><span class="s2">&quot;</span> <span class="ow">in</span> <span class="n">p</span><span class="p">)</span> <span class="k">else</span> <span class="n">p</span>
+                <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
             <span class="p">)</span>
+            <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;pair_coeff&quot;</span><span class="p">)</span>
+            <span class="k">else</span> <span class="n">line</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">pair_info</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
         <span class="p">)</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">diff</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
-            <span class="n">diff</span> <span class="o">=</span> <span class="s2">&quot;(no changes)&quot;</span>
-        <span class="n">LOGGER</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%s</span><span class="se">\n</span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">diff</span><span class="p">)</span>
 
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_safe_json_loads</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
@@ -20653,7 +20709,7 @@ space back into context via the existing experience tools.</p>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Read LAMMPS data file and trim to token limit for LLM context.&quot;&quot;&quot;</span>
         <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">data_file_path</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">Path</span><span class="p">(</span><span class="n">data_file_path</span><span class="p">)</span><span class="o">.</span><span class="n">is_file</span><span class="p">():</span>
             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">data_file_path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
                 <span class="n">content</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
             <span class="n">lines</span> <span class="o">=</span> <span class="n">content</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
@@ -20777,15 +20833,10 @@ space back into context via the existing experience tools.</p>
         <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
         <span class="c1"># Check if using user-provided potential</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_user_potential</span><span class="p">:</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_potential_only</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span>
-                    <span class="s2">&quot;Cannot set find_potential_only=True when providing your own potential!&quot;</span>
-                <span class="p">)</span>
             <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
                 <span class="s2">&quot;Using user-provided potential files&quot;</span><span class="p">,</span>
                 <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;entry&quot;</span><span class="p">,</span>
             <span class="p">)</span>
-
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_potential_only</span> <span class="ow">and</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">):</span>
             <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span>
                 <span class="s2">&quot;You cannot set find_potential_only=True and also specify your own potential!&quot;</span>
@@ -20837,33 +20888,49 @@ space back into context via the existing experience tools.</p>
             <span class="k">return</span> <span class="s2">&quot;summarize_one&quot;</span>
         <span class="k">return</span> <span class="s2">&quot;summarize_done&quot;</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_summarize_one</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_summarize_one</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
         <span class="n">i</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;idx&quot;</span><span class="p">]</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Summarizing potential #</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="n">match</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;matches&quot;</span><span class="p">][</span><span class="n">i</span><span class="p">]</span>
-        <span class="n">md</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">events</span><span class="o">.</span><span class="n">range</span><span class="p">(</span>
+            <span class="s2">&quot;summarize_potential&quot;</span><span class="p">,</span>
+            <span class="sa">f</span><span class="s2">&quot;Summarizing potential #</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">done</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Potential #</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2"> summarized&quot;</span><span class="p">,</span>
+            <span class="n">error</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Failed to summarize potential #</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">potential_index</span><span class="o">=</span><span class="n">i</span><span class="p">,</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
+            <span class="n">match</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;matches&quot;</span><span class="p">][</span><span class="n">i</span><span class="p">]</span>
+            <span class="n">md</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
 
-        <span class="k">if</span> <span class="n">md</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;comments&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;No metadata available&quot;</span>
-            <span class="n">summary</span> <span class="o">=</span> <span class="s2">&quot;No summary available&quot;</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">lines</span> <span class="o">=</span> <span class="n">md</span><span class="p">[</span><span class="s2">&quot;comments&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="n">url</span> <span class="o">=</span> <span class="n">lines</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
-            <span class="n">text</span> <span class="o">=</span> <span class="p">(</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_fetch_and_trim_text</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-                <span class="k">if</span> <span class="n">url</span>
-                <span class="k">else</span> <span class="s2">&quot;No metadata available&quot;</span>
+            <span class="k">if</span> <span class="n">md</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;comments&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;No metadata available&quot;</span>
+                <span class="n">summary</span> <span class="o">=</span> <span class="s2">&quot;No summary available&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">lines</span> <span class="o">=</span> <span class="n">md</span><span class="p">[</span><span class="s2">&quot;comments&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">url</span> <span class="o">=</span> <span class="n">lines</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+                <span class="n">text</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_fetch_and_trim_text</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">url</span>
+                    <span class="k">else</span> <span class="s2">&quot;No metadata available&quot;</span>
+                <span class="p">)</span>
+                <span class="n">summary</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">summ_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+                    <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">,</span>
+                    <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
+                <span class="p">})</span>
+
+            <span class="n">summary_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">potential_summaries_dir</span><span class="p">,</span> <span class="s2">&quot;potential_&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;.txt&quot;</span>
             <span class="p">)</span>
-            <span class="n">summary</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">summ_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-                <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">,</span>
-                <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
-            <span class="p">})</span>
-
-        <span class="n">summary_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">potential_summaries_dir</span><span class="p">,</span> <span class="s2">&quot;potential_&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;.txt&quot;</span>
-        <span class="p">)</span>
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">summary_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">summary_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span>
+            <span class="n">span</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                <span class="n">potential_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">id</span><span class="p">),</span>
+                <span class="n">output_path</span><span class="o">=</span><span class="n">summary_file</span><span class="p">,</span>
+                <span class="n">result_chars</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">summary</span><span class="p">),</span>
+            <span class="p">)</span>
 
         <span class="k">return</span> <span class="p">{</span>
             <span class="o">**</span><span class="n">state</span><span class="p">,</span>
@@ -20879,30 +20946,43 @@ space back into context via the existing experience tools.</p>
             <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Summary of potential #</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">s</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">state</span><span class="p">,</span> <span class="s2">&quot;summaries_combined&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)}</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_choose</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span><span class="s2">&quot;Choosing potential&quot;</span><span class="p">)</span>
-        <span class="n">choice</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">choose_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-            <span class="s2">&quot;summaries_combined&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;summaries_combined&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
-        <span class="p">})</span>
-        <span class="n">choice_dict</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_safe_json_loads</span><span class="p">(</span><span class="n">choice</span><span class="p">)</span>
-        <span class="n">chosen_index</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">choice_dict</span><span class="p">[</span><span class="s2">&quot;Chosen index&quot;</span><span class="p">])</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_choose</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">events</span><span class="o">.</span><span class="n">range</span><span class="p">(</span>
+            <span class="s2">&quot;choose_potential&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Choosing potential&quot;</span><span class="p">,</span>
+            <span class="n">done</span><span class="o">=</span><span class="s2">&quot;Potential chosen&quot;</span><span class="p">,</span>
+            <span class="n">error</span><span class="o">=</span><span class="s2">&quot;Failed to choose potential&quot;</span><span class="p">,</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
+            <span class="n">choice</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">choose_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+                <span class="s2">&quot;summaries_combined&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;summaries_combined&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
+            <span class="p">})</span>
+            <span class="n">choice_dict</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_safe_json_loads</span><span class="p">(</span><span class="n">choice</span><span class="p">)</span>
+            <span class="n">chosen_index</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">choice_dict</span><span class="p">[</span><span class="s2">&quot;Chosen index&quot;</span><span class="p">])</span>
 
-        <span class="n">chosen_potential</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;matches&quot;</span><span class="p">][</span><span class="n">chosen_index</span><span class="p">]</span>
+            <span class="n">chosen_potential</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;matches&quot;</span><span class="p">][</span><span class="n">chosen_index</span><span class="p">]</span>
+            <span class="n">rationale</span> <span class="o">=</span> <span class="n">choice_dict</span><span class="p">[</span><span class="s2">&quot;rationale&quot;</span><span class="p">]</span>
 
-        <span class="bp">self</span><span class="o">.</span><span class="n">_panel</span><span class="p">(</span>
-            <span class="s2">&quot;Chosen Potential&quot;</span><span class="p">,</span>
-            <span class="sa">f</span><span class="s2">&quot;[bold]Index:[/bold] </span><span class="si">{</span><span class="n">chosen_index</span><span class="si">}</span><span class="se">\n</span><span class="s2">[bold]ID:[/bold] </span><span class="si">{</span><span class="n">chosen_potential</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="se">\n\n</span><span class="s2">[bold]Rationale:[/bold]</span><span class="se">\n</span><span class="si">{</span><span class="n">choice_dict</span><span class="p">[</span><span class="s1">&#39;rationale&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">style</span><span class="o">=</span><span class="s2">&quot;green&quot;</span><span class="p">,</span>
-        <span class="p">)</span>
-
-        <span class="n">out_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">potential_summaries_dir</span><span class="p">,</span> <span class="s2">&quot;Rationale.txt&quot;</span><span class="p">)</span>
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">out_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Chosen potential #</span><span class="si">{</span><span class="n">chosen_index</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;Rationale for choosing this potential:&quot;</span><span class="p">)</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">choice_dict</span><span class="p">[</span><span class="s2">&quot;rationale&quot;</span><span class="p">])</span>
+            <span class="n">out_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">potential_summaries_dir</span><span class="p">,</span> <span class="s2">&quot;Rationale.txt&quot;</span>
+            <span class="p">)</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">out_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Chosen potential #</span><span class="si">{</span><span class="n">chosen_index</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;Rationale for choosing this potential:&quot;</span><span class="p">)</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">rationale</span><span class="p">)</span>
+            <span class="n">span</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                <span class="n">chosen_index</span><span class="o">=</span><span class="n">chosen_index</span><span class="p">,</span>
+                <span class="n">potential_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">chosen_potential</span><span class="o">.</span><span class="n">id</span><span class="p">),</span>
+                <span class="n">rationale</span><span class="o">=</span><span class="n">rationale</span><span class="p">,</span>
+                <span class="n">output_path</span><span class="o">=</span><span class="n">out_file</span><span class="p">,</span>
+            <span class="p">)</span>
 
         <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">state</span><span class="p">,</span> <span class="s2">&quot;chosen_potential&quot;</span><span class="p">:</span> <span class="n">chosen_potential</span><span class="p">}</span>
 
@@ -20916,35 +20996,43 @@ space back into context via the existing experience tools.</p>
         <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
         <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span><span class="s2">&quot;First attempt at writing LAMMPS input file&quot;</span><span class="p">)</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">events</span><span class="o">.</span><span class="n">range</span><span class="p">(</span>
+            <span class="s2">&quot;author_input&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Writing initial LAMMPS input&quot;</span><span class="p">,</span>
+            <span class="n">done</span><span class="o">=</span><span class="s2">&quot;LAMMPS input authored&quot;</span><span class="p">,</span>
+            <span class="n">error</span><span class="o">=</span><span class="s2">&quot;Failed to author LAMMPS input&quot;</span><span class="p">,</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_user_potential</span><span class="p">:</span>
+                <span class="n">state</span><span class="p">[</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">download_files</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">)</span>
+            <span class="n">pair_info</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">pair_info</span><span class="p">()</span>
+            <span class="n">pair_info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_normalize_pair_info</span><span class="p">(</span><span class="n">pair_info</span><span class="p">)</span>
 
-        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_user_potential</span><span class="p">:</span>
-            <span class="n">state</span><span class="p">[</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">download_files</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">)</span>
-        <span class="n">pair_info</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">pair_info</span><span class="p">()</span>
+            <span class="n">data_content</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">:</span>
+                <span class="n">data_content</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_and_trim_data_file</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
+                    <span class="n">config</span><span class="p">,</span>
+                <span class="p">)</span>
 
-        <span class="n">data_content</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">:</span>
-            <span class="n">data_content</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_and_trim_data_file</span><span class="p">(</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
-                <span class="n">config</span><span class="p">,</span>
+            <span class="n">authored_json</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">author_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+                <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;pair_info&quot;</span><span class="p">:</span> <span class="n">pair_info</span><span class="p">,</span>
+                <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;template&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;data_file&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
+                <span class="s2">&quot;data_content&quot;</span><span class="p">:</span> <span class="n">data_content</span><span class="p">,</span>
+            <span class="p">})</span>
+            <span class="n">script_dict</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_safe_json_loads</span><span class="p">(</span><span class="n">authored_json</span><span class="p">)</span>
+            <span class="n">input_script</span> <span class="o">=</span> <span class="n">script_dict</span><span class="p">[</span><span class="s2">&quot;input_script&quot;</span><span class="p">]</span>
+            <span class="n">input_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span> <span class="s2">&quot;in.lammps&quot;</span><span class="p">)</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">input_script</span><span class="p">)</span>
+            <span class="n">span</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                <span class="n">path</span><span class="o">=</span><span class="n">input_path</span><span class="p">,</span>
+                <span class="n">preview</span><span class="o">=</span><span class="n">input_script</span><span class="p">,</span>
+                <span class="n">language</span><span class="o">=</span><span class="s2">&quot;bash&quot;</span><span class="p">,</span>
+                <span class="n">result_chars</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">input_script</span><span class="p">),</span>
             <span class="p">)</span>
-
-        <span class="n">authored_json</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">author_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-            <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;pair_info&quot;</span><span class="p">:</span> <span class="n">pair_info</span><span class="p">,</span>
-            <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;template&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;data_file&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
-            <span class="s2">&quot;data_content&quot;</span><span class="p">:</span> <span class="n">data_content</span><span class="p">,</span>
-        <span class="p">})</span>
-        <span class="n">script_dict</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_safe_json_loads</span><span class="p">(</span><span class="n">authored_json</span><span class="p">)</span>
-        <span class="n">input_script</span> <span class="o">=</span> <span class="n">script_dict</span><span class="p">[</span><span class="s2">&quot;input_script&quot;</span><span class="p">]</span>
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span> <span class="s2">&quot;in.lammps&quot;</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">input_script</span><span class="p">)</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span><span class="s2">&quot;Authored LAMMPS input&quot;</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_code_panel</span><span class="p">(</span>
-            <span class="s2">&quot;in.lammps&quot;</span><span class="p">,</span> <span class="n">input_script</span><span class="p">,</span> <span class="n">language</span><span class="o">=</span><span class="s2">&quot;bash&quot;</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;magenta&quot;</span>
-        <span class="p">)</span>
 
         <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">state</span><span class="p">,</span> <span class="s2">&quot;input_script&quot;</span><span class="p">:</span> <span class="n">input_script</span><span class="p">}</span>
 
@@ -20953,72 +21041,92 @@ space back into context via the existing experience tools.</p>
         <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
         <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span><span class="s2">&quot;Running LAMMPS&quot;</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ngpus</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-                <span class="p">[</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">mpirun_cmd</span><span class="p">,</span>
-                    <span class="s2">&quot;-np&quot;</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mpi_procs</span><span class="p">),</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">lammps_cmd</span><span class="p">,</span>
-                    <span class="s2">&quot;-in&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;in.lammps&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;-k&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;on&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;g&quot;</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ngpus</span><span class="p">),</span>
-                    <span class="s2">&quot;-sf&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;kk&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;-pk&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;kokkos&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;neigh&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;half&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;newton&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;on&quot;</span><span class="p">,</span>
-                <span class="p">],</span>
-                <span class="n">cwd</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span>
-                <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
-                <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
-                <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-                <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
-                <span class="s2">&quot;LAMMPS command finished&quot;</span><span class="p">,</span>
-                <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
-                <span class="n">returncode</span><span class="o">=</span><span class="n">result</span><span class="o">.</span><span class="n">returncode</span><span class="p">,</span>
-                <span class="n">stdout_chars</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-                <span class="n">stderr_chars</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-            <span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-                <span class="p">[</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">mpirun_cmd</span><span class="p">,</span>
-                    <span class="s2">&quot;-np&quot;</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mpi_procs</span><span class="p">),</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">lammps_cmd</span><span class="p">,</span>
-                    <span class="s2">&quot;-in&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;in.lammps&quot;</span><span class="p">,</span>
-                <span class="p">],</span>
-                <span class="n">cwd</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span>
-                <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
-                <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
-                <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-                <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-            <span class="p">)</span>
-
-        <span class="n">status_style</span> <span class="o">=</span> <span class="s2">&quot;green&quot;</span> <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;red&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_panel</span><span class="p">(</span>
-            <span class="s2">&quot;Run Result&quot;</span><span class="p">,</span>
-            <span class="sa">f</span><span class="s2">&quot;returncode = </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">returncode</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">style</span><span class="o">=</span><span class="n">status_style</span><span class="p">,</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
+            <span class="s2">&quot;Running LAMMPS&quot;</span><span class="p">,</span>
+            <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
+            <span class="n">phase</span><span class="o">=</span><span class="s2">&quot;start&quot;</span><span class="p">,</span>
+            <span class="n">attempt</span><span class="o">=</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+            <span class="n">execution_mode</span><span class="o">=</span><span class="s2">&quot;gpu&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ngpus</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">,</span>
         <span class="p">)</span>
 
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ngpus</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                    <span class="p">[</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">mpirun_cmd</span><span class="p">,</span>
+                        <span class="s2">&quot;-np&quot;</span><span class="p">,</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mpi_procs</span><span class="p">),</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">lammps_cmd</span><span class="p">,</span>
+                        <span class="s2">&quot;-in&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;in.lammps&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;-k&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;on&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;g&quot;</span><span class="p">,</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ngpus</span><span class="p">),</span>
+                        <span class="s2">&quot;-sf&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;kk&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;-pk&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;kokkos&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;neigh&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;half&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;newton&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;on&quot;</span><span class="p">,</span>
+                    <span class="p">],</span>
+                    <span class="n">cwd</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span>
+                    <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                    <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                    <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                    <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                    <span class="p">[</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">mpirun_cmd</span><span class="p">,</span>
+                        <span class="s2">&quot;-np&quot;</span><span class="p">,</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mpi_procs</span><span class="p">),</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">lammps_cmd</span><span class="p">,</span>
+                        <span class="s2">&quot;-in&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;in.lammps&quot;</span><span class="p">,</span>
+                    <span class="p">],</span>
+                    <span class="n">cwd</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span>
+                    <span class="n">stdout</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                    <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                    <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                    <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
+                <span class="s2">&quot;LAMMPS command failed to start&quot;</span><span class="p">,</span>
+                <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
+                <span class="n">phase</span><span class="o">=</span><span class="s2">&quot;error&quot;</span><span class="p">,</span>
+                <span class="n">attempt</span><span class="o">=</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+                <span class="n">error_type</span><span class="o">=</span><span class="nb">type</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+                <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">),</span>
+            <span class="p">)</span>
+            <span class="k">raise</span>
+
+        <span class="n">event_payload</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;end&quot;</span> <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;error&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;attempt&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+            <span class="s2">&quot;returncode&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span><span class="p">,</span>
+            <span class="s2">&quot;stdout_chars&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+            <span class="s2">&quot;stderr_chars&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+        <span class="p">}</span>
         <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="n">err_view</span> <span class="o">=</span> <span class="p">(</span>
-                <span class="n">result</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">error_output</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="o">+</span> <span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
             <span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;(no output captured)&quot;</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_panel</span><span class="p">(</span><span class="s2">&quot;Run error/output&quot;</span><span class="p">,</span> <span class="n">err_view</span><span class="p">[</span><span class="o">-</span><span class="mi">6000</span><span class="p">:],</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;red&quot;</span><span class="p">)</span>
+            <span class="n">event_payload</span><span class="p">[</span><span class="s2">&quot;error_output&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">error_output</span><span class="p">[</span><span class="o">-</span><span class="mi">6000</span><span class="p">:]</span>
+        <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
+            <span class="s2">&quot;LAMMPS run succeeded&quot;</span>
+            <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span>
+            <span class="k">else</span> <span class="s2">&quot;LAMMPS run failed&quot;</span><span class="p">,</span>
+            <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run&quot;</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">event_payload</span><span class="p">,</span>
+        <span class="p">)</span>
 
         <span class="n">hist</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_history&quot;</span><span class="p">,</span> <span class="p">[]))</span>
         <span class="n">hist</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
@@ -21037,19 +21145,40 @@ space back into context via the existing experience tools.</p>
             <span class="s2">&quot;run_history&quot;</span><span class="p">:</span> <span class="n">hist</span><span class="p">,</span>
         <span class="p">}</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_route_run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_route_run</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="n">rc</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_returncode&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
         <span class="n">attempts</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">rc</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span><span class="s2">&quot;LAMMPS run successful! Exiting...&quot;</span><span class="p">)</span>
+            <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
+                <span class="s2">&quot;LAMMPS run complete&quot;</span><span class="p">,</span>
+                <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run_result&quot;</span><span class="p">,</span>
+                <span class="n">phase</span><span class="o">=</span><span class="s2">&quot;end&quot;</span><span class="p">,</span>
+                <span class="n">returncode</span><span class="o">=</span><span class="n">rc</span><span class="p">,</span>
+                <span class="n">attempts</span><span class="o">=</span><span class="n">attempts</span><span class="p">,</span>
+            <span class="p">)</span>
             <span class="k">return</span> <span class="s2">&quot;done_success&quot;</span>
         <span class="k">if</span> <span class="n">attempts</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_fix_attempts</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span>
-                <span class="s2">&quot;LAMMPS run Failed. Attempting to rewrite input file...&quot;</span>
+            <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
+                <span class="s2">&quot;LAMMPS run failed; rewriting input file&quot;</span><span class="p">,</span>
+                <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run_result&quot;</span><span class="p">,</span>
+                <span class="n">phase</span><span class="o">=</span><span class="s2">&quot;error&quot;</span><span class="p">,</span>
+                <span class="n">returncode</span><span class="o">=</span><span class="n">rc</span><span class="p">,</span>
+                <span class="n">attempts</span><span class="o">=</span><span class="n">attempts</span><span class="p">,</span>
+                <span class="n">max_fix_attempts</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_fix_attempts</span><span class="p">,</span>
             <span class="p">)</span>
             <span class="k">return</span> <span class="s2">&quot;need_fix&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span>
-            <span class="s2">&quot;LAMMPS run Failed and maximum fix attempts reached. Exiting..&quot;</span>
+        <span class="n">events</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
+            <span class="s2">&quot;LAMMPS run failed; maximum fix attempts reached&quot;</span><span class="p">,</span>
+            <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;run_result&quot;</span><span class="p">,</span>
+            <span class="n">phase</span><span class="o">=</span><span class="s2">&quot;error&quot;</span><span class="p">,</span>
+            <span class="n">returncode</span><span class="o">=</span><span class="n">rc</span><span class="p">,</span>
+            <span class="n">attempts</span><span class="o">=</span><span class="n">attempts</span><span class="p">,</span>
+            <span class="n">max_fix_attempts</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_fix_attempts</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="k">return</span> <span class="s2">&quot;done_failed&quot;</span>
 
@@ -21058,58 +21187,72 @@ space back into context via the existing experience tools.</p>
         <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
         <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
-        <span class="n">pair_info</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">pair_info</span><span class="p">()</span>
+        <span class="n">attempt</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">events</span><span class="o">.</span><span class="n">range</span><span class="p">(</span>
+            <span class="s2">&quot;fix_input&quot;</span><span class="p">,</span>
+            <span class="sa">f</span><span class="s2">&quot;Rewriting LAMMPS input for attempt #</span><span class="si">{</span><span class="n">attempt</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">done</span><span class="o">=</span><span class="s2">&quot;LAMMPS input rewritten&quot;</span><span class="p">,</span>
+            <span class="n">error</span><span class="o">=</span><span class="s2">&quot;Failed to rewrite LAMMPS input&quot;</span><span class="p">,</span>
+            <span class="n">attempt</span><span class="o">=</span><span class="n">attempt</span><span class="p">,</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
+            <span class="n">pair_info</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;chosen_potential&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">pair_info</span><span class="p">()</span>
+            <span class="n">pair_info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_normalize_pair_info</span><span class="p">(</span><span class="n">pair_info</span><span class="p">)</span>
 
-        <span class="n">hist</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_history&quot;</span><span class="p">,</span> <span class="p">[])</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">hist</span><span class="p">:</span>
-            <span class="n">hist</span> <span class="o">=</span> <span class="p">[</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;attempt&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
-                    <span class="s2">&quot;input_script&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;input_script&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-                    <span class="s2">&quot;returncode&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_returncode&quot;</span><span class="p">),</span>
-                    <span class="s2">&quot;stdout&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_stdout&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-                    <span class="s2">&quot;stderr&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_stderr&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-                <span class="p">}</span>
-            <span class="p">]</span>
+            <span class="n">hist</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_history&quot;</span><span class="p">,</span> <span class="p">[])</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">hist</span><span class="p">:</span>
+                <span class="n">hist</span> <span class="o">=</span> <span class="p">[</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;attempt&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+                        <span class="s2">&quot;input_script&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;input_script&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+                        <span class="s2">&quot;returncode&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_returncode&quot;</span><span class="p">),</span>
+                        <span class="s2">&quot;stdout&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_stdout&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+                        <span class="s2">&quot;stderr&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;run_stderr&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+                    <span class="p">}</span>
+                <span class="p">]</span>
 
-        <span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">hist</span><span class="p">:</span>
-            <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">&quot;=== Attempt </span><span class="si">{attempt}</span><span class="s2"> | returncode=</span><span class="si">{returncode}</span><span class="s2"> ===</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="s2">&quot;--- input_script ---</span><span class="se">\n</span><span class="si">{input_script}</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="s2">&quot;--- stdout ---</span><span class="se">\n</span><span class="si">{stdout}</span><span class="se">\n</span><span class="s2">&quot;</span>
-                <span class="s2">&quot;--- stderr ---</span><span class="se">\n</span><span class="si">{stderr}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="o">**</span><span class="n">h</span><span class="p">)</span>
+            <span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">hist</span><span class="p">:</span>
+                <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="s2">&quot;=== Attempt </span><span class="si">{attempt}</span><span class="s2"> | returncode=</span><span class="si">{returncode}</span><span class="s2"> ===</span><span class="se">\n</span><span class="s2">&quot;</span>
+                    <span class="s2">&quot;--- input_script ---</span><span class="se">\n</span><span class="si">{input_script}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                    <span class="s2">&quot;--- stdout ---</span><span class="se">\n</span><span class="si">{stdout}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                    <span class="s2">&quot;--- stderr ---</span><span class="se">\n</span><span class="si">{stderr}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="o">**</span><span class="n">h</span><span class="p">)</span>
+                <span class="p">)</span>
+            <span class="n">err_blob</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+            <span class="n">data_content</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">:</span>
+                <span class="n">data_content</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_and_trim_data_file</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
+                    <span class="n">config</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="n">fixed_json</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fix_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+                <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;err_message&quot;</span><span class="p">:</span> <span class="n">err_blob</span><span class="p">,</span>
+                <span class="s2">&quot;pair_info&quot;</span><span class="p">:</span> <span class="n">pair_info</span><span class="p">,</span>
+                <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;template&quot;</span><span class="p">],</span>
+                <span class="s2">&quot;data_file&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
+                <span class="s2">&quot;data_content&quot;</span><span class="p">:</span> <span class="n">data_content</span><span class="p">,</span>
+            <span class="p">})</span>
+            <span class="n">script_dict</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_safe_json_loads</span><span class="p">(</span><span class="n">fixed_json</span><span class="p">)</span>
+
+            <span class="n">new_input</span> <span class="o">=</span> <span class="n">script_dict</span><span class="p">[</span><span class="s2">&quot;input_script&quot;</span><span class="p">]</span>
+            <span class="n">old_input</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;input_script&quot;</span><span class="p">]</span>
+            <span class="n">input_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span> <span class="s2">&quot;in.lammps&quot;</span><span class="p">)</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">new_input</span><span class="p">)</span>
+            <span class="n">span</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+                <span class="n">path</span><span class="o">=</span><span class="n">input_path</span><span class="p">,</span>
+                <span class="n">old_code</span><span class="o">=</span><span class="n">old_input</span><span class="p">,</span>
+                <span class="n">new_code</span><span class="o">=</span><span class="n">new_input</span><span class="p">,</span>
             <span class="p">)</span>
-        <span class="n">err_blob</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
-
-        <span class="n">data_content</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">:</span>
-            <span class="n">data_content</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_and_trim_data_file</span><span class="p">(</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
-                <span class="n">config</span><span class="p">,</span>
-            <span class="p">)</span>
-
-        <span class="n">fixed_json</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fix_chain</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-            <span class="s2">&quot;simulation_task&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;err_message&quot;</span><span class="p">:</span> <span class="n">err_blob</span><span class="p">,</span>
-            <span class="s2">&quot;pair_info&quot;</span><span class="p">:</span> <span class="n">pair_info</span><span class="p">,</span>
-            <span class="s2">&quot;template&quot;</span><span class="p">:</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;template&quot;</span><span class="p">],</span>
-            <span class="s2">&quot;data_file&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_file</span><span class="p">,</span>
-            <span class="s2">&quot;data_content&quot;</span><span class="p">:</span> <span class="n">data_content</span><span class="p">,</span>
-        <span class="p">})</span>
-        <span class="n">script_dict</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_safe_json_loads</span><span class="p">(</span><span class="n">fixed_json</span><span class="p">)</span>
-
-        <span class="n">new_input</span> <span class="o">=</span> <span class="n">script_dict</span><span class="p">[</span><span class="s2">&quot;input_script&quot;</span><span class="p">]</span>
-        <span class="n">old_input</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;input_script&quot;</span><span class="p">]</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_diff_panel</span><span class="p">(</span><span class="n">old_input</span><span class="p">,</span> <span class="n">new_input</span><span class="p">)</span>
-
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span> <span class="s2">&quot;in.lammps&quot;</span><span class="p">),</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">new_input</span><span class="p">)</span>
 
         <span class="k">return</span> <span class="p">{</span>
             <span class="o">**</span><span class="n">state</span><span class="p">,</span>
             <span class="s2">&quot;input_script&quot;</span><span class="p">:</span> <span class="n">new_input</span><span class="p">,</span>
-            <span class="s2">&quot;fix_attempts&quot;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;fix_attempts&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+            <span class="s2">&quot;fix_attempts&quot;</span><span class="p">:</span> <span class="n">attempt</span><span class="p">,</span>
         <span class="p">}</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_summarize</span><span class="p">(</span>
@@ -21117,29 +21260,24 @@ space back into context via the existing experience tools.</p>
         <span class="n">state</span><span class="p">:</span> <span class="n">LammpsState</span><span class="p">,</span>
         <span class="n">config</span><span class="p">:</span> <span class="n">RunnableConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LammpsState</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_section</span><span class="p">(</span>
-            <span class="s2">&quot;Now handing things off to execution agent for summarization/visualization&quot;</span>
-        <span class="p">)</span>
+        <span class="n">events</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">events</span><span class="o">.</span><span class="n">range</span><span class="p">(</span>
+            <span class="s2">&quot;summarize_results&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Handing LAMMPS results to execution agent&quot;</span><span class="p">,</span>
+            <span class="n">done</span><span class="o">=</span><span class="s2">&quot;LAMMPS result summarization complete&quot;</span><span class="p">,</span>
+            <span class="n">error</span><span class="o">=</span><span class="s2">&quot;LAMMPS result summarization failed&quot;</span><span class="p">,</span>
+            <span class="n">workspace</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">),</span>
+        <span class="p">):</span>
+            <span class="n">executor</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">)</span>
 
-        <span class="n">executor</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">llm</span><span class="p">)</span>
+            <span class="n">exe_plan</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">            You are part of a larger scientific workflow whose purpose is to accomplish this task: </span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">]</span><span class="si">}</span>
+<span class="s2">            A LAMMPS simulation has been done and all output files are located in the current workspace directory.</span>
+<span class="s2">            The simulation logs are recorded in the file &#39;log.lammps&#39;.</span>
+<span class="s2">            Summarize the outcome of this simulation in a markdown document. Include plots, if relevant.</span>
+<span class="s2">            &quot;&quot;&quot;</span>
 
-        <span class="n">exe_plan</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
-<span class="s2">        You are part of a larger scientific workflow whose purpose is to accomplish this task: </span><span class="si">{</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;simulation_task&quot;</span><span class="p">]</span><span class="si">}</span>
-<span class="s2">        A LAMMPS simulation has been done and the output is located in the file &#39;log.lammps&#39;.</span>
-<span class="s2">        Summarize the contents of this file in a markdown document. Include a plot, if relevent.</span>
-<span class="s2">        &quot;&quot;&quot;</span>
-
-        <span class="n">exe_results</span> <span class="o">=</span> <span class="n">executor</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-            <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="n">exe_plan</span><span class="p">)],</span>
-            <span class="s2">&quot;workspace&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">workspace</span><span class="p">,</span>
-        <span class="p">})</span>
-
-        <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">exe_results</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">]:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">events</span><span class="p">(</span><span class="n">config</span><span class="p">)</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span>
-                <span class="s2">&quot;Execution summary message received&quot;</span><span class="p">,</span>
-                <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;summarize_results&quot;</span><span class="p">,</span>
-                <span class="n">result_chars</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">content</span><span class="p">)),</span>
-            <span class="p">)</span>
+            <span class="n">executor</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">exe_plan</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">config</span> <span class="ow">or</span> <span class="p">{}))</span>
 
         <span class="k">return</span> <span class="n">state</span>
 
