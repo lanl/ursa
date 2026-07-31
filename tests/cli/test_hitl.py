@@ -487,6 +487,66 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     assert "42 chars" in rendered
 
 
+def test_hitl_log_event_handler_renders_named_agent_tool_artifacts(tmp_path):
+    output = io.StringIO()
+    console = RealConsole(
+        file=output,
+        force_terminal=False,
+        force_interactive=False,
+        color_system=None,
+        width=80,
+    )
+    handler = HITLLogEventHandler(console=console, workspace=tmp_path)
+
+    async def emit_events() -> None:
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "dummy_bot_3000",
+                "tool": "write_code",
+                "stage": "write",
+                "phase": "end",
+                "message": "File written",
+                "filename": "first_10_integers.py",
+                "artifact": event_artifact(
+                    "for i in range(1, 11):\n    print(i)\n",
+                    "text/x-python",
+                    metadata={"title": "File written"},
+                ),
+            },
+            run_id="named-write-tool-run",
+        )
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "dummy_bot_3000",
+                "tool": "run_command",
+                "stage": "execute",
+                "phase": "end",
+                "message": "Command finished",
+                "query": "python first_10_integers.py",
+                "artifacts": [
+                    event_artifact(
+                        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+                        "text/plain",
+                        metadata={"title": "stdout"},
+                    )
+                ],
+            },
+            run_id="named-command-tool-run",
+        )
+
+    asyncio.run(emit_events())
+
+    rendered = output.getvalue()
+    assert "File written" in rendered
+    assert "for i in range(1, 11):" in rendered
+    assert "print(i)" in rendered
+    assert "stdout" in rendered
+    assert "1" in rendered
+    assert "10" in rendered
+
+
 def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
