@@ -21,6 +21,55 @@ def _stub_mcp_server(monkeypatch):
     return hitl, mcp
 
 
+def _stub_cli_repl(monkeypatch):
+    monkeypatch.setattr("ursa.cli.hitl.HITL", MagicMock())
+    monkeypatch.setattr("ursa.cli.hitl.UrsaRepl", MagicMock())
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+
+def test_cli_warns_about_legacy_unnamed_checkpoint(
+    monkeypatch, tmp_path, capsys
+):
+    _stub_cli_repl(monkeypatch)
+    checkpoint = tmp_path / "db" / "checkpointer.db"
+    checkpoint.parent.mkdir()
+    checkpoint.touch()
+
+    main(["--workspace", str(tmp_path)])
+
+    warning = capsys.readouterr().err
+    assert "URSA no longer restarts unnamed CLI sessions" in warning
+    assert "only persisted when --name is used" in warning
+    assert (
+        "ursa import-agent db/checkpointer.db --name <new agent name>"
+        in warning
+    )
+    assert "--name <new agent name>" in warning
+
+
+def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
+    monkeypatch, tmp_path, capsys
+):
+    _stub_cli_repl(monkeypatch)
+    checkpoint = tmp_path / "db" / "checkpointer.db"
+    checkpoint.parent.mkdir()
+    checkpoint.touch()
+
+    main(["--workspace", str(tmp_path), "--name", "continued-agent"])
+
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_does_not_warn_without_legacy_checkpoint(
+    monkeypatch, tmp_path, capsys
+):
+    _stub_cli_repl(monkeypatch)
+
+    main(["--workspace", str(tmp_path)])
+
+    assert capsys.readouterr().err == ""
+
+
 def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
     hitl, mcp = _stub_mcp_server(monkeypatch)
 
