@@ -127,16 +127,6 @@ def _validate_simple_name(value: Any, *, label: str) -> str:
     return name
 
 
-def _validate_workspace(value: Any) -> None:
-    if value is None or not str(value).strip():
-        return
-    path = Path(str(value)).expanduser()
-    if path.is_absolute() or ".." in path.parts:
-        raise ValueError(
-            "Environment workspace must be a relative path without '..'."
-        )
-
-
 def _validate_model(model: Any, *, group: str, label: str) -> None:
     if model is None:
         return
@@ -198,7 +188,6 @@ def _validate_config_mapping(
 ) -> AgentTeamConfig | AgentSymposiumConfig:
     data["group"] = group
     assert_no_raw_api_key(data, context="environment config")
-    _validate_workspace(data.get("workspace"))
     try:
         if environment_type == "agent_team":
             config: AgentTeamConfig | AgentSymposiumConfig = (

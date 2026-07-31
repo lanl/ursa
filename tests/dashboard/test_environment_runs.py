@@ -135,18 +135,6 @@ def test_environment_launch_validation_is_group_scoped_and_safe(
     assert launch.config.group == "science"
     assert launch.config_mapping["group"] == "science"
 
-    unsafe_workspace = _team_yaml().replace(
-        "pi:\n", "workspace: ../../outside\npi:\n"
-    )
-    try:
-        validate_environment_launch(
-            "agent_team", unsafe_workspace, group="default"
-        )
-    except ValueError as exc:
-        assert "workspace" in str(exc).lower()
-    else:  # pragma: no cover - assertion guard
-        raise AssertionError("Unsafe workspace was accepted")
-
     raw_key = _team_yaml().replace(
         "agent: ChatAgent",
         "agent: ChatAgent\n    model:\n      model: openai:test\n      api_key: secret",

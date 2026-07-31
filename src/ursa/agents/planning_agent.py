@@ -77,7 +77,9 @@ class Plan(BaseModel):
 class PlanningState(TypedDict, total=False):
     """State dictionary for planning agent"""
 
+    task: str
     plan: Plan
+    review: str
     messages: Annotated[list, add_messages]
     reflection_steps: int
 
@@ -99,6 +101,22 @@ class PlanningAgent(BaseAgent[PlanningState]):
     def format_result(self, state: PlanningState) -> str:
         return str(state["plan"])
 
+    def format_query(
+        self, prompt: str, state: PlanningState | None = None
+    ) -> PlanningState:
+        """Start a planning run while retaining its persisted graph state."""
+        query = dict(state or {})
+        query.update({
+            "task": prompt,
+            "review": "",
+            "messages": [
+                *(state or {}).get("messages", []),
+                HumanMessage(content=prompt),
+            ],
+            "reflection_steps": self.max_reflection_steps,
+        })
+        return cast(PlanningState, query)
+
     def generation_node(
         self,
         state: PlanningState,
@@ -110,11 +128,18 @@ class PlanningAgent(BaseAgent[PlanningState]):
         """
         events = self.events(config)
         events.emit("Drafting plan", stage="generate")
-        messages = cast(list, state.get("messages"))
-        if isinstance(messages[0], SystemMessage):
-            messages[0] = SystemMessage(content=self.planner_prompt)
-        else:
-            messages = [SystemMessage(content=self.planner_prompt)] + messages
+        task = state.get("task") or _latest_human_message(state)
+        request = f"Task:\n{task}"
+        if review := state.get("review"):
+            request += (
+                f"\n\nCurrent plan:\n{state['plan'].model_dump_json(indent=2)}"
+                f"\n\nReviewer feedback:\n{review}"
+                "\n\nProduce a revised plan that addresses the feedback."
+            )
+        messages = [
+            SystemMessage(content=self.planner_prompt),
+            HumanMessage(content=request),
+        ]
 
         plan = cast(
             Plan,
@@ -133,6 +158,7 @@ class PlanningAgent(BaseAgent[PlanningState]):
         )
 
         return {
+            "task": task,
             "plan": plan,
             "messages": [AIMessage(content=plan.model_dump_json())],
             "reflection_steps": state.get(
@@ -147,15 +173,20 @@ class PlanningAgent(BaseAgent[PlanningState]):
     ) -> PlanningState:
         events = self.events(config)
         events.emit("Reviewing plan", stage="reflect")
-        cls_map = {"ai": HumanMessage, "human": AIMessage}
-        translated = [state["messages"][0]] + [
-            cls_map[msg.type](content=msg.content)
-            for msg in state["messages"][1:]
+        messages = [
+            SystemMessage(content=self.reflection_prompt),
+            HumanMessage(
+                content=(
+                    f"Original task:\n{state['task']}"
+                    "\n\nCandidate plan:\n"
+                    f"{state['plan'].model_dump_json(indent=2)}"
+                    "\n\nReview this candidate plan."
+                )
+            ),
         ]
-        translated = [SystemMessage(content=reflection_prompt)] + translated
         res = StrOutputParser().invoke(
             self.llm.invoke(
-                translated,
+                messages,
                 self.build_config(tags=["planner", "reflect"]),
             )
         )
@@ -174,6 +205,7 @@ class PlanningAgent(BaseAgent[PlanningState]):
         )
         return {
             "plan": state["plan"],
+            "review": res,
             "messages": [HumanMessage(content=res)],
             "reflection_steps": state["reflection_steps"] - 1,
         }
@@ -206,11 +238,15 @@ def _should_reflect(state: PlanningState):
 
 
 def _should_regenerate(state: PlanningState):
-    # Latest reviewer output (if present)
-    last_content = state["messages"][-1].text if state.get("messages") else ""
-
     # Approved?
-    if "[APPROVED]" in last_content:
+    if "[APPROVED]" in state.get("review", ""):
         return "END"
 
     return "generate"
+
+
+def _latest_human_message(state: PlanningState) -> str:
+    for message in reversed(state.get("messages", [])):
+        if isinstance(message, HumanMessage):
+            return message.text
+    raise ValueError("Planning requires a task or human message.")
