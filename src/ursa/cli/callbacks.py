@@ -702,9 +702,10 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
     ) -> None:
         if name != DEFAULT_EVENT_NAME or not isinstance(data, dict):
             return
-        if "agent" in data:
-            self._print_agent_event(data)
-        elif "tool" in data:
+        # Tool events may also carry an ``agent`` field identifying their
+        # owner. Treat the primary tool discriminator as more specific than
+        # that ownership metadata so named-agent artifacts are still rendered.
+        if "tool" in data:
             tool = self._clean(data.get("tool"))
             self._print_event_artifact(data)
             if tool == "run_command":
@@ -721,6 +722,8 @@ class HITLLogEventHandler(CallbackRenderingMixin, AsyncCallbackHandler):
             if tool == "edit_code" and self._has_inflight_tool("edit_code"):
                 return
             self._print_tool_event(data)
+        elif "agent" in data:
+            self._print_agent_event(data)
 
 
 __all__ = ["HITLLogEventHandler"]
