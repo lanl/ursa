@@ -234,9 +234,15 @@ class HITL:
                 mcp_client=self.mcp_client,
                 thread_id=f"{self.thread_id}",
             )
-            # Replacing the sync checkpointer with an async one for the hitl
-            async_checkpointer = await self._get_checkpointer(agent._agent.den)
-            agent._agent.checkpointer = async_checkpointer
+            # Named agents are persistent. Replace their sync checkpointer with
+            # an async one for HITL execution. Unnamed CLI sessions are
+            # ephemeral and intentionally run without a checkpointer so they do
+            # not leave checkpoint files in the workspace.
+            if self.agent_name is not None:
+                async_checkpointer = await self._get_checkpointer(
+                    agent._agent.den
+                )
+                agent._agent.checkpointer = async_checkpointer
 
         assert agent._agent is not None
         return agent
