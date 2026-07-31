@@ -8,10 +8,13 @@ import html
 import json
 import mimetypes
 import os
+import platform
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import (
     Depends,
@@ -33,7 +36,39 @@ from fastapi.responses import (
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from ursa.cli.agent_management import (
+    copy_agent as cli_copy_agent,
+)
+from ursa.cli.agent_management import (
+    delete_agent as cli_delete_agent,
+)
+from ursa.cli.agent_management import (
+    ensure_group_dir,
+    validate_agent_name,
+)
+from ursa.cli.agent_management import (
+    save_agent as cli_save_agent,
+)
+from ursa.environments.visualization import (
+    get_environment_run_paths,
+    list_environment_run_manifests,
+    read_environment_run_events,
+    read_environment_run_manifest,
+)
+from ursa.rag.persistence import (
+    list_rag_agent_names,
+    normalize_rag_tool_names,
+    rag_agent_dir,
+)
+from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
+
 from .api_models import (
+    CredentialSetRequest,
+    CredentialStatusResponse,
+    EnvironmentConfigValidateRequest,
+    EnvironmentRunCancelRequest,
+    EnvironmentRunCreateRequest,
+    EnvironmentRunRecord,
     ErrorResponse,
     FileMetaResponse,
     RunCancelRequest,
@@ -49,12 +84,38 @@ from .api_models import (
     SessionMessageResponse,
     SessionPatchRequest,
     SessionWorkspaceListResponse,
+    SessionWorkspaceSetRequest,
     SettingsPatchRequest,
     SettingsResponse,
     WorkspaceAllFilesResponse,
     WorkspaceListResponse,
 )
 from .artifacts import scan_artifacts
+from .credentials import (
+    CredentialConfigurationError,
+    CredentialKind,
+    CredentialStore,
+    CredentialStoreError,
+    KeyringCredentialStore,
+    assert_no_credential_metadata,
+    assert_no_raw_api_key,
+    credential_id,
+    credential_status,
+    credential_target,
+    store_api_key,
+)
+from .environment_run_manager import (
+    SYMPOSIUM_STARTER_YAML,
+    TEAM_STARTER_YAML,
+    EnvironmentDefinitionExistsError,
+    EnvironmentRunExistsError,
+    EnvironmentRunManager,
+    validate_environment_launch,
+)
+from .environment_run_ui import (
+    render_environment_run_detail_page,
+    render_environment_runs_page,
+)
 from .models import AgentListResponse
 from .registry import REGISTRY
 from .run_manager import RunManager
@@ -64,6 +125,8 @@ from .sessions import (
 )
 from .sessions import (
     build_prompt_from_messages,
+    create_temporary_workspace,
+    delete_temporary_workspace,
     session_paths,
 )
 from .sessions import (
@@ -84,10 +147,15 @@ from .sessions import (
 from .sessions import (
     update_session as session_update_session,
 )
-from .settings import AuthConfig, SettingsStore
+from .settings import (
+    AuthConfig,
+    SettingsStore,
+    apply_dashboard_config,
+    merge_global_settings_patch,
+)
 
 
-def create_app() -> FastAPI:
+def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     auth = AuthConfig.from_env()
 
     security = HTTPBearer(auto_error=False)
@@ -130,8 +198,67 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    rm = RunManager()
-    settings_store = SettingsStore(rm.workspace_root)
+    dashboard_group = (
+        str(
+            os.environ.get("URSA_DASHBOARD_GROUP", "default") or "default"
+        ).strip()
+        or "default"
+    )
+    credential_store = credential_store or KeyringCredentialStore()
+    rm = RunManager(
+        credential_store=credential_store,
+        dashboard_group=dashboard_group,
+    )
+    environment_rm = EnvironmentRunManager(
+        group=dashboard_group,
+        credential_store=credential_store,
+    )
+    settings_store = SettingsStore(rm.dashboard_root)
+    dashboard_config = str(
+        os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
+    ).strip()
+    if dashboard_config:
+        apply_dashboard_config(
+            settings_store, dashboard_config, group=dashboard_group
+        )
+
+    dashboard_use_web = str(
+        os.environ.get("URSA_DASHBOARD_USE_WEB", "")
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    web_opt_in_agent_ids = {
+        "chat_agent",
+        "execution_agent",
+        "planning_executor_workflow",
+        "prompting_agent",
+    }
+    rag_tool_agent_ids = {
+        "chat_agent",
+        "execution_agent",
+        "planning_executor_workflow",
+    }
+
+    def _agent_init_with_dashboard_defaults(
+        agent_id: str, agent_init: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        out = dict(agent_init or {})
+        if agent_id in web_opt_in_agent_ids:
+            out.setdefault("use_web", dashboard_use_web)
+        if agent_id in rag_tool_agent_ids:
+            settings_tools = settings_store.load().tools
+            configured = list(settings_tools.rag_tools or [])
+            explicit = out.get("rag_tools", None)
+            if explicit is None:
+                out["rag_tools"] = configured
+            else:
+                merged = normalize_rag_tool_names(explicit) + configured
+                out["rag_tools"] = list(dict.fromkeys(merged))
+            out.setdefault("rag_tool_group", dashboard_group)
+        return out
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -141,11 +268,33 @@ def create_app() -> FastAPI:
                 "URSA_DASHBOARD_MODE=remote requires URSA_DASHBOARD_TOKEN"
             )
         await rm.start()
-        settings_store.load()
+        await environment_rm.start()
+        settings = settings_store.load()
+        try:
+            enforce_group_base_url_policy(
+                (
+                    settings.llm.base_url
+                    if getattr(settings, "llm", None)
+                    else None
+                ),
+                dashboard_group,
+            )
+            if (
+                getattr(settings, "embedding", None)
+                and settings.embedding.model
+            ):
+                enforce_group_base_url_policy(
+                    settings.embedding.base_url,
+                    dashboard_group,
+                )
+        except GroupBaseURLPolicyError as e:
+            raise RuntimeError(str(e)) from e
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        await environment_rm.shutdown()
         await rm.shutdown()
+        _cleanup_temporary_session_workspaces()
 
     # ----------------------------
     # Agents
@@ -186,6 +335,43 @@ def create_app() -> FastAPI:
     # Settings (apply to new runs)
     # ----------------------------
 
+    def _deep_merge_dicts(*dicts: dict[str, Any] | None) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        for obj in dicts:
+            if not isinstance(obj, dict):
+                continue
+            for key, value in obj.items():
+                if isinstance(value, dict) and isinstance(
+                    merged.get(key), dict
+                ):
+                    merged[key] = _deep_merge_dicts(merged[key], value)
+                else:
+                    merged[key] = value
+        return merged
+
+    def _session_settings_patch(req: SessionPatchRequest) -> dict[str, Any]:
+        patch: dict[str, Any] = {}
+        if req.title is not None:
+            title = req.title.strip()
+            if not title:
+                raise HTTPException(
+                    status_code=400, detail="Title cannot be empty"
+                )
+            patch["title"] = title
+        if req.llm is not None:
+            if not isinstance(req.llm, dict):
+                raise HTTPException(
+                    status_code=400, detail="llm must be an object"
+                )
+            patch["llm"] = req.llm
+        if req.runner is not None:
+            if not isinstance(req.runner, dict):
+                raise HTTPException(
+                    status_code=400, detail="runner must be an object"
+                )
+            patch["runner"] = req.runner
+        return patch
+
     @app.get(
         "/settings",
         response_model=SettingsResponse,
@@ -201,8 +387,169 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def patch_settings(req: SettingsPatchRequest) -> SettingsResponse:
-        s = settings_store.patch(req.patch)
+        for section in ("llm", "embedding"):
+            section_patch = req.patch.get(section)
+            if isinstance(section_patch, dict):
+                try:
+                    assert_no_raw_api_key(
+                        section_patch, context=f"settings.{section}"
+                    )
+                    assert_no_credential_metadata(
+                        section_patch, context=f"settings.{section}"
+                    )
+                except CredentialConfigurationError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+
+        try:
+            s = merge_global_settings_patch(settings_store.load(), req.patch)
+            enforce_group_base_url_policy(s.llm.base_url, dashboard_group)
+            if s.embedding.model:
+                enforce_group_base_url_policy(
+                    s.embedding.base_url, dashboard_group
+                )
+        except (GroupBaseURLPolicyError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        settings_store.save(s)
         return SettingsResponse(settings=s.model_dump(mode="json"))
+
+    def _credential_config(
+        kind: CredentialKind,
+    ) -> tuple[Any, dict[str, Any]]:
+        settings = settings_store.load()
+        config = getattr(settings, kind)
+        return settings, config.model_dump(mode="json")
+
+    def _require_safe_credential_request(request: Request) -> None:
+        if auth.mode == "remote" and request.url.scheme != "https":
+            raise HTTPException(
+                status_code=400,
+                detail="Credential changes require HTTPS in remote mode.",
+            )
+        origin = str(request.headers.get("origin") or "").strip()
+        if not origin:
+            return
+        parsed = urlsplit(origin)
+        request_origin = f"{request.url.scheme}://{request.url.netloc}"
+        supplied_origin = f"{parsed.scheme}://{parsed.netloc}"
+        if supplied_origin != request_origin:
+            raise HTTPException(status_code=403, detail="Origin not allowed")
+
+    def _credential_status_response(
+        kind: CredentialKind,
+    ) -> CredentialStatusResponse:
+        _settings, config = _credential_config(kind)
+        try:
+            status = credential_status(
+                config,
+                group=dashboard_group,
+                kind=kind,
+                store=credential_store,
+            )
+        except (CredentialStoreError, CredentialConfigurationError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        return CredentialStatusResponse.model_validate(status)
+
+    @app.get(
+        "/credentials/status",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_credential_statuses(response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            kind: _credential_status_response(kind).model_dump(mode="json")
+            for kind in ("llm", "embedding")
+        }
+
+    @app.put(
+        "/credentials/{kind}",
+        response_model=CredentialStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    def set_credential(
+        kind: CredentialKind,
+        req: CredentialSetRequest,
+        request: Request,
+        response: Response,
+    ) -> CredentialStatusResponse:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        value = req.api_key.get_secret_value()
+        if not value.strip():
+            raise HTTPException(status_code=400, detail="API key is empty")
+        if len(value) > 65_536:
+            raise HTTPException(status_code=400, detail="API key is too large")
+
+        settings, config = _credential_config(kind)
+        try:
+            if kind == "llm" or config.get("model"):
+                enforce_group_base_url_policy(
+                    config.get("base_url"), dashboard_group
+                )
+            secret_id = credential_id(dashboard_group, kind)
+            target = credential_target(config)
+            store_api_key(
+                credential_store,
+                credential_id=secret_id,
+                target=target,
+                value=value,
+            )
+            updated = config | {
+                "credential_source": "stored",
+                "credential_id": secret_id,
+                "credential_target": target,
+            }
+            setattr(settings, kind, type(getattr(settings, kind))(**updated))
+            settings_store.save(settings)
+        except (
+            CredentialStoreError,
+            CredentialConfigurationError,
+            GroupBaseURLPolicyError,
+            ValueError,
+        ) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        finally:
+            value = ""
+
+        return _credential_status_response(kind)
+
+    @app.delete(
+        "/credentials/{kind}",
+        response_model=CredentialStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    def delete_credential(
+        kind: CredentialKind, request: Request, response: Response
+    ) -> CredentialStatusResponse:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        settings, config = _credential_config(kind)
+        try:
+            credential_store.delete_secret(credential_id(dashboard_group, kind))
+            updated = config | {
+                "credential_source": "none",
+                "credential_id": None,
+                "credential_target": None,
+            }
+            setattr(settings, kind, type(getattr(settings, kind))(**updated))
+            settings_store.save(settings)
+        except (CredentialStoreError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return _credential_status_response(kind)
+
+    @app.get(
+        "/rag-tools",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_rag_tools() -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        try:
+            names = list_rag_agent_names(dashboard_group)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        for name in names:
+            path = rag_agent_dir(dashboard_group, name)
+            items.append({"name": name, "path": str(path)})
+        return {"group": dashboard_group, "rag_agents": items}
 
     # ----------------------------
     # Sessions (multi-turn chat)
@@ -216,8 +563,30 @@ def create_app() -> FastAPI:
     def list_sessions(
         limit: int = Query(default=50, ge=1, le=500),
     ) -> SessionListResponse:
-        recs = session_list_sessions(rm.workspace_root, limit=limit)
+        recs = session_list_sessions(rm.dashboard_root, limit=limit)
         return SessionListResponse(sessions=recs)
+
+    @app.get(
+        "/agent-names",
+        dependencies=[Depends(require_auth)],
+    )
+    def list_agent_names() -> dict[str, Any]:
+        group_dir = ensure_group_dir(dashboard_group)
+        items: list[dict[str, Any]] = []
+        for path in sorted(
+            (p for p in group_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        ):
+            stat = path.stat()
+            items.append({
+                "agent_name": path.name,
+                "updated_at": datetime.utcfromtimestamp(
+                    stat.st_mtime
+                ).isoformat()
+                + "Z",
+                "path": str(path),
+            })
+        return {"group": dashboard_group, "agent_names": items}
 
     @app.post(
         "/sessions",
@@ -225,12 +594,46 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def create_session(req: SessionCreateRequest) -> SessionDetail:
-        if req.agent_id not in REGISTRY or (
-            req.agent_id.startswith("demo_") and not _include_demo_agents()
+        agent_name = str(req.agent_name or "").strip() or None
+        if agent_name is not None:
+            validate_agent_name(agent_name)
+            # New named agents are allowed. If the directory does not yet exist,
+            # the underlying agent class will create persistent state on first use.
+
+        agent_id = str(req.agent_id or "").strip() or "chat_agent"
+        if agent_id not in REGISTRY or (
+            agent_id.startswith("demo_") and not _include_demo_agents()
         ):
             raise HTTPException(status_code=404, detail="Unknown agent_id")
-        sess = session_create_session(
-            rm.workspace_root, agent_id=req.agent_id, title=req.title
+        workspace_mode, workspace_path = _prepare_workspace_selection(
+            mode=req.workspace_mode,
+            path=req.workspace_path,
+            require_selection=True,
+        )
+        settings_snapshot = settings_store.load().model_dump(mode="json")
+        try:
+            sess = session_create_session(
+                rm.dashboard_root,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                title=req.title,
+                workspace_path=workspace_path,
+                workspace_mode=workspace_mode,
+            )
+        except Exception:
+            if workspace_mode == "temporary":
+                delete_temporary_workspace({
+                    "workspace_mode": workspace_mode,
+                    "workspace_path": str(workspace_path or ""),
+                })
+            raise
+        sess = session_update_session(
+            rm.dashboard_root,
+            sess["session_id"],
+            {
+                "llm": settings_snapshot.get("llm") or {},
+                "runner": settings_snapshot.get("runner") or {},
+            },
         )
         return SessionDetail(session=sess, messages=[])
 
@@ -243,12 +646,12 @@ def create_app() -> FastAPI:
         session_id: str, limit: int = Query(default=200, ge=1, le=2000)
     ) -> SessionDetail:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
-        msgs = session_read_messages(rm.workspace_root, session_id, limit=limit)
+        msgs = session_read_messages(rm.dashboard_root, session_id, limit=limit)
         return SessionDetail(session=sess, messages=msgs)
 
     @app.patch(
@@ -261,25 +664,53 @@ def create_app() -> FastAPI:
     ) -> SessionDetail:
         try:
             # Handle unknown session ID by trying to read and failing gracefully
-            _ = session_read_session(rm.workspace_root, session_id)
+            existing_session = session_read_session(
+                rm.dashboard_root, session_id
+            )
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        # Only allow renaming for now.
-        title = str(req.title).strip()
-        if not title:
-            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        patch = _session_settings_patch(req)
+        if not patch:
+            raise HTTPException(
+                status_code=400, detail="No session changes provided"
+            )
+        if "llm" in patch:
+            try:
+                assert_no_raw_api_key(patch["llm"] or {}, context="session.llm")
+                assert_no_credential_metadata(
+                    patch["llm"] or {}, context="session.llm"
+                )
+            except CredentialConfigurationError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            llm_patch = patch["llm"] or {}
+            merged_llm = _deep_merge_dicts(
+                existing_session.get("llm") or {}, llm_patch
+            )
+            if isinstance(llm_patch, dict) and "model_kwargs" in llm_patch:
+                # Treat model_kwargs as a replace-on-write object so users can
+                # remove keys from the JSON editor instead of keeping stale keys.
+                merged_llm["model_kwargs"] = llm_patch.get("model_kwargs") or {}
+            patch["llm"] = merged_llm
+            try:
+                enforce_group_base_url_policy(
+                    merged_llm.get("base_url"), dashboard_group
+                )
+            except GroupBaseURLPolicyError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+        if "runner" in patch:
+            patch["runner"] = _deep_merge_dicts(
+                existing_session.get("runner") or {}, patch["runner"] or {}
+            )
 
-        sess2 = session_update_session(
-            rm.workspace_root, session_id, {"title": title}
-        )
-        msgs = session_read_messages(rm.workspace_root, session_id, limit=200)
+        sess2 = session_update_session(rm.dashboard_root, session_id, patch)
+        msgs = session_read_messages(rm.dashboard_root, session_id, limit=200)
         return SessionDetail(session=sess2, messages=msgs)
 
     @app.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
     def delete_session(session_id: str) -> Response:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
@@ -290,7 +721,7 @@ def create_app() -> FastAPI:
             )
 
         try:
-            session_delete_session(rm.workspace_root, session_id)
+            session_delete_session(rm.dashboard_root, session_id)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception as e:
@@ -308,10 +739,10 @@ def create_app() -> FastAPI:
     ):
         # Lightweight endpoint for polling
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            _ = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
-        return session_read_messages(rm.workspace_root, session_id, limit=limit)
+        return session_read_messages(rm.dashboard_root, session_id, limit=limit)
 
     @app.post(
         "/sessions/{session_id}/message",
@@ -322,48 +753,72 @@ def create_app() -> FastAPI:
         session_id: str, req: SessionMessageRequest
     ) -> SessionMessageResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
+        workspace_dir = _require_session_workspace_dir(session_id, sess)
 
-        agent_id = str(sess.get("agent_id") or "")
+        try:
+            assert_no_raw_api_key(req.llm or {}, context="message.llm")
+            assert_no_credential_metadata(req.llm or {}, context="message.llm")
+        except CredentialConfigurationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        agent_id = str(req.agent_id or sess.get("agent_id") or "")
         if agent_id not in REGISTRY:
             raise HTTPException(
                 status_code=400,
                 detail="Session agent_id is no longer available",
             )
+        agent_name = str(sess.get("agent_name") or "").strip() or None
 
         # Build conversational prompt from prior transcript.
-        prior = session_read_messages(rm.workspace_root, session_id, limit=200)
+        prior = session_read_messages(rm.dashboard_root, session_id, limit=200)
         prompt = build_prompt_from_messages(prior, new_user_text=req.text)
 
         user_msg = session_append_message(
-            rm.workspace_root,
+            rm.dashboard_root,
             session_id=session_id,
             role="user",
             text=req.text,
+            agent_id=agent_id,
+            agent_name=agent_name,
         )
 
-        # Merge global defaults (apply only if caller didn't provide)
+        # Merge global defaults, then per-session settings, then per-message overrides.
         s = settings_store.load().model_dump(mode="json")
-        llm = {**(s.get("llm") or {}), **(req.llm or {})}
-        runner = {**(s.get("runner") or {}), **(req.runner or {})}
+        llm = _deep_merge_dicts(
+            s.get("llm") or {}, sess.get("llm") or {}, req.llm or {}
+        )
+        runner = _deep_merge_dicts(
+            s.get("runner") or {}, sess.get("runner") or {}, req.runner or {}
+        )
+        embedding = s.get("embedding") or {}
         mcp = s.get("mcp") or {}
 
         # Demo agents should work without external credentials.
         if agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
 
+        try:
+            await asyncio.to_thread(
+                rm.validate_credentials, llm=llm, embedding=embedding
+            )
+        except (CredentialConfigurationError, CredentialStoreError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
 
-        agent_init = dict(req.agent_init or {})
+        agent_init = _agent_init_with_dashboard_defaults(
+            agent_id, req.agent_init
+        )
+        if agent_name is not None:
+            agent_init["agent_name"] = agent_name
+        agent_init["group"] = dashboard_group
 
-        # Use a shared per-session workspace directory so artifacts persist across turns.
-        sp = session_paths(rm.workspace_root, session_id)
-        workspace_dir_rel = sp.workspace_dir.relative_to(
-            rm.workspace_root
-        ).as_posix()
+        # Use the workspace explicitly selected for this session.
+        workspace_dir.mkdir(parents=True, exist_ok=True)
 
         run = await rm.create_run(
             agent_id=agent_id,
@@ -374,15 +829,20 @@ def create_app() -> FastAPI:
             extra={
                 "session_id": session_id,
                 "session_user_message_id": user_msg.get("message_id"),
-                "workspace_dir": workspace_dir_rel,
+                "workspace_dir": str(workspace_dir),
+                "embedding": embedding,
                 "mcp": mcp,
             },
         )
 
         sess2 = session_update_session(
-            rm.workspace_root,
+            rm.dashboard_root,
             session_id,
-            {"active_run_id": run["run_id"], "last_run_id": run["run_id"]},
+            {
+                "agent_id": agent_id,
+                "active_run_id": run["run_id"],
+                "last_run_id": run["run_id"],
+            },
         )
         return SessionMessageResponse(
             session=sess2, user_message=user_msg, run=run
@@ -391,6 +851,68 @@ def create_app() -> FastAPI:
     # ----------------------------
     # Runs
     # ----------------------------
+
+    @app.get(
+        "/agent-management",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_agent_management() -> dict[str, Any]:
+        group_dir = ensure_group_dir(dashboard_group)
+        items = []
+        for path in sorted(
+            (p for p in group_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.name.lower(),
+        ):
+            items.append({"agent_name": path.name, "path": str(path)})
+        return {"group": dashboard_group, "agents": items}
+
+    @app.post(
+        "/agent-management/save",
+        dependencies=[Depends(require_auth)],
+    )
+    def save_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
+        name = validate_agent_name(str(payload.get("agent_name") or "").strip())
+        cli_save_agent(name, dashboard_group)
+        return {
+            "ok": True,
+            "action": "save",
+            "agent_name": name,
+            "group": dashboard_group,
+        }
+
+    @app.post(
+        "/agent-management/copy",
+        dependencies=[Depends(require_auth)],
+    )
+    def copy_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
+        source = validate_agent_name(
+            str(payload.get("source_agent_name") or "").strip()
+        )
+        new_name = validate_agent_name(
+            str(payload.get("new_agent_name") or "").strip()
+        )
+        cli_copy_agent(new_name, source, dashboard_group, dashboard_group)
+        return {
+            "ok": True,
+            "action": "copy",
+            "agent_name": new_name,
+            "source_agent_name": source,
+            "group": dashboard_group,
+        }
+
+    @app.post(
+        "/agent-management/delete",
+        dependencies=[Depends(require_auth)],
+    )
+    def delete_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
+        name = validate_agent_name(str(payload.get("agent_name") or "").strip())
+        cli_delete_agent(name, dashboard_group)
+        return {
+            "ok": True,
+            "action": "delete",
+            "agent_name": name,
+            "group": dashboard_group,
+        }
 
     @app.post(
         "/runs", response_model=RunRecord, dependencies=[Depends(require_auth)]
@@ -401,23 +923,41 @@ def create_app() -> FastAPI:
         ):
             raise HTTPException(status_code=404, detail="Unknown agent_id")
 
+        try:
+            assert_no_raw_api_key(req.llm or {}, context="run.llm")
+            assert_no_credential_metadata(req.llm or {}, context="run.llm")
+        except CredentialConfigurationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
         # Merge with global defaults (apply only if caller didn't provide)
         s = settings_store.load().model_dump(mode="json")
-        llm = {**(s.get("llm") or {}), **(req.llm or {})}
-        runner = {**(s.get("runner") or {}), **(req.runner or {})}
+        llm = _deep_merge_dicts(s.get("llm") or {}, req.llm or {})
+        runner = _deep_merge_dicts(s.get("runner") or {}, req.runner or {})
+        embedding = s.get("embedding") or {}
         mcp = s.get("mcp") or {}
 
         # Demo agents should work without external credentials.
         if req.agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
 
+        try:
+            await asyncio.to_thread(
+                rm.validate_credentials, llm=llm, embedding=embedding
+            )
+        except (CredentialConfigurationError, CredentialStoreError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        agent_init = _agent_init_with_dashboard_defaults(
+            req.agent_id, req.agent_init
+        )
+
         rec = await rm.create_run(
             agent_id=req.agent_id,
             params=req.params,
-            agent_init=req.agent_init,
+            agent_init=agent_init,
             llm=llm,
             runner=runner,
-            extra={"mcp": mcp},
+            extra={"embedding": embedding, "mcp": mcp},
         )
         return rec
 
@@ -603,7 +1143,7 @@ def create_app() -> FastAPI:
     # ----------------------------
 
     def _run_dir_for(run: dict[str, Any]) -> Path:
-        return (rm.workspace_root / run["run_dir"]).resolve()
+        return (rm.dashboard_root / run["run_dir"]).resolve()
 
     def _file_sha256(
         path: Path, *, max_bytes: int = 50 * 1024 * 1024
@@ -744,7 +1284,7 @@ def create_app() -> FastAPI:
         limit: int = Query(default=5000, ge=1, le=20000),
     ) -> WorkspaceAllFilesResponse:
         # Optional global scan across all runs.
-        base = rm.workspace_root / "runs"
+        base = rm.dashboard_root / "runs"
         files: list[dict[str, Any]] = []
         if base.exists():
             for root, dirnames, filenames in os.walk(base):
@@ -758,7 +1298,7 @@ def create_app() -> FastAPI:
                 for fn in filenames:
                     p = Path(root) / fn
                     try:
-                        rel = p.relative_to(rm.workspace_root).as_posix()
+                        rel = p.relative_to(rm.dashboard_root).as_posix()
                         st = p.stat()
                     except Exception:
                         continue
@@ -818,7 +1358,7 @@ def create_app() -> FastAPI:
   <title>{html.escape(title)}</title>
   <style>
     body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }}
-    .muted {{ color: #555; }}
+    .muted {{ color: #fe8181; }}
     .grid {{ display: grid; grid-template-columns: 1fr; gap: 12px; }}
     details {{ border: 1px solid #ddd; border-radius: 8px; padding: 8px 12px; }}
     summary {{ cursor: pointer; font-weight: 600; }}
@@ -878,10 +1418,8 @@ def create_app() -> FastAPI:
         download_url = f"/runs/{run_id}/workspace/file?path={quote(path)}&disposition=attachment"
 
         header = (
-            f'<div><a href="/ui/workspace">Workspace</a> / '
-            f'<span class="pill">{html.escape(run.get("agent_id", ""))}</span> '
-            f'<span class="muted">run {html.escape(run_id)}</span></div>'
-            f'<h2 style="margin-top:8px">{html.escape(path)}</h2>'
+            f'<div> <span class="pill">{html.escape(str(run.get("agent_id", "")))}</span>'
+            f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
             f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
         )
 
@@ -1106,9 +1644,145 @@ def create_app() -> FastAPI:
     # Session workspace (shared across turns)
     # ----------------------------
 
-    def _session_workspace_dir(session_id: str) -> Path:
-        sp = session_paths(rm.workspace_root, session_id)
-        return sp.workspace_dir.resolve()
+    def _cleanup_temporary_session_workspaces() -> None:
+        for sess in session_list_sessions(rm.dashboard_root, limit=100_000):
+            if sess.get("workspace_mode") != "temporary":
+                continue
+            delete_temporary_workspace(sess)
+            with contextlib.suppress(Exception):
+                session_update_session(
+                    rm.dashboard_root,
+                    str(sess["session_id"]),
+                    {"workspace_path": None, "workspace_mode": None},
+                )
+
+    def _prepare_workspace_selection(
+        *,
+        mode: str | None,
+        path: str | None,
+        require_selection: bool = False,
+    ) -> tuple[str | None, Path | None]:
+        normalized_mode = str(mode or "").strip().lower() or None
+        if normalized_mode is None:
+            if require_selection:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "A workspace is required. Choose a workspace folder "
+                        "or use a temporary workspace."
+                    ),
+                )
+            return None, None
+
+        if normalized_mode == "temporary":
+            return "temporary", create_temporary_workspace()
+        if normalized_mode != "folder":
+            raise HTTPException(
+                status_code=400, detail="Invalid workspace mode"
+            )
+
+        raw = str(path or "").strip()
+        if not raw:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose or enter a workspace folder.",
+            )
+        workspace = Path(raw).expanduser()
+        if not workspace.is_absolute():
+            raise HTTPException(
+                status_code=400, detail="Workspace path must be absolute"
+            )
+        try:
+            workspace.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not create or access workspace folder: {e}",
+            ) from e
+        if not workspace.is_dir():
+            raise HTTPException(
+                status_code=400, detail="Workspace path is not a directory"
+            )
+        return "folder", workspace.resolve()
+
+    def _session_workspace_dir(
+        session_id: str, sess: dict[str, Any] | None = None
+    ) -> Path | None:
+        if sess is None:
+            sess = session_read_session(rm.dashboard_root, session_id)
+        custom = str(sess.get("workspace_path") or "").strip()
+        if custom:
+            p = Path(custom).expanduser()
+            if not p.is_absolute():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Session workspace path is not absolute",
+                )
+            resolved = p.resolve()
+            if (
+                sess.get("workspace_mode") == "temporary"
+                and not resolved.is_dir()
+            ):
+                return None
+            return resolved
+        return None
+
+    def _require_session_workspace_dir(
+        session_id: str, sess: dict[str, Any] | None = None
+    ) -> Path:
+        workspace = _session_workspace_dir(session_id, sess)
+        if workspace is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This session does not have a workspace. Choose a workspace "
+                    "folder or use a temporary workspace before continuing."
+                ),
+            )
+        return workspace
+
+    def _legacy_session_workspace_suggestion(
+        session_id: str, sess: dict[str, Any]
+    ) -> Path | None:
+        """Return the former cached workspace only for pre-migration sessions."""
+
+        if "workspace_path" in sess or "workspace_mode" in sess:
+            return None
+        legacy_workspace = session_paths(
+            rm.dashboard_root, session_id
+        ).workspace_dir.resolve()
+        if legacy_workspace.is_dir():
+            return legacy_workspace
+        return None
+
+    def _workspace_response(
+        session_id: str, sess: dict[str, Any], files: list[dict[str, Any]]
+    ) -> SessionWorkspaceListResponse:
+        ws = _session_workspace_dir(session_id, sess)
+        legacy_suggestion = _legacy_session_workspace_suggestion(
+            session_id, sess
+        )
+        configured = ws is not None
+        mode = str(sess.get("workspace_mode") or "").strip() or None
+        if configured and mode not in {"folder", "temporary"}:
+            # Backwards compatibility for sessions that already used an explicit
+            # custom workspace before workspace modes were recorded.
+            mode = "folder"
+        data = {
+            "session_id": session_id,
+            "agent_id": str(sess.get("agent_id") or ""),
+            "files": files,
+            "workspace_path": str(ws) if ws is not None else None,
+            "default_workspace_path": (
+                str(legacy_suggestion)
+                if legacy_suggestion is not None
+                else None
+            ),
+            "is_default_workspace": False,
+            "workspace_mode": mode,
+            "configured": configured,
+        }
+        return SessionWorkspaceListResponse(**data)
 
     @app.get(
         "/sessions/{session_id}/workspace",
@@ -1119,17 +1793,247 @@ def create_app() -> FastAPI:
         session_id: str,
     ) -> SessionWorkspaceListResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
-        files = scan_artifacts(ws, exclude_dirs={"__pycache__"})
-        return SessionWorkspaceListResponse(
-            session_id=session_id,
-            agent_id=str(sess.get("agent_id") or ""),
-            files=files,
+        ws = _session_workspace_dir(session_id, sess)
+        files = (
+            scan_artifacts(ws, exclude_dirs={"__pycache__"})
+            if ws is not None
+            else []
         )
+        return _workspace_response(session_id, sess, files)
+
+    @app.patch(
+        "/sessions/{session_id}/workspace",
+        response_model=SessionWorkspaceListResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def set_session_workspace(
+        session_id: str, req: SessionWorkspaceSetRequest
+    ) -> SessionWorkspaceListResponse:
+        try:
+            sess = session_read_session(rm.dashboard_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+
+        if sess.get("active_run_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the workspace while this session has an active run",
+            )
+
+        old_session = dict(sess)
+        if req.mode == "unset":
+            mode, workspace = None, None
+        else:
+            mode, workspace = _prepare_workspace_selection(
+                mode=req.mode,
+                path=req.path,
+                require_selection=True,
+            )
+        patch = {
+            "workspace_path": str(workspace) if workspace is not None else None,
+            "workspace_mode": mode,
+        }
+
+        sess2 = session_update_session(rm.dashboard_root, session_id, patch)
+        if old_session.get("workspace_path") != sess2.get("workspace_path"):
+            delete_temporary_workspace(old_session)
+        ws = _session_workspace_dir(session_id, sess2)
+        files = (
+            scan_artifacts(ws, exclude_dirs={"__pycache__"})
+            if ws is not None
+            else []
+        )
+        return _workspace_response(session_id, sess2, files)
+
+    def _choose_folder_with_tk(initial_dir: str | None = None) -> str | None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except Exception as e:
+            raise RuntimeError(f"tkinter is not available: {e}") from e
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            selected = filedialog.askdirectory(
+                title="Select URSA workspace folder",
+                initialdir=initial_dir or str(Path.home()),
+                mustexist=False,
+            )
+            return selected or None
+        finally:
+            root.destroy()
+
+    def _choose_folder_with_osascript(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        prompt = "Choose an URSA workspace folder"
+        script = (
+            f'set chosenFolder to choose folder with prompt "{prompt}"\n'
+            "POSIX path of chosenFolder"
+        )
+        env = dict(os.environ)
+        if initial_dir:
+            env["PWD"] = initial_dir
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            text=True,
+            capture_output=True,
+            timeout=300,
+            env=env,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            if "User canceled" in err or "-128" in err:
+                return None
+            raise RuntimeError(err or "osascript folder chooser failed")
+        selected = proc.stdout.strip()
+        return selected or None
+
+    def _choose_folder_with_zenity(
+        initial_dir: str | None = None,
+    ) -> str | None:
+        cmd = [
+            "zenity",
+            "--file-selection",
+            "--directory",
+            "--title",
+            "Select URSA workspace folder",
+        ]
+        if initial_dir:
+            cmd.extend([
+                "--filename",
+                str(Path(initial_dir).expanduser()) + os.sep,
+            ])
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=300)
+        if proc.returncode != 0:
+            if proc.returncode == 1:
+                return None
+            raise RuntimeError(
+                (
+                    proc.stderr or proc.stdout or "zenity folder chooser failed"
+                ).strip()
+            )
+        selected = proc.stdout.strip()
+        return selected or None
+
+    def _choose_workspace_folder(initial_dir: str | None = None) -> str | None:
+        system = platform.system().lower()
+        errors: list[str] = []
+
+        if system == "darwin" and shutil.which("osascript"):
+            try:
+                return _choose_folder_with_osascript(initial_dir)
+            except Exception as e:
+                errors.append(f"osascript: {e}")
+
+        if system == "linux" and shutil.which("zenity"):
+            try:
+                return _choose_folder_with_zenity(initial_dir)
+            except Exception as e:
+                errors.append(f"zenity: {e}")
+
+        try:
+            return _choose_folder_with_tk(initial_dir)
+        except Exception as e:
+            errors.append(f"tkinter: {e}")
+
+        msg = (
+            "; ".join(errors)
+            if errors
+            else "no native folder chooser is available"
+        )
+        raise RuntimeError(msg)
+
+    @app.post(
+        "/workspace/choose",
+        dependencies=[Depends(require_auth)],
+    )
+    async def choose_workspace_folder() -> dict[str, str | None]:
+        """Open the dashboard host's folder chooser before a session exists."""
+
+        try:
+            selected = await asyncio.to_thread(
+                _choose_workspace_folder, str(Path.home())
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Could not open a native folder chooser on the dashboard host. "
+                    "If the dashboard is running remotely or headlessly, enter the "
+                    f"path manually. Details: {e}"
+                ),
+            ) from e
+        if not selected:
+            return {"path": None}
+        _, workspace = _prepare_workspace_selection(
+            mode="folder", path=selected, require_selection=True
+        )
+        return {"path": str(workspace)}
+
+    @app.post(
+        "/sessions/{session_id}/workspace/choose",
+        response_model=SessionWorkspaceListResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def choose_session_workspace(
+        session_id: str,
+    ) -> SessionWorkspaceListResponse:
+        try:
+            sess = session_read_session(rm.dashboard_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+
+        if sess.get("active_run_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot change the workspace while this session has an active run",
+            )
+
+        current = _session_workspace_dir(session_id, sess)
+        try:
+            selected = await asyncio.to_thread(
+                _choose_workspace_folder,
+                str(current) if current is not None else str(Path.home()),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Could not open a native folder chooser on the dashboard host. "
+                    "If the dashboard is running remotely or headlessly, enter the path manually. "
+                    f"Details: {e}"
+                ),
+            )
+
+        if not selected:
+            files = (
+                scan_artifacts(current, exclude_dirs={"__pycache__"})
+                if current is not None
+                else []
+            )
+            return _workspace_response(session_id, sess, files)
+
+        _, workspace = _prepare_workspace_selection(
+            mode="folder", path=selected, require_selection=True
+        )
+
+        sess2 = session_update_session(
+            rm.dashboard_root,
+            session_id,
+            {"workspace_path": str(workspace), "workspace_mode": "folder"},
+        )
+        if sess.get("workspace_path") != sess2.get("workspace_path"):
+            delete_temporary_workspace(sess)
+        ws = _session_workspace_dir(session_id, sess2)
+        files = scan_artifacts(ws, exclude_dirs={"__pycache__"}) if ws else []
+        return _workspace_response(session_id, sess2, files)
 
     async def _save_upload(
         upload: UploadFile, dest: Path, *, max_bytes: int
@@ -1177,11 +2081,11 @@ def create_app() -> FastAPI:
         overwrite: bool = Form(default=False),
     ):
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _require_session_workspace_dir(session_id, sess)
 
         MAX_FILE_BYTES = 100 * 1024 * 1024  # 100MB per file
         saved: list[dict[str, Any]] = []
@@ -1210,7 +2114,7 @@ def create_app() -> FastAPI:
             saved.append({"path": rel, "size_bytes": size})
 
         # Touch session updated_at.
-        session_update_session(rm.workspace_root, session_id, {})
+        session_update_session(rm.dashboard_root, session_id, {})
 
         # Return updated file listing for convenience.
         files_out = scan_artifacts(ws, exclude_dirs={"__pycache__"})
@@ -1230,11 +2134,11 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> SessionFileMetaResponse:
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _require_session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1262,11 +2166,11 @@ def create_app() -> FastAPI:
         session_id: str, path: str = Query(..., min_length=1)
     ) -> HTMLResponse:
         try:
-            sess = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _require_session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1286,10 +2190,8 @@ def create_app() -> FastAPI:
         download_url = f"/sessions/{session_id}/workspace/file?path={quote(path)}&disposition=attachment"
 
         header = (
-            f'<div><a href="/ui">Dashboard</a> / '
-            f'<span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span> '
-            f'<span class="muted">session {html.escape(session_id)}</span></div>'
-            f'<h2 style="margin-top:8px">{html.escape(path)}</h2>'
+            f'<div> <span class="pill">{html.escape(str(sess.get("agent_id", "")))}</span>'
+            f'<span class="muted" style="margin-top:8px"> · {html.escape(path)}</span></div>'
             f'<div class="muted">{html.escape(mime)} · {size} bytes · <a href="{download_url}">download</a></div>'
         )
 
@@ -1401,11 +2303,11 @@ def create_app() -> FastAPI:
         ),
     ):
         try:
-            _ = session_read_session(rm.workspace_root, session_id)
+            sess = session_read_session(rm.dashboard_root, session_id)
         except Exception:
             raise HTTPException(status_code=404, detail="Unknown session_id")
 
-        ws = _session_workspace_dir(session_id)
+        ws = _require_session_workspace_dir(session_id, sess)
         try:
             fp = safe_join(ws, path)
         except WorkspaceJailError:
@@ -1590,13 +2492,17 @@ def create_app() -> FastAPI:
   const state = {
     agents: [],
     agentsById: new Map(),
+    agentNames: [],
+    selectedComposerAgentId: '',
     sessions: [],
     activeSessionId: null,
     activeSession: null, // {session, messages}
+    viewSessionId: null,
     viewRunId: null,
     viewRunKind: 'none', // 'none' | 'static' | 'stream'
     es: null,
     logs: { stdout: '', stderr: '' },
+    workspaceInfo: null,
 
     // Panel visibility (left sidebar is always shown)
     showChat: true,
@@ -1604,8 +2510,15 @@ def create_app() -> FastAPI:
     showArtifacts: true,
 
     settings: null,
+    credentialStatuses: {},
+    _settingsMode: 'global',
+    _settingsSessionId: null,
+    _settingsSessionTitle: '',
+    _openSessionMenu: null,
     _renderTimers: { stdout: null, stderr: null },
     _logToken: 0,
+    _followLogs: { stdout: true, stderr: true },
+    _pendingWhilePaused: { stdout: false, stderr: false },
   };
 
   function escHtml(s) {
@@ -1680,13 +2593,22 @@ def create_app() -> FastAPI:
     if (leftSplit) leftSplit.classList.toggle('hidden', !showMain);
     if (rightSplit) rightSplit.classList.toggle('hidden', !showMain || !showArtifacts);
 
-    // Update toggle button labels (all toggles live on the left panel).
+    // Keep stable labels and communicate visibility through pressed state.
     const tChat = $('#toggleChatBtn');
-    if (tChat) tChat.textContent = showChat ? 'Hide chat' : 'Show chat';
+    if (tChat) {
+      tChat.setAttribute('aria-pressed', String(showChat));
+      tChat.title = showChat ? 'Hide chat panel' : 'Show chat panel';
+    }
     const tLogs = $('#toggleLogsBtn');
-    if (tLogs) tLogs.textContent = showRunLogs ? 'Hide logs' : 'Show logs';
+    if (tLogs) {
+      tLogs.setAttribute('aria-pressed', String(showRunLogs));
+      tLogs.title = showRunLogs ? 'Hide logs panel' : 'Show logs panel';
+    }
     const tArt = $('#toggleArtifactsBtn');
-    if (tArt) tArt.textContent = showArtifacts ? 'Hide artifacts' : 'Show artifacts';
+    if (tArt) {
+      tArt.setAttribute('aria-pressed', String(showArtifacts));
+      tArt.title = showArtifacts ? 'Hide artifacts panel' : 'Show artifacts panel';
+    }
 
     savePref('ursa.ui.showChat', showChat);
     savePref('ursa.ui.showRunLogs', showRunLogs);
@@ -1694,6 +2616,12 @@ def create_app() -> FastAPI:
   }
 
   function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+  function setDragShield(active) {
+    $$('iframe').forEach(el => {
+      el.style.pointerEvents = active ? 'none' : '';
+    });
+  }
 
   function setupSplitters() {
     const left = $('#leftPanel');
@@ -1717,6 +2645,16 @@ def create_app() -> FastAPI:
     let startX = 0;
     let startW = 0;
 
+    const cleanupDrag = () => {
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setDragShield(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onUp);
+    };
+
     const onMove = (e) => {
       if (!dragging) return;
       const x = e.clientX;
@@ -1729,15 +2667,11 @@ def create_app() -> FastAPI:
 
     const onUp = () => {
       if (!dragging) return;
-      dragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
       try {
         const w = panelEl.getBoundingClientRect().width;
         savePref(cfg.prefKey, Math.round(w));
       } catch {}
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      cleanupDrag();
     };
 
     splitterEl.addEventListener('mousedown', (e) => {
@@ -1747,8 +2681,10 @@ def create_app() -> FastAPI:
       startW = panelEl.getBoundingClientRect().width;
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
+      setDragShield(true);
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
+      window.addEventListener('blur', onUp);
       e.preventDefault();
     });
 
@@ -1773,6 +2709,16 @@ def create_app() -> FastAPI:
     let startY = 0;
     let startH = 0;
 
+    const cleanupDrag = () => {
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setDragShield(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onUp);
+    };
+
     const onMove = (e) => {
       if (!dragging) return;
       const dy = e.clientY - startY;
@@ -1782,7 +2728,6 @@ def create_app() -> FastAPI:
       const minConv = 220;
       const maxRun = Math.max(minRun, bodyH - minConv - 24);
 
-      // Moving mouse up should increase log height.
       let h = startH - dy;
       h = clamp(h, minRun, maxRun);
       run.style.height = `${Math.round(h)}px`;
@@ -1790,15 +2735,11 @@ def create_app() -> FastAPI:
 
     const onUp = () => {
       if (!dragging) return;
-      dragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
       try {
         const h = run.getBoundingClientRect().height;
         savePref('ursa.ui.runSectionHeight', Math.round(h));
       } catch {}
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      cleanupDrag();
     };
 
     split.addEventListener('mousedown', (e) => {
@@ -1808,8 +2749,10 @@ def create_app() -> FastAPI:
       startH = run.getBoundingClientRect().height;
       document.body.style.cursor = 'row-resize';
       document.body.style.userSelect = 'none';
+      setDragShield(true);
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
+      window.addEventListener('blur', onUp);
       e.preventDefault();
     });
 
@@ -2041,12 +2984,18 @@ def create_app() -> FastAPI:
     const key = (which === 'stderr') ? 'stderr' : 'stdout';
     if (state._renderTimers[key]) return;
     state._renderTimers[key] = setTimeout(() => {
-      state._renderTimers[key] = null;
-      const el = (key === 'stderr') ? $('#stderrLog') : $('#stdoutLog');
-      if (!el) return;
-      const raw = (key === 'stderr') ? state.logs.stderr : state.logs.stdout;
-      el.innerHTML = ansiToHtml(raw);
-      el.scrollTop = el.scrollHeight;
+        state._renderTimers[key] = null;
+        const el = (key === 'stderr') ? $('#stderrLog') : $('#stdoutLog');
+        if (!el) return;
+
+        if (!state._followLogs[key]) {
+        state._pendingWhilePaused[key] = true;
+        return;
+        }
+
+        const raw = (key === 'stderr') ? state.logs.stderr : state.logs.stdout;
+        el.innerHTML = ansiToHtml(raw);
+        el.scrollTop = el.scrollHeight;
     }, 60);
   }
 
@@ -2065,23 +3014,55 @@ def create_app() -> FastAPI:
     return out.join('');
   }
 
+  // this helps w/ Rich console animations
+  function applyCarriageReturns(existing, incoming) {
+    let out = existing;
+    let lineStart = out.lastIndexOf('\n') + 1;
+
+    for (let i = 0; i < incoming.length; i++) {
+        const ch = incoming[i];
+
+        if (ch === '\r') {
+        // Move cursor to start of current line.
+        lineStart = out.lastIndexOf('\n') + 1;
+        out = out.slice(0, lineStart);
+        continue;
+        }
+
+        out += ch;
+
+        if (ch === '\n') {
+        lineStart = out.length;
+        }
+    }
+
+    return out;
+  }
+
+  function trimToLastLines(text, maxLines) {
+    text = String(text ?? '');
+    maxLines = Number(maxLines);
+
+    if (!Number.isFinite(maxLines) || maxLines <= 0) return '';
+
+    const lines = text.split('\n');
+    if (lines.length <= maxLines) return text;
+    return lines.slice(-maxLines).join('\n');
+  }
+
   function appendLog(stream, text) {
-    const cap = 250000;
+    const capLines = state.settings?.ui?.stdout_buffer_lines ?? 5000;
     const key = (stream === 'stderr') ? 'stderr' : 'stdout';
     text = String(text ?? '');
 
-    // Some console UIs emit backspaces for spinners.
     text = stripBackspaces(text);
 
-    // Make progress-style output readable even without a real terminal.
-    text = text.replace(/\r(?!\n)/g, '\n');
-
     if (key === 'stderr') {
-      state.logs.stderr = (state.logs.stderr + text);
-      if (state.logs.stderr.length > cap) state.logs.stderr = state.logs.stderr.slice(-cap);
+        state.logs.stderr = applyCarriageReturns(state.logs.stderr, text);
+        state.logs.stderr = trimToLastLines(state.logs.stderr, capLines);
     } else {
-      state.logs.stdout = (state.logs.stdout + text);
-      if (state.logs.stdout.length > cap) state.logs.stdout = state.logs.stdout.slice(-cap);
+        state.logs.stdout = applyCarriageReturns(state.logs.stdout, text);
+        state.logs.stdout = trimToLastLines(state.logs.stdout, capLines);
     }
 
     scheduleLogRender(key);
@@ -2094,12 +3075,102 @@ def create_app() -> FastAPI:
     }
   }
 
+  function getSessionRunIds(sessionDetail) {
+    const ids = [];
+    const seen = new Set();
+
+    function add(id) {
+      id = String(id || '').trim();
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    }
+
+    const sess = sessionDetail?.session || {};
+    for (const m of (sessionDetail?.messages || [])) add(m.run_id);
+    add(sess.last_run_id);
+    add(sess.active_run_id);
+
+    return ids;
+  }
+
+  function appendRunDivider(runId, label='run') {
+    const line = '='.repeat(18);
+    const text = `\n${line} ${label} ${runId} ${line}\n`;
+    appendLog('stdout', text);
+  }
+
+  function sessionLogMetaText(sessionDetail, phaseText='history loaded') {
+    const sess = sessionDetail?.session || {};
+    const runIds = getSessionRunIds(sessionDetail);
+    const n = runIds.length;
+    const noun = n === 1 ? 'run' : 'runs';
+
+    if (sess.active_run_id) {
+      return `session log view · ${n} ${noun} · ${phaseText} ${sess.active_run_id}`;
+    }
+    return `session log view · ${n} ${noun}`;
+  }
+
+  async function showSessionLogs(sessionDetail) {
+    const sess = sessionDetail?.session || null;
+    if (!sess) {
+      clearRunView();
+      return;
+    }
+
+    const runIds = getSessionRunIds(sessionDetail);
+    const activeRunId = String(sess.active_run_id || '').trim();
+    const completedRunIds = activeRunId ? runIds.filter(id => id !== activeRunId) : runIds.slice();
+
+    state._logToken += 1;
+    const token = state._logToken;
+
+    closeRunStream();
+    clearLogs();
+
+    state.viewSessionId = sess.session_id;
+    state.viewRunId = activeRunId || String(sess.last_run_id || '').trim() || null;
+    state.viewRunKind = activeRunId ? 'stream' : (runIds.length ? 'static' : 'none');
+
+    const cancelBtn = $('#cancelRunBtn');
+    if (cancelBtn) cancelBtn.style.display = activeRunId ? '' : 'none';
+
+    if (!runIds.length) {
+      setStatus('');
+      setRunLogMeta('No runs yet in this session.');
+      return;
+    }
+
+    setStatus(activeRunId ? `run ${activeRunId} · running` : `session ${sess.session_id} · complete`);
+    setRunLogMeta(sessionLogMetaText(sessionDetail));
+
+    for (const runId of completedRunIds) {
+      if (token !== state._logToken) return;
+      appendRunDivider(runId, runId === sess.last_run_id && !activeRunId ? 'last run' : 'run');
+      try {
+        await loadRunEvents(runId, token);
+      } catch (e) {
+        appendLog('stderr', `\n[dashboard] Failed to load run ${runId}: ${e.message}\n`);
+      }
+    }
+
+    if (activeRunId) {
+      appendRunDivider(activeRunId, 'running');
+      showRunStream(activeRunId, {
+        preserveExisting: true,
+        metaText: sessionLogMetaText(sessionDetail, 'streaming'),
+      });
+    }
+  }
+
   async function loadRunEvents(runId, token) {
     let after = 0;
     let pages = 0;
     const limit = 5000;
+    const maxPages = 50;
 
-    while (pages < 50) {
+    while (pages < maxPages) {
       if (token !== state._logToken) return;
       const res = await api('GET', `/runs/${encodeURIComponent(runId)}/events?after_seq=${after}&limit=${limit}`);
       const events = res.events || [];
@@ -2126,6 +3197,7 @@ def create_app() -> FastAPI:
 
   function clearRunView() {
     closeRunStream();
+    state.viewSessionId = null;
     state.viewRunId = null;
     state.viewRunKind = 'none';
     clearLogs();
@@ -2160,22 +3232,27 @@ def create_app() -> FastAPI:
     }
   }
 
-  function showRunStream(runId) {
+  function showRunStream(runId, opts = {}) {
     if (!runId) return;
+
+    const preserveExisting = !!opts.preserveExisting;
+    const metaText = String(opts.metaText || `run ${runId} · running`);
+
     if (state.viewRunId === runId && state.viewRunKind === 'stream' && state.es) return;
 
     state._logToken += 1;
     const token = state._logToken;
 
     closeRunStream();
-    clearLogs();
+    if (!preserveExisting) clearLogs();
+
     state.viewRunId = runId;
     state.viewRunKind = 'stream';
 
     const cancelBtn = $('#cancelRunBtn');
     if (cancelBtn) cancelBtn.style.display = '';
 
-    setRunLogMeta(`run ${runId} \u00b7 running`);
+    setRunLogMeta(metaText);
 
     const es = new EventSource(`/runs/${encodeURIComponent(runId)}/stream`);
     state.es = es;
@@ -2185,11 +3262,10 @@ def create_app() -> FastAPI:
       try {
         const e = JSON.parse(ev.data);
         const to = (e.payload && e.payload.to) || '';
-        setStatus(to ? `run ${runId} \u00b7 ${to}` : `run ${runId}`);
-        if (to) setRunLogMeta(`run ${runId} \u00b7 ${to}`);
+        setStatus(to ? `run ${runId} · ${to}` : `run ${runId}`);
+        setRunLogMeta(to ? metaText.replace(/streaming\s+\S+$/, `${to} ${runId}`) : metaText);
 
         if (['succeeded','failed','cancelled'].includes(to)) {
-          // Refresh session + workspace after terminal.
           setTimeout(async () => {
             if (token !== state._logToken) return;
             closeRunStream();
@@ -2211,7 +3287,6 @@ def create_app() -> FastAPI:
 
     const onFinal = async (_ev) => {
       if (token !== state._logToken) return;
-      // Assistant message is appended server-side at run completion.
       await refreshSessions();
       if (state.activeSessionId) await loadSession(state.activeSessionId);
     };
@@ -2222,7 +3297,6 @@ def create_app() -> FastAPI:
 
     es.onerror = async () => {
       if (token !== state._logToken) return;
-      // If connection drops, poll session/run state.
       try {
         await refreshSessions();
         if (state.activeSessionId) await loadSession(state.activeSessionId);
@@ -2230,44 +3304,218 @@ def create_app() -> FastAPI:
     };
   }
 
+  function chooseNewSessionType() {
+    return new Promise((resolve) => {
+      const modal = $('#newSessionTypeModal');
+      const namedBtn = $('#newSessionNamedBtn');
+      const nonPersistentBtn = $('#newSessionNonPersistentBtn');
+      const closeBtn = $('#closeNewSessionTypeBtn');
+      const backdrop = $('#newSessionTypeBackdrop');
+      if (!modal || !namedBtn || !nonPersistentBtn || !closeBtn || !backdrop) {
+        resolve('nonpersistent');
+        return;
+      }
+
+      const cleanup = (choice) => {
+        modal.classList.remove('open');
+        namedBtn.onclick = null;
+        nonPersistentBtn.onclick = null;
+        closeBtn.onclick = null;
+        backdrop.onclick = null;
+        document.removeEventListener('keydown', onKeydown);
+        resolve(choice);
+      };
+
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+
+      namedBtn.onclick = () => cleanup('named');
+      nonPersistentBtn.onclick = () => cleanup('nonpersistent');
+      closeBtn.onclick = () => cleanup(null);
+      backdrop.onclick = () => cleanup(null);
+      document.addEventListener('keydown', onKeydown);
+      modal.classList.add('open');
+      namedBtn.focus();
+    });
+  }
+
+  function chooseWorkspaceSelection({ title='Choose a workspace', currentPath='' } = {}) {
+    return new Promise((resolve) => {
+      const modal = $('#workspaceChoiceModal');
+      const titleEl = $('#workspaceChoiceTitle');
+      const input = $('#workspaceFolderInput');
+      const errorEl = $('#workspaceChoiceError');
+      const browseBtn = $('#browseWorkspaceBtn');
+      const folderBtn = $('#useWorkspaceFolderBtn');
+      const temporaryBtn = $('#useTemporaryWorkspaceBtn');
+      const closeBtn = $('#closeWorkspaceChoiceBtn');
+      const backdrop = $('#workspaceChoiceBackdrop');
+      if (!modal || !input || !browseBtn || !folderBtn || !temporaryBtn || !closeBtn || !backdrop) {
+        resolve(null);
+        return;
+      }
+
+      if (titleEl) titleEl.textContent = title;
+      input.value = currentPath || '';
+      if (errorEl) errorEl.textContent = '';
+
+      const cleanup = (choice) => {
+        modal.classList.remove('open');
+        browseBtn.onclick = null;
+        folderBtn.onclick = null;
+        temporaryBtn.onclick = null;
+        closeBtn.onclick = null;
+        backdrop.onclick = null;
+        document.removeEventListener('keydown', onKeydown);
+        resolve(choice);
+      };
+      const showError = (message) => {
+        if (errorEl) errorEl.textContent = String(message || '');
+      };
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+
+      browseBtn.onclick = async () => {
+        browseBtn.disabled = true;
+        showError('');
+        try {
+          const result = await api('POST', '/workspace/choose');
+          if (result?.path) input.value = result.path;
+        } catch (e) {
+          showError(e && e.message ? e.message : e);
+          input.focus();
+        } finally {
+          browseBtn.disabled = false;
+        }
+      };
+      folderBtn.onclick = () => {
+        const path = String(input.value || '').trim();
+        if (!path) {
+          showError('Choose or enter a workspace folder.');
+          input.focus();
+          return;
+        }
+        cleanup({ workspace_mode: 'folder', workspace_path: path });
+      };
+      temporaryBtn.onclick = () => cleanup({ workspace_mode: 'temporary' });
+      closeBtn.onclick = () => cleanup(null);
+      backdrop.onclick = () => cleanup(null);
+      document.addEventListener('keydown', onKeydown);
+      modal.classList.add('open');
+      input.focus();
+    });
+  }
+
   function renderAgents() {
     const list = $('#agentList');
     if (!list) return;
     list.innerHTML = '';
 
-    const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
-    for (const a of agents) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'agentBtn';
-      btn.onclick = () => startSession(a.agent_id);
+    const groupPill = $('#dashboardGroupPill');
+    if (groupPill) groupPill.textContent = `Group: ${state.dashboardGroup || 'default'}`;
 
-      const top = document.createElement('div');
-      top.className = 'row';
+    const wrap = document.createElement('div');
+    wrap.className = 'sessionStartWrap';
 
-      const name = document.createElement('div');
-      name.className = 'agentName';
-      name.textContent = a.display_name || a.agent_id;
-      top.appendChild(name);
+    const form = document.createElement('div');
+    form.className = 'sessionStartOption';
+    form.innerHTML = `
+      <div class="sessionStartOptionTitle">New or temporary agent</div>
+      <!-- <div class="sessionStartOptionCopy">Create a named agent you can return to, or begin a non-persistent session.</div> -->
+      <div class="sessionStartOptionCopy"> </div>
+      <button class="btn sessionStartAction" id="createNewSessionBtn" type="button">Choose session type</button>
+    `;
+    wrap.appendChild(form);
 
-      const start = document.createElement('span');
-      start.className = 'pill action';
-      start.textContent = 'New session';
-      top.appendChild(start);
+    const divider = document.createElement('div');
+    divider.className = 'sessionStartDivider';
+    divider.innerHTML = '<span>or</span>';
+    wrap.appendChild(divider);
 
-      const desc = document.createElement('div');
-      desc.className = 'agentDesc';
-      desc.textContent = a.description || '';
+    const existing = document.createElement('div');
+    existing.className = 'sessionStartOption';
+    const items = (state.agentNames || []);
+    existing.innerHTML = `
+      <div class="sessionStartOptionTitle">Existing named agent</div>
+      <!-- <div class="sessionStartOptionCopy">Start a new session with an agent you have worked with before.</div> -->
+      <div class="sessionStartOptionCopy"> </div>
+      <!-- <label class="agentSearchLabel" for="agentSearchInput">Agent name</label> -->
+      <input class="input sessionAgentSearch" id="agentSearchInput" placeholder="Search named agents..." autocomplete="off" />
+      <div class="agentSearchResults" id="agentSearchResults"></div>
+    `;
 
-      btn.appendChild(top);
-      btn.appendChild(desc);
-      list.appendChild(btn);
+    const search = existing.querySelector('#agentSearchInput');
+    const listWrap = existing.querySelector('#agentSearchResults');
+
+    function draw(filterText='') {
+      const q = String(filterText || '').trim().toLowerCase();
+      listWrap.innerHTML = '';
+      if (!q) {
+        listWrap.innerHTML = items.length
+          ? '<div class="small muted">Type a name, then select an agent to start a session.</div>'
+          : '<div class="small muted">No named agents yet. Create one using the option above.</div>';
+        return;
+      }
+      const filtered = items.filter(item => String(item.agent_name || '').toLowerCase().includes(q));
+      if (!filtered.length) {
+        listWrap.innerHTML = '<div class="small muted">No matching named agents.</div>';
+        return;
+      }
+      for (const item of filtered) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'agentBtn';
+        btn.onclick = () => startSession('', item.agent_name);
+
+        const top = document.createElement('div');
+        top.className = 'row';
+        const name = document.createElement('div');
+        name.className = 'agentName';
+        name.textContent = item.agent_name;
+        top.appendChild(name);
+        const start = document.createElement('span');
+        start.className = 'pill action';
+        start.textContent = 'Start session';
+        top.appendChild(start);
+
+        const desc = document.createElement('div');
+        desc.className = 'agentDesc';
+        desc.textContent = `${fmtTime(item.updated_at)}`;
+
+        btn.appendChild(top);
+        btn.appendChild(desc);
+        listWrap.appendChild(btn);
+      }
     }
 
-    if (!agents.length) {
-      list.innerHTML = '<div class="muted">No agents found.</div>';
+    search.oninput = () => draw(search.value || '');
+    draw('');
+    wrap.appendChild(existing);
+    list.appendChild(wrap);
+
+    const createBtn = $('#createNewSessionBtn');
+    if (createBtn) {
+      createBtn.onclick = async () => {
+        const sessionType = await chooseNewSessionType();
+        if (sessionType === null) return;
+        if (sessionType === 'nonpersistent') {
+          await startSession('', '');
+          return;
+        }
+        const name = prompt('Enter the new agent name');
+        if (name === null) return;
+        const trimmed = String(name || '').trim();
+        if (!trimmed) {
+          alert('Agent name cannot be empty.');
+          return;
+        }
+        await startSession('', trimmed);
+      };
     }
   }
+
 
   function renderSessions() {
     const list = $('#sessionList');
@@ -2275,61 +3523,136 @@ def create_app() -> FastAPI:
     list.innerHTML = '';
 
     for (const s of state.sessions) {
-      const row = document.createElement('div');
-      row.className = 'sessionRow';
+        const row = document.createElement('div');
+        row.className = 'sessionRow';
 
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'histItem' + (state.activeSessionId === s.session_id ? ' selected' : '');
-      btn.onclick = () => loadSession(s.session_id);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const isRunning = !!s.active_run_id;
+        btn.className = 'histItem' + (state.activeSessionId === s.session_id ? ' selected' : '') + (isRunning ? ' running' : ' idle');
+        btn.onclick = () => loadSession(s.session_id);
 
-      const title = document.createElement('div');
-      title.textContent = s.title || s.session_id;
+        const title = document.createElement('div');
+        title.className = 'sessionTitle';
+        title.textContent = s.title || s.agent_name || s.session_id;
 
-      const meta = document.createElement('div');
-      meta.className = 'muted small';
-      const agentName = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
-      const active = s.active_run_id ? ' (running)' : '';
-      meta.textContent = `${agentName} \u00b7 ${fmtTime(s.updated_at)}${active}`;
+        const meta = document.createElement('div');
+        meta.className = 'muted small sessionMeta';
 
-      btn.appendChild(title);
-      btn.appendChild(meta);
+        const agentType = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+        const persistentName = s.agent_name || s.title || 'Unnamed agent';
+        const stateClass = isRunning ? 'running' : 'idle';
+        const stateText = isRunning ? 'Running' : 'Idle';
 
-      const renameBtn = document.createElement('button');
-      renameBtn.type = 'button';
-      renameBtn.className = 'sessActBtn';
-      renameBtn.textContent = 'Rename';
-      renameBtn.title = 'Rename session';
-      renameBtn.onclick = async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const cur = s.title || '';
-        const next = prompt('Rename session', cur);
-        if (next === null) return;
-        await renameSession(s.session_id, next);
-      };
+        meta.innerHTML = `
+        <span class="sessionMetaState ${stateClass}">
+            <span class="sessionMetaDot"></span>${stateText}
+        </span>
+        <span class="sessionMetaSep">·</span>
+        <span>${escHtml(persistentName)}</span>
+        <span class="sessionMetaSep">·</span>
+        <span>${escHtml(agentType)}</span>
+        <span class="sessionMetaSep">·</span>
+        <span>${escHtml(fmtTime(s.updated_at))}</span>
+        `;
 
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'sessActBtn danger';
-      delBtn.textContent = 'Delete';
-      delBtn.title = s.active_run_id ? 'Cannot delete while a run is active' : 'Delete session';
-      delBtn.disabled = !!s.active_run_id;
-      delBtn.onclick = async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        await deleteSessionUI(s.session_id);
-      };
+        btn.appendChild(title);
+        btn.appendChild(meta);
 
-      row.appendChild(btn);
-      row.appendChild(renameBtn);
-      row.appendChild(delBtn);
-      list.appendChild(row);
+        const gearWrap = document.createElement('div');
+        gearWrap.className = 'sessionMenuWrap';
+
+        const gearBtn = document.createElement('button');
+        gearBtn.type = 'button';
+        gearBtn.className = 'sessActBtn gear';
+        gearBtn.textContent = '⚙';
+        gearBtn.title = 'Session menu';
+        gearBtn.setAttribute('aria-label', 'Session menu');
+        gearBtn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = state._openSessionMenu === s.session_id ? null : s.session_id;
+          renderSessions();
+        };
+
+        const menu = document.createElement('div');
+        menu.className = 'sessionMenu' + (state._openSessionMenu === s.session_id ? ' open' : '');
+
+        const llmInfo = document.createElement('div');
+        llmInfo.className = 'sessionMenuInfo';
+        llmInfo.textContent = sessionLlmSummary(s);
+        menu.appendChild(llmInfo);
+
+        const settingsBtn = document.createElement('button');
+        settingsBtn.type = 'button';
+        settingsBtn.textContent = 'Session settings';
+        settingsBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = null;
+          const detail = await api('GET', `/sessions/${encodeURIComponent(s.session_id)}`);
+          const modal = $('#settingsModal');
+          modal.classList.add('open');
+          await loadSettings({ mode: 'session', session: detail.session });
+          renderSessions();
+        };
+        menu.appendChild(settingsBtn);
+
+        const renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.textContent = 'Rename';
+        renameBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = null;
+          const cur = s.title || '';
+          const next = prompt('Rename session', cur);
+          if (next === null) return;
+          await renameSession(s.session_id, next);
+        };
+        menu.appendChild(renameBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'danger';
+        delBtn.textContent = s.active_run_id ? 'Delete (disabled while running)' : 'Delete';
+        delBtn.disabled = !!s.active_run_id;
+        delBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state._openSessionMenu = null;
+          await deleteSessionUI(s.session_id);
+        };
+        menu.appendChild(delBtn);
+
+        gearWrap.appendChild(gearBtn);
+        gearWrap.appendChild(menu);
+
+        row.appendChild(btn);
+        row.appendChild(gearWrap);
+        list.appendChild(row);
     }
 
     if (!state.sessions.length) {
-      list.innerHTML = '<div class="muted">No sessions yet. Start one from the Agents list.</div>';
+        list.innerHTML = '<div class="muted">No sessions yet. Choose an option above to start one.</div>';
     }
+  }
+
+  function renderWorkspacePath() {
+    const el = $('#workspacePath');
+    if (!el) return;
+    const info = state.workspaceInfo || {};
+    if (!state.activeSessionId || !info.workspace_path) {
+      const legacyPath = info.default_workspace_path || '';
+      el.textContent = state.activeSessionId
+        ? (legacyPath ? `Workspace not configured · Previous workspace: ${legacyPath}` : 'Workspace not configured')
+        : '';
+      el.title = legacyPath;
+      return;
+    }
+    const prefix = info.workspace_mode === 'temporary' ? 'Temporary workspace' : 'Workspace';
+    el.textContent = `${prefix}: ${info.workspace_path}`;
+    el.title = info.workspace_path;
   }
 
   function renderActiveSession() {
@@ -2337,28 +3660,53 @@ def create_app() -> FastAPI:
     const meta = $('#activeSessionMeta');
     const msgs = $('#sessionMessages');
     const wsTitle = $('#workspaceTitle');
+    const badge = $('#activeSessionStateBadge');
 
     if (!state.activeSession) {
-      if (title) title.textContent = 'No session selected';
-      if (meta) meta.textContent = '';
-      if (msgs) msgs.innerHTML = '<div class="muted">Pick an agent to start a new session, or select a session on the left.</div>';
-      if (wsTitle) wsTitle.textContent = 'Session artifacts';
-      setStatus('');
-      clearRunView();
-      return;
+        if (title) title.textContent = 'No session selected';
+        if (meta) meta.textContent = '';
+        if (msgs) msgs.innerHTML = '<div class="muted">Pick an agent to start a new session, or select a session on the left.</div>';
+        if (wsTitle) wsTitle.textContent = 'Session artifacts';
+
+        if (badge) {
+        badge.style.display = 'none';
+        badge.className = 'sessionStatus idle';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Idle</span>';
+        }
+
+        setStatus('');
+        state.viewSessionId = null;
+        state.workspaceInfo = null;
+        renderWorkspacePath();
+        clearRunView();
+        return;
     }
 
     const s = state.activeSession.session;
-    const agentName = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+    const agentType = state.agentsById.get(s.agent_id)?.display_name || s.agent_id;
+    const persistentName = s.agent_name || s.title || 'Session';
 
-    if (title) title.textContent = s.title || 'Session';
-    if (meta) meta.textContent = `${agentName} \u00b7 created ${fmtTime(s.created_at)}`;
+    if (title) title.textContent = s.title || persistentName || 'Session';
+    if (meta) meta.textContent = `${persistentName} \u00b7 ${agentType} \u00b7 created ${fmtTime(s.created_at)}`;
 
-    if (wsTitle) wsTitle.textContent = `Artifacts \u00b7 ${s.session_id}`;
+    if (wsTitle) wsTitle.textContent = `Artifacts`;
 
     const activeRunId = s.active_run_id || null;
     const lastRunId = s.last_run_id || null;
-    const viewRunId = activeRunId || lastRunId || null;
+
+    if (badge) {
+        badge.style.display = '';
+        if (activeRunId) {
+        badge.className = 'sessionStatus running';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Running</span>';
+        } else if (lastRunId) {
+        badge.className = 'sessionStatus idle';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Complete</span>';
+        } else {
+        badge.className = 'sessionStatus idle';
+        badge.innerHTML = '<span class="sessionDot"></span><span>Idle</span>';
+        }
+    }
 
     if (activeRunId) setStatus(`run ${activeRunId} \u00b7 running`);
     else if (lastRunId) setStatus(`run ${lastRunId} \u00b7 last run`);
@@ -2368,63 +3716,75 @@ def create_app() -> FastAPI:
     msgs.innerHTML = '';
 
     for (const m of (state.activeSession.messages || [])) {
-      const row = document.createElement('div');
-      row.className = 'msgRow ' + (m.role || '');
+        const row = document.createElement('div');
+        row.className = 'msgRow ' + (m.role || '');
 
-      const head = document.createElement('div');
-      head.className = 'msgHead';
+        const head = document.createElement('div');
+        head.className = 'msgHead';
 
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = (m.role === 'assistant') ? 'Assistant' : (m.role === 'system' ? 'System' : 'You');
-      head.appendChild(who);
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = (m.role === 'assistant') ? 'Assistant' : (m.role === 'system' ? 'System' : 'You');
+        head.appendChild(who);
 
-      const t = document.createElement('span');
-      t.className = 'muted small';
-      t.textContent = ' \u00b7 ' + fmtTime(m.ts);
-      head.appendChild(t);
+        const t = document.createElement('span');
+        t.className = 'muted small';
+        t.textContent = ' \u00b7 ' + fmtTime(m.ts);
+        head.appendChild(t);
 
-      if (m.run_id) {
+        if (m.agent_id) {
+        const a = document.createElement('span');
+        a.className = 'muted small';
+        const label = state.agentsById.get(m.agent_id)?.display_name || m.agent_id;
+        a.textContent = ' \u00b7 ' + label;
+        head.appendChild(a);
+        }
+
+        if (m.run_id) {
         const r = document.createElement('span');
         r.className = 'muted small mono';
         r.textContent = ' \u00b7 ' + m.run_id;
         head.appendChild(r);
-      }
+        }
 
-      const body = document.createElement('div');
-      body.className = 'bubble ' + (m.role || '');
-      if (m.role === 'assistant' || m.role === 'system') {
+        const body = document.createElement('div');
+        body.className = 'bubble ' + (m.role || '');
+        if (m.role === 'assistant' || m.role === 'system') {
         body.innerHTML = mdToHtml(m.text || '');
-      } else {
+        } else {
         body.textContent = m.text || '';
-      }
+        }
 
-      row.appendChild(head);
-      row.appendChild(body);
-      msgs.appendChild(row);
+        row.appendChild(head);
+        row.appendChild(body);
+        msgs.appendChild(row);
     }
 
-    // Scroll to bottom
+    renderComposerAgentSelect();
     msgs.scrollTop = msgs.scrollHeight;
 
-    // Show run logs affiliated with this session:
-    // - If a run is currently active, stream it.
-    // - Otherwise, show the last completed run logs.
-    if (activeRunId) {
-      showRunStream(activeRunId);
-    } else if (lastRunId) {
-      showRunStatic(lastRunId).catch(err => console.error(err));
-    } else {
-      clearRunView();
-    }
+    showSessionLogs(state.activeSession).catch(err => {
+        console.error(err);
+        appendLog('stderr', `\n[dashboard] Failed to render session logs: ${err.message}\n`);
+    });
   }
 
   async function refreshAgents() {
-    const res = await api('GET', '/agents');
+    const [res, namesRes] = await Promise.all([
+      api('GET', '/agents'),
+      api('GET', '/agent-names')
+    ]);
     state.agents = res.agents || [];
     state.agentsById = new Map(state.agents.map(a => [a.agent_id, a]));
+    state.agentNames = namesRes.agent_names || [];
+    state.dashboardGroup = namesRes.group || 'default';
+    if (!state.selectedComposerAgentId && state.agents.length) {
+      state.selectedComposerAgentId = state.agents[0].agent_id;
+    }
     renderAgents();
     renderSessions();
+    renderComposerAgentSelect();
+    await refreshAgentManagement();
   }
 
   async function refreshSessions() {
@@ -2433,8 +3793,18 @@ def create_app() -> FastAPI:
     renderSessions();
   }
 
-  async function startSession(agentId) {
-    const res = await api('POST', '/sessions', { agent_id: agentId });
+  async function startSession(agentId, agentName='') {
+    const workspace = await chooseWorkspaceSelection({
+      title: 'Choose a workspace for this session',
+    });
+    if (!workspace) return;
+    const payload = {};
+    if (String(agentId || '').trim()) payload.agent_id = String(agentId || '').trim();
+    if (String(agentName || '').trim()) payload.agent_name = String(agentName || '').trim();
+    payload.workspace_mode = workspace.workspace_mode;
+    if (workspace.workspace_path) payload.workspace_path = workspace.workspace_path;
+    const res = await api('POST', '/sessions', payload);
+    await refreshAgents();
     await refreshSessions();
     await loadSession(res.session.session_id);
   }
@@ -2458,7 +3828,7 @@ def create_app() -> FastAPI:
       alert('Cannot delete a session with an active run');
       return;
     }
-    if (!confirm('Delete this session? This will remove its messages and workspace files.')) return;
+    if (!confirm('Delete this session? This removes its messages and any temporary workspace created for it. User-selected workspace folders are not deleted.')) return;
 
     await api('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
 
@@ -2475,12 +3845,28 @@ def create_app() -> FastAPI:
   }
 
   async function loadSession(sessionId) {
+    const previousSessionId = state.activeSessionId;
+    if (previousSessionId !== sessionId) clearArtifactPreview();
     state.activeSessionId = sessionId;
     savePref('ursa.ui.activeSessionId', sessionId);
     state.activeSession = await api('GET', `/sessions/${encodeURIComponent(sessionId)}`);
     renderSessions();
     renderActiveSession();
     await refreshWorkspace();
+  }
+
+  function clearArtifactPreview() {
+    $$('#workspaceFiles .fileItem').forEach(x => x.classList.remove('selected'));
+    const iframe = $('#previewFrame');
+    const txt = $('#artifactTextPreview');
+    if (iframe) {
+      iframe.src = 'about:blank';
+      iframe.style.display = '';
+    }
+    if (txt) {
+      txt.innerHTML = '';
+      txt.style.display = 'none';
+    }
   }
 
   function isMdFile(path) {
@@ -2527,12 +3913,15 @@ def create_app() -> FastAPI:
     const hint = $('#workspaceHint');
     if (!list) return;
     list.innerHTML = '';
+    renderWorkspacePath();
 
     if (!state.activeSessionId) {
       if (hint) hint.textContent = 'Select a session to view its workspace.';
       return;
     }
-    if (hint) hint.textContent = 'Click a file to preview, or download it.';
+    if (hint) hint.textContent = state.workspaceInfo?.configured
+      ? 'Click a file to preview, or download it.'
+      : 'Choose a workspace folder or use a temporary workspace to continue.';
 
     for (const f of (files || [])) {
       const row = document.createElement('div');
@@ -2558,17 +3947,21 @@ def create_app() -> FastAPI:
     }
 
     if (!files || !files.length) {
-      list.innerHTML = '<div class="muted">No files in this session workspace yet.</div>';
+      list.innerHTML = state.workspaceInfo?.configured
+        ? '<div class="muted">No files in this session workspace yet.</div>'
+        : '<div class="muted">No workspace configured.</div>';
     }
   }
 
   async function refreshWorkspace() {
     if (!state.activeSessionId) {
+      state.workspaceInfo = null;
       renderWorkspace([]);
       return;
     }
     try {
       const res = await api('GET', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`);
+      state.workspaceInfo = res;
       renderWorkspace(res.files || []);
     } catch (e) {
       const list = $('#workspaceFiles');
@@ -2576,20 +3969,73 @@ def create_app() -> FastAPI:
     }
   }
 
+  function renderComposerAgentSelect() {
+    const sel = $('#composerAgentType');
+    if (!sel) return;
+    const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
+    sel.innerHTML = agents.map(a => `<option value="${escHtml(a.agent_id)}">${escHtml(a.display_name || a.agent_id)}</option>`).join('');
+    const activeAgentId = state.activeSession?.session?.agent_id || '';
+    const target = state.selectedComposerAgentId || activeAgentId || agents[0]?.agent_id || '';
+    if (target) sel.value = target;
+    sel.onchange = () => {
+      state.selectedComposerAgentId = String(sel.value || '');
+    };
+  }
+
+  async function setSessionWorkspace(selection) {
+    if (!state.activeSessionId) return;
+    const payload = selection?.workspace_mode === 'temporary'
+      ? { mode: 'temporary' }
+      : { mode: 'folder', path: selection?.workspace_path || '' };
+    const res = await api('PATCH', `/sessions/${encodeURIComponent(state.activeSessionId)}/workspace`, payload);
+    state.workspaceInfo = res;
+    renderWorkspace(res.files || []);
+    await refreshSessions();
+  }
+
+  async function chooseWorkspaceFolder() {
+    if (!state.activeSessionId) {
+      alert('Select a session first');
+      return;
+    }
+    const selection = await chooseWorkspaceSelection({
+      title: state.workspaceInfo?.configured ? 'Change session workspace' : 'Choose a session workspace',
+      currentPath: state.workspaceInfo?.workspace_mode === 'folder'
+        ? (state.workspaceInfo?.workspace_path || '')
+        : (state.workspaceInfo?.default_workspace_path || ''),
+    });
+    if (!selection) return;
+    try {
+      await setSessionWorkspace(selection);
+    } catch (e) {
+      alert(String(e && e.message ? e.message : e));
+    }
+  }
+
+  async function ensureSessionWorkspaceConfigured() {
+    if (state.workspaceInfo?.configured) return true;
+    await chooseWorkspaceFolder();
+    return !!state.workspaceInfo?.configured;
+  }
+
   async function sendMessage() {
     if (!state.activeSessionId) return;
     const ta = $('#messageInput');
     const text = (ta && ta.value || '').trim();
     if (!text) return;
+    if (!(await ensureSessionWorkspaceConfigured())) return;
 
     const sendBtn = $('#sendMsgBtn');
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/message`, { text });
+      const agentId = String($('#composerAgentType')?.value || state.selectedComposerAgentId || state.activeSession?.session?.agent_id || '').trim();
+      await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/message`, { text, agent_id: agentId || undefined });
+      state.selectedComposerAgentId = agentId || state.selectedComposerAgentId;
       if (ta) ta.value = '';
       await loadSession(state.activeSessionId);
       await refreshSessions();
+      await refreshAgents();
     } catch (e) {
       alert('Failed to send: ' + e.message);
     } finally {
@@ -2609,6 +4055,75 @@ def create_app() -> FastAPI:
 
   function _cloneJson(obj) {
     return JSON.parse(JSON.stringify(obj || {}));
+  }
+
+  function _deepMergeObjects(...objs) {
+    const out = {};
+    for (const obj of objs) {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) continue;
+      for (const [k, v] of Object.entries(obj)) {
+        if (v && typeof v === 'object' && !Array.isArray(v) && out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) {
+          out[k] = _deepMergeObjects(out[k], v);
+        } else {
+          out[k] = v;
+        }
+      }
+    }
+    return out;
+  }
+
+  function _jsonObjectFromTextarea(sel, label, allowEmpty=true) {
+    const el = $(sel);
+    const txt = (el?.value || '').trim();
+    if (!txt) return allowEmpty ? {} : null;
+    let parsed;
+    try {
+      parsed = JSON.parse(txt);
+    } catch (e) {
+      throw new Error(`${label} must be valid JSON: ${e && e.message ? e.message : String(e)}`);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed;
+  }
+
+  function sessionEffectiveLlm(session) {
+    const globalLlm = state.settings?.llm || {};
+    return _deepMergeObjects(globalLlm, session?.llm || {});
+  }
+
+  function sessionLlmSummary(session) {
+    const llm = sessionEffectiveLlm(session);
+    const model = llm.model || '(model unset)';
+    const base = llm.base_url || '(default endpoint)';
+    return `${model} @ ${base}`;
+  }
+
+  function setSettingsModalMode(mode, session=null) {
+    state._settingsMode = mode;
+    state._settingsSessionId = session?.session_id || null;
+    state._settingsSessionTitle = session?.title || '';
+    const title = $('#settingsModalTitle');
+    const sub = $('#settingsModalSubtitle');
+    const uiBtn = document.querySelector('.settingsNavBtn[data-settings-section="ui"]');
+    const mcpBtn = document.querySelector('.settingsNavBtn[data-settings-section="mcp"]');
+    $$('.globalCredentialOnly').forEach(el => {
+      el.style.display = mode === 'session' ? 'none' : '';
+    });
+    if (mode === 'session') {
+      if (title) title.textContent = 'Session settings';
+      if (sub) sub.textContent = `Applies to this session only: ${session?.title || session?.session_id || ''}`;
+      if (uiBtn) uiBtn.style.display = 'none';
+      if (mcpBtn) mcpBtn.style.display = 'none';
+      setSettingsSection('llm');
+    } else {
+      if (title) title.textContent = 'Settings';
+      if (sub) sub.textContent = 'Global defaults for new sessions and runs.';
+      if (uiBtn) uiBtn.style.display = '';
+      if (mcpBtn) mcpBtn.style.display = '';
+      setSettingsSection('ui');
+    }
   }
 
   function setMcpStatus(msg) {
@@ -2715,73 +4230,468 @@ def create_app() -> FastAPI:
     renderMcpServers();
   }
 
-  async function loadSettings() {
+  function setRagToolStatus(msg) {
+    const el = $('#ragToolStatus');
+    if (el) el.textContent = msg || '';
+  }
+
+  function renderRagTools() {
+    const available = $('#ragAvailableList');
+    const selected = $('#ragSelectedList');
+    if (!available || !selected) return;
+
+    const chosen = new Set(state._ragTools || []);
+    const agents = state._availableRagAgents || [];
+    available.innerHTML = '';
+    selected.innerHTML = '';
+
+    const groupLabel = $('#ragToolsGroupLabel');
+    if (groupLabel) groupLabel.textContent = 'Group: ' + (state._ragToolsGroup || state.dashboardGroup || 'default');
+
+    const availableAgents = agents.filter(item => !chosen.has(item.name));
+    if (!availableAgents.length) {
+      available.innerHTML = '<div class="muted small">No unselected persisted RAG agents found for this group.</div>';
+    } else {
+      for (const item of availableAgents) {
+        const row = document.createElement('div');
+        row.className = 'row ragToolRow';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '8px';
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(item.name)}</div><div class="muted small">${escHtml(item.path || '')}</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn';
+        btn.textContent = 'Add';
+        btn.onclick = () => {
+          state._ragTools = Array.from(new Set([...(state._ragTools || []), item.name])).sort();
+          setRagToolStatus('Added ' + item.name + ' (staged). Click Save to persist.');
+          renderRagTools();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+        available.appendChild(row);
+      }
+    }
+
+    const selectedNames = Array.from(chosen).sort();
+    if (!selectedNames.length) {
+      selected.innerHTML = '<div class="muted small">No RAG tools selected.</div>';
+    } else {
+      for (const name of selectedNames) {
+        const item = agents.find(x => x.name === name) || { name, path: '' };
+        const row = document.createElement('div');
+        row.className = 'row ragToolRow';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '8px';
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(name)}</div><div class="muted small">${escHtml(item.path || 'Not found in current group')}</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn danger';
+        btn.textContent = 'Remove';
+        btn.onclick = () => {
+          state._ragTools = (state._ragTools || []).filter(x => x !== name);
+          setRagToolStatus('Removed ' + name + ' (staged). Click Save to persist.');
+          renderRagTools();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+        selected.appendChild(row);
+      }
+    }
+  }
+
+  async function refreshRagTools() {
+    try {
+      const res = await api('GET', '/rag-tools');
+      state._availableRagAgents = res.rag_agents || [];
+      state._ragToolsGroup = res.group || state.dashboardGroup || 'default';
+      renderRagTools();
+    } catch (e) {
+      state._availableRagAgents = [];
+      renderRagTools();
+      setRagToolStatus('Failed to load RAG agents: ' + e.message);
+    }
+  }
+
+  function applyTheme(theme) {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    let resolved = 'light';
+
+    if (theme === 'dark') resolved = 'dark';
+    else if (theme === 'light') resolved = 'light';
+    else resolved = prefersDark ? 'dark' : 'light';
+
+    document.documentElement.setAttribute('data-theme', resolved);
+  }
+
+  function renderCredentialStatus(kind) {
+    const status = state.credentialStatuses?.[kind] || {};
+    const el = $(`#set_${kind}_credential_status`);
+    if (!el) return;
+    if (status.needs_reentry) {
+      el.textContent = 'Saved key is not approved for this endpoint. Enter it again to rebind.';
+      return;
+    }
+    if (status.source === 'stored') {
+      el.textContent = status.usable ? 'Key saved securely.' : 'No usable saved key.';
+      return;
+    }
+    if (status.source === 'environment') {
+      el.textContent = status.configured ? 'Environment variable is available.' : 'Environment variable is not currently available.';
+      return;
+    }
+    if (status.source === 'llm') {
+      el.textContent = status.usable ? 'Using the saved LLM key.' : 'Saved LLM key is unavailable or bound to a different endpoint.';
+      return;
+    }
+    el.textContent = 'No API key will be used.';
+  }
+
+  function updateCredentialControls(kind) {
+    const source = $(`#set_${kind}_credential_source`)?.value || 'none';
+    const stored = $(`#set_${kind}_stored_fields`);
+    const env = $(`#set_${kind}_env_fields`);
+    if (stored) stored.style.display = source === 'stored' ? '' : 'none';
+    if (env) env.style.display = source === 'environment' ? '' : 'none';
+    renderCredentialStatus(kind);
+  }
+
+  async function refreshCredentialStatuses() {
+    try {
+      state.credentialStatuses = await api('GET', '/credentials/status');
+    } catch (e) {
+      state.credentialStatuses = {};
+      for (const kind of ['llm', 'embedding']) {
+        const el = $(`#set_${kind}_credential_status`);
+        if (el) el.textContent = 'Credential store unavailable: ' + e.message;
+      }
+      return;
+    }
+    renderCredentialStatus('llm');
+    renderCredentialStatus('embedding');
+  }
+
+  async function removeStoredCredential(kind) {
+    if (!confirm(`Remove the saved ${kind === 'llm' ? 'LLM' : 'embedding'} API key?`)) return;
+    try {
+      state.credentialStatuses[kind] = await api('DELETE', `/credentials/${kind}`);
+      const source = $(`#set_${kind}_credential_source`);
+      if (source) source.value = 'none';
+      const keyInput = $(`#set_${kind}_api_key`);
+      if (keyInput) keyInput.value = '';
+      updateCredentialControls(kind);
+      const res = await api('GET', '/settings');
+      state.settings = res.settings || state.settings;
+      await refreshCredentialStatuses();
+      updateCredentialControls('llm');
+      updateCredentialControls('embedding');
+    } catch (e) {
+      alert('Could not remove key: ' + e.message);
+    }
+  }
+
+  async function loadSettings(opts={}) {
+    const mode = opts.mode || state._settingsMode || 'global';
+    const session = opts.session || null;
     const res = await api('GET', '/settings');
     state.settings = res.settings || {};
-    const llm = state.settings.llm || {};
-    const runner = state.settings.runner || {};
+    applyTheme(state.settings?.ui?.theme || 'system');
+    setSettingsModalMode(mode, session);
+
+    const globalLlm = state.settings.llm || {};
+    const globalEmbedding = state.settings.embedding || {};
+    const globalRunner = state.settings.runner || {};
+    const llm = mode === 'session' ? _deepMergeObjects(globalLlm, session?.llm || {}) : globalLlm;
+    const embedding = globalEmbedding;
+    const runner = mode === 'session' ? _deepMergeObjects(globalRunner, session?.runner || {}) : globalRunner;
     const mcp = state.settings.mcp || {};
+    const tools = state.settings.tools || {};
+
+    // Settings-related entries
+    const ui = state.settings.ui || {};
+    $('#set_stdout_buffer_lines').value = ui.stdout_buffer_lines ?? 20000;
+    $('#set_theme').value = ui.theme || 'system';
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
-    $('#set_api_key_env_var').value = llm.api_key_env_var || '';
-    $('#set_max_tokens').value = llm.max_tokens ?? '';
-    $('#set_temperature').value = llm.temperature ?? '';
-    $('#set_timeout').value = runner.timeout_seconds ?? '';
+    $('#set_api_key_env').value = llm.api_key_env || '';
+    $('#set_llm_credential_source').value = llm.credential_source || (llm.api_key_env ? 'environment' : 'none');
+    $('#set_llm_api_key').value = '';
+    const modelKwargs = llm.model_kwargs || {};
+    $('#set_model_kwargs').value = Object.keys(modelKwargs).length ? JSON.stringify(modelKwargs, null, 2) : '';
 
-    // MCP
+    $('#set_embedding_base_url').value = embedding.base_url || '';
+    $('#set_embedding_model').value = embedding.model || '';
+    $('#set_embedding_api_key_env').value = embedding.api_key_env || '';
+    $('#set_embedding_credential_source').value = embedding.credential_source || (embedding.api_key_env ? 'environment' : 'none');
+    $('#set_embedding_api_key').value = '';
+    const embeddingModelKwargs = embedding.model_kwargs || {};
+    $('#set_embedding_model_kwargs').value = Object.keys(embeddingModelKwargs).length ? JSON.stringify(embeddingModelKwargs, null, 2) : '';
+
+    $('#set_timeout').value = runner.timeout_seconds ?? '';
+    updateCredentialControls('llm');
+    updateCredentialControls('embedding');
+    if (mode === 'global') await refreshCredentialStatuses();
+
+    // MCP is global-only.
     state._mcpServers = _cloneJson(mcp.servers || {});
     state._mcpEditKey = null;
     clearMcpEditor();
     renderMcpServers();
 
+    // Persisted RAG tools
+    state._ragTools = Array.from(new Set(tools.rag_tools || [])).sort();
+    await refreshRagTools();
+
+    const groupLabel = $('#agentMgmtGroupLabel');
+    if (groupLabel) groupLabel.textContent = 'Group: ' + (state.dashboardGroup || 'default');
+    await refreshAgentManagement();
+
     const upd = $('#settingsUpdated');
-    if (upd) upd.textContent = 'Loaded.';
+    if (upd) upd.textContent = mode === 'session' ? 'Loaded session settings.' : 'Loaded.';
+  }
+
+  async function refreshAgentManagement() {
+    const list = $('#agentMgmtList');
+    if (!list) return;
+    try {
+      const res = await api('GET', '/agent-management');
+      const agents = res.agents || [];
+      list.innerHTML = '';
+      if (!agents.length) {
+        list.innerHTML = '<div class="muted small">No named agents in this group.</div>';
+        return;
+      }
+      for (const item of agents) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.style.justifyContent = 'space-between';
+        row.style.alignItems = 'center';
+        row.style.gap = '8px';
+        row.style.padding = '8px 0';
+
+        const label = document.createElement('div');
+        label.innerHTML = `<div>${escHtml(item.agent_name)}</div><div class="muted small">${escHtml(item.path || '')}</div>`;
+
+        const actions = document.createElement('div');
+        actions.className = 'row';
+        actions.style.gap = '6px';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn';
+        saveBtn.type = 'button';
+        saveBtn.textContent = 'Checkpoint';
+        saveBtn.onclick = async () => {
+          await api('POST', '/agent-management/save', { agent_name: item.agent_name });
+          await refreshAgents();
+          await refreshAgentManagement();
+        };
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn';
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy';
+        copyBtn.onclick = async () => {
+          const newName = prompt('New name for copied agent', item.agent_name + '.copy');
+          if (newName === null) return;
+          await api('POST', '/agent-management/copy', { source_agent_name: item.agent_name, new_agent_name: newName });
+          await refreshAgents();
+          await refreshAgentManagement();
+        };
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn danger';
+        delBtn.type = 'button';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = async () => {
+          if (!confirm('Delete agent ' + item.agent_name + '?')) return;
+          await api('POST', '/agent-management/delete', { agent_name: item.agent_name });
+          await refreshAgents();
+          await refreshAgentManagement();
+        };
+
+        actions.appendChild(saveBtn);
+        actions.appendChild(copyBtn);
+        actions.appendChild(delBtn);
+        row.appendChild(label);
+        row.appendChild(actions);
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = `<div class="muted small">Failed to load agent management: ${escHtml(e.message)}</div>`;
+    }
   }
 
   async function saveSettings() {
-    const patch = {
+    let modelKwargs;
+    let embeddingModelKwargs;
+    try {
+      modelKwargs = _jsonObjectFromTextarea('#set_model_kwargs', 'Model kwargs');
+      embeddingModelKwargs = _jsonObjectFromTextarea('#set_embedding_model_kwargs', 'Embedding model kwargs');
+    } catch (e) {
+      alert(e.message || String(e));
+      return;
+    }
+
+    let llmKey = '';
+    let embeddingKey = '';
+    if (state._settingsMode === 'global') {
+      llmKey = $('#set_llm_api_key').value || '';
+      embeddingKey = $('#set_embedding_api_key').value || '';
+      const llmSource = $('#set_llm_credential_source').value || 'none';
+      const embeddingSource = $('#set_embedding_credential_source').value || 'none';
+      const embeddingConfigured = Boolean(($('#set_embedding_model').value || '').trim());
+      if (llmSource === 'stored' && !llmKey && !state.credentialStatuses?.llm?.configured) {
+        alert('Enter an LLM API key before selecting secure storage.');
+        return;
+      }
+      if (embeddingConfigured && embeddingSource === 'stored' && !embeddingKey && !state.credentialStatuses?.embedding?.configured) {
+        alert('Enter an embedding API key before selecting secure storage.');
+        return;
+      }
+      if (embeddingConfigured && embeddingSource === 'llm' && !state.credentialStatuses?.llm?.configured) {
+        alert('Save an LLM API key before reusing it for embeddings.');
+        return;
+      }
+    }
+
+    const llmPatch = {
+      base_url: ($('#set_base_url').value || '').trim() || null,
+      model: ($('#set_model').value || '').trim() || null,
+      api_key_env: ($('#set_api_key_env').value || '').trim() || null,
+      model_kwargs: modelKwargs,
+    };
+    if (state._settingsMode === 'global') {
+      llmPatch.credential_source = llmKey ? 'none' : ($('#set_llm_credential_source').value || 'none');
+    }
+
+    const common = {
       llm: {
-        base_url: ($('#set_base_url').value || '').trim() || null,
-        model: ($('#set_model').value || '').trim() || null,
-        api_key_env_var: ($('#set_api_key_env_var').value || '').trim() || null,
-        max_tokens: ($('#set_max_tokens').value === '' ? null : Number($('#set_max_tokens').value)),
-        temperature: ($('#set_temperature').value === '' ? null : Number($('#set_temperature').value)),
+        ...llmPatch,
       },
       runner: {
         timeout_seconds: ($('#set_timeout').value === '' ? null : Number($('#set_timeout').value)),
       },
+    };
+
+    const patch = state._settingsMode === 'session' ? common : {
+      ui: {
+        theme: ($('#set_theme').value || 'system'),
+        stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
+      },
+      ...common,
+      embedding: {
+        base_url: ($('#set_embedding_base_url').value || '').trim() || null,
+        model: ($('#set_embedding_model').value || '').trim() || null,
+        api_key_env: ($('#set_embedding_api_key_env').value || '').trim() || null,
+        credential_source: embeddingKey ? 'none' : ($('#set_embedding_credential_source').value || 'none'),
+        model_kwargs: embeddingModelKwargs,
+      },
       mcp: {
         servers: (state._mcpServers || {}),
+      },
+      tools: {
+        rag_tools: Array.from(new Set(state._ragTools || [])).sort(),
       }
     };
 
-    // remove nulls to avoid overwriting with null unless explicitly intended
-    // (but preserve empty objects where we need to allow clearing settings, e.g. mcp.servers).
+    // Remove nulls to avoid overwriting with null unless explicitly intended.
+    // Preserve llm.base_url=null so clearing the Base URL field restores the model provider default.
+    // Also preserve empty objects/arrays where we need to allow clearing settings, e.g. mcp.servers and tools.rag_tools.
     function compact(o, path='') {
       if (!o || typeof o !== 'object') return o;
       const out = Array.isArray(o) ? [] : {};
       for (const [k,v] of Object.entries(o)) {
         const p = path ? (path + '.' + k) : k;
-        if (v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v))) continue;
+        if (v === undefined || (typeof v === 'number' && Number.isNaN(v))) continue;
+        if (v === null && p !== 'llm.base_url' && !p.startsWith('embedding.')) continue;
         if (typeof v === 'object' && !Array.isArray(v)) {
           const c = compact(v, p);
           const empty = c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0;
-          if (!empty || p === 'mcp.servers') out[k] = c;
+          if (!empty || p === 'mcp.servers' || p === 'llm.model_kwargs' || p === 'embedding.model_kwargs') out[k] = c;
+        } else if (Array.isArray(v)) {
+          if (v.length || p === 'tools.rag_tools') out[k] = v;
         } else out[k] = v;
       }
       return out;
     }
 
-    const payload = { patch: compact(patch) };
-    const res = await api('PATCH', '/settings', payload);
-    state.settings = res.settings || {};
+    const cleaned = compact(patch);
+    if (state._settingsMode === 'session') {
+      if (!state._settingsSessionId) return;
+      const res = await api('PATCH', `/sessions/${encodeURIComponent(state._settingsSessionId)}`, cleaned);
+      state.activeSession = res;
+      await refreshSessions();
+      if (state.activeSessionId === state._settingsSessionId) await loadSession(state._settingsSessionId);
+    } else {
+      const res = await api('PATCH', '/settings', { patch: cleaned });
+      state.settings = res.settings || {};
+      let credentialSaveError = null;
+      try {
+        if (llmKey) {
+          state.credentialStatuses.llm = await api('PUT', '/credentials/llm', { api_key: llmKey });
+        }
+        if (embeddingKey) {
+          state.credentialStatuses.embedding = await api('PUT', '/credentials/embedding', { api_key: embeddingKey });
+        }
+      } catch (e) {
+        credentialSaveError = e;
+        alert('Settings were saved, but the API key could not be stored: ' + e.message);
+      } finally {
+        llmKey = '';
+        embeddingKey = '';
+        $('#set_llm_api_key').value = '';
+        $('#set_embedding_api_key').value = '';
+      }
+      await refreshCredentialStatuses();
+      const refreshed = await api('GET', '/settings');
+      state.settings = refreshed.settings || state.settings;
+      applyTheme(state.settings?.ui?.theme || 'system');
+      await refreshSessions();
+      if (credentialSaveError) return;
+    }
 
     const saved = $('#settingsSaved');
     if (saved) {
       saved.textContent = 'Saved.';
       setTimeout(() => { saved.textContent = ''; }, 1500);
     }
+  }
+
+  function setSettingsSection(section) {
+    $$('.settingsNavBtn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.settingsSection === section);
+    });
+    $$('.settingsPane').forEach(pane => {
+        pane.classList.toggle('hidden', pane.dataset.settingsPane !== section);
+    });
+    }
+
+  function setupSettingsNav() {
+    $$('.settingsNavBtn').forEach(btn => {
+        btn.onclick = () => setSettingsSection(btn.dataset.settingsSection);
+    });
+  }
+
+  function setupLogFollowState() {
+    ['stdout', 'stderr'].forEach((key) => {
+        const el = (key === 'stderr') ? $('#stderrLog') : $('#stdoutLog');
+        if (!el) return;
+
+        el.addEventListener('scroll', () => {
+        const thresholdPx = 24;
+        const nearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) <= thresholdPx;
+        state._followLogs[key] = nearBottom;
+
+        if (nearBottom && state._pendingWhilePaused[key]) {
+            state._pendingWhilePaused[key] = false;
+            el.innerHTML = ansiToHtml(state.logs[key]);
+            el.scrollTop = el.scrollHeight;
+        }
+        });
+    });
   }
 
   function setupUi() {
@@ -2795,6 +4705,7 @@ def create_app() -> FastAPI:
     state.showArtifacts = !!loadPref('ursa.ui.showArtifacts', oldHideRight === null ? true : !oldHideRight);
 
     applyPanelVisibility();
+    setupLogFollowState();
 
     const tChat = $('#toggleChatBtn');
     if (tChat) tChat.onclick = () => { state.showChat = !state.showChat; applyPanelVisibility(); };
@@ -2807,16 +4718,18 @@ def create_app() -> FastAPI:
 
     $('#refreshSessionsBtn').onclick = async () => { await refreshSessions(); };
     $('#refreshFilesBtn').onclick = async () => { await refreshWorkspace(); };
+    $('#setWorkspaceBtn').onclick = async () => { await chooseWorkspaceFolder(); };
 
     // Upload files into the active session workspace
     const uploadBtn = $('#uploadFilesBtn');
     const uploadInput = $('#uploadInput');
     if (uploadBtn && uploadInput) {
-      uploadBtn.onclick = () => {
+      uploadBtn.onclick = async () => {
         if (!state.activeSessionId) {
           alert('Select a session first');
           return;
         }
+        if (!(await ensureSessionWorkspaceConfigured())) return;
         uploadInput.value = '';
         uploadInput.click();
       };
@@ -2879,9 +4792,10 @@ def create_app() -> FastAPI:
 
     // Settings modal
     const modal = $('#settingsModal');
+    setupSettingsNav();
     $('#openSettingsBtn').onclick = async () => {
       modal.classList.add('open');
-      await loadSettings();
+      await loadSettings({ mode: 'global' });
     };
     $('#closeSettingsBtn').onclick = () => modal.classList.remove('open');
     $('#settingsBackdrop').onclick = () => modal.classList.remove('open');
@@ -2892,11 +4806,29 @@ def create_app() -> FastAPI:
     if (mRem) mRem.onclick = removeMcpServerFromEditor;
     const mClr = $('#mcpClearBtn');
     if (mClr) mClr.onclick = clearMcpEditor;
+    const ragRefresh = $('#ragRefreshBtn');
+    if (ragRefresh) ragRefresh.onclick = refreshRagTools;
+    $('#set_llm_credential_source').onchange = () => updateCredentialControls('llm');
+    $('#set_embedding_credential_source').onchange = () => updateCredentialControls('embedding');
+    $('#set_llm_remove_key').onclick = () => removeStoredCredential('llm');
+    $('#set_embedding_remove_key').onclick = () => removeStoredCredential('embedding');
 
     $('#saveSettingsBtn').onclick = saveSettings;
+
+    document.addEventListener('click', (e) => {
+      if (!state._openSessionMenu) return;
+      if (e.target && e.target.closest && e.target.closest('.sessionMenuWrap')) return;
+      state._openSessionMenu = null;
+      renderSessions();
+    });
   }
 
   async function init() {
+    // have to grab settings for light/dark theme first
+    const res = await api('GET', '/settings');
+    state.settings = res.settings || {};
+    applyTheme(state.settings?.ui?.theme || 'system');
+
     setupUi();
     await refreshAgents();
     await refreshSessions();
@@ -2921,6 +4853,37 @@ def create_app() -> FastAPI:
 """
 
     DASHBOARD_CSS = r"""
+:root[data-theme="dark"] {
+  --bg: #111418;
+  --panel: rgba(28, 32, 38, 0.92);
+  --panelSolid: #1c2026;
+  --border: #3a404a;
+  --text: #eceff4;
+  --muted: #aab3bf;
+}
+:root[data-theme="dark"] body { background: var(--bg); color: var(--text); }
+:root[data-theme="dark"] .section { background: rgba(24, 28, 34, 0.92); }
+:root[data-theme="dark"] .logDetails { background: rgba(24, 28, 34, 0.92); }
+:root[data-theme="dark"] .btn { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .histItem { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .sessActBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .agentBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .fileItem { background: #1f242b; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .fileDl { background: #1f242b; color: #8ab4ff; border-color: var(--border); }
+:root[data-theme="dark"] .messages { background: #171b20; border-color: var(--border); }
+:root[data-theme="dark"] .bubble { background: #252b33; color: var(--text); }
+:root[data-theme="dark"] .bubble.user { background: #1d3557; color: #eef4ff; }
+:root[data-theme="dark"] textarea { background: #171b20; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] input, :root[data-theme="dark"] select { background: #171b20; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] .artifactText { background: #171b20; color: var(--text); border-color: var(--border); }
+:root[data-theme="dark"] iframe { background: #171b20; border-color: var(--border); }
+:root[data-theme="dark"] .modalCard { background: #1a1f26; color: var(--text); }
+:root[data-theme="dark"] .settingsNavBtn:hover { background: #252b33; }
+:root[data-theme="dark"] .settingsNavBtn.active { background: #233247; border-color: #355070; }
+:root[data-theme="dark"] .settingsNavBtn { color: #b7bda6; }
+:root[data-theme="dark"] .settingsNavBtn.active { color: #eef4ff; }
+:root[data-theme="dark"] .sessionStartOption { background: rgba(255,255,255,0.05); }
+:root[data-theme="dark"] #dashboardGroupPill { background: rgba(255,255,255,0.05); }
 :root {
   --bg: #ffffff;
   --panel: rgba(250, 250, 250, 0.92);
@@ -2953,21 +4916,73 @@ body::before {
 .main { overflow:hidden; }
 
 .splitter {
-  flex: 0 0 8px;
+  flex: 0 0 12px;
   cursor: col-resize;
-  background: linear-gradient(to right, transparent, rgba(0,0,0,0.08), transparent);
+  position: relative;
+  background: transparent;
 }
+
+.splitter::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.16);
+  border-radius: 999px;
+}
+
+:root[data-theme="dark"] .splitter::before {
+  background: rgba(255,255,255,0.16);
+}
+
+.splitter:hover::before {
+  background: rgba(11,87,208,0.45);
+}
+
+:root[data-theme="dark"] .splitter:hover::before {
+  background: rgba(138,180,255,0.55);
+}
+
 .splitter.hidden { display:none; }
 
 /* Generic utility used throughout JS */
 .hidden { display:none !important; }
 
 .hsplitter {
-  flex: 0 0 8px;
+  flex: 0 0 12px;
   cursor: row-resize;
-  background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.08), transparent);
+  position: relative;
   border-radius: 6px;
+  background: transparent;
 }
+
+.hsplitter::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.22);
+  border-radius: 999px;
+}
+
+:root[data-theme="dark"] .hsplitter::before {
+  background: rgba(255,255,255,0.22);
+}
+
+.hsplitter:hover::before {
+  background: rgba(11,87,208,0.45);
+}
+
+:root[data-theme="dark"] .hsplitter:hover::before {
+  background: rgba(138,180,255,0.55);
+}
+
 .hsplitter.hidden { display:none; }
 
 .sidebar {
@@ -3029,12 +5044,29 @@ body::before {
 .topbar { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .topbarCol { flex-direction: column; align-items: stretch; justify-content: flex-start; }
 .topbarCol > .row { width: 100%; }
-.brandRow { display:flex; align-items:flex-start; gap: 12px; }
-.brandLogo { width: 75px; height: 75px; object-fit: contain; border-radius: 10px; background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.06); }
+.brandRow { display:flex; align-items:center; gap: 12px; }
+.brandLogo { width: 56px; height: 56px; object-fit: contain; border-radius: 12px; background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.06); }
 
 /* Brand sizing (left sidebar only) */
-#leftPanel .brand .title { font-size: 16pt; line-height: 1.15; }
-#leftPanel .brand .muted.small { font-size: 14pt; line-height: 1.2; }
+#leftPanel .brand .title { font-size: 15pt; line-height: 1.15; }
+#leftPanel .brand .muted.small { font-size: 12px; line-height: 1.35; margin-top: 3px; }
+
+.sidebarControls { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.panelControls { display: flex; flex-direction: column; gap: 6px; }
+.controlLabel { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.panelToggleGroup { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: rgba(0,0,0,0.035); }
+.panelToggle { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 8px; padding: 8px 6px; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
+.panelToggle:hover { color: var(--text); background: rgba(255,255,255,0.7); }
+.panelToggle[aria-pressed="true"] { color: #0b57d0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.sidebarNav { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.sidebarNavAction { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; line-height: 1.2; text-decoration: none; }
+.sidebarNavAction:hover { border-color: #bbb; background: rgba(255,255,255,0.7); }
+.controlIcon { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+:root[data-theme="dark"] .panelToggleGroup { background: rgba(255,255,255,0.04); }
+:root[data-theme="dark"] .panelToggle:hover { background: rgba(255,255,255,0.06); }
+:root[data-theme="dark"] .panelToggle[aria-pressed="true"] { color: #8ab4ff; background: #252b33; box-shadow: 0 1px 3px rgba(0,0,0,0.28); }
+:root[data-theme="dark"] .sidebarNavAction { color: var(--text); }
+:root[data-theme="dark"] .sidebarNavAction:hover { border-color: #596170; background: rgba(255,255,255,0.05); }
 
 .title { font-weight: 700; }
 .muted { color: var(--muted); }
@@ -3052,6 +5084,19 @@ body::before {
 .btn.danger { border-color: #cc3a3a; color: #cc3a3a; }
 .btn.danger:hover { background: rgba(204,58,58,0.06); }
 
+.sessionStartWrap { display: flex; flex-direction: column; }
+.sessionStartHeader { margin-bottom: 8px; }
+.sessionStartOption { border: 1px solid var(--border); border-radius: 11px; padding: 11px; background: #f4f5f6; }
+.sessionStartOptionTitle { font-size: 14px; font-weight: 700; line-height: 1.25; }
+.sessionStartOptionCopy { margin: 4px 0 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.sessionStartAction { width: 100%; font-weight: 450; }
+.sessionStartDivider { display: flex; align-items: center; gap: 8px; margin: 5px 3px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.sessionStartDivider::before, .sessionStartDivider::after { content: ""; height: 1px; flex: 1 1 auto; background: var(--border); }
+.agentSearchLabel { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.sessionAgentSearch { width: 100%; }
+.agentSearchResults { margin-top: 9px; }
+.agentSearchResults .agentBtn:last-child { margin-bottom: 0; }
+
 .agentBtn { width: 100%; text-align: left; border: 1px solid var(--border); background: #fff; padding: 10px; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
 .agentName { font-weight: 650; }
 .agentDesc { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.3; }
@@ -3059,12 +5104,37 @@ body::before {
 .pill { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--muted); }
 .pill.action { color: #0b57d0; border-color: rgba(11,87,208,0.35); }
 
-.sessionRow { display:flex; gap: 8px; align-items: stretch; margin-bottom: 10px; }
-.sessionRow .histItem { margin-bottom: 0; flex: 1 1 auto; }
-.sessionRow .sessActBtn { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 12px; }
+.sessionTitle { font-weight: 650; line-height: 1.2; overflow-wrap: anywhere; margin-bottom: 6px; }
+.sessionMeta { line-height: 1.25; overflow-wrap: anywhere; }
+.sessionMetaState { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.sessionMetaState.running { color: #0f7a2f; }
+.sessionMetaState.idle { color: #666; }
+.sessionMetaDot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; background: currentColor; transform: translateY(0.5px); }
+.sessionMetaState.running .sessionMetaDot { animation: sessionPulse 1.4s ease-in-out infinite; }
+.sessionMetaSep { color: #999; margin: 0 4px; }
+.sessionStatus { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; font-size: 11px; line-height: 1; border: 1px solid var(--border); background: #fff; white-space: nowrap; }
+.sessionStatus.running { color: #0f7a2f; border-color: rgba(15, 122, 47, 0.28); background: rgba(15, 122, 47, 0.06); }
+.sessionStatus.idle { color: #666; border-color: rgba(0, 0, 0, 0.10); background: rgba(0, 0, 0, 0.03); }
+.sessionDot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; background: currentColor; transform: translateY(0.5px); }
+.sessionStatus.running .sessionDot { animation: sessionPulse 1.4s ease-in-out infinite; }
+.histItem.running { border-left: 4px solid rgba(15, 122, 47, 0.55); padding-left: 8px; }
+.histItem.selected.running { box-shadow: 0 0 0 2px rgba(15, 122, 47, 0.12); }
+.histItem.selected.idle { box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
+@keyframes sessionPulse { 0%, 100% { transform: translateY(0.5px) scale(1); opacity: 1; } 50% { transform: translateY(0.5px) scale(1.35); opacity: 0.65; } }
+
+.sessionRow { display:flex; gap: 8px; align-items: stretch; margin-bottom: 10px; position: relative; }
+.sessionRow .histItem { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.sessionRow .sessActBtn { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 14px; }
 .sessionRow .sessActBtn:hover { border-color: #bbb; }
-.sessionRow .sessActBtn.danger { border-color: #cc3a3a; color: #cc3a3a; }
-.sessionRow .sessActBtn.danger:hover { background: rgba(204,58,58,0.06); }
+.sessionMenuWrap { position: relative; flex: 0 0 auto; display: flex; align-items: stretch; }
+.sessionMenuWrap .gear { min-width: 38px; }
+.sessionMenu { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 80; min-width: 230px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); box-shadow: 0 14px 40px rgba(0,0,0,0.16); }
+.sessionMenu.open { display: block; }
+.sessionMenuInfo { padding: 8px 9px 10px; margin-bottom: 5px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.35; word-break: break-word; }
+.sessionMenu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); border-radius: 8px; padding: 8px 9px; cursor: pointer; }
+.sessionMenu button:hover { background: rgba(11,87,208,0.08); }
+.sessionMenu button.danger { color: #cc3a3a; }
+.sessionMenu button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .histItem { width: 100%; text-align:left; border: 1px solid var(--border); background: #fff; padding: 10px; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
 .histItem.selected { border-color: #0b57d0; box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
@@ -3093,7 +5163,7 @@ body::before {
 .bubble.user { background: #eef5ff; }
 
 .composer { margin-top: 10px; }
-textarea, input, select { font: inherit; }
+textarea, input, select { font: inherit; box-sizing: border-box; }
 textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; border-radius: 10px; border: 1px solid var(--border); }
 
 .logDetails { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #fff; margin-bottom: 10px; }
@@ -3114,6 +5184,7 @@ textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; borde
 .fileDl:hover { border-color: #bbb; }
 
 #filesDetails { flex: 0 0 auto; }
+#workspacePath { max-width: 100%; overflow-wrap: anywhere; }
 #workspaceFiles { max-height: 32vh; overflow:auto; padding-right: 4px; }
 
 iframe { width: 100%; flex: 1 1 auto; min-height: 320px; border: 1px solid var(--border); border-radius: 12px; background:#fff; }
@@ -3134,8 +5205,92 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 .modal { position: fixed; inset: 0; display:none; z-index: 30; }
 .modal.open { display:block; }
 .backdrop { position:absolute; inset:0; background: rgba(0,0,0,0.25); }
-.modalCard { position:absolute; top: 8vh; left: 50%; transform: translateX(-50%); width: min(720px, 94vw); background:#fff; border-radius: 14px; border: 1px solid var(--border); padding: 14px; }
+.modalCard {
+  position: absolute;
+  top: 4vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1100px, 96vw);
+  height: 90vh;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  padding: 14px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+.modalCard.smallModalCard {
+  top: 16vh;
+  width: min(520px, 92vw);
+  height: auto;
+  gap: 14px;
+}
+.modalActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.workspaceChoiceBody { display: grid; gap: 14px; }
+.workspaceChoiceSection {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--panelSolid);
+}
+.workspaceChoiceInputRow { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
+.workspaceChoiceInputRow .input { width: 100%; min-width: 0; }
+.workspaceChoiceSection code { white-space: nowrap; }
+.workspaceChoiceError { min-height: 1.25em; color: #b3261e; }
+:root[data-theme="dark"] .workspaceChoiceError { color: #ffb4ab; }
+@media (max-width: 560px) {
+  .modalActions { grid-template-columns: 1fr; }
+  .workspaceChoiceInputRow { grid-template-columns: 1fr; }
+}
+
+.settingsShell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
+}
+
+.settingsNav {
+  border-right: 1px solid var(--border);
+  padding-right: 12px;
+  overflow: auto;
+}
+
+.settingsContent {
+  min-width: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.settingsNavBtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.settingsNavBtn:hover {
+  background: #f6f6f6;
+}
+
+.settingsNavBtn.active {
+  background: #eef5ff;
+  border-color: #c9daf8;
+}
 .fieldRow { display:grid; grid-template-columns: 170px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+.fieldHelp { display: grid; grid-template-columns: 170px 1fr; gap: 8px; margin: -2px 0 12px; }
+.fieldHelpText { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .label { color: var(--muted); font-size: 12px; }
 .input { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); }
 textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
@@ -3176,6 +5331,292 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             headers={"Cache-Control": "no-cache"},
         )
 
+    def _environment_run_manifest_for_dashboard(run_id: str) -> dict[str, Any]:
+        manifest = read_environment_run_manifest(dashboard_group, run_id)
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        manifest.setdefault("paths", {})
+        manifest["paths"].update({
+            "run_dir": str(paths.run_dir),
+            "events_path": str(paths.events_path),
+            "artifacts_dir": str(paths.artifacts_dir),
+            "logs_dir": str(paths.logs_dir),
+        })
+        return manifest
+
+    @app.post(
+        "/environment-runs",
+        response_model=EnvironmentRunRecord,
+        status_code=201,
+        dependencies=[Depends(require_auth)],
+    )
+    async def create_environment_run(
+        req: EnvironmentRunCreateRequest,
+        response: Response,
+    ) -> EnvironmentRunRecord:
+        try:
+            launch = validate_environment_launch(
+                req.environment_type,
+                req.config_yaml,
+                group=dashboard_group,
+            )
+            settings = settings_store.load().model_dump(mode="json")
+            llm = settings.get("llm") or {}
+            runner = settings.get("runner") or {}
+            await asyncio.to_thread(
+                environment_rm.validate_credentials,
+                llm=llm,
+                config_mapping=launch.config_mapping,
+            )
+            manifest = await environment_rm.create_run(
+                launch=launch,
+                prompt=req.prompt,
+                llm=llm,
+                runner=runner,
+                run_id=req.run_id,
+                replace_existing=req.replace_existing,
+            )
+        except EnvironmentDefinitionExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An environment definition with this name already exists. "
+                    "Confirm replacement to update it and launch a new run."
+                ),
+            ) from exc
+        except EnvironmentRunExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An environment run with this Run ID already exists. "
+                    "Choose a new Run ID to preserve the earlier replay."
+                ),
+            ) from exc
+        except (
+            CredentialConfigurationError,
+            CredentialStoreError,
+            GroupBaseURLPolicyError,
+            ValueError,
+        ) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        response.headers["Location"] = (
+            f"/ui/environment-runs/{manifest['run_id']}"
+        )
+        return EnvironmentRunRecord.model_validate(manifest)
+
+    @app.post(
+        "/environment-runs/validate",
+        dependencies=[Depends(require_auth)],
+    )
+    async def validate_environment_run(
+        req: EnvironmentConfigValidateRequest,
+    ) -> dict[str, Any]:
+        try:
+            launch = validate_environment_launch(
+                req.environment_type,
+                req.config_yaml,
+                group=dashboard_group,
+            )
+        except (GroupBaseURLPolicyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "environment_type": launch.environment_type,
+            "environment_name": launch.config.name,
+            "group": dashboard_group,
+        }
+
+    @app.get("/environment-runs", dependencies=[Depends(require_auth)])
+    async def list_environment_runs() -> dict[str, Any]:
+        return {
+            "group": dashboard_group,
+            "runs": list_environment_run_manifests(dashboard_group),
+        }
+
+    @app.get("/environment-runs/{run_id}", dependencies=[Depends(require_auth)])
+    async def get_environment_run(run_id: str) -> dict[str, Any]:
+        try:
+            return _environment_run_manifest_for_dashboard(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+
+    @app.post(
+        "/environment-runs/{run_id}/cancel",
+        response_model=EnvironmentRunRecord,
+        dependencies=[Depends(require_auth)],
+    )
+    async def cancel_environment_run(
+        run_id: str,
+        req: EnvironmentRunCancelRequest,
+    ) -> EnvironmentRunRecord:
+        try:
+            manifest = await environment_rm.cancel(run_id, reason=req.reason)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        except (PermissionError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return EnvironmentRunRecord.model_validate(manifest)
+
+    @app.get(
+        "/environment-runs/{run_id}/events",
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_environment_run_events(
+        run_id: str,
+        after_seq: int = Query(default=0, ge=0),
+        limit: int = Query(default=1000, ge=1, le=10000),
+    ) -> dict[str, Any]:
+        try:
+            read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        events = read_environment_run_events(
+            dashboard_group, run_id, after_seq=after_seq, limit=limit
+        )
+        return {"run_id": run_id, "events": events}
+
+    async def _environment_run_sse(
+        run_id: str, after_seq: int = 0
+    ) -> AsyncIterator[bytes]:
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        cursor_seq = after_seq
+        offset = 0
+        last_keepalive = asyncio.get_event_loop().time()
+
+        def format_sse(event: dict[str, Any]) -> bytes:
+            seq = int(event.get("seq", 0))
+            data = json.dumps(event, ensure_ascii=False)
+            return (
+                f"id: {seq}\nevent: message\nretry: 1500\ndata: {data}\n\n"
+            ).encode("utf-8")
+
+        while True:
+            if paths.events_path.exists():
+                with paths.events_path.open("rb") as f:
+                    if offset:
+                        f.seek(offset)
+                    while True:
+                        line_b = f.readline()
+                        if not line_b:
+                            offset = f.tell()
+                            break
+                        try:
+                            event = json.loads(
+                                line_b.decode("utf-8", errors="replace")
+                            )
+                            seq = int(event.get("seq", 0))
+                        except Exception:
+                            continue
+                        if seq <= cursor_seq:
+                            continue
+                        cursor_seq = seq
+                        yield format_sse(event)
+
+            status = None
+            with contextlib.suppress(Exception):
+                status = json.loads(
+                    paths.manifest_path.read_text(encoding="utf-8")
+                ).get("status")
+            if status in {"succeeded", "failed", "cancelled"}:
+                # Give writers a moment to flush any final event records that
+                # landed just before or after the terminal manifest update.
+                await asyncio.sleep(0.1)
+                if paths.events_path.exists():
+                    with paths.events_path.open("rb") as f:
+                        if offset:
+                            f.seek(offset)
+                        while True:
+                            line_b = f.readline()
+                            if not line_b:
+                                offset = f.tell()
+                                break
+                            try:
+                                event = json.loads(
+                                    line_b.decode("utf-8", errors="replace")
+                                )
+                                seq = int(event.get("seq", 0))
+                            except Exception:
+                                continue
+                            if seq <= cursor_seq:
+                                continue
+                            cursor_seq = seq
+                            yield format_sse(event)
+                break
+
+            now = asyncio.get_event_loop().time()
+            if now - last_keepalive > 15:
+                yield b": keepalive\n\n"
+                last_keepalive = now
+            await asyncio.sleep(0.5)
+
+    @app.get(
+        "/environment-runs/{run_id}/stream",
+        dependencies=[Depends(require_auth)],
+    )
+    async def stream_environment_run_events(
+        run_id: str,
+        after_seq: int = Query(default=0, ge=0),
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse:
+        try:
+            read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        with contextlib.suppress(Exception):
+            if last_event_id is not None and str(last_event_id).strip():
+                after_seq = max(after_seq, int(str(last_event_id).strip()))
+        return StreamingResponse(
+            _environment_run_sse(run_id, after_seq),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    @app.get(
+        "/ui/environment-runs",
+        include_in_schema=False,
+        dependencies=[Depends(require_auth)],
+    )
+    async def ui_environment_runs() -> HTMLResponse:
+        runs = list_environment_run_manifests(dashboard_group)
+        return HTMLResponse(
+            render_environment_runs_page(
+                dashboard_group=dashboard_group,
+                runs=runs,
+                team_starter_yaml=TEAM_STARTER_YAML,
+                symposium_starter_yaml=SYMPOSIUM_STARTER_YAML,
+            )
+        )
+
+    @app.get(
+        "/ui/environment-runs/{run_id}",
+        include_in_schema=False,
+        dependencies=[Depends(require_auth)],
+    )
+    async def ui_environment_run_detail(run_id: str) -> HTMLResponse:
+        try:
+            manifest = _environment_run_manifest_for_dashboard(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        return HTMLResponse(
+            render_environment_run_detail_page(
+                run_id=run_id,
+                manifest=manifest,
+            )
+        )
+
     @app.get("/", include_in_schema=False, dependencies=[Depends(require_auth)])
     async def ui_root() -> HTMLResponse:
         return await ui_dashboard()
@@ -3210,6 +5651,14 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         logo_img_style = "" if str(logo_img_src).strip() else "display:none"
 
+        environment_runs_button = (
+            '<a class="sidebarNavAction" href="/ui/environment-runs">'
+            '<svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true">'
+            '<path d="M4 19V9m8 10V5m8 14v-7"/>'
+            '<path d="M2 19h20"/>'
+            "</svg><span>Environment runs</span></a>"
+        )
+
         body = f"""
 <div class="app">
   <div class="sidebar" id="leftPanel">
@@ -3224,16 +5673,39 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         </div>
       </div>
 
-      <div class="row" style="margin-top:10px; justify-content:flex-start; flex-wrap:wrap">
-        <button class="btn" id="toggleChatBtn" type="button">Hide chat</button>
-        <button class="btn" id="toggleLogsBtn" type="button">Hide logs</button>
-        <button class="btn" id="toggleArtifactsBtn" type="button">Hide artifacts</button>
-        <button class="btn" id="openSettingsBtn" type="button">Settings</button>
+      <div class="sidebarControls">
+        <div class="panelControls">
+          <div class="controlLabel">Visible panels</div>
+          <div class="panelToggleGroup" role="group" aria-label="Visible dashboard panels">
+            <button class="panelToggle" id="toggleChatBtn" type="button" aria-pressed="true" title="Hide chat panel">
+              <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+              <span>Chat</span>
+            </button>
+            <button class="panelToggle" id="toggleLogsBtn" type="button" aria-pressed="true" title="Hide logs panel">
+              <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 4 4-4 4m6 0h8"/><rect x="2" y="3" width="20" height="18" rx="3"/></svg>
+              <span>Logs</span>
+            </button>
+            <button class="panelToggle" id="toggleArtifactsBtn" type="button" aria-pressed="true" title="Hide artifacts panel">
+              <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <span>Artifacts</span>
+            </button>
+          </div>
+        </div>
+        <nav class="sidebarNav" aria-label="Dashboard actions">
+          <button class="sidebarNavAction" id="openSettingsBtn" type="button">
+            <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.95 4.6 1.7 1.7 0 0 0 9.97 3.04V3h4v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06L19.77 7l-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H21v4h-.08A1.7 1.7 0 0 0 19.4 15z"/></svg>
+            <span>Settings</span>
+          </button>
+          {environment_runs_button}
+        </nav>
       </div>
     </div>
 
     <div class="section">
-      <div class="sectionHead">Agents</div>
+      <div class="row sessionStartHeader">
+        <div class="sectionHead" style="margin:0">Start a session</div>
+        <span class="pill" id="dashboardGroupPill">Group: default</span>
+      </div>
       <div id="agentList"></div>
     </div>
 
@@ -3251,7 +5723,13 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   <div class="main" id="mainPanel">
     <div class="topbar">
       <div>
-        <div class="title" id="activeSessionTitle">No session selected</div>
+        <div class="row" style="justify-content:flex-start; gap:10px; align-items:center">
+            <div class="title" id="activeSessionTitle">No session selected</div>
+            <div id="activeSessionStateBadge" class="sessionStatus idle" style="display:none">
+            <span class="sessionDot"></span>
+            <span>Idle</span>
+            </div>
+        </div>
         <div class="muted small" id="activeSessionMeta"></div>
       </div>
       <div class="row" style="justify-content:flex-end">
@@ -3263,7 +5741,13 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <div class="section conversation" id="conversationSection">
         <div class="messages" id="sessionMessages"></div>
         <div class="composer">
-          <div class="muted small" style="margin: 8px 0">Ctrl/⌘ + Enter to send</div>
+          <div class="row" style="justify-content:space-between; align-items:center; margin: 8px 0; gap: 8px; flex-wrap: wrap;">
+            <div class="muted small">Ctrl/⌘ + Enter to send</div>
+            <div class="row" style="gap:8px; justify-content:flex-end; align-items:center; margin-left:auto;">
+              <label class="muted small" for="composerAgentType">Agent type</label>
+              <select id="composerAgentType" style="min-width:220px"></select>
+            </div>
+          </div>
           <textarea id="messageInput" placeholder="Message the agent..."></textarea>
           <div class="row" style="margin-top: 8px">
             <button class="btn primary" id="sendMsgBtn" type="button">Send</button>
@@ -3287,14 +5771,14 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         </div>
 
         <details class="logDetails" id="stdoutDetails" open>
-          <summary class="logHead">stdout</summary>
+          <!-- summary class="logHead">stdout</summary -->
           <pre class="log" id="stdoutLog"></pre>
         </details>
 
-        <details class="logDetails" id="stderrDetails">
+        <!-- details class="logDetails" id="stderrDetails">
           <summary class="logHead">stderr</summary>
           <pre class="log" id="stderrLog"></pre>
-        </details>
+        </details -->
       </div>
     </div>
   </div>
@@ -3305,9 +5789,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     <div class="topbar">
       <div>
         <div class="title" id="workspaceTitle">Session artifacts</div>
+        <div class="muted small" id="workspacePath"></div>
         <div class="muted small" id="workspaceHint">Select a session to view its workspace.</div>
       </div>
       <div class="row" style="justify-content:flex-end">
+        <button class="btn" id="setWorkspaceBtn" type="button">Set workspace</button>
         <button class="btn" id="refreshFilesBtn" type="button">Refresh</button>
         <button class="btn" id="uploadFilesBtn" type="button">Upload</button>
       </div>
@@ -3324,57 +5810,229 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   </div>
 </div>
 
+
+
+<div class="modal" id="newSessionTypeModal" aria-hidden="true">
+  <div class="backdrop" id="newSessionTypeBackdrop"></div>
+  <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="newSessionTypeTitle">
+    <div class="topbar">
+      <div>
+        <div class="title" id="newSessionTypeTitle">Start New Session</div>
+        <div class="muted small">Choose how this session should be created.</div>
+      </div>
+      <button class="btn" id="closeNewSessionTypeBtn" type="button">Close</button>
+    </div>
+    <div class="modalActions">
+      <button class="btn primary" id="newSessionNamedBtn" type="button">New Named Agent Session</button>
+      <button class="btn" id="newSessionNonPersistentBtn" type="button">Non-persistent Session</button>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal" id="workspaceChoiceModal" aria-hidden="true">
+  <div class="backdrop" id="workspaceChoiceBackdrop"></div>
+  <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="workspaceChoiceTitle">
+    <div class="topbar">
+      <div>
+        <div class="title" id="workspaceChoiceTitle">Choose a workspace</div>
+        <div class="muted small">URSA needs an explicit place for session files and artifacts.</div>
+      </div>
+      <button class="btn" id="closeWorkspaceChoiceBtn" type="button">Cancel</button>
+    </div>
+    <div class="workspaceChoiceBody">
+      <div class="workspaceChoiceSection">
+        <div class="sectionHead">Workspace folder</div>
+        <div class="muted small">Use a folder you can easily find and return to later.</div>
+        <div class="workspaceChoiceInputRow">
+          <input class="input" id="workspaceFolderInput" placeholder="/absolute/path/to/workspace" autocomplete="off" />
+          <button class="btn" id="browseWorkspaceBtn" type="button">Browse…</button>
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn primary" id="useWorkspaceFolderBtn" type="button">Use this folder</button>
+        </div>
+      </div>
+      <div class="workspaceChoiceSection">
+        <div class="sectionHead">Temporary workspace</div>
+        <div class="muted small">Create an OS-managed temporary folder for disposable work, like <code>ursa --workspace tmp</code>. It is removed when you delete the session or stop the dashboard.</div>
+        <div style="margin-top:10px">
+          <button class="btn" id="useTemporaryWorkspaceBtn" type="button">Use temporary workspace</button>
+        </div>
+      </div>
+      <div class="workspaceChoiceError small" id="workspaceChoiceError" role="alert"></div>
+    </div>
+  </div>
+</div>
+
+
 <div class="modal" id="settingsModal" aria-hidden="true">
   <div class="backdrop" id="settingsBackdrop"></div>
   <div class="modalCard">
     <div class="topbar">
       <div>
-        <div class="title">Settings</div>
-        <div class="muted small">Applies to new runs only.</div>
+        <div class="title" id="settingsModalTitle">Settings</div>
+        <div class="muted small" id="settingsModalSubtitle">Global defaults for new sessions and runs.</div>
       </div>
       <button class="btn" id="closeSettingsBtn" type="button">Close</button>
     </div>
 
-    <div class="section">
-      <div class="sectionHead">LLM</div>
-      <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="http://127.0.0.1:8000/v1" /></div>
-      <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5-mini" /></div>
-      <div class="fieldRow"><div class="label">API key env var</div><input class="input" id="set_api_key_env_var" placeholder="OPENAI_API_KEY" /></div>
-      <div class="muted small" style="margin: 2px 0 10px">The dashboard does not store API keys. Set the key in the dashboard server environment and reference its variable name here.</div>
-      <div class="fieldRow"><div class="label">Max tokens</div><input class="input" id="set_max_tokens" type="number" min="1" /></div>
-      <div class="fieldRow"><div class="label">Temperature</div><input class="input" id="set_temperature" type="number" step="0.1" min="0" max="2" /></div>
-    </div>
-
-    <div class="section">
-      <div class="sectionHead">Runner</div>
-      <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
-    </div>
-
-    <div class="section">
-      <div class="sectionHead">MCP tools</div>
-      <div class="muted small" style="margin: 2px 0 10px">
-        MCP servers configured here will be started in the worker subprocess and their tools will be attached to the ExecutionAgent (and the executor inside the Planning + Execution Workflow) for new runs.
+    <div class="settingsShell">
+      <div class="settingsNav">
+        <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
+        <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn" data-settings-section="embedding" type="button">Embedding/RAG</button>
+        <button class="settingsNavBtn" data-settings-section="agents" type="button">Agent management</button>
+        <button class="settingsNavBtn" data-settings-section="tools" type="button">RAG tools</button>
+        <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
+        <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
       </div>
 
-      <div class="fieldRow">
-        <div class="label">Configured servers</div>
-        <div>
-          <div class="row" id="mcpServersList" style="justify-content:flex-start; gap:6px; flex-wrap:wrap"></div>
-          <div class="muted small" style="margin-top:6px">Click a server name to edit it.</div>
+      <div class="settingsContent">
+        <div class="settingsPane" data-settings-pane="ui">
+          <div class="section">
+            <div class="sectionHead">User Interface</div>
+            <div class="fieldRow">
+            <div class="label">Theme</div>
+            <select class="input" id="set_theme">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
+            </div>
+            <div class="fieldHelp">
+              <div></div>
+              <div class="fieldHelpText">
+                Follow your OS/browser theme, or force light or dark mode for the dashboard.
+              </div>
+            </div>
+            <div class="fieldRow">
+              <div class="label">STDOUT buffer lines</div>
+              <input class="input" id="set_stdout_buffer_lines" type="number" min="5000" step="100" />
+            </div>
+            <div class="fieldHelp">
+              <div></div>
+              <div class="fieldHelpText">
+              Number of log lines kept in the browser for the STDOUT pane. Higher values preserve more scrollback but can make the page heavier for very long runs.
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="fieldRow"><div class="label">Server name</div><input class="input" id="mcp_name" placeholder="my_server" /></div>
-      <div class="fieldRow">
-        <div class="label">Server config (JSON)</div>
-        <textarea class="input" id="mcp_json" rows="6" placeholder='{{"transport":"sse","url":"http://127.0.0.1:3000/sse"}}' style="font-family: var(--mono);"></textarea>
-      </div>
+        <div class="settingsPane hidden" data-settings-pane="llm">
+          <div class="section">
+            <div class="sectionHead">LLM</div>
+            <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
+            <div class="globalCredentialOnly">
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div id="set_llm_stored_fields">
+                <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_llm_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
+                <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_llm_remove_key" type="button">Remove saved key</button></div></div>
+              </div>
+              <div id="set_llm_env_fields"><div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_api_key_env" placeholder="OPENAI_API_KEY" /></div></div>
+              <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_llm_credential_status">Checking credential status…</div></div>
+            </div>
+            <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_model_kwargs" rows="7" placeholder='{{"max_completion_tokens":25000,"temperature":0.5,"reasoning": {{"effort": "medium"}}}}' style="font-family: var(--mono);"></textarea></div>
+            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_chat_model. Explicit fields above still take precedence for model and base_url.</div>
+          </div>
+        </div>
 
-      <div class="row" style="justify-content:flex-start; gap: 10px">
-        <button class="btn" id="mcpAddUpdateBtn" type="button">Add/Update</button>
-        <button class="btn danger" id="mcpRemoveBtn" type="button">Remove</button>
-        <button class="btn" id="mcpClearBtn" type="button">Clear</button>
-        <div class="muted small" id="mcpStatus"></div>
+        <div class="settingsPane hidden" data-settings-pane="embedding">
+          <div class="section">
+            <div class="sectionHead">Embedding / RAG</div>
+            <div class="muted small" style="margin: 2px 0 10px">Configure the embedding model used by RAG agents and persisted RAG tools. The dashboard stores only non-secret settings.</div>
+            <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_embedding_base_url" placeholder="Model Provider Default" /></div>
+            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_embedding_model" placeholder="openai:text-embedding-3-large" /></div>
+            <div class="globalCredentialOnly">
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div id="set_embedding_stored_fields">
+                <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_embedding_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
+                <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_embedding_remove_key" type="button">Remove saved key</button></div></div>
+              </div>
+              <div id="set_embedding_env_fields"><div class="fieldRow"><div class="label">API key env</div><input class="input" id="set_embedding_api_key_env" placeholder="OPENAI_API_KEY" /></div></div>
+              <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_embedding_credential_status">Checking credential status…</div></div>
+            </div>
+            <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_embedding_model_kwargs" rows="7" placeholder='{{"dimensions":1024}}' style="font-family: var(--mono);"></textarea></div>
+            <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_embeddings. Explicit fields above still take precedence for model and base_url.</div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="runner">
+          <div class="section">
+            <div class="sectionHead">Runner</div>
+            <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="tools">
+          <div class="section">
+            <div class="sectionHead">Agent tools</div>
+            <div class="muted small" style="margin: 2px 0 10px">
+              Select persisted RAG agents to attach as tools to new Chat, Execution, and Planning + Execution runs. Create or update collections with <code>ursa rag-ingest</code>; this dashboard only selects existing persisted collections.
+            </div>
+            <div class="muted small" id="ragToolsGroupLabel" style="margin-bottom:8px"></div>
+
+            <div class="fieldRow">
+              <div class="label">Selected RAG tools</div>
+              <div>
+                <div id="ragSelectedList"></div>
+                <div class="muted small" style="margin-top:6px">These tools are staged until you click Save.</div>
+              </div>
+            </div>
+
+            <div class="fieldRow">
+              <div class="label">Available RAG agents</div>
+              <div>
+                <div id="ragAvailableList"></div>
+                <div class="muted small" style="margin-top:6px">Only persisted RAG agents in the active dashboard group are shown.</div>
+              </div>
+            </div>
+
+            <div class="row" style="justify-content:flex-start; gap: 10px">
+              <button class="btn" id="ragRefreshBtn" type="button">Refresh RAG agents</button>
+              <div class="muted small" id="ragToolStatus"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="mcp">
+          <div class="section">
+            <div class="sectionHead">MCP tools</div>
+            <div class="muted small" style="margin: 2px 0 10px">
+              MCP servers configured here will be started in the worker subprocess and their tools will be attached to the ExecutionAgent (and the executor inside the Planning + Execution Workflow) for new runs.
+            </div>
+
+            <div class="fieldRow">
+              <div class="label">Configured servers</div>
+              <div>
+                <div class="row" id="mcpServersList" style="justify-content:flex-start; gap:6px; flex-wrap:wrap"></div>
+                <div class="muted small" style="margin-top:6px">Click a server name to edit it.</div>
+              </div>
+            </div>
+
+            <div class="fieldRow"><div class="label">Server name</div><input class="input" id="mcp_name" placeholder="my_server" /></div>
+            <div class="fieldRow">
+              <div class="label">Server config (JSON)</div>
+              <textarea class="input" id="mcp_json" rows="6" placeholder='{{"transport":"sse","url":"http://127.0.0.1:3000/sse"}}' style="font-family: var(--mono);"></textarea>
+            </div>
+
+            <div class="row" style="justify-content:flex-start; gap: 10px">
+              <button class="btn" id="mcpAddUpdateBtn" type="button">Add/Update</button>
+              <button class="btn danger" id="mcpRemoveBtn" type="button">Remove</button>
+              <button class="btn" id="mcpClearBtn" type="button">Clear</button>
+              <div class="muted small" id="mcpStatus"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settingsPane hidden" data-settings-pane="agents">
+          <div class="section">
+            <div class="sectionHead">Agent management</div>
+            <div class="muted small" style="margin: 2px 0 10px">Manage named agents in the active dashboard group.</div>
+            <div class="muted small" id="agentMgmtGroupLabel" style="margin-bottom:8px"></div>
+            <div id="agentMgmtList"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -3387,6 +6045,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     </div>
   </div>
 </div>
+
+
+
 
         """
 

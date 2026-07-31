@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -7,10 +8,17 @@ from typing import TypedDict
 from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from mp_api.client import MPRester
 from tqdm import tqdm
 
 from .base import BaseAgent
+
+LOGGER = logging.getLogger(__name__)
+
+working = True
+try:
+    from mp_api.client import MPRester
+except ImportError:
+    working = False
 
 
 class PaperMetadata(TypedDict):
@@ -40,11 +48,16 @@ class MaterialsProjectAgent(BaseAgent):
         summaries_path: str = "mp_summaries",
         **kwargs,
     ):
+        if not working:
+            raise ImportError(
+                "MP Agent requires special dependencies. These can be installed using 'pip install ursa-ai[mp]' or, if working from a local installation, 'pip install -e .[mp]' ."
+            )
+
         super().__init__(llm, **kwargs)
         self.summarize = summarize
         self.max_results = max_results
-        self.database_path = self.workspace.joinpath(database_path)
-        self.summaries_path = self.workspace.joinpath(summaries_path)
+        self.database_path = self.den.joinpath(database_path)
+        self.summaries_path = self.den.joinpath(summaries_path)
 
         self.database_path.mkdir(parents=True, exist_ok=True)
         self.summaries_path.mkdir(parents=True, exist_ok=True)
@@ -165,4 +178,4 @@ if __name__ == "__main__":
         mp_query="LiFePO4",
         context="What is its band gap and stability, and any synthesis challenges?",
     )
-    print(resp)
+    LOGGER.info("%s", resp)

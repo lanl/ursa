@@ -6,6 +6,9 @@ from langchain.embeddings import init_embeddings
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from ursa.experimental.agents.simulator_agent import SimulatorAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 problem = (
     "Your task is to perform a parameter sweep of dcopf using an open source "

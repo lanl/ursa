@@ -23,6 +23,7 @@ from PIL import Image
 
 from ursa.agents.base import BaseAgent
 from ursa.agents.rag_agent import RAGAgent
+from ursa.util.http import build_httpx_client
 from ursa.util.parse import (
     _derive_filename_from_cd_or_url,
     _download_stream_to,
@@ -113,7 +114,7 @@ def _download(url: str, dest_path: str, timeout: int = 20) -> str:
 def describe_image(image: Image.Image) -> str:
     if OpenAI is None:
         return ""
-    client = OpenAI()
+    client = OpenAI(http_client=build_httpx_client())
     buf = BytesIO()
     image.save(buf, format="PNG")
     import base64
@@ -214,9 +215,9 @@ class BaseAcquisitionAgent(BaseAgent):
         self.rag_embedding = rag_embedding
         self.process_images = process_images
         self.max_results = max_results
-        self.database_path = self.workspace / database_path
-        self.summaries_path = self.workspace / summaries_path
-        self.vectorstore_path = self.workspace / vectorstore_path
+        self.database_path = self.den / database_path
+        self.summaries_path = self.den / summaries_path
+        self.vectorstore_path = self.den / vectorstore_path
         self.download = download
         self.num_threads = num_threads
 
@@ -391,7 +392,7 @@ class BaseAcquisitionAgent(BaseAgent):
         new_state = state.copy()
         rag_agent = RAGAgent(
             llm=self.llm,
-            workspace=self.workspace,
+            workspace=self.den,
             embedding=self.rag_embedding,
             vectorstore_path="rag_vectorstore",
             database_path=self.database_path.name,

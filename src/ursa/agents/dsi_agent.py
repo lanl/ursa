@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import random
 from contextlib import redirect_stderr, redirect_stdout
@@ -36,6 +37,7 @@ from ursa.tools.write_code_tool import (
 from .base import AgentWithTools, BaseAgent
 
 _NULL = io.StringIO()  # Hides DSI outout
+LOGGER = logging.getLogger(__name__)
 
 
 ########################################################################
@@ -232,7 +234,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         """
 
         if master_database == "":
-            print("No DSI database provided. Please load one")
+            LOGGER.error("No DSI database provided. Please load one")
             return
 
         _master_database_path, _master_db_folder = _get_db_abs_path(
@@ -251,21 +253,26 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
             self.master_db_folder = _master_db_folder
 
         else:
-            print("No valid DSI database provided. Please load one")
+            LOGGER.error("No valid DSI database provided. Please load one")
             # sys.exit(1)
 
     # __call__ from my agent
     def _response_node(self, state):
-        messages = state["messages"]
+        new_state, full_overwrite = self.prepare_messages_context(state)
+        messages = new_state["messages"]
 
         conversation = [SystemMessage(content=self.prompt)] + messages
         response = self.llm.invoke(conversation)
 
-        return {
-            "messages": messages + [response],
-            "response": response.content,
-            "metadata": response.response_metadata,
-        }
+        return self.messages_update(
+            new_state,
+            [response],
+            full_overwrite=full_overwrite,
+            extra={
+                "response": response.content,
+                "metadata": response.response_metadata,
+            },
+        )
 
     def _build_graph(self):
         self.llm = self.llm.bind_tools(self.tools.values())
@@ -340,13 +347,21 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
         return {"messages": messages}
 
-    def format_query(self, user_query):
+    def format_query(
+        self, user_query, state: DSIState | None = None
+    ) -> DSIState:
         """
            Injest string query into the agent state
 
         Arg:
            user_query (str): the user question
         """
+        if state is not None and "messages" in state:
+            pass  # This is where we should process it if we want the state
+            # passed in to be appended to. Not sure if we do so reverting
+            # to current behavior for now
+            # state["messages"].append(HumanMessage(content=str(user_query)))
+            # return state
         return self.craft_message(user_query)
 
     def format_result(self, result: DSIState, start_time=None) -> str:
@@ -378,11 +393,8 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
 
         formatted_result = self.format_result(result, start)
 
-        # I would like to add those
-        # if self.output_mode == "console":
-        #     print(formatted_result)
-
-        # elif self.output_mode == "jupyter":
+        # I would like to add this
+        # if self.output_mode == "jupyter":
         #     from IPython.display import Markdown, display
         #     display(Markdown(formatted_result))
 

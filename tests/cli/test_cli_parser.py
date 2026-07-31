@@ -1,7 +1,125 @@
+from unittest.mock import MagicMock
+
 import yaml
 
-from ursa.cli import build_parser, resolve_config
-from ursa.cli.config import ModelConfig, UrsaConfig
+from ursa.cli import build_parser, main, resolve_config
+from ursa.cli.config import (
+    ChatModelConfig,
+    EmbModelConfig,
+    ModelConfig,
+    UrsaConfig,
+)
+
+
+def _stub_mcp_server(monkeypatch):
+    mcp = MagicMock()
+    hitl = MagicMock()
+    hitl.as_mcp_server.return_value = mcp
+    hitl_class = MagicMock(return_value=hitl)
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    return hitl, mcp
+
+
+def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
+    hitl, mcp = _stub_mcp_server(monkeypatch)
+
+    main(["mcp-server"])
+
+    hitl.as_mcp_server.assert_called_once_with()
+    mcp.run.assert_called_once_with(transport="stdio", log_level="INFO")
+
+
+def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
+    """`ursa mcp-server --config FILE` must configure the hosted URSA instance.
+
+    Regression: previously the mcp-server subparser had no --config option, so
+    `ursa mcp-server --config foo.yaml` failed with "Unrecognized arguments".
+    The subcommand-local --config should feed the LLM model/endpoint (and other
+    UrsaConfig fields) into the HITL instance backing the MCP server.
+    """
+    hitl_class = MagicMock()
+    hitl_class.return_value = MagicMock()
+    hitl_class.return_value.as_mcp_server.return_value = MagicMock()
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        yaml.safe_dump({
+            "llm_model": {
+                "model": "ollama:llama3.1",
+                "base_url": "http://localhost:11434",
+            }
+        })
+    )
+
+    main(["mcp-server", "--config", str(config_file)])
+
+    # HITL should be constructed with the config loaded from --config.
+    (ursa_config,), _ = hitl_class.call_args
+    assert ursa_config.llm_model.model == "ollama:llama3.1"
+    assert ursa_config.llm_model.base_url == "http://localhost:11434"
+
+
+def test_mcp_server_config_flag_parses_alongside_transport(
+    monkeypatch, tmp_path
+):
+    """--config coexists with MCP transport options on the subcommand."""
+    hitl_class = MagicMock()
+    hitl_class.return_value = MagicMock()
+    mcp = MagicMock()
+    hitl_class.return_value.as_mcp_server.return_value = mcp
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    config_file = tmp_path / "mcp.yaml"
+    config_file.write_text(
+        yaml.safe_dump({"llm_model": {"model": "ollama:llama3.1"}})
+    )
+
+    main([
+        "mcp-server",
+        "--config",
+        str(config_file),
+        "--transport",
+        "streamable-http",
+        "--port",
+        "9001",
+    ])
+
+    (ursa_config,), _ = hitl_class.call_args
+    assert ursa_config.llm_model.model == "ollama:llama3.1"
+    mcp.run.assert_called_once_with(
+        transport="streamable-http",
+        log_level="INFO",
+        host="localhost",
+        port=9001,
+    )
+
+
+def test_mcp_server_passes_http_options_when_running(monkeypatch):
+    hitl, mcp = _stub_mcp_server(monkeypatch)
+
+    main([
+        "mcp-server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "9001",
+        "--log_level",
+        "warning",
+    ])
+
+    hitl.as_mcp_server.assert_called_once_with()
+    mcp.run.assert_called_once_with(
+        transport="streamable-http",
+        log_level="WARNING",
+        host="127.0.0.1",
+        port=9001,
+    )
 
 
 def test_cli_parses_typed_flags(tmp_path):
@@ -29,6 +147,54 @@ def test_print_config_flag_sets_bool_and_preserves_defaults():
 
     config = resolve_config(args)
     assert config.model_dump() == UrsaConfig().model_dump()
+
+
+def test_resolve_config_preserves_cli_tmp_workspace_owner():
+    parser = build_parser()
+    args = parser.parse_args(["--workspace", "tmp"])
+
+    config = resolve_config(args)
+
+    assert config.workspace.exists()
+    assert config._temp_workspace is not None
+    assert config._temp_workspace.name == str(config.workspace)
+
+
+def test_resolve_config_preserves_file_tmp_workspace_owner(tmp_path):
+    cfg_path = tmp_path / "ursa.yml"
+    cfg_path.write_text("workspace: tmp\n")
+    parser = build_parser()
+    args = parser.parse_args(["--config", str(cfg_path)])
+
+    config = resolve_config(args)
+
+    assert config.workspace.exists()
+    assert config._temp_workspace is not None
+    assert config._temp_workspace.name == str(config.workspace)
+
+
+def test_cli_applies_chat_only_openai_defaults_to_llm_model():
+    parser = build_parser()
+    args = parser.parse_args([])
+
+    config = resolve_config(args)
+
+    assert isinstance(config.llm_model, ChatModelConfig)
+    assert config.llm_model.kwargs["use_responses_api"] is True
+
+
+def test_cli_does_not_apply_chat_only_openai_defaults_to_emb_model():
+    parser = build_parser()
+    args = parser.parse_args([
+        "--emb_model.model",
+        "openai:text-embedding-3-large",
+    ])
+
+    config = resolve_config(args)
+
+    assert isinstance(config.emb_model, EmbModelConfig)
+    assert not isinstance(config.emb_model, ChatModelConfig)
+    assert "use_responses_api" not in config.emb_model.kwargs
 
 
 def test_print_config_yaml_round_trip(tmp_path):
@@ -86,13 +252,11 @@ def test_config_env_cli_precedence(tmp_path, monkeypatch):
         str(cli_workspace),
         "--llm_model.model",
         "cli-model",
-        "--emb_model.max_completion_tokens",
-        "1024",
     ])
     config_cli = resolve_config(args_cli)
     assert config_cli.workspace == cli_workspace
     assert config_cli.llm_model.model == "cli-model"
-    assert config_cli.emb_model.max_completion_tokens == 1024
+    assert config_cli.emb_model.model == "openai:text-embedding-3-large"
 
 
 def test_config_file_env_interpolation(tmp_path, monkeypatch):
@@ -170,8 +334,6 @@ def test_config_file_and_cli_are_merged(tmp_path):
         str(cli_workspace),
         "--llm_model.model",
         "openai:gpt-5-nano",
-        "--emb_model.max_completion_tokens",
-        "1024",
     ])
 
     config = resolve_config(args)
@@ -180,23 +342,92 @@ def test_config_file_and_cli_are_merged(tmp_path):
     assert config.llm_model.model == "openai:gpt-5-nano"
     assert config.llm_model.model_extra["temperature"] == 0.4
     assert config.emb_model.model == "openai:text-embedding-3-large"
-    assert config.emb_model.max_completion_tokens == 1024
     assert config.emb_model.model_extra["cache_dir"] == "/tmp/cache"
 
 
 def test_model_config_kwargs_includes_extra():
     cfg = ModelConfig(
         model="openai:gpt-5",
-        max_completion_tokens=1024,
         ssl_verify=False,
     )
     cfg.model_extra["timeout"] = 30
 
     kwargs = cfg.kwargs
     assert kwargs["model"] == "openai:gpt-5"
-    assert kwargs["max_completion_tokens"] == 1024
     assert "http_client" in kwargs  # ssl_verify False triggers custom client
+    assert "http_async_client" in kwargs
     assert kwargs["timeout"] == 30
+
+
+def test_chat_model_config_kwargs_includes_max_completion_tokens():
+    cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
+
+    kwargs = cfg.kwargs
+
+    assert kwargs["model"] == "openai:gpt-5"
+    assert kwargs["max_completion_tokens"] == 1024
+
+
+def test_chat_model_config_initializes_chat_model(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_init_chat_model(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "chat-model"
+
+    monkeypatch.setattr(
+        "ursa.cli.config.init_chat_model",
+        fake_init_chat_model,
+    )
+    cfg = ChatModelConfig(model="openai:gpt-5", max_completion_tokens=1024)
+
+    result = cfg.init_chat_model()
+
+    assert result == "chat-model"
+    assert captured_kwargs["model"] == "openai:gpt-5"
+    assert captured_kwargs["max_completion_tokens"] == 1024
+    assert captured_kwargs["use_responses_api"] is True
+
+
+def test_emb_model_config_initializes_embedding_model(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_init_embeddings(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "embedding-model"
+
+    monkeypatch.setattr(
+        "ursa.cli.config.init_embeddings",
+        fake_init_embeddings,
+    )
+    cfg = EmbModelConfig(model="openai:text-embedding-3-large")
+
+    result = cfg.init_embedding()
+
+    assert result == "embedding-model"
+    assert captured_kwargs["model"] == "openai:text-embedding-3-large"
+    assert "use_responses_api" not in captured_kwargs
+
+
+def test_model_config_openai_uses_truststore_client():
+    cfg = ModelConfig(model="openai:text-embedding-3-large")
+
+    kwargs = cfg.kwargs
+
+    assert kwargs["model"] == "openai:text-embedding-3-large"
+    assert "http_client" in kwargs
+    assert "http_async_client" in kwargs
+
+
+def test_model_config_ollama_uses_client_kwargs():
+    cfg = ModelConfig(model="ollama:nomic-embed-text:latest")
+
+    kwargs = cfg.kwargs
+
+    assert kwargs["model"] == "ollama:nomic-embed-text:latest"
+    assert "http_client" not in kwargs
+    assert "http_async_client" not in kwargs
+    assert kwargs["client_kwargs"]["verify"] is not False
 
 
 def test_api_key_env(monkeypatch, tmp_path):
@@ -213,3 +444,36 @@ def test_api_key_env(monkeypatch, tmp_path):
     assert config.llm_model.api_key_env == "TEST_ENV_API_KEY"
     assert config.llm_model.kwargs["api_key"] == "super-secret-key"
     assert "api_key_env" not in config.llm_model.kwargs.keys()
+
+
+def test_model_config_omits_unset_or_blank_base_url_for_provider_default():
+    for value in (None, "", "   "):
+        cfg = ModelConfig(model="openai:gpt-5", base_url=value)
+
+        kwargs = cfg.kwargs
+
+        assert cfg.base_url is None
+        assert "base_url" not in kwargs
+
+
+def test_model_config_strips_configured_base_url():
+    cfg = ModelConfig(
+        model="openai:gpt-5",
+        base_url=" https://models.example.org/v1 ",
+    )
+
+    kwargs = cfg.kwargs
+
+    assert cfg.base_url == "https://models.example.org/v1"
+    assert kwargs["base_url"] == "https://models.example.org/v1"
+
+
+def test_model_config_omits_blank_api_key_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg = ModelConfig(model="openai:gpt-5", api_key_env="   ")
+
+    kwargs = cfg.kwargs
+
+    assert cfg.api_key_env is None
+    assert "api_key" not in kwargs
+    assert "api_key_env" not in kwargs

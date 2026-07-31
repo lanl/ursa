@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 # ursa/observability/timing.py
 from __future__ import annotations
 

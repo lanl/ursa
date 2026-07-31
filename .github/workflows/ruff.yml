@@ -2,15 +2,21 @@ name: Ruff
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch: # allow manual trigger
 jobs:
-  ruff:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      - uses: actions/checkout@v7
         with:
-          version: "0.12.10"
-          args: "--version"
-      - run: ruff check
-      - run: ruff format --check
+          lfs: true
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: lint
+      - name: Run lint checks
+        run: uv run --with 'rust-just~=1.42' --group dev just lint

@@ -1,4 +1,7 @@
+import contextlib
+import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -7,14 +10,18 @@ import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import justext
+import pymupdf
 import requests
-import trafilatura
 from bs4 import BeautifulSoup
-from langchain_community.document_loaders import PyPDFLoader
+
+logger = logging.getLogger(__name__)
+
+with contextlib.redirect_stdout(io.StringIO()):
+    import pymupdf4llm
 
 # Check for optional dependencies
 docx_installed = False
@@ -23,14 +30,14 @@ try:
     from docx import Document
 
     docx_installed = True
-except Exception:
+except Exception:  # noqa: BLE001, S110
     pass
 
 try:
     from pptx import Presentation
 
     pptx_installed = True
-except Exception:
+except Exception:  # noqa: BLE001, S110
     pass
 
 
@@ -39,6 +46,7 @@ TEXT_EXTENSIONS = {
     # plain text & docs
     ".txt",
     ".md",
+    ".markdown",
     ".rst",
     ".rtf",
     ".tex",
@@ -50,6 +58,8 @@ TEXT_EXTENSIONS = {
     ".xml",
     ".html",
     ".htm",
+    ".adoc",
+    ".asciidoc",
     # source code (common)
     ".py",
     ".pyi",
@@ -59,6 +69,7 @@ TEXT_EXTENSIONS = {
     ".cpp",
     ".hpp",
     ".cc",
+    ".cxx",
     ".java",
     ".kt",
     ".scala",
@@ -74,6 +85,49 @@ TEXT_EXTENSIONS = {
     ".bash",
     ".zsh",
     ".ps1",
+    ".r",
+    ".R",
+    ".jl",
+    ".lua",
+    ".pl",
+    ".swift",
+    ".m",
+    ".mm",
+    # config files
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".config",
+    ".properties",
+    ".env",
+    ".editorconfig",
+    # build & project files
+    ".gradle",
+    ".cmake",
+    ".bazel",
+    ".bzl",
+    # systemd & podman quadlet files
+    ".service",
+    ".socket",
+    ".timer",
+    ".target",
+    ".mount",
+    ".automount",
+    ".path",
+    ".slice",
+    ".container",
+    ".volume",
+    ".network",
+    ".kube",
+    ".spec",
+    # other markup & data
+    ".proto",
+    ".graphql",
+    ".gql",
+    ".sql",
 }
 
 SPECIAL_TEXT_FILENAMES = {
@@ -116,7 +170,7 @@ def extract_json(text: str) -> list[dict]:
     generic_block = re.search(r"```(.*?)```", text, re.DOTALL)
     if generic_block:
         json_str = generic_block.group(1).strip()
-        if json_str.startswith("{") or json_str.startswith("["):
+        if json_str.startswith(("{", "[")):
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError:
@@ -233,14 +287,14 @@ def _download_stream_to(path: str, resp: requests.Response) -> str:
 
 
 def _get_soup(
-    url: str, timeout: int = 20, headers: Optional[dict[str, str]] = None
+    url: str, timeout: int = 20, headers: dict[str, str] | None = None
 ) -> BeautifulSoup:
     r = requests.get(url, timeout=timeout, headers=headers or {})
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
 
 
-def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> Optional[str]:
+def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> str | None:
     # 1) meta citation_pdf_url
     meta = soup.find("meta", attrs={"name": "citation_pdf_url"})
     if meta and meta.get("content"):
@@ -267,11 +321,10 @@ def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> Optional[str]:
 
 def _pdf_page_count(path: Path) -> int:
     try:
-        loader = PyPDFLoader(path)
-        pages = loader.load()
-        return len(pages)
-    except Exception as e:
-        print("[Error]: ", e)
+        with pymupdf.open(str(path)) as doc:
+            return len(doc)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to count document pages")
         return 0
 
 
@@ -323,10 +376,10 @@ def _ocr_to_searchable_pdf(
 def resolve_pdf_from_osti_record(
     rec: dict[str, Any],
     *,
-    headers: Optional[dict[str, str]] = None,
-    unpaywall_email: Optional[str] = None,
+    headers: dict[str, str] | None = None,
+    unpaywall_email: str | None = None,
     timeout: int = 25,
-) -> tuple[Optional[str], Optional[str], str]:
+) -> tuple[str | None, str | None, str]:
     """
     Returns (pdf_url, landing_used, note)
       - pdf_url: direct downloadable PDF URL if found (or a strong candidate)
@@ -373,7 +426,7 @@ def resolve_pdf_from_osti_record(
                     "found PDF via meta/anchor on fulltext landing"
                 )
                 return (candidate, fulltext, " | ".join(note_parts))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             note_parts.append(f"fulltext failed: {e}")
 
     # 2) Try DOE PAGES landing (citation_doe_pages)
@@ -403,14 +456,14 @@ def resolve_pdf_from_osti_record(
                         note_parts.append("citation_doe_pages → direct PDF")
                         return (r2.url, doe_pages, " | ".join(note_parts))
                     r2.close()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
                 # If not clearly PDF, still return as a candidate (agent will fetch & parse)
                 note_parts.append(
                     "citation_doe_pages → PDF-like candidate (not confirmed by headers)"
                 )
                 return (candidate, doe_pages, " | ".join(note_parts))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             note_parts.append(f"citation_doe_pages failed: {e}")
 
     # # 3) Optional: DOI → Unpaywall OA
@@ -433,8 +486,7 @@ def _normalize_ws(text: str) -> str:
     text = re.sub(r"[ \t\r\f\v]+", " ", text)
     text = re.sub(r"\s*\n\s*", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    text = text.strip()
-    return text
+    return text.strip()
 
 
 def _dedupe_lines(text: str, min_len: int = 40) -> str:
@@ -456,31 +508,9 @@ def _dedupe_lines(text: str, min_len: int = 40) -> str:
 def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     """
     Returns plain text with navigation/ads/scripts removed.
-    Prefers trafilatura -> jusText -> BS4 paragraphs.
+    Prefers jusText -> BS4 paragraphs.
     """
-    # 1) Trafilatura
-    # You can tune config: with_metadata, include_comments, include_images, favor_recall, etc.
-    cfg = trafilatura.settings.use_config()
-    cfg.set("DEFAULT", "include_comments", "false")
-    cfg.set("DEFAULT", "include_tables", "false")
-    cfg.set("DEFAULT", "favor_recall", "false")  # be stricter; less noise
-    try:
-        # If you fetched HTML already, use extract() on string; otherwise, fetch_url(url)
-        txt = trafilatura.extract(
-            html,
-            config=cfg,
-            include_comments=False,
-            include_tables=False,
-            favor_recall=False,
-        )
-        if txt and txt.strip():
-            txt = _normalize_ws(txt)
-            txt = _dedupe_lines(txt)
-            return txt[:max_chars]
-    except Exception:
-        pass
-
-    # 2) jusText
+    # 1) jusText
     try:
         paragraphs = justext.justext(html, justext.get_stoplist("English"))
         body_paras = [p.text for p in paragraphs if not p.is_boilerplate]
@@ -488,10 +518,10 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
             txt = _normalize_ws("\n\n".join(body_paras))
             txt = _dedupe_lines(txt)
             return txt[:max_chars]
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
-    # 4) last-resort: BS4 paragraphs/headings only
+    # 2) last-resort: BS4 paragraphs/headings only
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
@@ -517,9 +547,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
 
 
 def read_text_pdf(path: str | Path) -> str:
-    loader = PyPDFLoader(path)
-    pages = loader.load()
-    return "\n".join(p.page_content for p in pages)
+    return pymupdf4llm.to_markdown(str(path)) or ""
 
 
 def read_pdf(path: str | Path) -> str:
@@ -557,14 +585,14 @@ def read_pdf(path: str | Path) -> str:
                 if not os.path.exists(ocr_pdf) or os.path.getmtime(
                     ocr_pdf
                 ) < os.path.getmtime(full_filename):
-                    print(
+                    logger.info(
                         f"[OCR]: mode={first_mode} ({len(text)} chars, {pages} pages) -> {ocr_pdf}"
                     )
                     _ocr_to_searchable_pdf(
                         full_filename, ocr_pdf, mode=first_mode
                     )
                 else:
-                    print(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
+                    logger.info(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
 
                 text2 = read_text_pdf(ocr_pdf) or ""
                 if len(text2) > len(text):
@@ -582,14 +610,14 @@ def read_pdf(path: str | Path) -> str:
                     if not os.path.exists(force_pdf) or os.path.getmtime(
                         force_pdf
                     ) < os.path.getmtime(full_filename):
-                        print(
+                        logger.info(
                             f"[OCR]: still low after skip-text; retrying with force-ocr -> {force_pdf}"
                         )
                         _ocr_to_searchable_pdf(
                             full_filename, force_pdf, mode="force"
                         )
                     else:
-                        print(
+                        logger.info(
                             f"[OCR]: using cached force OCR PDF -> {force_pdf}"
                         )
 
@@ -599,20 +627,20 @@ def read_pdf(path: str | Path) -> str:
 
             except (FileNotFoundError, subprocess.CalledProcessError) as e:
                 # Missing ocrmypdf or OCR failed: keep original extraction
-                print(f"[OCR Error]: {e}")
-            except Exception as e:
+                logger.warning("OCR failed; using original extraction: %s", e)
+            except Exception as e:  # noqa: BLE001
                 # Any other OCR-related failure: keep original extraction
-                print(f"[OCR Error]: {e}")
+                logger.warning("OCR failed; using original extraction: %s", e)
 
-        return text
+        return text  # noqa: TRY300
 
     except subprocess.CalledProcessError as e:
         # OCR failed; return whatever we got from normal extraction
         err = (e.stderr or "")[:500]
-        print(f"[OCR Error]: {err}")
+        logger.error("OCR failed: %s", err)
         return text if text else f"[Error]: OCR failed: {err}"
-    except Exception as e:
-        print(f"[Error]: {e}")
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Document parsing failed")
         return f"[Error]: {e}"
 
 
@@ -623,9 +651,12 @@ def read_text_file(path: str | Path) -> str:
     Args:
         path: string filename, with path, to read in
     """
-    with open(path, "r", encoding="utf-8") as file:
-        file_contents = file.read()
-    return file_contents
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            return file.read()
+    except UnicodeDecodeError:
+        # If UTF-8 fails, it's likely binary
+        raise ValueError(f"File appears to be binary: {path}")
 
 
 # helper to extract text from OpenDocument formats (.odt/.odp)
@@ -662,7 +693,7 @@ def read_docx(path: Path) -> str:
         return "\n".join(parts)
     else:
         return (
-            f"No DOCX reader so skipping {str(path)}.\n",
+            f"No DOCX reader so skipping {path!s}.\n",
             "Consider installing via `pip install 'ursa-ai[office_readers]'`.",
         )
 
@@ -681,7 +712,7 @@ def read_pptx(path: Path) -> str:
         return "\n".join(parts)
     else:
         return (
-            f"No PPTX reader so skipping {str(path)}.\n",
+            f"No PPTX reader so skipping {path!s}.\n",
             "Consider installing via `pip install 'ursa-ai[office_readers]'`.",
         )
 
@@ -715,7 +746,11 @@ def read_text_from_file(path):
                 ):
                     full_text = read_text_file(path)
                 else:
-                    full_text = f"Unsupported file type: {path.name}"
-    except Exception as e:
+                    # Gracefully attempt to read unknown extensions as text
+                    try:
+                        full_text = read_text_file(path)
+                    except (UnicodeDecodeError, ValueError):
+                        full_text = f"Unsupported file type (binary or non-UTF-8): {path.name}"
+    except Exception as e:  # noqa: BLE001
         full_text = f"Error loading {path.name}: {e}"
     return full_text

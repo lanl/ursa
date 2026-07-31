@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from ursa.agents.planning_agent import Plan, PlanStep
@@ -102,3 +103,36 @@ def test_planning_execution_workflow_planner_executor_handoff(monkeypatch):
         executor.invoke_kwargs[0]["configurable"]["checkpoint_ns"] == "executor"
     )
     assert result == "exec-step-2"
+
+
+@pytest.mark.asyncio
+async def test_planning_execution_workflow_ainvoke_normalizes_and_returns_result(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "ursa.workflows.planning_execution_workflow.render_plan_steps_rich",
+        lambda _steps: None,
+    )
+
+    planner = StubPlanner(plan=_plan_with_two_steps())
+    executor = StubExecutor()
+    planner_checkpointer = object()
+    executor_checkpointer = object()
+    planner.checkpointer = planner_checkpointer
+    executor.checkpointer = executor_checkpointer
+    workflow = PlanningExecutorWorkflow(planner=planner, executor=executor)
+
+    result = await workflow.ainvoke(
+        "Solve this task",
+        config={"configurable": {"thread_id": "thread-1"}},
+    )
+
+    assert result == "exec-step-2"
+    assert planner.checkpointer is planner_checkpointer
+    assert executor.checkpointer is executor_checkpointer
+    planner_config = planner.invoke_kwargs[0]["configurable"]
+    executor_config = executor.invoke_kwargs[0]["configurable"]
+    assert planner_config["thread_id"] == "thread-1"
+    assert planner_config["checkpoint_ns"] == "planner"
+    assert executor_config["thread_id"] == "thread-1"
+    assert executor_config["checkpoint_ns"] == "executor"

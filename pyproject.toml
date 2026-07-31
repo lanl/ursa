@@ -23,29 +23,31 @@ dependencies = [
     "arxiv>=2.2.0,<3.0",
     "beautifulsoup4>=4.13.4,<5.0",
     "randomname>=0.2.1,<0.3",
-    "pandas>=2.3.1,<3.0",
     "pillow>=11.3.0,<12.0",
-    "pymupdf>=1.26.0,<2.0",
-    "pypdf>=5.9.0,<6.0",
+    "pymupdf>=1.28.0,<2.0",
+    "pymupdf4llm>=0.3.4,<1.0",
     "rich>=13.9.4,<14.0",
-    "mp-api>=0.45.8,<0.45.13",
     "ddgs>=9.5.5",
     "typer>=0.16.1",
-    "trafilatura>=1.6.1,<1.7",
+    "truststore>=0.10.4,<1.0",
     "selectolax>=0.4.0,<0.5",
-    "langchain>=1.0.3",
+    "langchain>=1.3.2",
     "langchain-chroma>=1.0.0",
     "langchain-community>=0.4.1",
     "langchain-openai>=1.0.1",
-    "langgraph-checkpoint-sqlite>=3.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "aiosqlite>=0.20.0",
+    "langchain-anthropic>=1.4",
+    "langchain-google-genai>=4.2",
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
     "langchain-mcp-adapters>=0.1.12,<0.2",
     "pydantic>=2.12.0,<3.0",
     "mcp>=1.20.0,<2.0",
     "jsonargparse>=4.45.0",
-    "fastmcp>=2.13.3",
+    "fastmcp~=3.0",
     "pyyaml>=6.0.3",
+    "justext>=3.0.2",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -61,13 +63,14 @@ ursa-dashboard = "ursa_dashboard.main:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
-Documentation = "https://github.com/lanl/ursa/tree/main/docs"
+Documentation = "https://lanl.github.io/ursa/"
 Repository = "https://github.com/lanl/ursa"
 Issues = "https://github.com/lanl/ursa/issues"
 
 [project.optional-dependencies]
 dashboard = [
     "fastapi>=0.120.0",
+    "keyring>=25.0.0,<26.0.0",
     "uvicorn>=0.37.0",
 ]
 fm = [
@@ -75,6 +78,7 @@ fm = [
 ] # Ursa's MCP FM interface
 lammps = [
     "atomman>=1.5.2",
+    "trafilatura>=1.6.1,<1.7",
 ]
 office_readers = [
     "python-docx>=1.2",
@@ -90,6 +94,17 @@ otel = [
 dsi = [
     "dsi-workflow>=1.1.4",
 ]
+image = [
+    "pillow>=11.3.0,<12.0.0",
+]
+mp = [
+    "mp-api>=0.45.8,<0.45.13",
+]
+metric_plots = [
+    "matplotlib>=3.10.6",
+    "pandas>=2.3.1,<3.0",
+    "scipy>=1.16.2,<2.0.0",
+]
 
 [build-system]
 requires = ["setuptools>=74.1,<80", "setuptools-git-versioning>=2.0,<3"]
@@ -103,16 +118,18 @@ line-length = 80
 preview = true
 
 [tool.ruff.lint]
-extend-select = ["I", "TID", "UP006", "UP007"]  # W505 (doc-line-too-long); D (pydocstyle)
+extend-select = ["I", "TID", "UP006", "UP007", "T201"]  # W505 (doc-line-too-long); D (pydocstyle);
 pydocstyle.convention = "numpy"
 pycodestyle.max-doc-length = 80
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing_extensions" = { msg = "Use standard typing features instead of `typing_extensions`." }
+"rich" = { msg = "Rich is restricted to presentation modules; use logging or events instead." }
 
 # Ignore test file documentation linting.
 [tool.ruff.lint.extend-per-file-ignores]
-"tests/**/*.py" = ["D"]
+"tests/**/*.py" = ["D", "T201"]
+"examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
 ursa = ["observability/pricing.json"]
@@ -121,6 +138,10 @@ ursa_dashboard = ["logo/logo.png"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--numprocesses auto --dist worksteal"
+markers = [
+    "real_llm: test intentionally initializes a real chat or embedding model and may make network calls",
+    "slow: test is comparatively slow and may be omitted from quick local runs",
+]
 
 [dependency-groups]
 dev = [
@@ -131,8 +152,10 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-xdist",
     "scikit-optimize>=0.10.2",
+    "ruff==0.12.10",
 ]
 docs = [
+    "mike>=2.1.3,<3",
     "mkdocs>=1.6.1",
     "mkdocs-autorefs>=1.4.3",
     "mkdocs-material>=9.6.21",

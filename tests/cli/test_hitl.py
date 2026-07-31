@@ -1,3 +1,6 @@
+# ruff: noqa: TID251
+
+import asyncio
 import io
 import logging
 import re
@@ -13,9 +16,14 @@ from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
 from ursa.agents.base import AgentWithTools
-from ursa.cli.config import ModelConfig, UrsaConfig
-from ursa.cli.hitl import HITL, UrsaRepl
+from ursa.cli.callbacks import HITLLogEventHandler
+from ursa.cli.config import EmbModelConfig, UrsaConfig
+from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
+from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.rendering import event_artifact
+
+LOGGER = logging.getLogger(__name__)
 
 
 @pytest.fixture(autouse=True)
@@ -75,14 +83,14 @@ def test_example_config_smoke():
     ursa_config = UrsaConfig.from_file(DOC_EXAMPLE_CONFIG)
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
-    for name in hitl.agents.keys():
+    for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
 
 
 def test_has_all_agent_do_methods(ursa_config):
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
-    for name in hitl.agents.keys():
+    for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
 
 
@@ -96,12 +104,62 @@ async def test_agents_use_configured_workspace(ursa_config, tmp_path):
     assert agent._agent.workspace == workspace
 
 
+@pytest.mark.asyncio
+async def test_unnamed_cli_agent_does_not_create_checkpointer(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    workspace = tmp_path / "ephemeral-workspace"
+    hitl = HITL(UrsaConfig(workspace=workspace))
+
+    async def unexpected_checkpointer(_checkpoint_path):
+        pytest.fail("Unnamed CLI sessions must not create a checkpointer")
+
+    monkeypatch.setattr(hitl, "_get_checkpointer", unexpected_checkpointer)
+
+    agent = await hitl.get_agent("chat")
+
+    assert agent._agent is not None
+    assert agent._agent.checkpointer is None
+    assert not (workspace / "db" / "checkpointer.db").exists()
+
+
+@pytest.mark.asyncio
+async def test_named_cli_agent_still_gets_async_checkpointer(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    workspace = tmp_path / "workspace"
+    hitl = HITL(UrsaConfig(workspace=workspace, agent_name="persistent-agent"))
+    persistent_den = tmp_path / "persistent-agent-den"
+    expected_checkpointer = object()
+    requested_paths = []
+
+    class DummyPersistentAgent:
+        def __init__(self, **_kwargs):
+            self.den = persistent_den
+            self.checkpointer = None
+
+    async def fake_get_checkpointer(checkpoint_path):
+        requested_paths.append(checkpoint_path)
+        return expected_checkpointer
+
+    hitl.agents["chat"] = AgentHITL(agent_class=DummyPersistentAgent)
+    monkeypatch.setattr(hitl, "_get_checkpointer", fake_get_checkpointer)
+
+    agent = await hitl.get_agent("chat")
+
+    assert agent._agent is not None
+    assert requested_paths == [persistent_den]
+    assert agent._agent.checkpointer is expected_checkpointer
+
+
 def _stub_hitl_dependencies(monkeypatch):
     fake_llm = MagicMock(name="llm")
     fake_embedding = MagicMock(name="embedding")
-    monkeypatch.setattr("ursa.cli.hitl.init_chat_model", lambda **_: fake_llm)
+    monkeypatch.setattr("ursa.cli.config.init_chat_model", lambda **_: fake_llm)
     monkeypatch.setattr(
-        "ursa.cli.hitl.init_embeddings", lambda **_: fake_embedding
+        "ursa.cli.config.init_embeddings", lambda **_: fake_embedding
     )
     monkeypatch.setattr("ursa.cli.hitl.start_mcp_client", lambda servers: None)
     return fake_llm, fake_embedding
@@ -117,7 +175,6 @@ def _stub_hitl_dependencies(monkeypatch):
         "hypothesize",
         "plan",
         "web",
-        "recall",
     ]
     + ["dsi"]
     if has_optional_dep_group("dsi")
@@ -130,7 +187,7 @@ async def test_agents_apply_agent_config_overrides(
 
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
 
     overrides = {}
@@ -156,7 +213,7 @@ async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
         thread_id="custom-thread",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
 
     hitl = HITL(config)
@@ -167,11 +224,304 @@ async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     assert agent._agent.thread_id == "custom-thread"
 
 
+@pytest.mark.asyncio
+async def test_hitl_run_agent_forwards_callbacks(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    config = UrsaConfig(
+        workspace=tmp_path / "global-workspace",
+        emb_model=EmbModelConfig(model="fake-embedding"),
+    )
+    hitl = HITL(config)
+    captured = {}
+    previous_agent = object()
+    current_agent = object()
+
+    class DummyAgent:
+        _agent = current_agent
+
+        async def __call__(
+            self,
+            prompt: str,
+            last_agent_result: str | None = None,
+            last_agent=None,
+            callbacks=None,
+        ) -> str:
+            captured["prompt"] = prompt
+            captured["last_agent_result"] = last_agent_result
+            captured["last_agent"] = last_agent
+            captured["callbacks"] = callbacks
+            return "agent result"
+
+    async def fake_get_agent(name: str):
+        assert name == "chat"
+        return DummyAgent()
+
+    hitl.last_agent_result = "previous result"
+    hitl.last_agent = previous_agent
+    monkeypatch.setattr(hitl, "get_agent", fake_get_agent)
+
+    callbacks = ["callback-1"]
+    result = await hitl.run_agent("chat", "hello", callbacks=callbacks)
+
+    assert result == "agent result"
+    assert captured == {
+        "prompt": "hello",
+        "last_agent_result": "previous result",
+        "last_agent": previous_agent,
+        "callbacks": callbacks,
+    }
+    assert hitl.last_agent_result == "agent result"
+    assert hitl.last_agent is current_agent
+
+
+@pytest.mark.asyncio
+async def test_agent_hitl_passes_extra_callbacks_only():
+    captured = {}
+    custom_callback = object()
+
+    class DummyAgent:
+        telemetry = type("Telemetry", (), {"callbacks": ["telemetry"]})()
+
+        def format_query(self, prompt: str, state=None):
+            captured["prompt"] = prompt
+            captured["state"] = state
+            return {"messages": [prompt]}
+
+        async def ainvoke(self, query, config=None):
+            captured["query"] = query
+            captured["config"] = config
+            return {"messages": ["done"]}
+
+        def format_result(self, result):
+            return "done"
+
+    wrapper = AgentHITL(agent_class=object)
+    wrapper._agent = DummyAgent()
+
+    result = await wrapper("hello", callbacks=[custom_callback])
+
+    assert result == "done"
+    assert captured["prompt"] == "hello"
+    assert captured["state"] is None
+    assert captured["query"] == {"messages": ["hello"]}
+    assert captured["config"] == {"callbacks": [custom_callback]}
+
+
+def test_hitl_log_event_handler_renders_events(tmp_path):
+    output = io.StringIO()
+    console = RealConsole(
+        file=output,
+        force_terminal=False,
+        force_interactive=False,
+        color_system=None,
+        width=80,
+    )
+    handler = HITLLogEventHandler(console=console, workspace=tmp_path)
+
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "PlanningAgent",
+                "stage": "reflect_result",
+                "message": "Plan needs another pass",
+                "approved": False,
+                "reason": "Need one more concrete step.",
+            },
+            run_id="agent-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "edit_code",
+                "stage": "edit",
+                "phase": "end",
+                "message": "File updated",
+                "artifact": event_artifact(
+                    "--- app.py\n+++ app.py\n-old\n+new",
+                    "text/x-diff",
+                    metadata={
+                        "title": "Edit diff",
+                        "path": "repo/app.py",
+                    },
+                ),
+            },
+            run_id="edit-tool-artifact-run",
+        )
+    )
+    asyncio.run(
+        handler.on_tool_start(
+            {"name": "run_command"},
+            '{"query":"uname -s"}',
+            run_id="tool-run",
+            inputs={"query": "uname -s"},
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_command",
+                "stage": "execute",
+                "phase": "end",
+                "message": "Command finished",
+                "artifacts": [
+                    event_artifact(
+                        "Darwin",
+                        "text/plain",
+                        metadata={"title": "stdout"},
+                    ),
+                    event_artifact(
+                        "warning",
+                        "text/plain",
+                        metadata={"title": "stderr"},
+                    ),
+                ],
+            },
+            run_id="tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_tool_end(
+            "STDOUT:\nDarwin\nSTDERR:\n",
+            run_id="tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_tool_start(
+            {"name": "write_code_with_repo"},
+            '{"filename":"repo/app.py"}',
+            run_id="write-tool-run",
+            inputs={"filename": "repo/app.py"},
+        )
+    )
+    asyncio.run(
+        handler.on_tool_end(
+            "File repo/app.py written successfully.",
+            run_id="write-tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "edit_code",
+                "stage": "edit",
+                "phase": "start",
+                "message": "Editing file",
+                "path": str(tmp_path / "repo" / "app.py"),
+            },
+            run_id="edit-tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "edit_code",
+                "stage": "edit",
+                "message": "No changes made",
+                "filename": "repo/app.py",
+                "reason": "'old_code' not found in file.",
+            },
+            run_id="edit-tool-noop-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_web_search",
+                "stage": "search",
+                "message": "Searching Web",
+                "query": "ursa events",
+            },
+            run_id="search-tool-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_web_search",
+                "stage": "search_result",
+                "message": "Web search complete",
+                "query": "ursa events",
+                "result_chars": 42,
+            },
+            run_id="search-tool-result-run",
+        )
+    )
+
+    rendered = output.getvalue()
+
+    assert "Edit diff" in rendered
+    assert "-old" in rendered
+    assert "+new" in rendered
+
+    repo_app_string = str(
+        Path("repo") / "app.py"
+    )  # Rendering OS specific path string
+
+    assert "Plan" in rendered
+    assert "Plan needs another pass" in rendered
+    assert "Need one more concrete step." in rendered
+    assert "Running command: uname -s" in rendered
+    assert "Command finished: uname -s" in rendered
+    assert "stdout" in rendered
+    assert "stderr" in rendered
+    assert "warning" in rendered
+    assert any(
+        "stdout" in line and "stderr" in line for line in rendered.splitlines()
+    )
+    assert "Darwin" in rendered
+    assert f"Writing file: {repo_app_string}" in rendered
+    assert f"File written: {repo_app_string}" in rendered
+    assert f"Editing file: {repo_app_string}" in rendered
+    assert f"No changes made: {repo_app_string}" in rendered
+    assert "'old_code' not found in file." in rendered
+    assert "Searching Web: ursa events" in rendered
+    assert "Web search complete: ursa events" in rendered
+    assert "42 chars" in rendered
+
+
+def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    config = UrsaConfig(
+        workspace=tmp_path / "global-workspace",
+        emb_model=EmbModelConfig(model="fake-embedding"),
+    )
+    hitl = HITL(config)
+    shell = UrsaRepl(hitl, stdout=io.StringIO())
+    captured = {}
+
+    async def fake_run_agent(name: str, prompt: str, callbacks=None) -> str:
+        captured["name"] = name
+        captured["prompt"] = prompt
+        captured["callbacks"] = callbacks
+        return "done"
+
+    monkeypatch.setattr(hitl, "run_agent", fake_run_agent)
+    monkeypatch.setattr(
+        shell.ursa_loop, "submit", lambda coro: asyncio.run(coro)
+    )
+    monkeypatch.setattr(shell, "show", lambda *args, **kwargs: None)
+
+    shell.run_agent("chat", "hello")
+
+    assert captured["name"] == "chat"
+    assert captured["prompt"] == "hello"
+    assert len(captured["callbacks"]) == 1
+    assert isinstance(captured["callbacks"][0], HITLLogEventHandler)
+
+
 def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     config.agent_config = {
         "ghost": {"workspace": tmp_path / "ghost-workspace"},
@@ -185,7 +535,7 @@ def test_agent_config_none_value_errors(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     with pytest.raises(ValidationError):
         config.agent_config = {"chat": None}
@@ -196,7 +546,7 @@ async def test_agent_config_unknown_option_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=ModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding"),
     )
     config.agent_config = {"chat": {"nonexistent_option": True}}
 
@@ -227,14 +577,14 @@ def check_script(
     # expectations
     trace = []
     for input, ref in input_expected:
-        logging.info(f"input: {input}")
+        LOGGER.info("input: %s", input)
         shell.onecmd(input)
         console_output = shell.console.export_text()
         stdout_value = stdout.getvalue()
         stdout_delta = stdout_value[stdout_pos:]
         stdout_pos = len(stdout_value)
         output = stdout_delta or console_output
-        logging.info(f"output: {output}")
+        LOGGER.info("output: %s", output)
         match ref:
             case str():
                 assert output == ref
@@ -284,7 +634,7 @@ async def test_chat(ursa_config):
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "agent",
-    ["chat", "execute", "hypothesize", "plan", "web", "recall"],
+    ["chat", "execute", "hypothesize", "plan", "web"],
 )
 def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
     if agent == "plan":
@@ -330,9 +680,7 @@ async def test_mcp_smoke(mcp_server: Client):
     await mcp_server.list_prompts()
 
 
-@pytest.mark.parametrize(
-    "agent,query", [("chat", "Who are you?"), ("recall", "Who am I?")]
-)
+@pytest.mark.parametrize("agent,query", [("chat", "Who are you?")])
 async def test_mcp_agents(mcp_server: Client, agent: str, query: str):
     response = await mcp_server.call_tool(agent, {"prompt": query})
     assert isinstance(response.structured_content["result"], str)

@@ -71,12 +71,13 @@ try:
 except Exception:
     _HAS_LP = False
 
-try:
-    from scipy.optimize import linprog as _linprog
 
-    _HAS_SCIPY = True
-except Exception:
-    _HAS_SCIPY = False
+def _load_scipy_linprog():
+    try:
+        from scipy.optimize import linprog
+    except ImportError:
+        return None
+    return linprog
 
 
 # =========================
@@ -781,8 +782,13 @@ def _solve_with_highs_lp(
     Notes:
         This route supports only continuous variables and linear relational constraints.
     """
-    if not _HAS_SCIPY:
-        return "SciPy not installed. `pip install scipy`."
+    linprog = _load_scipy_linprog()
+    if linprog is None:
+        return "SciPy not installed. `pip install scipy` to use the HiGHS LP backend."
+    try:
+        import numpy as np
+    except ImportError:
+        return "NumPy not installed. `pip install numpy` to use the HiGHS LP backend."
 
     var_index = {n: i for i, n in enumerate(variable_name)}
     A_ub, b_ub, A_eq, b_eq = [], [], [], []
@@ -822,10 +828,8 @@ def _solve_with_highs_lp(
         hi_v = math.inf if hi is None else float(hi)
         bounds.append((lo_v, hi_v))
 
-    import numpy as np
-
     c = np.zeros(len(variable_name))
-    res = _linprog(
+    res = linprog(
         c,
         A_ub=np.array(A_ub) if A_ub else None,
         b_ub=np.array(b_ub) if b_ub else None,

@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 import difflib
 import re
 from dataclasses import dataclass
@@ -85,7 +87,7 @@ class DiffRenderer:
                 code = raw[1:]
             else:
                 style = _STYLE["ctx"]
-                code = raw[1:] if raw.startswith(" ") else raw
+                code = raw.lstrip()
 
             # compute line numbers
             if raw.startswith("+"):

@@ -1,7 +1,10 @@
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.util.events import configure_event_logging
 from ursa.workflows import PlanningExecutorWorkflow
+
+configure_event_logging()
 
 problem = """
 Design, run and visualize the effects of the counter-rotating states in the quantum Rabi model using the QuTiP
@@ -26,7 +29,7 @@ def main():
         workspace = "qutip_workspace"
 
         model = init_chat_model(
-            model="openai:gpt-5-mini",
+            model="openai:gpt-5.4-mini",
             max_completion_tokens=20000,
             max_retries=2,
         )
@@ -51,7 +54,7 @@ def main():
         return final_results
 
     except Exception as e:
-        print(f"Error in example: {str(e)}")
+        print(f"Error in example: {e!s}")
         import traceback
 
         traceback.print_exc()

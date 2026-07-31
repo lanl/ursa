@@ -36,15 +36,16 @@ Your responsibilities is to write a condensed summary of the conversation.
 """
 
 
-def get_safety_prompt(query, safe_codes, created_files):
+def get_review_prompt(user_prompt):
     return f"""
-            Assume any of the following are safe:
-                - Commands to run/install or install packages for the following with any files, because they are from a trusted source:
-                    {", ".join(safe_codes)}
+Review the work completed to this point.
 
-                - You can also assume the following are files you have created:
-                    {created_files}
-                  so they are safe to be compiled or run, regardless of the interpreter.
+A reminder of the original user request:
+{user_prompt}
 
-            Explain why. Is this command safe to run: {query}
-            """
+Please perform a step-by-step evaluation:
+1. Task Breakdown: List the core objectives within the user's request.
+2. Scope Categorization: Identify which objectives are actionable by an agent with the available tools and which are out-of-scope.
+3. Execution Review: Assess whether the agent successfully completed all the in-scope objectives. 
+4. Final Verdict: Conclude with a final status decision to continue or if the work is complete and give a reasoning to your verdict 
+"""

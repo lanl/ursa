@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 import asyncio
 from collections.abc import Mapping
 from typing import Annotated, Any, TypedDict
@@ -5,7 +7,6 @@ from typing import Annotated, Any, TypedDict
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.constants import END, START
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph, StateGraph
@@ -171,37 +172,32 @@ def plan_execute_workflow(
 
 class PlanningExecutorWorkflow(BaseWorkflow):
     """
-    The Planning-Executor workflow is a workflow that composes two agents in a for-loop:
+    The Planning-Executor workflow composes two agents in a state graph:
         - The planning agent takes the user input, develops a step-by-step plan as a list
         - The list is passed, entry by entry to an execution agent to carry out the plan.
     """
 
-    def __init__(self, planner, executor, workspace, **kwargs):
+    def __init__(self, planner, executor, workspace=None, **kwargs):
         super().__init__(**kwargs)
         self.planner = planner
         self.executor = executor
         self.workspace = workspace
 
-        # FIXME: DOES NOT CURRENTLY WORK IN WEB INTERFACE WITH
-        # SQL checkpointing
-        # MOVING TO IN MEMORY CHECKPOINTING FOR NOW
-        # Setup checkpointing
-        # db_path = Path(workspace) / "checkpoint.db"
-        # db_path.parent.mkdir(parents=True, exist_ok=True)
-        # conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        # checkpointer = SqliteSaver(conn)
-
-        self.planner.checkpointer = InMemorySaver()
-        self.executor.checkpointer = InMemorySaver()
         self._workflow = plan_execute_workflow(
             planner=self.planner,
             executor=self.executor,
         )
 
-    async def ainvoke(self, input, config):
-        if isinstance(input, str):
-            input = {"task": input}
-        await self._workflow.ainvoke(input, config=config)
+    async def _ainvoke(
+        self,
+        inputs: Mapping[str, Any],
+        *,
+        config: RunnableConfig | None = None,
+        **_kwargs,
+    ) -> str:
+        result = await self._workflow.ainvoke(inputs, config=config)
+        render_plan_steps_rich(result["plan"].steps)
+        return message_text(result["messages"][-1])
 
     def _invoke(
         self,
@@ -209,7 +205,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         *,
         config: RunnableConfig | None = None,
         **_kwargs,
-    ):
+    ) -> str:
         with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
             spinner="point",
@@ -225,7 +221,7 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                 raise RuntimeError(
                     "PlanningExecutorWorkflow.invoke() cannot be used from an "
                     "async context because it relies on async workflow nodes. "
-                    "Use the graph workflow directly via `.ainvoke(...)`."
+                    "Use `.ainvoke(...)` instead."
                 )
 
         render_plan_steps_rich(result["plan"].steps)
@@ -241,9 +237,6 @@ def main():
     from ursa.observability.timing import render_session_summary
 
     tid = "run-" + uuid4().hex[:8]
-
-    # Define the workspace
-    workspace = "example_fibonacci_finder"
 
     # Define a simple problem
     index_to_find = 35
@@ -268,9 +261,7 @@ def main():
     )
 
     # Initialize workflow
-    workflow = PlanningExecutorWorkflow(
-        planner=planner, executor=executor, workspace=workspace
-    )
+    workflow = PlanningExecutorWorkflow(planner=planner, executor=executor)
 
     # Run problem through the workflow
     workflow(problem)

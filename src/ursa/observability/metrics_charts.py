@@ -1,16 +1,8 @@
 # charts.py
 from __future__ import annotations
 
-from typing import Any
-
-import matplotlib
-
-matplotlib.use("Agg")  # safe for headless environments
 import datetime as _dt
-
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.stats import gaussian_kde  # type: ignore
+from typing import Any
 
 # Layout spec for compact charts (fractions of figure size)
 _LAYOUT = dict(
@@ -20,6 +12,45 @@ _LAYOUT = dict(
     footer1_y=0.105,  # run_id
     footer2_y=0.050,  # started → ended
 )
+
+
+def _optional_dependency_error(package: str, *, utility: str) -> ImportError:
+    return ImportError(
+        f"{utility} requires the optional dependency '{package}'. "
+        f"Install it to use this observability chart utility "
+        f"(for example: pip install {package})."
+    )
+
+
+def _require_pyplot():
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")  # safe for headless environments
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "matplotlib", utility="Metrics chart generation"
+        ) from exc
+    return plt
+
+
+def _require_numpy():
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise _optional_dependency_error(
+            "numpy", utility="Metrics chart generation"
+        ) from exc
+    return np
+
+
+def _optional_gaussian_kde():
+    try:
+        from scipy.stats import gaussian_kde  # type: ignore
+    except ImportError:
+        return None
+    return gaussian_kde
 
 
 def compute_llm_wall_seconds(payload: dict) -> float:
@@ -193,6 +224,7 @@ def plot_time_breakdown(
     min_label_pct: float = 1.0,
     context: dict[str, Any] | None = None,  # NEW
 ) -> str:
+    plt = _require_pyplot()
     labels = [k for k, _ in parts]
     values = [v for _, v in parts]
     overall = sum(values) or 1.0
@@ -251,7 +283,7 @@ def plot_time_breakdown(
             fig.text(
                 0.5,
                 0.06,
-                f"{started} \u2192 {ended}",
+                f"{started} → {ended}",
                 ha="center",
                 va="center",
                 fontsize="x-small",
@@ -304,7 +336,7 @@ def plot_time_breakdown(
         fig.text(
             0.5,
             0.06,
-            f"{started} \u2192 {ended}",
+            f"{started} → {ended}",
             ha="center",
             va="center",
             fontsize="x-small",
@@ -328,6 +360,7 @@ def plot_lollipop_time(
     exclude_zero: bool = True,
     context: dict[str, Any] | None = None,  # NEW
 ) -> str:
+    plt = _require_pyplot()
     data = [(k, v) for (k, v) in parts if (v > 0 if exclude_zero else True)]
     data.sort(key=lambda kv: kv[1])
     labels = [k for k, _ in data]
@@ -418,7 +451,7 @@ def plot_lollipop_time(
         fig.text(
             0.5,
             _LAYOUT["footer2_y"],
-            f"{started} \u2192 {ended}",
+            f"{started} → {ended}",
             ha="center",
             va="center",
             fontsize="x-small",
@@ -498,6 +531,7 @@ def plot_token_totals_bar(
     """
     Horizontal bar chart of token totals by category.
     """
+    plt = _require_pyplot()
 
     order = [
         "input_tokens",
@@ -563,7 +597,7 @@ def plot_token_totals_bar(
         fig.text(
             0.5,
             _LAYOUT["footer2_y"],
-            f"{started} \u2192 {ended}",
+            f"{started} → {ended}",
             ha="center",
             va="center",
             fontsize="x-small",
@@ -587,9 +621,12 @@ def plot_token_kde(
 ) -> str:
     """
     Overlay KDEs for input/output/reasoning/cached/total tokens.
-    - Uses scipy.stats.gaussian_kde if available; falls back to a Gaussian-smoothed histogram.
+    - Uses scipy.stats.gaussian_kde if available; falls back to a simple NumPy Gaussian KDE.
     - No seaborn.
     """
+    plt = _require_pyplot()
+    np = _require_numpy()
+    gaussian_kde = _optional_gaussian_kde()
 
     # categories & pretty labels (skip empty series automatically)
     order = [
@@ -633,10 +670,22 @@ def plot_token_kde(
     x_max = max(1.0, all_max * 1.05)
     x = np.linspace(x_min, x_max, 600)
 
-    # Try scipy KDE; else fallback to simple Gaussian smoothing of hist density
-    def _kde(arr: np.ndarray) -> np.ndarray:
-        kde = gaussian_kde(arr, bw_method=bandwidth)
-        return kde.evaluate(x)
+    # Try scipy KDE; else fallback to simple NumPy Gaussian KDE.
+    def _kde(arr):
+        if gaussian_kde is not None:
+            kde = gaussian_kde(arr, bw_method=bandwidth)
+            return kde.evaluate(x)
+        std = float(np.std(arr)) or max(1.0, x_max - x_min) / 50.0
+        bw = (
+            float(bandwidth)
+            if bandwidth
+            else 1.06 * std * (arr.size ** (-1 / 5))
+        )
+        bw = max(bw, 1e-9)
+        diffs = (x[:, None] - arr[None, :]) / bw
+        return np.exp(-0.5 * diffs * diffs).sum(axis=1) / (
+            arr.size * bw * np.sqrt(2 * np.pi)
+        )
 
     # Plot
     fig = plt.figure(figsize=(8, 2.8))
@@ -687,7 +736,7 @@ def plot_token_kde(
         fig.text(
             0.5,
             _LAYOUT["footer2_y"],
-            f"{started} \u2192 {ended}",
+            f"{started} → {ended}",
             ha="center",
             va="center",
             fontsize="x-small",
@@ -708,8 +757,8 @@ def plot_token_rates_bar(
     context: dict | None = None,
     categories: list[str] | None = None,
 ) -> str:
-    import matplotlib.pyplot as plt
-    import numpy as np
+    plt = _require_pyplot()
+    np = _require_numpy()
 
     cats = categories or [
         "input_tokens",
@@ -753,7 +802,7 @@ def plot_token_rates_bar(
             s
             for s in [
                 f"run_id: {run_id_short}" if run_id_short else "",
-                f"{started} \u2192 {ended}" if (started or ended) else "",
+                f"{started} → {ended}" if (started or ended) else "",
             ]
             if s
         )
@@ -855,7 +904,7 @@ def plot_tokens_bar_by_model(
     title: str = "LLM Token Totals by Category — by model",
     context: dict | None = None,
 ) -> str:
-    import matplotlib.pyplot as plt
+    plt = _require_pyplot()
 
     cats = [
         "input_tokens",
@@ -926,8 +975,8 @@ def plot_token_rates_by_model(
     title: str = "Tokens per second — by model",
     context: dict | None = None,
 ) -> str:
-    import matplotlib.pyplot as plt
-    import numpy as np
+    plt = _require_pyplot()
+    np = _require_numpy()
 
     cats = [
         "input_tokens",
@@ -1051,8 +1100,8 @@ def plot_tokens_by_agent_stacked(
     title: str = "LLM Token Totals by Agent (thread)",
     footer_lines: list[str] | None = None,
 ) -> str:
-    import matplotlib.pyplot as plt
-    import numpy as np
+    plt = _require_pyplot()
+    np = _require_numpy()
 
     cats = [
         "input_tokens",
@@ -1165,8 +1214,8 @@ def plot_tps_by_agent_grouped(
     title: str = "Tokens per second by Agent (thread)",
     footer_lines: list[str] | None = None,
 ) -> str:
-    import matplotlib.pyplot as plt
-    import numpy as np
+    plt = _require_pyplot()
+    np = _require_numpy()
 
     cats = [
         "input_tokens",
