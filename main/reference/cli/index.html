@@ -2334,7 +2334,10 @@ ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span cla
 <span class="normal">720</span>
 <span class="normal">721</span>
 <span class="normal">722</span>
-<span class="normal">723</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">HITLLogEventHandler</span><span class="p">(</span><span class="n">CallbackRenderingMixin</span><span class="p">,</span> <span class="n">AsyncCallbackHandler</span><span class="p">):</span>
+<span class="normal">723</span>
+<span class="normal">724</span>
+<span class="normal">725</span>
+<span class="normal">726</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">HITLLogEventHandler</span><span class="p">(</span><span class="n">CallbackRenderingMixin</span><span class="p">,</span> <span class="n">AsyncCallbackHandler</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Render structured agent/tool progress events to the REPL console.&quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">console</span><span class="p">:</span> <span class="n">Console</span><span class="p">,</span> <span class="n">workspace</span><span class="p">:</span> <span class="n">Path</span><span class="p">):</span>
@@ -2487,9 +2490,10 @@ ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span cla
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">name</span> <span class="o">!=</span> <span class="n">DEFAULT_EVENT_NAME</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
             <span class="k">return</span>
-        <span class="k">if</span> <span class="s2">&quot;agent&quot;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_print_agent_event</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-        <span class="k">elif</span> <span class="s2">&quot;tool&quot;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="c1"># Tool events may also carry an ``agent`` field identifying their</span>
+        <span class="c1"># owner. Treat the primary tool discriminator as more specific than</span>
+        <span class="c1"># that ownership metadata so named-agent artifacts are still rendered.</span>
+        <span class="k">if</span> <span class="s2">&quot;tool&quot;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
             <span class="n">tool</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_clean</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tool&quot;</span><span class="p">))</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_print_event_artifact</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
             <span class="k">if</span> <span class="n">tool</span> <span class="o">==</span> <span class="s2">&quot;run_command&quot;</span><span class="p">:</span>
@@ -2506,6 +2510,8 @@ ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span cla
             <span class="k">if</span> <span class="n">tool</span> <span class="o">==</span> <span class="s2">&quot;edit_code&quot;</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_has_inflight_tool</span><span class="p">(</span><span class="s2">&quot;edit_code&quot;</span><span class="p">):</span>
                 <span class="k">return</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_print_tool_event</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="s2">&quot;agent&quot;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_print_agent_event</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
