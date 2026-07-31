@@ -83,7 +83,7 @@ class PlanningState(TypedDict, total=False):
 
 
 class PlanningAgent(BaseAgent[PlanningState]):
-    agent_state = PlanningState
+    state_type = PlanningState
 
     def __init__(
         self,
