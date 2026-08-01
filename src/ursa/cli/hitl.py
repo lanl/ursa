@@ -26,6 +26,7 @@ from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
+from ursa.observability.timing import render_session_summary
 from ursa.security import (
     enforce_group_base_url_policy,
     enforce_model_group_policy,
@@ -246,6 +247,10 @@ class HITL:
 
         assert agent._agent is not None
         return agent
+
+    def render_metrics(self) -> None:
+        """Render the timing and cost summary for this session's agents."""
+        render_session_summary(self.thread_id)
 
     async def run_agent(
         self,
@@ -494,6 +499,10 @@ class UrsaRepl(Cmd):
                     self.console.print(f" {k}: {v}")
             else:
                 self.console.print(name + ": {}")
+
+    def do_metrics(self, _: str):
+        """Show timing and cost metrics for agents run this session"""
+        self.hitl.render_metrics()
 
 
 def get_provider_and_model(model_str: str | None):
