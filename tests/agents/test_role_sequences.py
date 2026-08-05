@@ -13,6 +13,7 @@ from tests.agents.utils import (
     assert_requests_provider_valid,
 )
 from ursa.agents.chat_agent import BasicChatAgent, ChatAgent
+from ursa.agents.deep_review_agent import DeepReviewAgent
 from ursa.agents.execution_agent import ExecutionAgent
 from ursa.agents.planning_agent import PlanningAgent
 from ursa.agents.prompting_agent import PromptingAgent
@@ -64,6 +65,15 @@ async def test_planning_agent_role_sequences(tmpdir):
     agent = PlanningAgent(llm=llm, workspace=tmpdir)
 
     await agent.ainvoke({"messages": [HumanMessage(content="make a plan")]})
+
+    assert_requests_provider_valid(llm.calls)
+
+
+async def test_deep_review_agent_role_sequences(tmpdir):
+    llm = RecordingChatModel()
+    agent = DeepReviewAgent(llm=llm, workspace=tmpdir, max_iterations=1)
+
+    await agent.ainvoke({"question": "How can cooling usage be reduced?"})
 
     assert_requests_provider_valid(llm.calls)
 
