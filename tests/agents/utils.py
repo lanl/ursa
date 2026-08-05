@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.language_models.fake_chat_models import (
     GenericFakeChatModel,
 )
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
@@ -73,3 +73,13 @@ def assert_requests_provider_valid(calls: list[list[BaseMessage]]) -> None:
             f"call {index} ends on an assistant turn: "
             f"{[message.type for message in call]}"
         )
+        past_system_prefix = False
+        for message in call:
+            if isinstance(message, SystemMessage):
+                assert not past_system_prefix, (
+                    f"call {index} has a system message after the leading "
+                    f"system prefix, which providers reject: "
+                    f"{[m.type for m in call]}"
+                )
+            else:
+                past_system_prefix = True

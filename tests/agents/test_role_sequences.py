@@ -69,6 +69,15 @@ async def test_planning_agent_role_sequences(tmpdir):
     assert_requests_provider_valid(llm.calls)
 
 
+@pytest.mark.xfail(
+    reason=(
+        "DeepReviewAgent appends a fresh SystemMessage per debate phase into "
+        "the accumulated history, so requests from the second phase onward "
+        "carry mid-conversation system messages, which langchain-anthropic "
+        "rejects; upstream issue pending"
+    ),
+    strict=True,
+)
 async def test_deep_review_agent_role_sequences(tmpdir):
     llm = RecordingChatModel()
     agent = DeepReviewAgent(llm=llm, workspace=tmpdir, max_iterations=1)
@@ -94,6 +103,25 @@ def test_invariant_rejects_empty_requests():
 
     with pytest.raises(AssertionError, match="empty message list"):
         assert_requests_provider_valid([[]])
+
+
+def test_invariant_rejects_mid_conversation_system_messages():
+    leading_prefix_ok = [
+        SystemMessage(content="s1"),
+        SystemMessage(content="s2"),
+        HumanMessage(content="h"),
+    ]
+    mid_list_system = [
+        SystemMessage(content="s1"),
+        HumanMessage(content="h"),
+        SystemMessage(content="s2"),
+        HumanMessage(content="h2"),
+    ]
+
+    assert_requests_provider_valid([leading_prefix_ok])
+
+    with pytest.raises(AssertionError, match="after the leading"):
+        assert_requests_provider_valid([mid_list_system])
 
 
 async def test_execution_agent_role_sequences(tmpdir):
