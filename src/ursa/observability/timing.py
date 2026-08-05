@@ -560,7 +560,7 @@ class PerLLMTimer(BaseCallbackHandler):
 
     def __init__(self, agg: _Agg | None = None, keep_max: int = 1000):
         self.agg = agg or _Agg()
-        self._starts: dict[Any, tuple[str, float, list, dict]] = {}
+        self._starts: dict[Any, tuple[str, float, list, dict, float]] = {}
         self.samples: collections.deque = collections.deque(maxlen=keep_max)
 
     def _name(self, serialized, metadata, tags) -> str:
@@ -769,7 +769,7 @@ class PerLLMTimer(BaseCallbackHandler):
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         name, t0, tags, metadata, wall_t0 = self._starts.pop(
-            run_id, ("llm:unknown", time.perf_counter(), [], {})
+            run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
         )
         ms = (time.perf_counter() - t0) * 1000.0
         wall_t1 = time.time()
