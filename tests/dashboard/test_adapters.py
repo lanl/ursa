@@ -4,6 +4,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
+from langchain_core.callbacks import BaseCallbackHandler
+
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.workflows.planning_execution_workflow import PlanningExecutorWorkflow
 from ursa_dashboard.adapters import (
@@ -106,22 +108,31 @@ def test_planning_executor_workflow_propagates_callbacks(
     tmp_path: Path,
     monkeypatch,
 ):
-    planner_calls: list[dict | None] = []
-    executor_calls: list[dict | None] = []
+    planner_calls: list[dict] = []
+    executor_calls: list[dict] = []
 
     class FakePlanner:
         checkpointer = None
 
-        def invoke(self, prompt, *, config=None):
-            planner_calls.append(config)
+        def format_query(self, prompt):
+            return prompt
+
+        async def _ainvoke(self, prompt, **kwargs):
+            planner_calls.append(kwargs)
             return {"plan": SimpleNamespace(steps=["step one", "step two"])}
 
     class FakeExecutor:
         checkpointer = None
 
-        def invoke(self, prompt, *, config=None):
-            executor_calls.append(config)
+        def format_query(self, prompt):
+            return prompt
+
+        async def _ainvoke(self, prompt, **kwargs):
+            executor_calls.append(kwargs)
             return {"messages": [SimpleNamespace(text=f"done for {prompt}")]}
+
+        def format_result(self, state):
+            return state["messages"][-1].text
 
     class DummyConsole:
         def status(self, *_args, **_kwargs):
@@ -144,10 +155,14 @@ def test_planning_executor_workflow_propagates_callbacks(
         executor=FakeExecutor(),
         workspace=tmp_path,
     )
-    callbacks = [object()]
+    callback = BaseCallbackHandler()
 
-    result = workflow.invoke("solve this", config={"callbacks": callbacks})
+    result = workflow.invoke("solve this", config={"callbacks": [callback]})
 
     assert "done for" in result
-    assert planner_calls == [{"callbacks": callbacks}]
-    assert executor_calls == [{"callbacks": callbacks}] * 2
+    assert len(planner_calls) == 1
+    assert len(executor_calls) == 2
+    assert callback in planner_calls[0]["callbacks"].handlers
+    assert all(
+        callback in call["callbacks"].handlers for call in executor_calls
+    )
