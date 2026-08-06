@@ -57,11 +57,13 @@ def chat_history(draw, min_pairs=0, max_pairs=4):
 @settings(max_examples=15, deadline=None)
 @given(history=chat_history())
 def test_property_shapes_without_summarization(history):
-    with tempfile.TemporaryDirectory() as workspace:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         llm = RecordingChatModel()
         agent = BasicChatAgent(llm=llm, workspace=workspace)
-
-        agent.invoke({"messages": list(history)})
+        try:
+            agent.invoke({"messages": list(history)})
+        finally:
+            agent.close()
 
         assert_requests_provider_valid(llm.calls)
 
@@ -72,7 +74,7 @@ def test_property_shapes_without_summarization(history):
     messages_to_keep=st.sampled_from([1, 2, 20]),
 )
 def test_property_summarization_healthy_space(history, messages_to_keep):
-    with tempfile.TemporaryDirectory() as workspace:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         llm = RecordingChatModel()
         agent = ChatAgent(
             llm=llm,
@@ -80,8 +82,10 @@ def test_property_summarization_healthy_space(history, messages_to_keep):
             tokens_before_summarize=1,
             messages_to_keep=messages_to_keep,
         )
-
-        agent.invoke({"messages": list(history)})
+        try:
+            agent.invoke({"messages": list(history)})
+        finally:
+            agent.close()
 
         assert_requests_provider_valid(llm.calls)
 
