@@ -313,6 +313,7 @@ async def test_planning_agent_role_sequences(tmpdir):
         "rejects; see upstream issue #294"
     ),
     strict=True,
+    raises=AssertionError,
 )
 async def test_deep_review_agent_role_sequences(tmpdir):
     llm = RecordingChatModel()
