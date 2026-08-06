@@ -18,6 +18,16 @@ from ursa.agents.execution_agent import ExecutionAgent
 from ursa.agents.hypothesizer_agent import HypothesizerAgent
 from ursa.agents.planning_agent import PlanningAgent
 from ursa.agents.prompting_agent import PromptingAgent
+from ursa.agents.rag_agent import RAGAgent
+from ursa.agents.recall_agent import RecallAgent
+
+
+class StubMemory:
+    def __init__(self, memories):
+        self._memories = memories
+
+    def retrieve(self, query):
+        return self._memories
 
 
 def _plan_factory(schema):
@@ -57,6 +67,46 @@ async def test_prompting_agent_role_sequences(tmpdir):
     agent = PromptingAgent(llm=llm, workspace=tmpdir)
 
     await agent.ainvoke(agent.format_query("Refine this prompt: hello"))
+
+    assert_requests_provider_valid(llm.calls)
+
+
+async def test_rag_agent_role_sequences(embedding_model, monkeypatch, tmp_path):
+    (tmp_path / "database").mkdir()
+    (tmp_path / "database" / "doc.pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(
+        "ursa.agents.rag_agent.read_text_from_file",
+        lambda path_name: "Entangled resonators enable sensitive detection.",
+    )
+
+    llm = RecordingChatModel()
+    agent = RAGAgent(
+        llm=llm,
+        embedding=embedding_model,
+        workspace=tmp_path,
+        database_path="database",
+        summaries_path="summaries",
+        vectorstore_path="vectors",
+        return_k=1,
+        chunk_size=256,
+        chunk_overlap=0,
+    )
+
+    query = "Explain entangled resonators."
+    await agent.ainvoke({"context": query, "query": query})
+
+    assert_requests_provider_valid(llm.calls)
+
+
+async def test_recall_agent_role_sequences(tmpdir):
+    llm = RecordingChatModel()
+    agent = RecallAgent(
+        llm=llm,
+        memory=StubMemory(["remembered detail one", "remembered detail two"]),
+        workspace=tmpdir,
+    )
+
+    await agent.ainvoke({"query": "what happened last run?"})
 
     assert_requests_provider_valid(llm.calls)
 
