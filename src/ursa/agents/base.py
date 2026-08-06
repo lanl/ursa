@@ -1315,6 +1315,15 @@ class BaseAgent(Generic[TState], ABC):
 
         cls._warn_if_state_unregistered()
 
+        # Init graph after subclass has been fully constructed
+        orig_init = cls.__init__
+
+        def __init__(self, *args, **kwargs):
+            orig_init(self, *args, **kwargs)
+            self.__post_init__()
+
+        cls.__init__ = __init__
+
     @classmethod
     def _warn_if_state_unregistered(cls):
         """Warn when a subclass declares a typed state it never registers.
@@ -1358,15 +1367,6 @@ class BaseAgent(Generic[TState], ABC):
             UnregisteredAgentStateWarning,
             stacklevel=3,
         )
-
-        # Init graph after subclass has been fully constructed
-        orig_init = cls.__init__
-
-        def __init__(self, *args, **kwargs):
-            orig_init(self, *args, **kwargs)
-            self.__post_init__()
-
-        cls.__init__ = __init__
 
     def __post_init__(self):
         self.build_graph()
