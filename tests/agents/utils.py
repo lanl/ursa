@@ -44,6 +44,7 @@ class RecordingChatModel(GenericFakeChatModel):
 
     def with_structured_output(self, schema, **kwargs):
         model = self
+        include_raw = kwargs.get("include_raw", False)
 
         class StructuredOutput:
             def invoke(self, messages, config=None):
@@ -53,7 +54,14 @@ class RecordingChatModel(GenericFakeChatModel):
                         "RecordingChatModel needs a structured_factory to "
                         f"answer with_structured_output({schema!r})"
                     )
-                return model.structured_factory(schema)
+                parsed = model.structured_factory(schema)
+                if include_raw:
+                    return {
+                        "raw": AIMessage(content=""),
+                        "parsed": parsed,
+                        "parsing_error": None,
+                    }
+                return parsed
 
         return StructuredOutput()
 
