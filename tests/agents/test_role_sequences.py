@@ -120,6 +120,51 @@ async def test_hypothesizer_agent_role_sequences(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
+def _optimization_factory(schema):
+    if schema.__name__ == "ProblemSpec":
+        return schema(
+            title="Test problem",
+            description_nl="Minimize x.",
+            decision_variables=[
+                {
+                    "name": "x",
+                    "type": "continuous",
+                    "domain": "x >= 0",
+                    "description": "the variable",
+                }
+            ],
+            parameters=[],
+            objective={
+                "sense": "minimize",
+                "expression_nl": "x",
+                "tags": ["linear"],
+            },
+            constraints=[],
+            status="VERIFIED",
+            notes={
+                "verifier": "verified",
+                "feasibility": "feasible",
+                "user": "",
+                "assumptions": "",
+            },
+        )
+    if schema.__name__ == "SolverSpec":
+        return schema(solver="ipopt", library="pyomo")
+    raise AssertionError(f"unexpected structured schema: {schema.__name__}")
+
+
+async def test_optimization_agent_role_sequences(tmpdir):
+    pytest.importorskip("sympy")
+    from ursa.agents.optimization_agent import OptimizationAgent
+
+    llm = RecordingChatModel(structured_factory=_optimization_factory)
+    agent = OptimizationAgent(llm=llm, workspace=tmpdir)
+
+    await agent.ainvoke({"user_input": "Minimize x subject to x >= 0."})
+
+    assert_requests_provider_valid(llm.calls)
+
+
 async def test_planning_agent_role_sequences(tmpdir):
     llm = RecordingChatModel(structured_factory=_plan_factory)
     agent = PlanningAgent(llm=llm, workspace=tmpdir)
