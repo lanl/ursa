@@ -58,6 +58,25 @@ class RecordingChatModel(GenericFakeChatModel):
         return StructuredOutput()
 
 
+class ScriptedRecordingChatModel(RecordingChatModel):
+    """Recording model that pops scripted responses before the default.
+
+    Seed ``script`` with messages (for example ``AIMessage`` instances
+    carrying ``tool_calls``) to drive an agent's tool loop; once the
+    script is exhausted, the model falls back to ``response``.
+    """
+
+    script: list = Field(default_factory=list)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.calls.append(list(messages))
+        if self.script:
+            message = self.script.pop(0)
+        else:
+            message = AIMessage(content=self.response)
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
 def assert_requests_provider_valid(calls: list[list[BaseMessage]]) -> None:
     """Assert every recorded request has a shape chat providers accept.
 

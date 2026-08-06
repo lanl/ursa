@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from tests.agents.utils import (
     RecordingChatModel,
+    ScriptedRecordingChatModel,
     assert_requests_provider_valid,
 )
 from ursa.agents.acquisition_agents import (
@@ -25,6 +26,7 @@ from ursa.agents.planning_agent import PlanningAgent
 from ursa.agents.prompting_agent import PromptingAgent
 from ursa.agents.rag_agent import RAGAgent
 from ursa.agents.recall_agent import RecallAgent
+from ursa.util.has_optional_dep_group import has_optional_dep_group
 
 
 class StubMemory:
@@ -123,6 +125,60 @@ async def test_hypothesizer_agent_role_sequences(tmp_path):
     await agent.ainvoke("Why is cooling energy rising in the data center?")
 
     assert_requests_provider_valid(llm.calls)
+
+
+@pytest.mark.skipif(
+    not has_optional_dep_group("dsi"), reason="dsi extra not installed"
+)
+async def test_dsi_agent_role_sequences(tmp_path):
+    from ursa.agents.dsi_agent import DSIAgent
+
+    llm = RecordingChatModel()
+    agent = DSIAgent(llm=llm, workspace=tmp_path)
+
+    await agent.ainvoke(agent.format_query("What datasets exist for X?"))
+
+    assert_requests_provider_valid(llm.calls)
+
+
+def _tool_call_script(tool_name, args):
+    return [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": tool_name, "args": args, "id": "call_1"}],
+        )
+    ]
+
+
+async def test_chat_agent_tool_loop_role_sequences(tmpdir):
+    llm = ScriptedRecordingChatModel(
+        script=_tool_call_script("read_file", {"filename": "notes.txt"})
+    )
+    agent = ChatAgent(llm=llm, workspace=tmpdir)
+
+    await agent.ainvoke(agent.format_query("Read my notes."))
+
+    assert_requests_provider_valid(llm.calls)
+    assert any(call[-1].type == "tool" for call in llm.calls), (
+        "expected a post-tool re-entry request ending on a tool message"
+    )
+
+
+async def test_execution_agent_tool_loop_role_sequences(tmpdir):
+    llm = ScriptedRecordingChatModel(
+        script=_tool_call_script("read_file", {"filename": "notes.txt"}),
+        structured_factory=lambda schema: schema(
+            is_complete=True, reason="Work complete."
+        ),
+    )
+    agent = ExecutionAgent(llm=llm, workspace=tmpdir)
+
+    await agent.ainvoke("read the notes file")
+
+    assert_requests_provider_valid(llm.calls)
+    assert any(call[-1].type == "tool" for call in llm.calls), (
+        "expected a post-tool re-entry request ending on a tool message"
+    )
 
 
 def _optimization_factory(schema):
