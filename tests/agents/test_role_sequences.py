@@ -15,6 +15,7 @@ from tests.agents.utils import (
 from ursa.agents.chat_agent import BasicChatAgent, ChatAgent
 from ursa.agents.deep_review_agent import DeepReviewAgent
 from ursa.agents.execution_agent import ExecutionAgent
+from ursa.agents.hypothesizer_agent import HypothesizerAgent
 from ursa.agents.planning_agent import PlanningAgent
 from ursa.agents.prompting_agent import PromptingAgent
 
@@ -60,6 +61,15 @@ async def test_prompting_agent_role_sequences(tmpdir):
     assert_requests_provider_valid(llm.calls)
 
 
+async def test_hypothesizer_agent_role_sequences(tmp_path):
+    llm = RecordingChatModel()
+    agent = HypothesizerAgent(llm=llm, workspace=tmp_path)
+
+    await agent.ainvoke("Why is cooling energy rising in the data center?")
+
+    assert_requests_provider_valid(llm.calls)
+
+
 async def test_planning_agent_role_sequences(tmpdir):
     llm = RecordingChatModel(structured_factory=_plan_factory)
     agent = PlanningAgent(llm=llm, workspace=tmpdir)
@@ -74,7 +84,7 @@ async def test_planning_agent_role_sequences(tmpdir):
         "DeepReviewAgent appends a fresh SystemMessage per debate phase into "
         "the accumulated history, so requests from the second phase onward "
         "carry mid-conversation system messages, which langchain-anthropic "
-        "rejects; upstream issue pending"
+        "rejects; see upstream issue #294"
     ),
     strict=True,
 )
