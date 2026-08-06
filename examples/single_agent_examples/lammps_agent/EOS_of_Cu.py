@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from langchain_openai import ChatOpenAI
 from rich import get_console
 
@@ -21,7 +23,7 @@ model = "gpt-5"
 
 llm = ChatOpenAI(model=model, timeout=None, max_retries=2)
 
-workspace = "./workspace_eos_cu"
+workspace = Path("./workspace_eos_cu")
 
 wf = LammpsAgent(
     llm=llm,
@@ -59,4 +61,4 @@ final_lammps_state = wf.invoke(
 if final_lammps_state.get("run_returncode") == 0:
     console.print(
         "\n[green]LAMMPS Workflow completed successfully.[/green] Exiting....."
-    )
+    )  # noqa: T201

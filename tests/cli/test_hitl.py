@@ -454,6 +454,65 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
             run_id="search-tool-result-run",
         )
     )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "choose_potential",
+                "phase": "end",
+                "message": "Potential chosen",
+                "chosen_index": 2,
+                "potential_id": "pot-2",
+                "rationale": "Best fit for the requested elements.",
+            },
+            run_id="lammps-choice-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "author_input",
+                "phase": "end",
+                "message": "LAMMPS input authored",
+                "preview": "units metal\nrun 100",
+                "language": "bash",
+                "path": str(tmp_path / "in.lammps"),
+            },
+            run_id="lammps-author-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "fix_input",
+                "phase": "end",
+                "message": "LAMMPS input rewritten",
+                "old_code": "run 100",
+                "new_code": "run 200",
+                "path": str(tmp_path / "in.lammps"),
+            },
+            run_id="lammps-fix-run",
+        )
+    )
+    asyncio.run(
+        handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "LammpsAgent",
+                "stage": "run",
+                "phase": "error",
+                "message": "LAMMPS run failed",
+                "returncode": 1,
+                "error_output": "ERROR: Invalid pair style",
+            },
+            run_id="lammps-failed-run",
+        )
+    )
 
     rendered = output.getvalue()
 
@@ -485,6 +544,77 @@ def test_hitl_log_event_handler_renders_events(tmp_path):
     assert "Searching Web: ursa events" in rendered
     assert "Web search complete: ursa events" in rendered
     assert "42 chars" in rendered
+    assert "LAMMPS" in rendered
+    assert "Chosen Potential" in rendered
+    assert "pot-2" in rendered
+    assert "Best fit for the requested elements." in rendered
+    assert "LAMMPS input authored" in rendered
+    assert "units metal" in rendered
+    assert "LAMMPS input diff" in rendered
+    assert "run 100" in rendered
+    assert "run 200" in rendered
+    assert "Run error/output" in rendered
+    assert "ERROR: Invalid pair style" in rendered
+
+
+def test_hitl_log_event_handler_renders_named_agent_tool_artifacts(tmp_path):
+    output = io.StringIO()
+    console = RealConsole(
+        file=output,
+        force_terminal=False,
+        force_interactive=False,
+        color_system=None,
+        width=80,
+    )
+    handler = HITLLogEventHandler(console=console, workspace=tmp_path)
+
+    async def emit_events() -> None:
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "dummy_bot_3000",
+                "tool": "write_code",
+                "stage": "write",
+                "phase": "end",
+                "message": "File written",
+                "filename": "first_10_integers.py",
+                "artifact": event_artifact(
+                    "for i in range(1, 11):\n    print(i)\n",
+                    "text/x-python",
+                    metadata={"title": "File written"},
+                ),
+            },
+            run_id="named-write-tool-run",
+        )
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "agent": "dummy_bot_3000",
+                "tool": "run_command",
+                "stage": "execute",
+                "phase": "end",
+                "message": "Command finished",
+                "query": "python first_10_integers.py",
+                "artifacts": [
+                    event_artifact(
+                        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+                        "text/plain",
+                        metadata={"title": "stdout"},
+                    )
+                ],
+            },
+            run_id="named-command-tool-run",
+        )
+
+    asyncio.run(emit_events())
+
+    rendered = output.getvalue()
+    assert "File written" in rendered
+    assert "for i in range(1, 11):" in rendered
+    assert "print(i)" in rendered
+    assert "stdout" in rendered
+    assert "1" in rendered
+    assert "10" in rendered
 
 
 def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):

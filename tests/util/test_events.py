@@ -445,6 +445,47 @@ def test_tool_events_emit_tool_payload_from_runtime(
     assert calls == [("ursa_agent_progress", payload, runtime.config)]
 
 
+def test_tool_events_include_owner_from_named_agent_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def fake_dispatch(event_name: str, payload: dict, config: dict) -> None:
+        calls.append((event_name, payload, config))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        fake_dispatch,
+    )
+
+    runtime = ToolRuntime(
+        state={},
+        context=AgentContext(
+            llm=None,
+            workspace=Path("workspace"),
+            den=Path("workspace"),
+            agent_name="dummy_bot_3000",
+            group="default",
+        ),
+        config={"metadata": {"thread_id": "thread-10"}},
+        stream_writer=lambda _: None,
+        tool_call_id="tool-call-10",
+        store=None,
+    )
+
+    events = ToolEvents.from_runtime("write_code", runtime)
+    payload = events.emit(
+        "File written",
+        stage="write",
+        phase="end",
+    )
+
+    assert payload["tool"] == "write_code"
+    assert payload["agent"] == "dummy_bot_3000"
+    assert payload["tool_call_id"] == "tool-call-10"
+    assert calls == [("ursa_agent_progress", payload, runtime.config)]
+
+
 def test_tool_events_include_owner_payload_from_runtime_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

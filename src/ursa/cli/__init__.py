@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 from warnings import filterwarnings
 
@@ -242,6 +243,18 @@ def main(args=None):
     if cfg["print_config"]:
         print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))  # noqa: T201
         exit(0)
+
+    legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"
+    if ursa_config.agent_name is None and legacy_checkpoint.is_file():
+        # Intentionally print so this warning is visible regardless of log level.
+        print(  # noqa: T201
+            "\nWarning: URSA no longer restarts unnamed CLI sessions from "
+            "db/checkpointer.db, and CLI checkpoint history is only persisted "
+            "when --name is used.\n\nTo continue this history, from the workspace "
+            "run 'ursa import-agent db/checkpointer.db --name <new agent name>', "
+            "\nThen use '--name <new agent name>' for future CLI sessions.\n",
+            file=sys.stderr,
+        )
 
     match subcommand:
         case None:
