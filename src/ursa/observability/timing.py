@@ -45,6 +45,7 @@ try:
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.trace import Status, StatusCode, set_span_in_context
     from opentelemetry.util.re import parse_env_headers
 except Exception as _exc:
     opentelemetry_available = False
@@ -1247,6 +1248,61 @@ class Telemetry:
             )
         return resolved_endpoint, resolved_headers
 
+    def _llm_event_span(self, tracer, parent_ctx, event: dict):
+        """Emit one child span for a recorded LLM call, at its real times.
+
+        Span name and attribute names follow the OpenTelemetry GenAI
+        semantic conventions (Development status): "{operation} {model}",
+        gen_ai.operation.name, gen_ai.request.model, and
+        gen_ai.usage.{input,output}_tokens.
+        https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+        """
+        t_start, t_end = event.get("t_start"), event.get("t_end")
+        if t_start is None or t_end is None:
+            return None
+        metadata = event.get("metadata") or {}
+        metrics = event.get("metrics") or {}
+        model = metadata.get("model")
+        span = tracer.start_span(
+            f"chat {model}" if model else "chat",
+            context=parent_ctx,
+            start_time=int(t_start * 1_000_000_000),
+        )
+        attrs = {"gen_ai.operation.name": "chat"}
+        if model:
+            attrs["gen_ai.request.model"] = str(model)
+        node = (
+            metadata.get("langgraph_node")
+            or metadata.get("node_name")
+            or metadata.get("langgraph:node")
+        )
+        if node is not None:
+            attrs["ursa.langgraph.node"] = str(node)
+        step = metadata.get("langgraph_step")
+        if step is not None:
+            attrs["ursa.langgraph.step"] = (
+                step if isinstance(step, int) else str(step)
+            )
+        rollup = metrics.get("usage_rollup") or {}
+        for semconv_key, rollup_key in (
+            ("gen_ai.usage.input_tokens", "input_tokens"),
+            ("gen_ai.usage.output_tokens", "output_tokens"),
+        ):
+            value = rollup.get(rollup_key)
+            if value:
+                attrs[semconv_key] = int(value)
+        span.set_attributes(attrs)
+        if not event.get("ok", True):
+            error_text = metrics.get("error")
+            span.set_status(
+                Status(
+                    StatusCode.ERROR,
+                    str(error_text) if error_text else None,
+                )
+            )
+        span.end(end_time=int(t_end * 1_000_000_000))
+        return span
+
     def _save_otel(self, payload: dict, endpoint, headers) -> dict:
         if not opentelemetry_available:
             _otel_logger.warning(
@@ -1283,20 +1339,30 @@ class Telemetry:
             getattr(exporter, "_endpoint", "")
         )
 
+        start_dt = _parse_iso(ctx.get("started_at"))
+        end_dt = _parse_iso(ctx.get("ended_at"))
+        start_ns = (
+            int(start_dt.timestamp() * 1_000_000_000) if start_dt else None
+        )
+        end_ns = int(end_dt.timestamp() * 1_000_000_000) if end_dt else None
+
         span_count = 0
         flushed = False
         try:
             tracer = provider.get_tracer(agent or "ursa")
-            with tracer.start_as_current_span(run_id or "run") as span:
-                total_i, parts_i = extract_time_breakdown(
-                    payload, group_llm=True
-                )
-                for key, value in parts_i:
-                    span.set_attribute(key, value)
-                span.set_attributes(compute_attribution(payload))
-                totals_run, _samples_run = extract_llm_token_stats(payload)
-                span.set_attributes(totals_run)
+            root = tracer.start_span(run_id or "run", start_time=start_ns)
+            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
+            for key, value in parts_i:
+                root.set_attribute(key, value)
+            root.set_attributes(compute_attribution(payload))
+            totals_run, _samples_run = extract_llm_token_stats(payload)
+            root.set_attributes(totals_run)
             span_count = 1
+            parent_ctx = set_span_in_context(root)
+            for event in payload.get("llm_events") or []:
+                if self._llm_event_span(tracer, parent_ctx, event) is not None:
+                    span_count += 1
+            root.end(end_time=end_ns)
             flushed = provider.force_flush(timeout_millis=10_000)
         finally:
             provider.shutdown()
