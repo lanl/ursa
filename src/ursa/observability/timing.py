@@ -6,6 +6,7 @@ from __future__ import annotations
 import collections
 import importlib
 import json
+import logging as _logging
 import os
 import re
 import time
@@ -32,16 +33,21 @@ from ursa.observability.metrics_charts import (
     extract_time_breakdown,
 )
 
+_otel_logger = _logging.getLogger("ursa.observability.otel")
+
 opentelemetry_available = True
+_otel_import_error: str | None = None
 try:
-    from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
         OTLPSpanExporter,
     )
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-except Exception:
+    from opentelemetry.util.re import parse_env_headers
+except Exception as _exc:
     opentelemetry_available = False
+    _otel_import_error = repr(_exc)
 
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
@@ -1046,9 +1052,7 @@ class Telemetry:
     output_dir: str = "metrics"  # where to save JSON
     save_json_default: bool = True  # opt-in autosave
     save_otel_default: bool = False  # opt-out otel
-    otel_endpoint: str = (
-        "http://localhost:5000/v1/traces"  # where to push otel metrics
-    )
+    otel_endpoint: str | None = None  # explicit OTLP endpoint override
 
     tool: PerToolTimer = field(default_factory=PerToolTimer)
     runnable: PerRunnableTimer = field(default_factory=PerRunnableTimer)
@@ -1218,36 +1222,100 @@ class Telemetry:
             )
         return path
 
-    def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
+    def _resolve_otlp_config(
+        self, endpoint: str | None, headers
+    ) -> tuple[str | None, dict | None]:
+        """Resolve endpoint and headers for the OTLP exporter.
+
+        Endpoint precedence: explicit parameter, then the
+        ``otel_endpoint`` field, then ``None`` so the SDK applies its
+        own ``OTEL_EXPORTER_OTLP_*`` environment variables or default.
+        Headers accept a mapping or an env-style ``"k=v,k2=v2"`` string.
+        """
+        resolved_endpoint = endpoint or self.otel_endpoint or None
+        if headers is None:
+            resolved_headers = None
+        elif isinstance(headers, dict):
+            resolved_headers = dict(headers)
+        elif isinstance(headers, str):
+            resolved_headers = parse_env_headers(headers, liberal=True)
+        else:
+            raise ValueError(
+                "otel_headers must be a mapping or an env-style "
+                f"'k=v,k2=v2' string, got {type(headers).__name__}"
+            )
+        return resolved_endpoint, resolved_headers
+
+    def _save_otel(self, payload: dict, endpoint, headers) -> dict:
         if not opentelemetry_available:
-            return None
+            _otel_logger.warning(
+                "OpenTelemetry export was requested but the OTLP exporter "
+                "is not installed; install it with "
+                'pip install "ursa-ai[otel]". Import error: %s',
+                _otel_import_error,
+            )
+            return {
+                "ok": False,
+                "endpoint": None,
+                "span_count": 0,
+                "reason": "otel-unavailable",
+            }
+        resolved_endpoint, resolved_headers = self._resolve_otlp_config(
+            endpoint, headers
+        )
         ctx = payload.get("context") or {}
         agent = str(ctx.get("agent") or "")
-        # thread_id = str(ctx.get("thread_id") or "")
         run_id = str(ctx.get("run_id") or "")
-        # s = _parse_iso(ctx.get("started_at"))
-        # e = _parse_iso(ctx.get("ended_at"))
 
-        provider = TracerProvider()
-        trace.set_tracer_provider(provider)
+        resource = Resource.create({
+            "service.name": "ursa",
+            "ursa.agent": agent,
+            "ursa.run_id": run_id,
+        })
         exporter = OTLPSpanExporter(
-            endpoint=endpoint,
-            headers=headers,
+            endpoint=resolved_endpoint,
+            headers=resolved_headers,
         )
+        provider = TracerProvider(resource=resource, shutdown_on_exit=False)
         provider.add_span_processor(BatchSpanProcessor(exporter))
-        tracer = trace.get_tracer(agent)
+        reported_endpoint = resolved_endpoint or str(
+            getattr(exporter, "_endpoint", "")
+        )
 
-        with tracer.start_as_current_span(run_id) as span:
-            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
-            [span.set_attribute(i[0], i[1]) for i in parts_i]
+        span_count = 0
+        flushed = False
+        try:
+            tracer = provider.get_tracer(agent or "ursa")
+            with tracer.start_as_current_span(run_id or "run") as span:
+                total_i, parts_i = extract_time_breakdown(
+                    payload, group_llm=True
+                )
+                for key, value in parts_i:
+                    span.set_attribute(key, value)
+                span.set_attributes(compute_attribution(payload))
+                totals_run, _samples_run = extract_llm_token_stats(payload)
+                span.set_attributes(totals_run)
+            span_count = 1
+            flushed = provider.force_flush(timeout_millis=10_000)
+        finally:
+            provider.shutdown()
 
-            att = compute_attribution(payload)
-            span.set_attributes(att)
-
-            totals_run, samples_run = extract_llm_token_stats(payload)
-            span.set_attributes(totals_run)
-
-        return endpoint
+        if flushed:
+            _otel_logger.info(
+                "Exported %d span(s) to OTLP endpoint %s",
+                span_count,
+                reported_endpoint,
+            )
+        else:
+            _otel_logger.warning(
+                "OTLP export flush failed for endpoint %s", reported_endpoint
+            )
+        return {
+            "ok": bool(flushed),
+            "endpoint": reported_endpoint,
+            "span_count": span_count if flushed else 0,
+            "reason": None if flushed else "flush-failed",
+        }
 
     def to_json(
         self, *, include_raw_snapshot: bool, include_raw_records: bool
@@ -1404,9 +1472,10 @@ class Telemetry:
         )
         if saved_path:
             attrib_lines.append(f"[dim]Saved metrics JSON to:[/] {saved_path}")
-        if saved_otel:
+        if saved_otel and saved_otel.get("ok"):
             attrib_lines.append(
-                f"[dim]Saved metrics JSON to OTEL endpoint:[/] {saved_otel}"
+                "[dim]Exported metrics span to OTLP endpoint:[/] "
+                f"{saved_otel.get('endpoint')}"
             )
 
         header_str = "\n".join(
