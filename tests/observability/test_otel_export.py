@@ -22,7 +22,7 @@ otel = pytest.importorskip("opentelemetry")
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: E402
     OTLPSpanExporter,
 )
-from opentelemetry.trace import StatusCode  # noqa: E402
+from opentelemetry.trace import SpanKind, StatusCode  # noqa: E402
 
 import ursa.observability.timing as timing  # noqa: E402
 
@@ -442,3 +442,104 @@ def test_t2_missing_run_timestamps_still_exports():
 
     assert result["ok"] is True
     assert len(_EXPORTERS[-1].captured) == 1
+
+
+def test_t2_real_langchain_metadata_names_child_spans():
+    # Live langchain callbacks carry ls_model_name / ls_provider, not a
+    # "model" key; the child span must still get its name, model, and the
+    # Required gen_ai.provider.name from them.
+    base = _epoch(_T2_START)
+    event = _event(t_start=base + 1.0, t_end=base + 2.0)
+    event["metadata"] = {
+        "ls_provider": "openai",
+        "ls_model_name": "real-model",
+        "ls_model_type": "chat",
+        "langgraph_node": "respond",
+        "langgraph_step": 1,
+    }
+    telemetry = _telemetry()
+    telemetry._save_otel(
+        _payload_with_events([event]), "http://127.0.0.1:19999/v1/traces", None
+    )
+
+    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
+    assert len(children) == 1
+    child = children[0]
+    assert child.name == "chat real-model"
+    attrs = dict(child.attributes)
+    assert attrs["gen_ai.request.model"] == "real-model"
+    assert attrs["gen_ai.provider.name"] == "openai"
+
+
+def test_t2_explicit_model_key_wins_over_ls_model_name():
+    # Guard: a producer-set "model" key keeps precedence over langchain's
+    # ls_model_name fallback.
+    base = _epoch(_T2_START)
+    event = _event(t_start=base + 1.0, t_end=base + 2.0)
+    event["metadata"]["ls_model_name"] = "other-model"
+    telemetry = _telemetry()
+    telemetry._save_otel(
+        _payload_with_events([event]), "http://127.0.0.1:19999/v1/traces", None
+    )
+
+    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
+    assert children[0].name == "chat test-model"
+
+
+def test_t2_malformed_event_does_not_crash_export(caplog):
+    # _save_otel runs inside the agent's finally; a malformed event must
+    # never raise out of it, and the root plus already-built children must
+    # still export as a partial trace with a warning.
+    base = _epoch(_T2_START)
+    good = _event(t_start=base + 1.0, t_end=base + 2.0)
+    malformed = _event(t_start=base + 2.0, t_end=base + 3.0)
+    malformed["metadata"] = "not-a-dict"
+    telemetry = _telemetry()
+    with caplog.at_level("WARNING", logger="ursa.observability.otel"):
+        result = telemetry._save_otel(
+            _payload_with_events([good, malformed]),
+            "http://127.0.0.1:19999/v1/traces",
+            None,
+        )
+
+    assert result["ok"] is True
+    captured = _EXPORTERS[-1].captured
+    assert len(captured) == 2, "good child and root must both export"
+    roots = [s for s in captured if s.parent is None]
+    assert len(roots) == 1, "root span must export even when assembly fails"
+    assert roots[0].end_time == _iso_ns(_T2_END)
+    assert any("span assembly" in r.message for r in caplog.records)
+
+
+def test_t2_timestampless_events_logged_as_skipped(caplog):
+    # The recorder always stamps t_start/t_end; if a future producer drops
+    # them the skip must be visible, not silent.
+    base = _epoch(_T2_START)
+    events = [
+        _event(t_start=base + 1.0, t_end=base + 2.0),
+        _event(),
+    ]
+    telemetry = _telemetry()
+    with caplog.at_level("DEBUG", logger="ursa.observability.otel"):
+        result = telemetry._save_otel(
+            _payload_with_events(events),
+            "http://127.0.0.1:19999/v1/traces",
+            None,
+        )
+
+    assert result["span_count"] == 2
+    assert any("Skipped 1" in r.message for r in caplog.records)
+
+
+def test_t2_child_spans_are_client_kind():
+    # GenAI semconv: inference spans SHOULD be SpanKind.CLIENT.
+    base = _epoch(_T2_START)
+    telemetry = _telemetry()
+    telemetry._save_otel(
+        _payload_with_events([_event(t_start=base + 1.0, t_end=base + 2.0)]),
+        "http://127.0.0.1:19999/v1/traces",
+        None,
+    )
+
+    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
+    assert children[0].kind is SpanKind.CLIENT

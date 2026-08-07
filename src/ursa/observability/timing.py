@@ -45,7 +45,12 @@ try:
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.trace import Status, StatusCode, set_span_in_context
+    from opentelemetry.trace import (
+        SpanKind,
+        Status,
+        StatusCode,
+        set_span_in_context,
+    )
     from opentelemetry.util.re import parse_env_headers
 except Exception as _exc:
     opentelemetry_available = False
@@ -1262,15 +1267,19 @@ class Telemetry:
             return None
         metadata = event.get("metadata") or {}
         metrics = event.get("metrics") or {}
-        model = metadata.get("model")
+        model = metadata.get("model") or metadata.get("ls_model_name")
         span = tracer.start_span(
             f"chat {model}" if model else "chat",
             context=parent_ctx,
+            kind=SpanKind.CLIENT,
             start_time=int(t_start * 1_000_000_000),
         )
         attrs = {"gen_ai.operation.name": "chat"}
         if model:
             attrs["gen_ai.request.model"] = str(model)
+        provider_name = metadata.get("ls_provider")
+        if provider_name:
+            attrs["gen_ai.provider.name"] = str(provider_name)
         node = (
             metadata.get("langgraph_node")
             or metadata.get("node_name")
@@ -1351,18 +1360,40 @@ class Telemetry:
         try:
             tracer = provider.get_tracer(agent or "ursa")
             root = tracer.start_span(run_id or "run", start_time=start_ns)
-            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
-            for key, value in parts_i:
-                root.set_attribute(key, value)
-            root.set_attributes(compute_attribution(payload))
-            totals_run, _samples_run = extract_llm_token_stats(payload)
-            root.set_attributes(totals_run)
             span_count = 1
-            parent_ctx = set_span_in_context(root)
-            for event in payload.get("llm_events") or []:
-                if self._llm_event_span(tracer, parent_ctx, event) is not None:
-                    span_count += 1
-            root.end(end_time=end_ns)
+            # This runs inside the agent's finally: a malformed payload must
+            # never raise past here, and the root must always end so the
+            # trace exports (partially) rather than as orphaned children.
+            try:
+                total_i, parts_i = extract_time_breakdown(
+                    payload, group_llm=True
+                )
+                for key, value in parts_i:
+                    root.set_attribute(key, value)
+                root.set_attributes(compute_attribution(payload))
+                totals_run, _samples_run = extract_llm_token_stats(payload)
+                root.set_attributes(totals_run)
+                parent_ctx = set_span_in_context(root)
+                events = payload.get("llm_events") or []
+                for event in events:
+                    if (
+                        self._llm_event_span(tracer, parent_ctx, event)
+                        is not None
+                    ):
+                        span_count += 1
+                skipped = len(events) - (span_count - 1)
+                if skipped:
+                    _otel_logger.debug(
+                        "Skipped %d llm event(s) lacking timestamps", skipped
+                    )
+            except Exception:
+                _otel_logger.warning(
+                    "OTel span assembly failed part-way; exporting a "
+                    "partial trace",
+                    exc_info=True,
+                )
+            finally:
+                root.end(end_time=end_ns)
             flushed = provider.force_flush(timeout_millis=10_000)
         finally:
             provider.shutdown()
