@@ -37,6 +37,8 @@ from ursa.cli.rag_management import (
 )
 from ursa.util.http import inject_truststore_into_ssl
 
+from openai import OpenAIError
+
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
 # NOTE [alui | 26 June, 2026]:
 # Pydantic warnings occured around v0.16.0. Suppress for now.
@@ -260,8 +262,12 @@ def main(args=None):
         case None:
             from ursa.cli.hitl import HITL, UrsaRepl
 
-            hitl = HITL(ursa_config)
-            UrsaRepl(hitl).run()
+            try:
+                hitl = HITL(ursa_config)
+                UrsaRepl(hitl).run()
+            except OpenAIError as exc:
+                print(f"Error: {exc}")
+                return
 
         case "exec":
             from ursa.cli.hitl import HITL, UrsaRepl
