@@ -88,7 +88,7 @@ opt = [
     "ortools>=9.14,<9.15",
 ]
 otel = [
-    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.0",
     "opentelemetry-sdk>=1.38.0",
 ]
 dsi = [

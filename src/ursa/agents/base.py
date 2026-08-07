@@ -220,7 +220,7 @@ class BaseAgent(Generic[TState], ABC):
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
-        otel_metrics: bool = False,
+        otel_metrics: Optional[bool] = None,
         thread_id: Optional[str] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
@@ -247,6 +247,16 @@ class BaseAgent(Generic[TState], ABC):
                 "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
             }
         )
+        if otel_metrics is not None:
+            import warnings
+
+            warnings.warn(
+                "The otel_metrics argument has never had an effect and is "
+                "deprecated; OpenTelemetry export is configured per invoke "
+                "via save_otel (see issue #259, Tier 2 will supersede it).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or ".")
         self.agent_name = agent_name

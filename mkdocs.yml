@@ -94,6 +94,7 @@ nav:
       - MCP reference: reference/mcp.md
       - Event logging: reference/logging_events.md
       - Metrics: reference/metrics.md
+      - OpenTelemetry export: reference/otel.md
       - Plan-Execute checkpointing: reference/plan-execute-checkpointing.md
       - Tutorials and examples:
           - Combining arXiv agent and execution agent: reference/tutorials/arxiv-execution.md
