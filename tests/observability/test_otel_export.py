@@ -134,6 +134,17 @@ def test_d6_characterization_env_honored_when_unset(monkeypatch):
     assert "17777" in str(_EXPORTERS[-1]._endpoint)
 
 
+def test_d6_param_beats_field():
+    # Pins the top of the documented precedence order: an explicit call
+    # parameter wins over the Telemetry.otel_endpoint field.
+    telemetry = _telemetry()
+    telemetry.otel_endpoint = "http://127.0.0.1:15555/v1/traces"
+    telemetry._save_otel(_payload(), "http://127.0.0.1:16666/v1/traces", None)
+
+    assert _EXPORTERS
+    assert "16666" in str(_EXPORTERS[-1]._endpoint)
+
+
 def test_d6_characterization_param_beats_env(monkeypatch):
     monkeypatch.setenv(
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
@@ -543,3 +554,20 @@ def test_t2_child_spans_are_client_kind():
 
     children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
     assert children[0].kind is SpanKind.CLIENT
+
+
+def test_t4_no_atexit_providers_registered():
+    # The per-call provider uses shutdown_on_exit=False and is shut down
+    # in-call; an export must leave no atexit hook behind (hooks would
+    # accumulate per run and fire at interpreter exit).
+    import atexit
+
+    if not hasattr(atexit, "_ncallbacks"):
+        pytest.skip("atexit._ncallbacks not available")
+    before = atexit._ncallbacks()
+    telemetry = _telemetry()
+    telemetry._save_otel(_payload(), "http://127.0.0.1:19999/v1/traces", None)
+
+    assert atexit._ncallbacks() == before, (
+        "export left an atexit-registered provider behind"
+    )
