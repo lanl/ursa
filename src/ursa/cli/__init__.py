@@ -166,6 +166,22 @@ def resolve_config(cfg) -> UrsaConfig:
     return config.update(cli_config)
 
 
+def _initialize_hitl(config: UrsaConfig):
+    """Create the CLI controller and report missing OpenAI credentials cleanly."""
+    from openai import OpenAIError
+
+    from ursa.cli.hitl import HITL
+
+    try:
+        return HITL(config)
+    except OpenAIError as exc:
+        print(  # noqa: T201
+            "Error: unable to initialize the language model. " + str(exc),
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
+
+
 def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
@@ -258,21 +274,19 @@ def main(args=None):
 
     match subcommand:
         case None:
-            from ursa.cli.hitl import HITL, UrsaRepl
+            from ursa.cli.hitl import UrsaRepl
 
-            hitl = HITL(ursa_config)
+            hitl = _initialize_hitl(ursa_config)
             UrsaRepl(hitl).run()
 
         case "exec":
-            from ursa.cli.hitl import HITL, UrsaRepl
+            from ursa.cli.hitl import UrsaRepl
 
-            hitl = HITL(ursa_config)
+            hitl = _initialize_hitl(ursa_config)
             UrsaRepl(hitl).run_prompt(cmd_config.prompt)
 
         case "mcp-server":
-            from ursa.cli.hitl import HITL
-
-            hitl = HITL(ursa_config)
+            hitl = _initialize_hitl(ursa_config)
             mcp = hitl.as_mcp_server()
             run_kwargs = {
                 "transport": cmd_config.transport,
