@@ -1258,9 +1258,9 @@ class Telemetry:
 
         Span name and attribute names follow the OpenTelemetry GenAI
         semantic conventions (Development status): "{operation} {model}",
-        gen_ai.operation.name, gen_ai.request.model, and
-        gen_ai.usage.{input,output}_tokens.
-        https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+        gen_ai.operation.name, gen_ai.request.model, gen_ai.provider.name,
+        and gen_ai.usage.{input,output}_tokens.
+        https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md
         """
         t_start, t_end = event.get("t_start"), event.get("t_end")
         if t_start is None or t_end is None:
