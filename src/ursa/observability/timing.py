@@ -1301,8 +1301,10 @@ class Telemetry:
             provider.shutdown()
 
         if flushed:
+            # force_flush confirms handoff to the exporter, not delivery;
+            # the SDK exposes no per-batch delivery status to callers.
             _otel_logger.info(
-                "Exported %d span(s) to OTLP endpoint %s",
+                "Flushed %d span(s) toward OTLP endpoint %s",
                 span_count,
                 reported_endpoint,
             )

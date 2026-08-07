@@ -134,6 +134,21 @@ def test_d6_characterization_param_beats_env(monkeypatch):
     assert "16666" in str(_EXPORTERS[-1]._endpoint)
 
 
+def test_d1_inprocess_unavailable_structured_branch(caplog, monkeypatch):
+    monkeypatch.setattr(timing, "opentelemetry_available", False)
+    telemetry = _telemetry()
+    with caplog.at_level("WARNING", logger="ursa.observability.otel"):
+        result = telemetry._save_otel(_payload(), None, None)
+
+    assert result == {
+        "ok": False,
+        "endpoint": None,
+        "span_count": 0,
+        "reason": "otel-unavailable",
+    }
+    assert any("ursa-ai[otel]" in r.message for r in caplog.records)
+
+
 def test_d7_structured_result_and_logging(caplog):
     telemetry = _telemetry()
     with caplog.at_level("INFO", logger="ursa.observability.otel"):
