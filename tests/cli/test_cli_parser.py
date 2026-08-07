@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock
 
+import pytest
 import yaml
+from openai import OpenAIError
 
 from ursa.cli import build_parser, main, resolve_config
 from ursa.cli.config import (
@@ -68,6 +70,25 @@ def test_cli_does_not_warn_without_legacy_checkpoint(
     main(["--workspace", str(tmp_path)])
 
     assert capsys.readouterr().err == ""
+
+
+def test_cli_reports_model_initialization_error_without_traceback(
+    monkeypatch, capsys
+):
+    error = OpenAIError(
+        "The api_key client option must be set by setting the "
+        "OPENAI_API_KEY environment variable"
+    )
+    monkeypatch.setattr("ursa.cli.hitl.HITL", MagicMock(side_effect=error))
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    with pytest.raises(SystemExit, match="2"):
+        main([])
+
+    stderr = capsys.readouterr().err
+    assert stderr.startswith("Error: unable to initialize the language model.")
+    assert "OPENAI_API_KEY" in stderr
+    assert "Traceback" not in stderr
 
 
 def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
