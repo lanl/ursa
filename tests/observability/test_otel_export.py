@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import textwrap
+from datetime import datetime
 from types import MappingProxyType
 
 import pytest
@@ -21,6 +22,7 @@ otel = pytest.importorskip("opentelemetry")
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: E402
     OTLPSpanExporter,
 )
+from opentelemetry.trace import StatusCode  # noqa: E402
 
 import ursa.observability.timing as timing  # noqa: E402
 
@@ -257,3 +259,186 @@ def test_d2_two_endpoints_route_independently():
     assert counts == [1, 1], (
         f"spans misrouted across endpoints: {counts} (expected [1, 1])"
     )
+
+
+# --- T1.2: true-time span tree (root from run context, child per event) ---
+
+_T2_START = "2026-08-07T00:00:00+00:00"
+_T2_END = "2026-08-07T00:00:05+00:00"
+
+
+def _iso_ns(iso: str) -> int:
+    return int(datetime.fromisoformat(iso).timestamp() * 1_000_000_000)
+
+
+def _epoch(iso: str) -> float:
+    return datetime.fromisoformat(iso).timestamp()
+
+
+def _event(
+    ok=True,
+    t_start=None,
+    t_end=None,
+    model="test-model",
+    node="agent_node",
+    step=3,
+):
+    """Mirror a PerLLMTimer.samples entry (on_llm_end / on_llm_error)."""
+    metrics = (
+        {
+            "usage_rollup": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "total_tokens": 18,
+            }
+        }
+        if ok
+        else {"error": "RuntimeError('boom')"}
+    )
+    return {
+        "name": f"llm:{model}",
+        "ms": 1000.0,
+        "ok": ok,
+        "tags": [],
+        "metadata": {
+            "model": model,
+            "langgraph_node": node,
+            "langgraph_step": step,
+        },
+        "metrics": metrics,
+        "t_start": t_start,
+        "t_end": t_end,
+    }
+
+
+def _payload_with_events(events):
+    payload = _payload()
+    payload["llm_events"] = list(events)
+    return payload
+
+
+def test_t2_root_span_uses_real_run_timestamps():
+    telemetry = _telemetry()
+    telemetry._save_otel(_payload(), "http://127.0.0.1:19999/v1/traces", None)
+
+    assert _EXPORTERS
+    (root,) = _EXPORTERS[-1].captured
+    assert root.start_time == _iso_ns(_T2_START), (
+        "root span start is not the run's real started_at"
+    )
+    assert root.end_time == _iso_ns(_T2_END), (
+        "root span end is not the run's real ended_at"
+    )
+
+
+def test_t2_child_span_per_llm_event_within_root():
+    base = _epoch(_T2_START)
+    events = [
+        _event(t_start=base + 1.0, t_end=base + 2.0),
+        _event(t_start=base + 2.5, t_end=base + 4.0),
+    ]
+    telemetry = _telemetry()
+    result = telemetry._save_otel(
+        _payload_with_events(events), "http://127.0.0.1:19999/v1/traces", None
+    )
+
+    captured = _EXPORTERS[-1].captured
+    assert len(captured) == 3, (
+        f"expected 1 root + 2 children, got {len(captured)}"
+    )
+    roots = [s for s in captured if s.parent is None]
+    assert len(roots) == 1, "expected exactly one root span"
+    root = roots[0]
+    children = [s for s in captured if s.parent is not None]
+    assert all(c.parent.span_id == root.context.span_id for c in children), (
+        "children are not parented to the run root span"
+    )
+    assert sorted(c.start_time for c in children) == [
+        int((base + 1.0) * 1_000_000_000),
+        int((base + 2.5) * 1_000_000_000),
+    ]
+    assert sorted(c.end_time for c in children) == [
+        int((base + 2.0) * 1_000_000_000),
+        int((base + 4.0) * 1_000_000_000),
+    ]
+    for child in children:
+        assert (
+            root.start_time
+            <= child.start_time
+            <= child.end_time
+            <= root.end_time
+        ), "child span falls outside the root span interval"
+    assert result["span_count"] == 3
+
+
+def test_t2_child_attributes_follow_genai_semconv():
+    base = _epoch(_T2_START)
+    telemetry = _telemetry()
+    telemetry._save_otel(
+        _payload_with_events([_event(t_start=base + 1.0, t_end=base + 2.0)]),
+        "http://127.0.0.1:19999/v1/traces",
+        None,
+    )
+
+    children = [s for s in _EXPORTERS[-1].captured if s.parent is not None]
+    assert len(children) == 1
+    child = children[0]
+    assert child.name == "chat test-model"
+    attrs = dict(child.attributes)
+    assert attrs["gen_ai.operation.name"] == "chat"
+    assert attrs["gen_ai.request.model"] == "test-model"
+    assert attrs["gen_ai.usage.input_tokens"] == 11
+    assert attrs["gen_ai.usage.output_tokens"] == 7
+    assert attrs["ursa.langgraph.node"] == "agent_node"
+    assert attrs["ursa.langgraph.step"] == 3
+
+
+def test_t2_error_event_child_has_error_status():
+    base = _epoch(_T2_START)
+    events = [
+        _event(t_start=base + 1.0, t_end=base + 2.0),
+        _event(ok=False, t_start=base + 2.0, t_end=base + 3.0),
+    ]
+    telemetry = _telemetry()
+    telemetry._save_otel(
+        _payload_with_events(events), "http://127.0.0.1:19999/v1/traces", None
+    )
+
+    children = {
+        c.start_time: c for c in _EXPORTERS[-1].captured if c.parent is not None
+    }
+    ok_child = children[int((base + 1.0) * 1_000_000_000)]
+    err_child = children[int((base + 2.0) * 1_000_000_000)]
+    assert err_child.status.status_code is StatusCode.ERROR, (
+        "ok=False event did not produce an ERROR-status span"
+    )
+    assert ok_child.status.status_code is StatusCode.UNSET
+
+
+def test_t2_no_events_root_only():
+    # Guard (green before and after T1.2): empty llm_events yields exactly
+    # one root span and span_count 1.
+    telemetry = _telemetry()
+    result = telemetry._save_otel(
+        _payload(), "http://127.0.0.1:19999/v1/traces", None
+    )
+
+    captured = _EXPORTERS[-1].captured
+    assert len(captured) == 1
+    assert captured[0].parent is None
+    assert result["span_count"] == 1
+
+
+def test_t2_missing_run_timestamps_still_exports():
+    # Robustness guard (green before and after T1.2): a degenerate context
+    # without timestamps must not crash and still exports a root span.
+    payload = _payload()
+    del payload["context"]["started_at"]
+    del payload["context"]["ended_at"]
+    telemetry = _telemetry()
+    result = telemetry._save_otel(
+        payload, "http://127.0.0.1:19999/v1/traces", None
+    )
+
+    assert result["ok"] is True
+    assert len(_EXPORTERS[-1].captured) == 1
