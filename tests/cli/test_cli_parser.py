@@ -246,6 +246,33 @@ def test_cli_does_not_apply_chat_only_openai_defaults_to_emb_model():
     assert "use_responses_api" not in config.emb_model.kwargs
 
 
+def test_cli_handles_missing_api_key(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "ursa.cli.inject_truststore_into_ssl",
+        lambda: None,
+    )
+
+    from openai import OpenAIError
+
+    monkeypatch.setattr(
+        "ursa.cli.hitl.HITL",
+        MagicMock(
+            side_effect=OpenAIError(
+                "The api_key client option must be set either by passing "
+                "api_key to the client or by setting the OPENAI_API_KEY "
+                "environment variable"
+            )
+        ),
+    )
+
+    main([])
+
+    output = capsys.readouterr().out
+
+    assert "api_key" in output
+    assert "OPENAI_API_KEY" in output
+
+
 def test_print_config_yaml_round_trip(tmp_path):
     parser = build_parser()
     args = parser.parse_args([
