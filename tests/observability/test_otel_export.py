@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import textwrap
+from types import MappingProxyType
 
 import pytest
 
@@ -98,6 +99,15 @@ def test_d4_headers_garbage_raises_ursa_error():
         telemetry._save_otel(
             _payload(), "http://127.0.0.1:19999/v1/traces", 12345
         )
+
+
+def test_d4_headers_accept_nondict_mapping():
+    telemetry = _telemetry()
+    telemetry._save_otel(
+        _payload(),
+        "http://127.0.0.1:19999/v1/traces",
+        MappingProxyType({"authorization": "Bearer abc"}),
+    )
 
 
 def test_d5b_telemetry_field_endpoint_honored():

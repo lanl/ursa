@@ -11,6 +11,7 @@ import os
 import re
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
@@ -1223,7 +1224,7 @@ class Telemetry:
         return path
 
     def _resolve_otlp_config(
-        self, endpoint: str | None, headers
+        self, endpoint: str | None, headers: str | Mapping | None
     ) -> tuple[str | None, dict | None]:
         """Resolve endpoint and headers for the OTLP exporter.
 
@@ -1235,7 +1236,7 @@ class Telemetry:
         resolved_endpoint = endpoint or self.otel_endpoint or None
         if headers is None:
             resolved_headers = None
-        elif isinstance(headers, dict):
+        elif isinstance(headers, Mapping):
             resolved_headers = dict(headers)
         elif isinstance(headers, str):
             resolved_headers = parse_env_headers(headers, liberal=True)
@@ -1345,7 +1346,7 @@ class Telemetry:
         save_otel: bool | None = None,
         filepath: str | None = None,
         otel_endpoint: str | None = None,
-        otel_headers: str | None = None,
+        otel_headers: str | Mapping | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
     ):
@@ -1476,7 +1477,7 @@ class Telemetry:
             attrib_lines.append(f"[dim]Saved metrics JSON to:[/] {saved_path}")
         if saved_otel and saved_otel.get("ok"):
             attrib_lines.append(
-                "[dim]Exported metrics span to OTLP endpoint:[/] "
+                "[dim]Flushed metrics span(s) to OTLP endpoint:[/] "
                 f"{saved_otel.get('endpoint')}"
             )
 
