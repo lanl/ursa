@@ -776,15 +776,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         prior = session_read_messages(rm.dashboard_root, session_id, limit=200)
         prompt = build_prompt_from_messages(prior, new_user_text=req.text)
 
-        user_msg = session_append_message(
-            rm.dashboard_root,
-            session_id=session_id,
-            role="user",
-            text=req.text,
-            agent_id=agent_id,
-            agent_name=agent_name,
-        )
-
         # Merge global defaults, then per-session settings, then per-message overrides.
         s = settings_store.load().model_dump(mode="json")
         llm = _deep_merge_dicts(
@@ -800,12 +791,23 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         if agent_id.startswith("demo_") and "disabled" not in llm:
             llm["disabled"] = True
 
+        # Validate before persisting anything: a send rejected here must
+        # not leave an unanswered user message in the transcript.
         try:
             await asyncio.to_thread(
                 rm.validate_credentials, llm=llm, embedding=embedding
             )
         except (CredentialConfigurationError, CredentialStoreError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+        user_msg = session_append_message(
+            rm.dashboard_root,
+            session_id=session_id,
+            role="user",
+            text=req.text,
+            agent_id=agent_id,
+            agent_name=agent_name,
+        )
 
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
@@ -3679,6 +3681,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         state.workspaceInfo = null;
         renderWorkspacePath();
         clearRunView();
+        updateComposerState();
         return;
     }
 
@@ -3852,6 +3855,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state.activeSession = await api('GET', `/sessions/${encodeURIComponent(sessionId)}`);
     renderSessions();
     renderActiveSession();
+    updateComposerState();
     await refreshWorkspace();
   }
 
@@ -4018,6 +4022,33 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     return !!state.workspaceInfo?.configured;
   }
 
+  function updateComposerState() {
+    const ta = $('#messageInput');
+    const btn = $('#sendMsgBtn');
+    const ready = !!state.activeSessionId;
+    if (ta) {
+      ta.disabled = !ready;
+      ta.placeholder = ready
+        ? 'Message the agent...'
+        : 'Create a session to start chatting';
+    }
+    if (btn) btn.disabled = !ready;
+  }
+
+  function showSendError(message) {
+    const msgs = $('#sessionMessages');
+    if (!msgs) {
+      alert('Failed to send: ' + message);
+      return;
+    }
+    msgs.querySelectorAll('.sendError').forEach(x => x.remove());
+    const el = document.createElement('div');
+    el.className = 'sendError';
+    el.textContent = 'Failed to send: ' + message;
+    msgs.appendChild(el);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
   async function sendMessage() {
     if (!state.activeSessionId) return;
     const ta = $('#messageInput');
@@ -4037,7 +4068,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       await refreshSessions();
       await refreshAgents();
     } catch (e) {
-      alert('Failed to send: ' + e.message);
+      showSendError(e && e.message ? e.message : String(e));
     } finally {
       if (sendBtn) sendBtn.disabled = false;
     }
@@ -4838,6 +4869,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!state.activeSessionId && state.sessions.length) {
       const exists = remembered && state.sessions.some(s => s.session_id === remembered);
       await loadSession(exists ? remembered : state.sessions[0].session_id);
+    } else if (!state.activeSessionId) {
+      renderActiveSession();
     }
 
     // periodic refresh
@@ -5150,6 +5183,7 @@ body::before {
 }
 
 .msgRow { margin-bottom: 12px; }
+.sendError { color: #dc2626; background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.4); border-radius: 8px; padding: 8px 10px; margin: 8px 0; white-space: pre-wrap; }
 .msgHead { font-weight: 650; margin-bottom: 6px; display:flex; gap: 8px; align-items: baseline; }
 .msgHead .who { font-weight: 700; }
 
@@ -5315,6 +5349,13 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             except Exception:
                 continue
         return None
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        p = _find_logo_path()
+        if not p:
+            raise HTTPException(status_code=404, detail="favicon not found")
+        return FileResponse(str(p), media_type="image/png")
 
     @app.get(
         "/ui/ursa_logo.png",
@@ -5748,9 +5789,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
               <select id="composerAgentType" style="min-width:220px"></select>
             </div>
           </div>
-          <textarea id="messageInput" placeholder="Message the agent..."></textarea>
+          <textarea id="messageInput" placeholder="Create a session to start chatting" disabled></textarea>
           <div class="row" style="margin-top: 8px">
-            <button class="btn primary" id="sendMsgBtn" type="button">Send</button>
+            <button class="btn primary" id="sendMsgBtn" type="button" disabled>Send</button>
             <div class="muted small" id="runStatus"></div>
             <a class="muted small" href="/ui/workspace" style="margin-left:auto">Run workspace browser</a>
           </div>
