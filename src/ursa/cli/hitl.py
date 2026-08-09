@@ -115,6 +115,22 @@ def get_base_url(model: BaseChatModel) -> str | None:
     return None
 
 
+def _init_model_or_exit(kind: str, model_config, init_fn):
+    """Run a LangChain `init_*` factory, turning init failures (e.g. a
+    missing API key) into a short, readable error instead of a raw
+    traceback from deep inside the provider's client library."""
+    try:
+        return init_fn()
+    except Exception as e:
+        raise SystemExit(
+            f"Error: failed to initialize the {kind} model "
+            f"'{model_config.model}'.\n{e}\n\n"
+            "If this looks like a missing or invalid API key, set the "
+            "appropriate environment variable (e.g. OPENAI_API_KEY, "
+            "ANTHROPIC_API_KEY) and try again."
+        ) from None
+
+
 class HITL:
     def __init__(self, config: UrsaConfig):
         self.config = config
@@ -131,14 +147,20 @@ class HITL:
         enforce_group_base_url_policy(
             self.config.llm_model.base_url, self.group
         )
-        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
+        self.model: BaseChatModel = _init_model_or_exit(
+            "chat", self.config.llm_model, self.config.llm_model.init_chat_model
+        )
         enforce_model_group_policy(self.model, self.group)
         if self.config.emb_model:
             enforce_group_base_url_policy(
                 self.config.emb_model.base_url, self.group
             )
         self.embedding = (
-            self.config.emb_model.init_embedding()
+            _init_model_or_exit(
+                "embedding",
+                self.config.emb_model,
+                self.config.emb_model.init_embedding,
+            )
             if self.config.emb_model
             else None
         )
