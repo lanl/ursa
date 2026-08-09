@@ -23,7 +23,7 @@ from rich.theme import Theme
 
 from ursa import agents
 from ursa.agents import BaseAgent
-from ursa.agents.base import AgentWithTools
+from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
 from ursa.security import (
@@ -337,6 +337,7 @@ class UrsaRepl(Cmd):
             model_name = self.hitl.model.model
         self.llm_model_panel = Panel.fit(
             Text.from_markup(
+                f"[bold]URSA version[/]: {URSA_VERSION}\n"
                 f"[bold]LLM endpoint[/]: {base_url}\n"
                 f"[bold]LLM model[/]: {model_name}"
             ),
