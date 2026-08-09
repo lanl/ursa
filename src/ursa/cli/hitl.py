@@ -33,7 +33,7 @@ from ursa.security import (
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
 
-ursa_banner = f"""
+ursa_banner = rf"""
   __  ________________ _
  / / / / ___/ ___/ __ `/
 / /_/ / /  (__  ) /_/ /
