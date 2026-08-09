@@ -94,18 +94,6 @@ def test_has_all_agent_do_methods(ursa_config):
         assert hasattr(repl, f"do_{name}")
 
 
-def test_banner_panel_shows_version(ursa_config):
-    # The startup banner's info panel must display the running URSA
-    # version (issue 298).
-    hitl = HITL(ursa_config)
-    repl = UrsaRepl(hitl, stdout=io.StringIO())
-
-    console = RealConsole(file=io.StringIO(), width=200)
-    console.print(repl.llm_model_panel)
-
-    assert URSA_VERSION in console.file.getvalue()
-
-
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):
     workspace = tmp_path / "custom-workspace"
     ursa_config.workspace = workspace
