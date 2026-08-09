@@ -3667,7 +3667,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!state.activeSession) {
         if (title) title.textContent = 'No session selected';
         if (meta) meta.textContent = '';
-        if (msgs) msgs.innerHTML = '<div class="muted">Pick an agent to start a new session, or select a session on the left.</div>';
+        if (msgs) msgs.innerHTML = '<div class="muted">Start a new session or select an existing session from the panel on the left.</div>';
         if (wsTitle) wsTitle.textContent = 'Session artifacts';
 
         if (badge) {
