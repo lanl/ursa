@@ -918,7 +918,24 @@ class BaseAgent(Generic[TState], ABC):
         if system_prompt is not None:
             first_message = SystemMessage(content=system_prompt)
 
-        new_state["messages"] = [first_message, summary] + conversation_to_keep
+        # The summary lands as human-role context rather than as the raw
+        # assistant message: with messages_to_keep=0 (and in the absorbed
+        # tool-tail case) the summary is the final message, and a history
+        # ending on an assistant turn is a request shape Claude 4.6 and
+        # newer reject (issue 296).
+        summary_message = HumanMessage(
+            content="[Summary of the earlier conversation]\n"
+            + (
+                summary.text
+                if isinstance(summary.text, str)
+                else str(summary.content)
+            ),
+            id=summary.id,
+        )
+        new_state["messages"] = [
+            first_message,
+            summary_message,
+        ] + conversation_to_keep
         return new_state, True
 
     def prepare_messages_context(
