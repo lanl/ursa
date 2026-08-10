@@ -435,7 +435,9 @@ class UrsaRepl(Cmd):
         self.run_agent("chat", prompt)
 
     def postcmd(self, stop: bool, line: str):
-        print(file=self.stdout)
+        # A dim rule chunks scrollback into per-turn blocks (issue 264).
+        self.console.print()
+        self.console.rule(style="dim")
         return stop
 
     def do_exit(self, _: str):

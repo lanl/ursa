@@ -171,6 +171,20 @@ def test_onecmd_dispatch_route_echoes_user_turn(ursa_config, monkeypatch):
     assert "summarize the log" in out
 
 
+def test_turns_end_with_a_dim_rule(ursa_config, monkeypatch):
+    # The blank turn separator became a full-width dim rule, chunking
+    # scrollback into visual blocks (issue 264).
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.run_prompt("chat hello there")
+
+    out = repl.stdout.getvalue()
+    assert "────" in out, "no rule separating turns"
+    assert out.index("agent says hi") < out.index("────"), (
+        "the rule must close the turn after the agent output"
+    )
+
+
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):
     workspace = tmp_path / "custom-workspace"
     ursa_config.workspace = workspace
