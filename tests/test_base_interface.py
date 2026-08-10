@@ -13,7 +13,6 @@ from langgraph.runtime import Runtime
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
 from ursa.tools.write_code_tool import write_code
-from ursa.util.memory_logger import AgentMemory
 
 
 def load_class(path: str):
@@ -42,7 +41,6 @@ MODEL_QUERY = {
         "ursa.agents.hypothesizer_agent.HypothesizerAgent",
         "ursa.agents.planning_agent.PlanningAgent",
         "ursa.agents.rag_agent.RAGAgent",
-        "ursa.agents.recall_agent.RecallAgent",
     ],
     ids=lambda agent_import: agent_import.rsplit(".", 1)[-1],
 )
@@ -52,9 +50,6 @@ def agent_instance(request, tmpdir: Path, chat_model, embedding_model):
 
     kwargs = {}
     kwargs["llm"] = chat_model
-
-    if request.param == "ursa.agents.recall_agent.RecallAgent":
-        kwargs["memory"] = AgentMemory(embedding_model, Path(tmpdir / "memory"))
 
     if request.param == "ursa.agents.rag_agent.RAGAgent":
         kwargs["embedding"] = embedding_model

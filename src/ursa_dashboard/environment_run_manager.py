@@ -58,7 +58,6 @@ _ALLOWED_SHORT_CLASSES = {
     "PlanningAgent",
     "PromptingAgent",
     "RAGAgent",
-    "RecallAgent",
     "WebSearchAgent",
     "AgentTeamEnvironment",
 }
@@ -78,7 +77,6 @@ _ALLOWED_CLASS_PATHS = {
     "ursa.agents.planning_agent.PlanningAgent",
     "ursa.agents.prompting_agent.PromptingAgent",
     "ursa.agents.rag_agent.RAGAgent",
-    "ursa.agents.recall_agent.RecallAgent",
     "ursa.environments.agent_team.AgentTeamEnvironment",
 }
 

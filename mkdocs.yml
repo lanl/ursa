@@ -81,6 +81,7 @@ nav:
       - Hypothesizer Agent: agents/hypothesizer.md
       - LAMMPS Agent: agents/lammps.md
       - Planning Agent: agents/planning.md
+      - Planning and Execution Agent: agents/planning-execution.md
   - Environments:
       - Overview: environments/index.md
       - Agent Teams: environments/agent-teams.md

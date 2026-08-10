@@ -65,7 +65,7 @@ from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
-from langgraph.types import Overwrite
+from langgraph.types import Command, Overwrite
 
 from ursa.observability.timing import (
     Telemetry,  # for timing / telemetry / metrics
@@ -87,7 +87,7 @@ from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
 
 logger = logging.getLogger(__name__)
 
-InputLike = str | Mapping[str, Any]
+InputLike = str | Mapping[str, Any] | Command
 TState = TypeVar("TState", bound=Mapping[str, Any])
 
 try:
@@ -453,6 +453,28 @@ class BaseAgent(Generic[TState], ABC):
         base.update(overrides)
 
         return base
+
+    def nested_config(
+        self,
+        config: RunnableConfig | None = None,
+        *,
+        tags: list[str] | None = None,
+    ) -> dict:
+        """Merge a graph node's runtime config into a nested model call.
+
+        Passing the active node config preserves caller callbacks, metadata, and
+        tracing context when an agent graph invokes an LLM or another runnable.
+        Agent telemetry callbacks and identifying tags are then added exactly as
+        they are for a top-level invocation.
+        """
+        overrides = dict(config or {})
+        if tags:
+            inherited_tags = list(overrides.get("tags") or [])
+            overrides["tags"] = [
+                *inherited_tags,
+                *(tag for tag in tags if tag not in inherited_tags),
+            ]
+        return self.build_config(**overrides)
 
     def _invoke_engine(
         self,
@@ -975,7 +997,9 @@ class BaseAgent(Generic[TState], ABC):
             update["messages"] = message_update
         return update
 
-    def _normalize_inputs(self, inputs: InputLike) -> Mapping[str, Any]:
+    def _normalize_inputs(
+        self, inputs: InputLike
+    ) -> Mapping[str, Any] | Command:
         """Normalizes various input formats into a standardized mapping.
 
         This method converts different input types into a consistent dictionary format
@@ -993,6 +1017,10 @@ class BaseAgent(Generic[TState], ABC):
         Raises:
             TypeError: If the input type is not supported (neither string nor mapping).
         """
+        if isinstance(inputs, Command):
+            # LangGraph resume/update commands must reach the compiled graph
+            # unchanged so a persisted interrupted run can continue.
+            return inputs
         if isinstance(inputs, str):
             # Adjust to your message type
             return {"messages": [HumanMessage(content=inputs)]}

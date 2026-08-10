@@ -19,9 +19,12 @@ _lazy_attrs: dict[str, tuple[str, str]] = {
     "make_git_agent": (".git_agent", "make_git_agent"),
     "MaterialsProjectAgent": (".mp_agent", "MaterialsProjectAgent"),
     "PlanningAgent": (".planning_agent", "PlanningAgent"),
+    "PlanningExecutionAgent": (
+        ".planning_execution_agent",
+        "PlanningExecutionAgent",
+    ),
     "PromptingAgent": (".prompting_agent", "PromptingAgent"),
     "RAGAgent": (".rag_agent", "RAGAgent"),
-    "RecallAgent": (".recall_agent", "RecallAgent"),
 }
 
 __all__ = list(_lazy_attrs.keys())

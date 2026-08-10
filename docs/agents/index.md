@@ -13,7 +13,7 @@ The interactive command-line interface exposes common agents by short names, inc
 - `deep_review`
 - `hypothesize`
 
-Additional agents may be available depending on optional dependencies and configuration, such as DSI, LAMMPS, and recall/RAG-related workflows.
+Additional agents may be available depending on optional dependencies and configuration, such as DSI, LAMMPS, and RAG-related workflows.
 
 ## Common agents
 

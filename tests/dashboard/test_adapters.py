@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
-from langchain_core.callbacks import BaseCallbackHandler
-
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.workflows.planning_execution_workflow import PlanningExecutorWorkflow
+from ursa_dashboard import registry
 from ursa_dashboard.adapters import (
     BaseAgentInProcessAdapter,
     DirectInvokeAdapter,
@@ -104,65 +101,34 @@ def test_direct_invoke_adapter_attaches_cli_handler_when_supported(
     assert isinstance(callbacks[0], HITLLogEventHandler)
 
 
-def test_planning_executor_workflow_propagates_callbacks(
+def test_planning_execution_registry_uses_one_base_agent_runtime(
     tmp_path: Path,
     monkeypatch,
 ):
-    planner_calls: list[dict] = []
-    executor_calls: list[dict] = []
+    captured: dict[str, object] = {}
 
-    class FakePlanner:
-        checkpointer = None
+    class FakePlanningExecutionAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
-        def format_query(self, prompt):
-            return prompt
+    def fake_lazy_class(path: str):
+        captured["class_path"] = path
+        return FakePlanningExecutionAgent
 
-        async def _ainvoke(self, prompt, **kwargs):
-            planner_calls.append(kwargs)
-            return {"plan": SimpleNamespace(steps=["step one", "step two"])}
+    monkeypatch.setattr(registry, "_lazy_class", fake_lazy_class)
 
-    class FakeExecutor:
-        checkpointer = None
+    entry = registry.REGISTRY["planning_executor_workflow"]
+    model = object()
+    adapter = entry.build_adapter(model, {"max_reflection_steps": 0})
 
-        def format_query(self, prompt):
-            return prompt
-
-        async def _ainvoke(self, prompt, **kwargs):
-            executor_calls.append(kwargs)
-            return {"messages": [SimpleNamespace(text=f"done for {prompt}")]}
-
-        def format_result(self, state):
-            return state["messages"][-1].text
-
-    class DummyConsole:
-        def status(self, *_args, **_kwargs):
-            return nullcontext()
-
-        def print(self, *_args, **_kwargs):
-            return None
-
-    monkeypatch.setattr(
-        "ursa.workflows.planning_execution_workflow.console",
-        DummyConsole(),
+    assert isinstance(adapter, BaseAgentInProcessAdapter)
+    agent = adapter._agent_factory(tmp_path, "solve this")
+    assert isinstance(agent, FakePlanningExecutionAgent)
+    assert captured["class_path"] == (
+        "ursa.agents.planning_execution_agent.PlanningExecutionAgent"
     )
-    monkeypatch.setattr(
-        "ursa.workflows.planning_execution_workflow.render_plan_steps_rich",
-        lambda steps: None,
-    )
-
-    workflow = PlanningExecutorWorkflow(
-        planner=FakePlanner(),
-        executor=FakeExecutor(),
-        workspace=tmp_path,
-    )
-    callback = BaseCallbackHandler()
-
-    result = workflow.invoke("solve this", config={"callbacks": [callback]})
-
-    assert "done for" in result
-    assert len(planner_calls) == 1
-    assert len(executor_calls) == 2
-    assert callback in planner_calls[0]["callbacks"].handlers
-    assert all(
-        callback in call["callbacks"].handlers for call in executor_calls
-    )
+    assert captured["llm"] is model
+    assert captured["workspace"] == str(tmp_path)
+    assert captured["max_reflection_steps"] == 0
+    assert "planner" not in captured
+    assert "executor" not in captured

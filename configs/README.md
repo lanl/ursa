@@ -36,7 +36,7 @@ options that can be expressed in a YAML file.
 Agent configurations are keyed by their subcommand name in the HITL. For example,
 the ExecutionAgent's config is under `execute`.
 
-The Memory agent (used by the ExecutionAgent and RecallAgent) is keyed under `memory`.
+The Memory agent is keyed under `memory`.
 
 The current agent configuration (excluding defaults) can be viewed using the `agents` command
 from URSA's HITL (run `ursa` then type `agents`).

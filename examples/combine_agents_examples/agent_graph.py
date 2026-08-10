@@ -3,31 +3,22 @@ from typing import Annotated, Literal, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import init_embeddings
-from langchain_core.messages import (
-    AIMessage,
-    SystemMessage,
-)
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import InjectedState
 
-from ursa.agents import (
-    ArxivAgent,
-    ExecutionAgent,
-    RecallAgent,
-)
+from ursa.agents import ArxivAgent, ExecutionAgent
 from ursa.agents.base import AgentWithTools, BaseAgent
 from ursa.agents.execution_agent import ExecutionState
 from ursa.prompt_library.execution_prompts import recap_prompt
 from ursa.util.events import configure_event_logging
-from ursa.util.memory_logger import AgentMemory
 
 configure_event_logging()
 
 # --- ANSI color codes ---
 GREEN = "\033[92m"
-BLUE = "\033[94m"
 RED = "\033[91m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -44,8 +35,6 @@ Your responsibilities are as follows:
 2. Use the appropriate tools available to execute each step effectively, including (and possibly combining multiple tools as needed):
    - Make requests to an execution agent who can write and run code to solve your request.
    - Make requests to an arxiv agent that can query and summarize recent research papers on the ArXiv on a topic.
-   - Utilize a rememberer agent that can query its memory for similar tasks so that you can remember if anything similar was done before.
-       - You should consider using this agent anytime you want to check if you have taken a relevant past action.
 3. Clearly document each action you take, including:
    - The tools or methods you used.
    - Any code written, commands executed, or searches performed by the agents you are working with.
@@ -61,7 +50,6 @@ model = ChatOpenAI(
     # max_completion_tokens=50000,
 )
 embedding = init_embeddings("openai:text-embedding-3-large")
-memory = AgentMemory(embedding_model=embedding)
 
 arxiver = ArxivAgent(
     llm=model,
@@ -77,8 +65,6 @@ arxiver = ArxivAgent(
 )
 
 executor = ExecutionAgent(llm=model, workspace=workspace)
-
-rememberer = RecallAgent(llm=model, memory=memory, workspace=workspace)
 
 
 @tool
@@ -111,19 +97,6 @@ async def query_executor(
     return await executor.ainvoke(request)
 
 
-@tool
-async def query_rememberer(request: str) -> str:
-    """
-    Check logs of past tasks to see if you have a memory of doing something similar
-
-    Args:
-        request: Short string to be used as a RAG query to identify similar previous messages
-
-    """
-    print(f"{BLUE}[Rememberer Request] - {request}{RESET}")
-    return await rememberer.ainvoke(query=request)
-
-
 class State(TypedDict):
     messages: Annotated[list, add_messages]
     code_files: list[str]
@@ -138,7 +111,7 @@ class CombinedAgent(AgentWithTools, BaseAgent):
         log_state: bool = False,
         **kwargs,
     ):
-        tools = [query_arxiver, query_executor, query_rememberer]
+        tools = [query_arxiver, query_executor]
         super().__init__(llm, tools=tools, **kwargs)
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
@@ -177,25 +150,6 @@ class CombinedAgent(AgentWithTools, BaseAgent):
         response = await self.llm.ainvoke(
             messages, {"configurable": {"thread_id": self.thread_id}}
         )
-        memories: list[str] = []
-        # Handle looping through the messages
-        for x in state["messages"]:
-            if not isinstance(x, AIMessage):
-                memories.append(x.text)
-            elif not x.tool_calls:
-                memories.append(x.text)
-            else:
-                tool_strings = []
-                for tool in x.tool_calls:
-                    tool_name = "Tool Name: " + tool["name"]
-                    tool_strings.append(tool_name)
-                    for y in tool["args"]:
-                        tool_strings.append(
-                            f"Arg: {str(y)}\nValue: {str(tool['args'][y])}"
-                        )
-                memories.append("\n".join(tool_strings))
-        memories.append(response.text)
-        memory.add_memories(memories)
         updated_messages = [*state["messages"], response]
 
         if self.log_state:
