@@ -1,3 +1,4 @@
+import sys
 import json
 import logging
 import re
@@ -27,6 +28,8 @@ from ursa.util.http import (
     httpx_verify_value,
 )
 from ursa.util.mcp import ServerParameters, _serialize_server_config
+
+logger = logging.getLogger(__name__)
 
 LoggingLevel = Literal[
     "debug", "info", "notice", "warning", "error", "critical"
@@ -96,10 +99,10 @@ class ModelConfig(BaseModel):
             try:
                 kwargs["api_key"] = environ[api_key_env]
             except KeyError:
-                logging.exception(
+                logger.error(
                     f"Env variable '{api_key_env}' for {self.model}'s API key was not set"
                 )
-                raise
+                sys.exit(1)
         return kwargs
 
 
