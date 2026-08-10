@@ -15,10 +15,10 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
-from ursa.agents.base import AgentWithTools
+from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import EmbModelConfig, UrsaConfig
-from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
+from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl, ursa_banner
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.rendering import event_artifact
@@ -92,6 +92,23 @@ def test_has_all_agent_do_methods(ursa_config):
     repl = UrsaRepl(hitl)
     for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
+
+
+def test_banner_shows_version():
+    # Issue 298: the running version rides next to the ascii logo.
+    assert f"v{URSA_VERSION}" in ursa_banner
+
+
+def test_banner_panel_shows_workspace(ursa_config):
+    hitl = HITL(ursa_config)
+    repl = UrsaRepl(hitl, stdout=io.StringIO())
+
+    console = RealConsole(file=io.StringIO(), width=200)
+    console.print(repl.llm_model_panel)
+
+    assert (
+        str(Path(ursa_config.workspace).absolute()) in console.file.getvalue()
+    )
 
 
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):

@@ -23,7 +23,7 @@ from rich.theme import Theme
 
 from ursa import agents
 from ursa.agents import BaseAgent
-from ursa.agents.base import AgentWithTools
+from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
 from ursa.security import (
@@ -33,11 +33,11 @@ from ursa.security import (
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
 
-ursa_banner = r"""
+ursa_banner = rf"""
   __  ________________ _
  / / / / ___/ ___/ __ `/
 / /_/ / /  (__  ) /_/ /
-\__,_/_/  /____/\__,_/
+\__,_/_/  /____/\__,_/ v{URSA_VERSION}
 """
 
 
@@ -337,6 +337,7 @@ class UrsaRepl(Cmd):
             model_name = self.hitl.model.model
         self.llm_model_panel = Panel.fit(
             Text.from_markup(
+                f"[bold]Workspace[/]: {Path(self.hitl.workspace).absolute()}\n"
                 f"[bold]LLM endpoint[/]: {base_url}\n"
                 f"[bold]LLM model[/]: {model_name}"
             ),
