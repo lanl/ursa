@@ -159,6 +159,18 @@ def test_bare_text_default_route_echoes_user_turn(ursa_config, monkeypatch):
     assert "hello there" in out
 
 
+def test_onecmd_dispatch_route_echoes_user_turn(ursa_config, monkeypatch):
+    # The do_<agent> dispatch through onecmd carries the sentinel too.
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.onecmd("chat summarize the log")
+
+    out = repl.stdout.getvalue()
+    assert "🐻" in out
+    assert "chat>" in out
+    assert "summarize the log" in out
+
+
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):
     workspace = tmp_path / "custom-workspace"
     ursa_config.workspace = workspace
