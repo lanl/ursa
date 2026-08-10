@@ -84,8 +84,17 @@ class PlanningState(TypedDict, total=False):
     reflection_steps: int
 
 
-class PlanningAgent(BaseAgent[PlanningState]):
-    state_type = PlanningState
+class PlanningGraphMixin:
+    """Reusable planning graph nodes for agents that embed a planner subgraph.
+
+    The mixin deliberately does not own or compile a graph.  Its nodes use the
+    containing agent's LLM, events, and node metadata so a composite agent can
+    keep one runtime and persistence identity.
+    """
+
+    planner_prompt: str
+    reflection_prompt: str
+    max_reflection_steps: int
 
     def __init__(
         self,
@@ -93,10 +102,12 @@ class PlanningAgent(BaseAgent[PlanningState]):
         max_reflection_steps: int = 1,
         **kwargs,
     ):
-        super().__init__(llm, **kwargs)
+        # Set these before BaseAgent's post-init graph build. This also makes the
+        # mixin safe in a composite-agent MRO where ExecutionAgent is next.
         self.planner_prompt = planner_prompt
         self.reflection_prompt = reflection_prompt
         self.max_reflection_steps = max_reflection_steps
+        super().__init__(llm, **kwargs)
 
     def format_result(self, state: PlanningState) -> str:
         return str(state["plan"])
@@ -130,6 +141,9 @@ class PlanningAgent(BaseAgent[PlanningState]):
         events.emit("Drafting plan", stage="generate")
         task = state.get("task") or _latest_human_message(state)
         request = f"Task:\n{task}"
+        hypothesis = str(state.get("hypothesis", "") or "").strip()
+        if hypothesis:
+            request += f"\n\nWorking hypothesis:\n{hypothesis}"
         if review := state.get("review"):
             request += (
                 f"\n\nCurrent plan:\n{state['plan'].model_dump_json(indent=2)}"
@@ -147,6 +161,7 @@ class PlanningAgent(BaseAgent[PlanningState]):
                 self.llm,
                 Plan,
                 messages,
+                config=self.nested_config(config, tags=["planner", "generate"]),
                 context="planning generation",
                 repair=3,
             ),
@@ -187,7 +202,7 @@ class PlanningAgent(BaseAgent[PlanningState]):
         res = StrOutputParser().invoke(
             self.llm.invoke(
                 messages,
-                self.build_config(tags=["planner", "reflect"]),
+                self.nested_config(config, tags=["planner", "reflect"]),
             )
         )
 
@@ -210,24 +225,36 @@ class PlanningAgent(BaseAgent[PlanningState]):
             "reflection_steps": state["reflection_steps"] - 1,
         }
 
-    def _build_graph(self):
-        self.add_node(self.generation_node, "generate")
-        self.add_node(self.reflection_node, "reflect")
-        self.graph.set_entry_point("generate")
-        self.graph.add_conditional_edges(
+    def _populate_planning_graph(self, builder) -> None:
+        """Add the planner nodes and edges to ``builder`` without compiling it."""
+        builder.add_node(
             "generate",
-            self._wrap_cond(
-                _should_reflect, "should_reflect", "planning_agent"
-            ),
+            self._wrap_node(self.generation_node, "generate", "planner"),
+        )
+        builder.add_node(
+            "reflect",
+            self._wrap_node(self.reflection_node, "reflect", "planner"),
+        )
+        builder.set_entry_point("generate")
+        builder.add_conditional_edges(
+            "generate",
+            self._wrap_cond(_should_reflect, "should_reflect", "planner"),
             {"reflect": "reflect", "END": END},
         )
-        self.graph.add_conditional_edges(
+        builder.add_conditional_edges(
             "reflect",
-            self._wrap_cond(
-                _should_regenerate, "should_regenerate", "planning_agent"
-            ),
+            self._wrap_cond(_should_regenerate, "should_regenerate", "planner"),
             {"generate": "generate", "END": END},
         )
+
+    def _build_graph(self) -> None:
+        self._populate_planning_graph(self.graph)
+
+
+class PlanningAgent(PlanningGraphMixin, BaseAgent[PlanningState]):
+    """Standalone graph-backed planning agent."""
+
+    state_type = PlanningState
 
 
 def _should_reflect(state: PlanningState):

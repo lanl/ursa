@@ -1,33 +1,27 @@
 from langchain.chat_models import init_chat_model
 
-from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.agents import PlanningExecutionAgent
 from ursa.util.events import configure_event_logging
-from ursa.workflows import PlanningExecutorWorkflow
 
 configure_event_logging()
 
 problem = """
-Design, run and visualize the effects of the counter-rotating states in the quantum Rabi model using the QuTiP
-python package. Compare with the Rotating wave approximation.
+Design, run, and visualize the effects of the counter-rotating states in the
+quantum Rabi model using the QuTiP Python package. Compare the result with the
+rotating-wave approximation.
 
-Write a python file to:
-  - Create a compelling example
-  - Build the case in python with the QuTiP package, installing QuTiP if necessary.
-  - Visualize the results and create outputs for future website visualization.
-  - Write a pedogogical description of the example, its motivation, and the results. Define technical terms.
-
-Then create a webpage to present the output in a clear and engaging manner. 
+Write a Python file that creates a compelling example, runs it (installing QuTiP
+if necessary), visualizes the results, and saves outputs for a website. Also
+write a pedagogical description that defines the technical terms. Finally,
+create a webpage that presents the output clearly.
 """
 
 
 def main():
-    """
-    Run an example where a planning agent generates a multistep plan and the execution agent is
-    queried to solve the problem step by step.
-    """
+    """Solve the task with one parent planning/execution agent."""
+    agent = None
     try:
         workspace = "qutip_workspace"
-
         model = init_chat_model(
             model="openai:gpt-5.4-mini",
             max_completion_tokens=20000,
@@ -35,30 +29,22 @@ def main():
         )
 
         print(f"\nSolving problem: {problem}\n")
-
-        # Initialize the agent
-        planner = PlanningAgent(llm=model, workspace=workspace)
-        executor = ExecutionAgent(llm=model, workspace=workspace)
-
-        workflow = PlanningExecutorWorkflow(
-            planner=planner,
-            executor=executor,
+        agent = PlanningExecutionAgent(
+            llm=model,
             workspace=workspace,
             enable_metrics=True,
-            thread_id="city_vowel_test_workflow",
+            thread_id="quantum_rabi_workflow",
         )
-
-        # Solve the problem
-        final_results = workflow.invoke(problem)
-
-        return final_results
-
-    except Exception as e:
-        print(f"Error in example: {e!s}")
+        return agent.invoke(problem)
+    except Exception as exc:
+        print(f"Error in example: {exc!s}")
         import traceback
 
         traceback.print_exc()
-        return {"error": str(e)}
+        return {"error": str(exc)}
+    finally:
+        if agent is not None:
+            agent.close()
 
 
 if __name__ == "__main__":

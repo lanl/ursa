@@ -1,12 +1,11 @@
 # Getting LLM History
 
-This document describes how to all of the content going into/from the LLM even
-when used in an agent.
+This document describes how to retrieve all content sent to and returned from an
+LLM when it is used by an agent.
 
-## Retrieving history for ExecutionAgent-only workflow
+## Retrieving history for an ExecutionAgent
 
 ```python
-import tempfile
 from pathlib import Path
 
 from ursa.agents import ExecutionAgent
@@ -17,45 +16,41 @@ llm = TracedChatOpenAI(
     model="gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
 )
 
-## Ollama model with reasoning abilities
-# from ursa.util.traced import TracedChatOpenAI
-# llm = "ollama-nemotron-nano": TracedChatOllama(
-#   model="nemotron-3-nano:4b", reasoning=True
-# )
-
-## Ollama Model without reasoning abilities
-# llm TracedChatOllama(model="nemotron-mini:4b")
-
+# Ollama models can be traced in the same way with TracedChatOllama.
 executor = ExecutionAgent(llm=llm)
-executor.invoke(
-    "Write a python script to print the first 10 positive integer."
-)
-# Save messages to json. Omit indent arg for minified json
+executor.invoke("Write a Python script to print the first 10 positive integers.")
+
+# Omit indent for minified JSON.
 llm.save_messages(Path("messages.json"), indent=2)
 ```
 
-## Retrieving history for plan-execute workflow
+## Retrieving history for planning and execution
+
+`PlanningExecutionAgent` owns one persistent graph containing native planner and
+executor subgraphs. Pass the traced model once; every planning, execution,
+review, and recap call uses that model and appears in the same history.
 
 ```python
 import tempfile
 from pathlib import Path
 
-from ursa.agents import ExecutionAgent, PlanningAgent
+from ursa.agents import PlanningExecutionAgent
 from ursa.util.traced import TracedChatOpenAI
-from ursa.workflows import PlanningExecutorWorkflow
 
 llm = TracedChatOpenAI(
-  model="gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
+    model="gpt-5-nano", reasoning={"effort": "low", "summary": "auto"}
 )
 
 workspace = Path(tempfile.mkdtemp())
-planner = PlanningAgent(llm=llm, workspace=workspace)
-executor = ExecutionAgent(llm=llm, workspace=workspace)
-workflow = PlanningExecutorWorkflow(planner=planner, executor=executor)
-workflow(
-    "Write a python script <10 lines to compute Pi "
-    "using Monte Carlo; use standard lib only."
-    "Plan at most two steps."
+agent = PlanningExecutionAgent(llm=llm, workspace=workspace)
+agent.invoke(
+    "Write a Python script of fewer than 10 lines to compute pi "
+    "using Monte Carlo and the standard library only. Plan at most two steps."
 )
-llm.save_messages(Path(f"messages.json"), indent=2)
+llm.save_messages(Path("messages.json"), indent=2)
+agent.close()
 ```
+
+The parent agent owns the workspace, thread, callbacks, telemetry, checkpointer,
+and store. The nested planner and executor inherit those resources; do not
+construct or inject separate child agents.
