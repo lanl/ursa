@@ -396,9 +396,20 @@ class UrsaRepl(Cmd):
             names.append(f"do_{name}")
         return names
 
+    def _show_user_turn(self, name: str, prompt: str) -> None:
+        # Mark the user's turn so prompts stand out in scrollback between
+        # rich agent output blocks (issue 264). Built from Text parts so
+        # user input is never parsed as markup.
+        self.console.print(
+            Text("🐻 ", style="bold")
+            + Text(f"{name}> ", style="emph")
+            + Text(prompt)
+        )
+
     def run_agent(self, name: str, prompt: str | None = None):
         if not prompt:
             prompt = input(f"{name}: ")
+        self._show_user_turn(name, prompt)
         handler = HITLLogEventHandler(
             console=self.console,
             workspace=self.hitl.workspace,
