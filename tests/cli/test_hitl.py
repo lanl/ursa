@@ -121,54 +121,50 @@ def _repl_with_stub_agent(ursa_config, monkeypatch, reply="agent says hi"):
     return UrsaRepl(hitl, stdout=io.StringIO())
 
 
-def test_agent_invocation_echoes_user_turn(ursa_config, monkeypatch):
-    # Issue 264: the user's turn must be visibly marked in scrollback.
+def test_agent_invocation_uses_bear_inline_prompt(ursa_config, monkeypatch):
+    # Issue 264: the user's turn is marked inline in the prompt, not echoed.
     repl = _repl_with_stub_agent(ursa_config, monkeypatch)
 
     repl.run_agent("chat", "what does this bug mean?")
 
     out = repl.stdout.getvalue()
-    assert "🐻" in out, "no user-turn sentinel in the output"
-    assert "chat>" in out
-    assert "what does this bug mean?" in out
-    assert out.index("what does this bug mean?") < out.index("agent says hi"), (
-        "the user turn must be echoed before the agent output"
-    )
+    assert "agent says hi" in out
+    assert "what does this bug mean?" not in out
+    assert "chat>" not in out
 
 
-def test_user_turn_echo_is_literal_not_markup(ursa_config, monkeypatch):
-    # User text must never be interpreted as rich markup.
+def test_user_turn_is_not_echoed_as_markup(ursa_config, monkeypatch):
+    # User text is no longer echoed, so rich markup must not appear either.
     repl = _repl_with_stub_agent(ursa_config, monkeypatch)
 
     repl.run_agent("chat", "explain [red]this[/red] tag")
 
     out = repl.stdout.getvalue()
-    assert "[red]this[/red]" in out
+    assert "[red]this[/red]" not in out
 
 
-def test_bare_text_default_route_echoes_user_turn(ursa_config, monkeypatch):
-    # Bare text goes to the chat agent through default(); the sentinel
-    # must appear on that route too.
+def test_bare_text_default_route_does_not_echo_user_turn(ursa_config, monkeypatch):
+    # Bare text goes to the chat agent through default(); the request is not echoed.
     repl = _repl_with_stub_agent(ursa_config, monkeypatch)
 
     repl.default("hello there")
 
     out = repl.stdout.getvalue()
-    assert "🐻" in out
-    assert "chat>" in out
-    assert "hello there" in out
+    assert "agent says hi" in out
+    assert "hello there" not in out
+    assert "chat>" not in out
 
 
-def test_onecmd_dispatch_route_echoes_user_turn(ursa_config, monkeypatch):
-    # The do_<agent> dispatch through onecmd carries the sentinel too.
+def test_onecmd_dispatch_route_does_not_echo_user_turn(ursa_config, monkeypatch):
+    # The do_<agent> dispatch through onecmd also avoids echoing the request.
     repl = _repl_with_stub_agent(ursa_config, monkeypatch)
 
     repl.onecmd("chat summarize the log")
 
     out = repl.stdout.getvalue()
-    assert "🐻" in out
-    assert "chat>" in out
-    assert "summarize the log" in out
+    assert "agent says hi" in out
+    assert "summarize the log" not in out
+    assert "chat>" not in out
 
 
 def test_turns_end_with_a_dim_rule(ursa_config, monkeypatch):

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import sys
 import threading
 from cmd import Cmd
 from collections.abc import Sequence
@@ -307,10 +308,19 @@ class AsyncLoopThread:
     def submit(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
 
+def safe_prompt() -> str:
+    base_prompt = "ursa 🐻> "
+    fallback_prompt = "ursa> "
+    
+    try:
+        base_prompt.encode(sys.stdout.encoding or "utf-8")
+        return base_prompt
+    except (UnicodeEncodeError, TypeError):
+        return fallback_prompt
 
 class UrsaRepl(Cmd):
     exit_message: str = "[dim]Exiting ursa..."
-    prompt: str = "ursa> "
+    prompt: str = safe_prompt()
 
     def __init__(self, hitl: HITL, **kwargs):
         super().__init__(**kwargs)
@@ -396,20 +406,9 @@ class UrsaRepl(Cmd):
             names.append(f"do_{name}")
         return names
 
-    def _show_user_turn(self, name: str, prompt: str) -> None:
-        # Mark the user's turn so prompts stand out in scrollback between
-        # rich agent output blocks (issue 264). Built from Text parts so
-        # user input is never parsed as markup.
-        self.console.print(
-            Text("🐻 ", style="bold")
-            + Text(f"{name}> ", style="emph")
-            + Text(prompt)
-        )
-
     def run_agent(self, name: str, prompt: str | None = None):
         if not prompt:
             prompt = input(f"{name}: ")
-        self._show_user_turn(name, prompt)
         handler = HITLLogEventHandler(
             console=self.console,
             workspace=self.hitl.workspace,
