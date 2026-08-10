@@ -387,7 +387,13 @@ class DeepReviewAgent(AgentWithTools, BaseAgent[DeepReviewState]):
         state: DeepReviewState,
         config: RunnableConfig | None = None,
     ) -> DeepReviewState:
-        return state.copy()
+        # Return only this node's own update: langgraph applies a node's
+        # return value through each key's reducer, so returning the full
+        # accumulated state re-adds every operator.add key to itself.
+        return cast(
+            DeepReviewState,
+            {"visited_sites": self._collect_visited_sites(state)},
+        )
 
     @staticmethod
     def _escape_latex(text: Any) -> str:
