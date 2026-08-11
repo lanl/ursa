@@ -116,7 +116,7 @@ def get_base_url(model: BaseChatModel) -> str | None:
 
 class HITL:
     def __init__(self, config: UrsaConfig):
-        self.config = config
+        self.config = UrsaConfig.resolve_config(config)
         self.thread_id = config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
@@ -125,15 +125,11 @@ class HITL:
         self.agent_name = self.config.agent_name
         self.group = self.config.group
 
-        self.model: BaseChatModel = self.config.llm_model.init_chat_model(
-            self.config.inference_providers
-        )
+        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
 
         self.embedding = (
-            self.config.emb_model.init_embedding(
-                self.config.inference_providers
-            )
+            self.config.emb_model.init_embedding()
             if self.config.emb_model is not None
             else None
         )
@@ -147,39 +143,28 @@ class HITL:
         }
 
         self.agents: dict[str, AgentHITL] = {}
-        self.agents["chat"] = AgentHITL(
-            agent_class=agents.ChatAgent,
-            config={"use_web": self.config.use_web, **rag_tool_config},
-        )
-        self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
-        if has_optional_dep_group("dsi"):
-            self.agents["dsi"] = AgentHITL(
-                agent_class=agents.DSIAgent,
-                config=dict(rag_tool_config),
-            )
-        self.agents["execute"] = AgentHITL(
-            agent_class=agents.ExecutionAgent,
-            config={
-                "use_web": self.config.use_web,
-                **rag_tool_config,
-            },
-        )
-        self.agents["deep_review"] = AgentHITL(
-            agent_class=agents.DeepReviewAgent,
-            config={"use_web": self.config.use_web, **rag_tool_config},
-        )
-        self.agents["hypothesize"] = AgentHITL(
-            agent_class=agents.HypothesizerAgent
-        )
-        self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
-        self.agents["prompt"] = AgentHITL(
-            agent_class=agents.PromptingAgent,
-            config={"use_web": self.config.use_web},
-        )
-        self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
+        for agent_name, agent_class_name, deps in [
+            ("chat", "ChatAgent", None),
+            ("arxiv", "ArxivAgent", None),
+            ("dsi", "DSIAgent", "dsi"),
+            ("execute", "ExecutionAgent", None),
+            ("deep_review", "DeepReviewAgent", None),
+            ("hypothesize", "HypothesizerAgent", None),
+            ("plan", "PlanningAgent", None),
+            ("prompt", "PromptingAgent", None),
+            ("web", "WebSearchAgent", None),
+            ("lammps", "LammpsAgent", "lammps"),
+        ]:
+            if deps is not None and not has_optional_dep_group(deps):
+                continue
 
-        if has_optional_dep_group("lammps"):
-            self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
+            config = {}
+            if agent_name in {"chat", "execute", "deep_review", "dsi"}:
+                config.update(rag_tool_config)
+            self.agents[agent_name] = AgentHITL(
+                agent_class=getattr(agents, agent_class_name),
+                config=config,
+            )
 
         # Apply agent-specific configuration overrides
         for agent, agent_config in self.config.agent_config.items():

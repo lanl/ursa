@@ -22,6 +22,7 @@ from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
+    resolve_ursa_config,
 )
 from ursa.cli.groups import (
     add_group_subcommands,
@@ -213,7 +214,18 @@ def resolve_config(cfg) -> UrsaConfig:
     config = UrsaConfig()
     for config_path in _config_search_paths(cfg):
         config.update(UrsaConfig.from_file(config_path))
-    return config.update(cli_config)
+    config.update(cli_config)
+
+    if str(config.workspace) == "tmp":
+        return resolve_ursa_config(config)
+
+    if config.use_web:
+        return resolve_ursa_config(config)
+
+    if config.group != "default":
+        return resolve_ursa_config(config)
+
+    return config
 
 
 def _initialize_hitl(config: UrsaConfig):

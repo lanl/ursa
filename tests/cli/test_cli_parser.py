@@ -16,6 +16,7 @@ from ursa.cli.config import (
     EmbModelConfig,
     ModelConfig,
     UrsaConfig,
+    resolve_ursa_config,
 )
 
 
@@ -845,7 +846,7 @@ def test_model_config_resolve_provider_returns_self_when_unset():
     assert resolved is cfg
 
 
-def test_print_config_preserves_unresolved_inference_provider(tmp_path):
+def test_resolve_config_preserves_unresolved_inference_provider(tmp_path):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
         "\n".join([
@@ -868,3 +869,47 @@ def test_print_config_preserves_unresolved_inference_provider(tmp_path):
     assert config.inference_providers["openai_public"].base_url == (
         "https://api.openai.com/v1"
     )
+
+
+def test_resolve_ursa_config_promotes_use_web_to_agent_config():
+    config = UrsaConfig(use_web=True)
+
+    resolved = resolve_ursa_config(config)
+
+    for agent_name in ["chat", "execute", "deep_review", "prompt"]:
+        assert resolved.agent_config[agent_name]["use_web"] is True
+
+
+def test_resolve_ursa_config_creates_tmp_workspace():
+    config = UrsaConfig(workspace="tmp")
+
+    resolved = resolve_ursa_config(config)
+
+    assert resolved.workspace.exists()
+    assert resolved._temp_workspace is not None
+    assert resolved._temp_workspace.name == str(resolved.workspace)
+
+
+def test_resolve_ursa_config_enforces_group_base_url_policy(tmp_path, monkeypatch):
+    from ursa import security
+    from ursa.security import GroupBaseURLPolicyError
+
+    root = tmp_path / "ursa"
+    group_root = root / "science"
+    group_root.mkdir(parents=True)
+    (group_root / "group.yaml").write_text(
+        "allowed_base_urls:\n  - https://models.example.test\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", root)
+
+    config = UrsaConfig(
+        group="science",
+        llm_model={
+            "model": "openai:gpt-test",
+            "base_url": "https://disallowed.example.test/v1",
+        },
+    )
+
+    with pytest.raises(GroupBaseURLPolicyError, match="not allowed"):
+        resolve_ursa_config(config)

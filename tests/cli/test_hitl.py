@@ -15,9 +15,10 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
+from ursa import agents
 from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import EmbModelConfig, UrsaConfig
+from ursa.cli.config import EmbModelConfig, UrsaConfig, resolve_ursa_config
 from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl, ursa_banner
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
@@ -80,7 +81,7 @@ DOC_EXAMPLE_CONFIG = DOCS_ROOT / "configs" / "example.yaml"
 
 def test_example_config_smoke():
     assert DOC_EXAMPLE_CONFIG.is_file()
-    ursa_config = UrsaConfig.from_file(DOC_EXAMPLE_CONFIG)
+    ursa_config = resolve_ursa_config(UrsaConfig.from_file(DOC_EXAMPLE_CONFIG))
     hitl = HITL(ursa_config)
     repl = UrsaRepl(hitl)
     for name in hitl.agents:
@@ -92,6 +93,36 @@ def test_has_all_agent_do_methods(ursa_config):
     repl = UrsaRepl(hitl)
     for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
+
+
+@pytest.mark.parametrize(
+    ("agent_name", "agent_class_name", "deps"),
+    [
+        ("chat", "ChatAgent", None),
+        ("arxiv", "ArxivAgent", None),
+        ("dsi", "DSIAgent", "dsi"),
+        ("execute", "ExecutionAgent", None),
+        ("deep_review", "DeepReviewAgent", None),
+        ("hypothesize", "HypothesizerAgent", None),
+        ("plan", "PlanningAgent", None),
+        ("prompt", "PromptingAgent", None),
+        ("web", "WebSearchAgent", None),
+        ("lammps", "LammpsAgent", "lammps"),
+    ],
+)
+def test_hitl_agent_registry_respects_optional_deps(
+    ursa_config, agent_name, agent_class_name, deps
+):
+    hitl = HITL(ursa_config)
+
+    if deps is not None and not has_optional_dep_group(deps):
+        assert agent_name not in hitl.agents
+        return
+
+    assert agent_name in hitl.agents
+    assert hitl.agents[agent_name].agent_class is getattr(
+        agents, agent_class_name
+    )
 
 
 def test_banner_shows_version():
@@ -187,15 +218,12 @@ def _stub_hitl_dependencies(monkeypatch):
     [
         "chat",
         "arxiv",
-        "dsi",
         "execute",
         "hypothesize",
         "plan",
         "web",
     ]
-    + ["dsi"]
-    if has_optional_dep_group("dsi")
-    else [],
+    + (["dsi"] if has_optional_dep_group("dsi") else []),
 )
 async def test_agents_apply_agent_config_overrides(
     agent_name, tmp_path, monkeypatch
@@ -676,6 +704,24 @@ def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
 
     with pytest.raises(AssertionError, match="Unknown agent ghost"):
         HITL(config)
+
+
+def test_hitl_uses_resolved_agent_config_for_use_web(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    config = resolve_ursa_config(
+        UrsaConfig(
+            workspace=tmp_path / "global-workspace",
+            use_web=True,
+            emb_model=EmbModelConfig(model="fake-embedding"),
+        )
+    )
+
+    hitl = HITL(config)
+
+    assert hitl.agents["chat"].config["use_web"] is True
+    assert hitl.agents["execute"].config["use_web"] is True
+    assert hitl.agents["deep_review"].config["use_web"] is True
+    assert hitl.agents["prompt"].config["use_web"] is True
 
 
 def test_agent_config_none_value_errors(tmp_path, monkeypatch):

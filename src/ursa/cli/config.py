@@ -294,27 +294,8 @@ class UrsaConfig(BaseModel):
             )
         return mc
 
-    @field_validator("llm_model", "emb_model", mode="after")
-    @classmethod
-    def _check_group_policy(
-        cls, value: ModelConfig | None, info: ValidationInfo
-    ) -> ModelConfig | None:
-        """Validate that configured model base URLs comply with the selected group policy.
-
-        This runs for both chat and embedding model configs after field parsing,
-        using the already-validated ``group`` value from ``info.data``.
-        """
-        if value is None:
-            return value
-        enforce_group_base_url_policy(value.base_url, info.data["group"])
-        return value
-
     def model_post_init(self, __context):
         """Handle temporary workspace creation post validation."""
-        if str(self.workspace) == "tmp" and not self.workspace.exists():
-            temp_workspace = TemporaryDirectory(prefix="ursa")
-            self.workspace = Path(temp_workspace.name)
-            self._temp_workspace = temp_workspace
 
     def update(self, other: "UrsaConfig") -> "UrsaConfig":
         """Merge non-default values from another config into this config."""
@@ -342,15 +323,11 @@ class UrsaConfig(BaseModel):
 
     @classmethod
     def from_file(cls, path: Path):
-        loader = (
-            yaml.safe_load if path.suffix in [".yaml", ".yml"] else json.load
-        )
-        with open(path, "r") as fid:
-            data = loader(fid)
+        return cls.model_validate(load_config_file(path))
 
-        data = deep_interp_env(data)
-
-        return cls.model_validate(data)
+    @classmethod
+    def resolve_config(cls, config: "UrsaConfig") -> "UrsaConfig":
+        return resolve_ursa_config(config)
 
     @field_serializer("workspace")
     def serialize_workspace(self, workspace: Path, _info):
@@ -364,6 +341,15 @@ class UrsaConfig(BaseModel):
             server: _serialize_server_config(config)
             for server, config in mcp_servers.items()
         }
+
+
+def load_config_file(path: Path) -> dict[str, Any]:
+    """Load and validate raw config-file data before config merging."""
+    loader = yaml.safe_load if path.suffix in [".yaml", ".yml"] else json.load
+    with open(path, "r") as fid:
+        data = loader(fid)
+
+    return deep_interp_env(data)
 
 
 @dataclass
@@ -425,6 +411,31 @@ def deep_interp_env(x: dict[str, Any] | str | Any):
         return interpolate_env(x)
     else:
         return x
+
+
+def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
+    """Resolve derived config state after validation and merge steps."""
+    resolved = config.model_copy(deep=True)
+
+    if resolved.llm_model is not None:
+        enforce_group_base_url_policy(
+            resolved.llm_model.base_url, resolved.group
+        )
+    if resolved.emb_model is not None:
+        enforce_group_base_url_policy(
+            resolved.emb_model.base_url, resolved.group
+        )
+
+    if str(resolved.workspace) == "tmp" and not resolved.workspace.exists():
+        temp_workspace = TemporaryDirectory(prefix="ursa")
+        resolved.workspace = Path(temp_workspace.name)
+        resolved._temp_workspace = temp_workspace
+
+    if resolved.use_web:
+        for agent_name in ["chat", "execute", "deep_review", "prompt"]:
+            resolved.agent_config.setdefault(agent_name, {})["use_web"] = True
+
+    return resolved
 
 
 def interpolate_env(value: str) -> str:
