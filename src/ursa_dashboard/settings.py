@@ -166,7 +166,12 @@ class GlobalSettings(BaseModel):
     ui: UISettings = Field(default_factory=UISettings)
 
 
-def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
+def dashboard_llm_patch_from_ursa_config(
+    path: str | Path,
+    *,
+    group: str,
+    current: GlobalSettings | None = None,
+) -> dict[str, Any]:
     """Return a dashboard settings patch from a CLI-style URSA config.
 
     The dashboard intentionally stores only non-secret LLM settings.
@@ -176,7 +181,28 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
     first-class dashboard setting.
     """
 
-    cfg = resolve_ursa_config(UrsaConfig.from_file(Path(path)))
+    cfg = UrsaConfig.from_file(Path(path))
+    llm_cfg = cfg.llm_model
+    if (
+        current is not None
+        and llm_cfg.inference_provider is None
+        and "base_url" not in llm_cfg.model_fields_set
+    ):
+        llm_cfg = llm_cfg.model_copy(update={"base_url": current.llm.base_url})
+    emb_cfg = cfg.emb_model
+    if (
+        current is not None
+        and emb_cfg is not None
+        and emb_cfg.inference_provider is None
+        and "base_url" not in emb_cfg.model_fields_set
+    ):
+        emb_cfg = emb_cfg.model_copy(
+            update={"base_url": current.embedding.base_url}
+        )
+    cfg = cfg.model_copy(
+        update={"group": group, "llm_model": llm_cfg, "emb_model": emb_cfg}
+    )
+    cfg = resolve_ursa_config(cfg)
     llm_cfg = cfg.llm_model
 
     patch: dict[str, Any] = {"model": llm_cfg.model}
@@ -299,8 +325,11 @@ def apply_dashboard_config(
     dashboard app.
     """
 
-    patch = dashboard_llm_patch_from_ursa_config(path)
-    settings = merge_global_settings_patch(settings_store.load(), patch)
+    current = settings_store.load()
+    patch = dashboard_llm_patch_from_ursa_config(
+        path, group=group, current=current
+    )
+    settings = merge_global_settings_patch(current, patch)
     enforce_group_base_url_policy(settings.llm.base_url, group)
     if settings.embedding.model:
         enforce_group_base_url_policy(settings.embedding.base_url, group)

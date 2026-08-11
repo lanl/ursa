@@ -275,6 +275,16 @@ class UrsaConfig(BaseModel):
 
         return normalize_rag_tool_names(value)
 
+    @field_validator("agent_config", mode="before")
+    @classmethod
+    def _normalize_agent_config(cls, value):
+        if value is None:
+            logger.warning(
+                "Setting agent_config to null is deprecated; treating it as an empty mapping"
+            )
+            return {}
+        return value
+
     @field_validator("llm_model", "emb_model", mode="after")
     @classmethod
     def _check_inference_provider(
@@ -288,7 +298,12 @@ class UrsaConfig(BaseModel):
         """
         if mc is None or mc.inference_provider is None:
             return mc
-        if mc.inference_provider not in info.data["inference_providers"]:
+        providers = info.data.get("inference_providers")
+        if providers is None:
+            # Let the provider catalog's validation error remain the primary
+            # error when that earlier field could not be resolved.
+            return mc
+        if mc.inference_provider not in providers:
             raise ValueError(
                 f"Unknown inference_provider '{mc.inference_provider}'"
             )
@@ -304,10 +319,17 @@ class UrsaConfig(BaseModel):
 
     @field_serializer("mcp_servers")
     def serialize_mcp_servers(
-        self, mcp_servers: dict[str, ServerParameters], _info
+        self, mcp_servers: dict[str, ServerParameters], info
     ):
+        include_defaults = bool(
+            info.context and info.context.get("include_defaults")
+        )
         return {
-            server: _serialize_server_config(config)
+            server: _serialize_server_config(
+                config,
+                exclude_defaults=not include_defaults,
+                exclude_none=not include_defaults,
+            )
             for server, config in mcp_servers.items()
         }
 
@@ -318,6 +340,12 @@ def load_config_file(path: Path) -> dict[str, Any]:
     with open(path, "r") as fid:
         data = loader(fid)
 
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Configuration file '{path}' must contain a mapping at its root"
+        )
     return deep_interp_env(data)
 
 
@@ -337,7 +365,10 @@ def config_path_from_namespace(cfg: Namespace) -> Path | None:
 def xdg_config_search_paths() -> list[Path]:
     """Return candidate XDG config paths in increasing precedence order."""
     candidates: list[Path] = []
-    for config_dir in getenv("XDG_CONFIG_DIRS", "/etc/xdg").split(":"):
+    # XDG_CONFIG_DIRS lists its most-preferred directory first, whereas config
+    # merging consumes sources from lowest to highest precedence.
+    config_dirs = getenv("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
+    for config_dir in reversed(config_dirs):
         if config_dir:
             candidates.append(
                 Path(config_dir).expanduser() / "ursa" / "config.yaml"
@@ -356,35 +387,27 @@ def config_search_paths(cfg: Namespace, level: str = "final") -> list[Path]:
     """Return isolated or cumulative config paths for a precedence level."""
     cumulative = level.endswith("+")
     level = level.removesuffix("+")
+    if level not in {"user", "file", "final"}:
+        raise ValueError(f"Unknown config level '{level}'")
     explicit_path = config_path_from_namespace(cfg)
-    project_path = Path.cwd() / ".ursa" / "config.yaml"
 
     seen: set[Path] = set()
     user_paths: list[Path] = []
     for candidate in xdg_config_search_paths():
         candidate = candidate.expanduser()
-        if candidate in {explicit_path, project_path} or candidate in seen:
+        if candidate == explicit_path or candidate in seen:
             continue
         seen.add(candidate)
         if candidate.is_file():
             user_paths.append(candidate)
 
-    project_paths = (
-        [project_path]
-        if project_path != explicit_path and project_path.is_file()
-        else []
-    )
     file_paths = [explicit_path] if explicit_path is not None else []
 
     if level == "user":
         return user_paths
-    if level == "project" and not cumulative:
-        return project_paths
-    if level == "project":
-        return [*user_paths, *project_paths]
     if level == "file" and not cumulative:
         return file_paths
-    return [*user_paths, *project_paths, *file_paths]
+    return [*user_paths, *file_paths]
 
 
 def merge_ursa_config(
@@ -479,8 +502,18 @@ def deep_interp_env(x: dict[str, Any] | str | Any):
 
 
 def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
-    """Resolve derived config state after validation and merge steps."""
-    resolved = config.model_copy(deep=True)
+    """Resolve and group-policy-check config after validation and merging."""
+    # Copy public fields independently while retaining the same private
+    # TemporaryDirectory owner. Deep-copying the owner duplicates its cleanup
+    # finalizer and can remove the workspace while a resolved config still uses
+    # it. Copying the nested model objects also preserves their fields-set state,
+    # which provider resolution uses to distinguish defaults from overrides.
+    resolved = config.model_copy(
+        update={
+            name: deepcopy(getattr(config, name))
+            for name in type(config).model_fields
+        }
+    )
 
     if resolved.llm_model is not None:
         resolved.llm_model = resolved.llm_model.resolve_inference_provider(
@@ -497,10 +530,12 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
             resolved.emb_model.base_url, resolved.group
         )
 
-    if str(resolved.workspace) == "tmp" and not resolved.workspace.exists():
-        temp_workspace = TemporaryDirectory(prefix="ursa")
-        resolved.workspace = Path(temp_workspace.name)
-        resolved._temp_workspace = temp_workspace
+    if str(resolved.workspace) == "tmp":
+        if resolved._temp_workspace is not None:
+            resolved.workspace = Path(resolved._temp_workspace.name)
+        elif not resolved.workspace.exists():
+            resolved._temp_workspace = TemporaryDirectory(prefix="ursa")
+            resolved.workspace = Path(resolved._temp_workspace.name)
 
     if resolved.use_web:
         for agent_name in ["chat", "execute", "deep_review", "prompt"]:

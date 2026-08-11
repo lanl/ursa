@@ -2,7 +2,7 @@
 # For most keys, the exact configuration options are a combination of model/agent dependent
 # A subset of these options are surfaced via command line flags or environmental variables.
 # The rest must be set by providing a configuration file via the `--config` flag
-# To see active non-default resolved settings run `ursa --print-config`
+# To see the full resolved configuration, including defaults, run `ursa --print-config`
 workspace: tmp
 group: default
 use_web: true

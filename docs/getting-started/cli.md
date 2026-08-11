@@ -13,7 +13,11 @@ This guide walks through starting URSA from the terminal, configuring a model, c
 
 ## 1. Create a configuration file
 
-YAML configuration files are the recommended way to configure URSA because they are reusable and easy to edit. URSA also layers config from an XDG-compliant user config, a project-local `./.ursa/config.yaml`, any file passed by `--config`, and finally CLI flags.
+YAML configuration files are the recommended way to configure URSA because
+they are reusable and easy to edit. URSA can combine files, environment
+variables, and CLI flags; see
+[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+for the authoritative precedence order.
 
 Create `config.yaml`:
 
@@ -108,7 +112,7 @@ For detailed commands to list, save, copy, share, import, and delete agents, see
 ursa --help
 ursa --print-config
 ursa --print-config=merged
-ursa --print-config=file,resolved
+ursa --config ./.ursa/config.yaml --print-config=file,resolved
 ursa --config config.yaml
 ursa --config config.yaml --name my-agent
 ursa --config config.yaml --use-web

@@ -79,11 +79,19 @@ def start_mcp_client(
     return MultiServerMCPClient(client_config)
 
 
-def _serialize_server_config(config: ServerParameters):
+def _serialize_server_config(
+    config: ServerParameters,
+    *,
+    exclude_defaults: bool = True,
+    exclude_none: bool = True,
+):
     """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
     config = {
         "transport": transport(config),
-        **config.model_dump(exclude_defaults=True, exclude_none=True),
+        **config.model_dump(
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        ),
     }
     for k, v in config.items():
         if isinstance(v, timedelta):
