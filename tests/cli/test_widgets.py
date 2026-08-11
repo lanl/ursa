@@ -218,6 +218,16 @@ async def test_welcome_banner_and_endpoint_status_are_visible(tmp_path):
         )
 
 
+async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
+    hitl = FakeHITL(tmp_path)
+    hitl.agent_name = "lab-assistant"
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(100, 36)):
+        assert "lab-assistant" in str(app.query_one("#status", Static).content)
+        assert "lab-assistant" in app._status_markdown()
+
+
 async def test_welcome_chooses_one_tip_from_the_catalog(tmp_path, monkeypatch):
     calls = []
 
@@ -281,6 +291,7 @@ async def test_workspace_uses_one_borderless_row_when_it_fits(tmp_path):
 
 async def test_slash_picker_opens_status_inside_textual(tmp_path):
     hitl = FakeHITL(tmp_path)
+    hitl.agent_name = "lab-assistant"
     hitl.config = SimpleNamespace(
         mcp_servers={
             "local": {"transport": "stdio", "command": "ursa-mcp"},
@@ -313,6 +324,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         await pilot.pause()
         assert isinstance(app.screen, InformationScreen)
         assert "LLM endpoint" in app.screen.content
+        assert "lab-assistant" in app.screen.content
         assert "MCP servers" in app.screen.content
         assert "ursa-mcp" in app.screen.content
         assert "https://example.test/mcp" in app.screen.content
