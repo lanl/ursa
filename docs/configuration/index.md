@@ -52,7 +52,7 @@ Use:
 ursa --print-config
 ```
 
-to inspect the active resolved configuration and defaults. Use `ursa --print-config=merged` to inspect the merged pre-resolution view.
+to inspect active, non-default resolved settings. Use `ursa --print-config=merged` to inspect non-default settings before resolution.
 
 ## Model configuration
 
@@ -115,7 +115,7 @@ emb_model:
   inference_provider: openai_public
 ```
 
-This is useful when multiple model configs share the same endpoint, credentials, or SSL settings. Model-specific settings override values inherited from the referenced provider. For example, this keeps the shared endpoint but uses a different credential source for just the LLM:
+This is useful when multiple model configs share the same endpoint, credentials, or SSL settings. A model inherits provider settings that it does not specify. Model-specific settings override inherited values. For example, this keeps the shared endpoint but uses a different credential source for just the LLM:
 
 ```yaml
 inference_providers:
@@ -128,7 +128,21 @@ llm_model:
   api_key_env: PROJECT_OPENAI_API_KEY
 ```
 
-Provider references must name an entry in `inference_providers`. During config resolution, provider defaults are merged into `llm_model` and `emb_model`, with model-specific values taking precedence.
+Provider references must name an entry in the final merged `inference_providers` catalog. During config resolution, provider defaults are merged into `llm_model` and `emb_model`, with model-specific values taking precedence. Resolution consumes the reference, so resolved output contains the inherited values and omits `inference_provider`; use merged output to see the selected provider name.
+
+For nullable settings, an explicit `null` is different from omission. Omit a
+setting to inherit it from the provider; set it to `null` to clear the provider
+value. This model uses the provider's credential setting but clears its custom
+endpoint:
+
+```yaml
+llm_model:
+  model: openai:gpt-5.4
+  inference_provider: openai_public
+  base_url: null
+```
+
+`ssl_verify` is a boolean and defaults to `true`. Omit it from a model to inherit the referenced provider's value. Set it explicitly to `true` or `false` to override the provider; `null` is not valid. If neither the model nor provider specifies it, certificate verification remains enabled.
 
 ### Managing multiple inference providers across config layers
 
@@ -204,6 +218,9 @@ workspace: tmp
 
 URSA will use a temporary directory for the run instead of literal folder named `tmp`.
 If a literal `tmp` folder exists in the current directory, URSA *will* use that instead.
+Because this happens during resolution, resolved `--print-config` output may
+show the allocated temporary-directory path. Merged output continues to show
+`workspace: tmp`.
 
 ## More configuration topics
 

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import enforce_group_base_url_policy
 
 from .credentials import assert_no_raw_api_key
@@ -176,7 +176,7 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
     first-class dashboard setting.
     """
 
-    cfg = UrsaConfig.from_file(Path(path))
+    cfg = resolve_ursa_config(UrsaConfig.from_file(Path(path)))
     llm_cfg = cfg.llm_model
 
     patch: dict[str, Any] = {"model": llm_cfg.model}

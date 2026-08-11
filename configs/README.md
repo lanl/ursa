@@ -27,7 +27,11 @@ For configuration concepts, precedence, and printing merged vs resolved config, 
 - <https://lanl.github.io/ursa/configuration/>
 - <https://lanl.github.io/ursa/configuration/files-and-env/>
 
-To see the default resolved configuration run: `ursa --print-config`
+To see active non-default resolved settings run: `ursa --print-config`
+
+Configuration sources are sparse: omitted keys preserve lower-precedence or
+provider values, while explicit `null` clears nullable settings. The
+`ssl_verify` setting is boolean and defaults to `true`.
 
 Configuration files can be provided in [JSON](https://www.json.org/) or [YAML](https://yaml.org/) formats.
 

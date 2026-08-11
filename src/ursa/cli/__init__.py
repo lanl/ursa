@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 from pathlib import Path
 from warnings import filterwarnings
@@ -21,6 +20,7 @@ from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
+    merge_ursa_config,
     resolve_ursa_config,
 )
 from ursa.cli.groups import (
@@ -43,29 +43,6 @@ set_parsing_settings(docstring_parse_attribute_docstrings=True)
 # NOTE [alui | 26 June, 2026]:
 # Pydantic warnings occured around v0.16.0. Suppress for now.
 filterwarnings("ignore", message="Pydantic serializer warnings:*")
-
-
-def _xdg_config_search_paths() -> list[Path]:
-    """Return candidate XDG config paths in increasing precedence order."""
-    candidates: list[Path] = []
-
-    config_dirs = os.getenv("XDG_CONFIG_DIRS", "/etc/xdg")
-    for config_dir in config_dirs.split(":"):
-        if not config_dir:
-            continue
-        candidates.append(
-            Path(config_dir).expanduser() / "ursa" / "config.yaml"
-        )
-
-    config_home = os.getenv("XDG_CONFIG_HOME")
-    if config_home:
-        candidates.append(
-            Path(config_home).expanduser() / "ursa" / "config.yaml"
-        )
-    else:
-        candidates.append(Path.home() / ".config" / "ursa" / "config.yaml")
-
-    return candidates
 
 
 def build_parser() -> ArgumentParser:
@@ -99,7 +76,8 @@ def build_parser() -> ArgumentParser:
             "Print configuration and exit. Defaults to resolved output. "
             "Accepted forms: --print-config, --print-config=resolved, "
             "--print-config=merged, or --print-config=LEVEL,STAGE where "
-            "LEVEL is one of final, file, project, user and STAGE is merged or resolved."
+            "LEVEL is one of final, file, project, user (optionally suffixed "
+            "with + for cumulative input) and STAGE is merged or resolved."
         ),
     )
     parser.add_class_arguments(
@@ -122,6 +100,7 @@ def build_parser() -> ArgumentParser:
     )
     parser.add_argument(
         "--name",
+        dest="agent_name",
         type=str,
         default=None,
         help="Name of the agent for persistence",
@@ -168,32 +147,7 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def _config_search_paths(cfg) -> list[Path]:
-    """Return config files in increasing precedence order."""
-    paths: list[Path] = []
-    from ursa.cli.print_config import config_path_from_namespace
-
-    explicit_config = config_path_from_namespace(cfg)
-    implicit_paths = [
-        *_xdg_config_search_paths(),
-        Path.cwd() / ".ursa" / "config.yaml",
-    ]
-    seen: set[Path] = set()
-    for candidate in implicit_paths:
-        candidate = candidate.expanduser()
-        if candidate == explicit_config:
-            continue
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate.is_file():
-            paths.append(candidate)
-    if explicit_config:
-        paths.append(explicit_config)
-    return paths
-
-
-def resolve_config(cfg) -> UrsaConfig:
+def resolve_config(cfg, overrides) -> UrsaConfig:
     """Produce the fully resolved UrsaConfig from the parsed arguments.
 
     This function merges configuration layers in precedence order and then
@@ -201,31 +155,7 @@ def resolve_config(cfg) -> UrsaConfig:
     materialization, top-level ``use_web`` promotion into ``agent_config``,
     and group-based model endpoint policy enforcement.
     """
-    cfg_dict = cfg.as_dict()
-    # Change `name` to `agent_name` for consistency with agent
-    #    arguments.
-    # TODO: Longer term, we should make our agents use `name`
-    #    as the argument for the class, but this is a problem
-    #    with the current class property `name` that is used by
-    #    the CLI
-    if cfg_dict.get("name") is not None:
-        cfg_dict["agent_name"] = cfg_dict.pop("name")
-    else:
-        cfg_dict.pop("name", None)
-
-    config = UrsaConfig()
-    for config_path in _config_search_paths(cfg):
-        config.update(UrsaConfig.from_file(config_path))
-
-    cli_updates = cfg_dict.copy()
-    cli_updates.pop("subcommand", None)
-    cli_updates.pop("config", None)
-    cli_updates.pop("print_config", None)
-    if cli_updates.get("rag_tools") is None:
-        cli_updates.pop("rag_tools", None)
-
-    config.update(UrsaConfig.model_validate(cli_updates, extra="ignore"))
-    return resolve_ursa_config(config)
+    return resolve_ursa_config(merge_ursa_config(cfg, overrides=overrides))
 
 
 def _initialize_hitl(config: UrsaConfig):
@@ -248,6 +178,7 @@ def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
+    overrides = parser.parse_args(args=args, defaults=False)
 
     subcommand = cfg.get("subcommand", None)
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
@@ -311,14 +242,14 @@ def main(args=None):
             return
 
     if subcommand in RAG_COMMANDS:
-        ursa_config = resolve_config(cfg)
+        ursa_config = resolve_config(cfg, overrides)
         if handle_rag_command(cfg, ursa_config):
             return
 
-    if print_config(cfg, _config_search_paths(cfg)):
+    if print_config(cfg, overrides):
         exit(0)
 
-    ursa_config = resolve_config(cfg)
+    ursa_config = resolve_config(cfg, overrides)
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
     legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"
