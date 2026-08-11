@@ -2,7 +2,14 @@
 # For most keys, the exact configuration options are a combination of model/agent dependent
 # A subset of these options are surfaced via command line flags or environmental variables.
 # The rest must be set by providing a configuration file via the `--config` flag
-# To see the default configuration run `ursa --print-config`
+# To see the default resolved configuration run `ursa --print-config`
+workspace: tmp
+group: default
+use_web: true
+inference_providers:
+  openai_public:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
 llm_model:
   # Additional configuration options can be specified here
   # Exact options are model dependent, see the LangGraph docs
@@ -10,13 +17,20 @@ llm_model:
   # Provider Overview: https://docs.langchain.com/oss/python/integrations/providers/overview
   model: openai:gpt-5.2
   max_completion_tokens: 10000
-  api_key_env: OPENAI_API_KEY
+  inference_provider: openai_public
 emb_model:
   # The embedding model (default none) can similarly be configured
   # Exact options are model/provider dependent, see the LangGraph docs
   # https://reference.langchain.com/python/langchain/embeddings/#langchain.embeddings.init_embeddings
   model: ollama:nomic-embed-text:latest
+  base_url: http://localhost:11434
 agent_config:
+  # Top-level use_web: true fills in missing use_web values for chat, execute,
+  # deep_review, and prompt, but explicit per-agent values win.
+  prompt:
+    use_web: false
+  chat:
+    temperature: 0.2
   # Agents can be configured by providing configuration dicts keyed to the Agents name in the HITL
   # To get a list of agent names, launch the URSA HITL (`ursa`) then type `help`
   execute:

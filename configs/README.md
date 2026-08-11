@@ -20,23 +20,23 @@ Supported environmental variables for the CLI can be viewed by running: `ursa --
 ## Default Configuration Options
 
 The default configuration is defined by [src/ursa/cli/config.py](../src/ursa/cli/config.py).
-However, for many options (Agent config, MCP servers) the available options are documented by
-their respective subsystems. An [example configuration file](./example.yaml) is provided.
+An [example configuration file](./example.yaml) is provided.
 
-To see the default configuration run: `ursa --print-config`
+For configuration concepts, precedence, and printing merged vs resolved config, see:
+
+- <https://lanl.github.io/ursa/configuration/>
+- <https://lanl.github.io/ursa/configuration/files-and-env/>
+
+To see the default resolved configuration run: `ursa --print-config`
 
 Configuration files can be provided in [JSON](https://www.json.org/) or [YAML](https://yaml.org/) formats.
 
 ## Configuring Agents
 
-URSA Agents can be configured using the `agent_config` field in a configuration file.
-Exact options are dependent on the agent (see their documentation) and is limited to
-options that can be expressed in a YAML file.
+For `agent_config`, `use_web`, and per-agent configuration behavior, see:
 
-Agent configurations are keyed by their subcommand name in the HITL. For example,
-the ExecutionAgent's config is under `execute`.
-
-The Memory agent (used by the ExecutionAgent and RecallAgent) is keyed under `memory`.
+- <https://lanl.github.io/ursa/configuration/>
+- <https://lanl.github.io/ursa/getting-started/cli/>
 
 The current agent configuration (excluding defaults) can be viewed using the `agents` command
 from URSA's HITL (run `ursa` then type `agents`).

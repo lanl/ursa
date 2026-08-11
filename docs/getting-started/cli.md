@@ -21,8 +21,11 @@ Create `config.yaml`:
 llm_model:
   model: openai:gpt-5.4
   api_key_env: OPENAI_API_KEY
-
 workspace: .
+agent_config:
+  execute:
+    safe_codes:
+      - python
 ```
 
 Then set your API key in the shell:
@@ -104,12 +107,18 @@ For detailed commands to list, save, copy, share, import, and delete agents, see
 ```bash
 ursa --help
 ursa --print-config
+ursa --print-config=merged
+ursa --print-config=file,resolved
 ursa --config config.yaml
 ursa --config config.yaml --name my-agent
 ursa --config config.yaml --use-web
 ```
 
-Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA to make network requests through its web-search tools.
+Web tools are opt in. Use `--use-web` or `use_web: true` only when you want
+URSA to make network requests through its web-search tools. The top-level
+`use_web` setting fills in missing `use_web` values for `chat`, `execute`,
+`deep_review`, and `prompt`; explicit `agent_config` values still take
+precedence.
 
 ## Where next?
 
