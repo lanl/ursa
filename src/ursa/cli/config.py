@@ -112,9 +112,22 @@ class ModelConfig(BaseModel):
             raise ValueError(f"Unknown inference_provider '{provider_name}'")
         assert isinstance(provider_config, InferenceProviderConfig)
 
+        provider_values = provider_config.model_dump(
+            mode="python", exclude_unset=True
+        )
+        self_values = self.model_dump(mode="python", exclude_unset=True)
+        if provider_config.model_extra:
+            provider_values.update(provider_config.model_extra)
+        if self.model_extra:
+            self_values.update(self.model_extra)
+
+        for field_name in ["base_url", "api_key_env", "ssl_verify"]:
+            if getattr(self, field_name) is None and field_name in provider_values:
+                self_values.pop(field_name, None)
+
         return type(self).model_validate({
-            **(provider_config.model_dump(mode="python", exclude_unset=True)),
-            **(self.model_dump(mode="python", exclude_unset=True)),
+            **provider_values,
+            **self_values,
         })
 
     @staticmethod
@@ -199,7 +212,11 @@ class ChatModelConfig(ModelConfig):
         self,
         inference_providers: dict[str, InferenceProviderConfig] | None = None,
     ) -> BaseChatModel:
-        resolved = self.resolve_inference_provider(inference_providers or {})
+        resolved = (
+            self.resolve_inference_provider(inference_providers)
+            if inference_providers is not None
+            else self
+        )
         llm = init_chat_model(**resolved.kwargs)
         resolved.check_instantiated_model(llm)
         return llm
@@ -212,7 +229,11 @@ class EmbModelConfig(ModelConfig):
         self,
         inference_providers: dict[str, InferenceProviderConfig] | None = None,
     ) -> Embeddings:
-        resolved = self.resolve_inference_provider(inference_providers or {})
+        resolved = (
+            self.resolve_inference_provider(inference_providers)
+            if inference_providers is not None
+            else self
+        )
         emb = init_embeddings(**resolved.kwargs)
         resolved.check_instantiated_model(emb)
         return emb
@@ -418,10 +439,16 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
     resolved = config.model_copy(deep=True)
 
     if resolved.llm_model is not None:
+        resolved.llm_model = resolved.llm_model.resolve_inference_provider(
+            resolved.inference_providers
+        )
         enforce_group_base_url_policy(
             resolved.llm_model.base_url, resolved.group
         )
     if resolved.emb_model is not None:
+        resolved.emb_model = resolved.emb_model.resolve_inference_provider(
+            resolved.inference_providers
+        )
         enforce_group_base_url_policy(
             resolved.emb_model.base_url, resolved.group
         )
@@ -433,7 +460,9 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
 
     if resolved.use_web:
         for agent_name in ["chat", "execute", "deep_review", "prompt"]:
-            resolved.agent_config.setdefault(agent_name, {})["use_web"] = True
+            resolved.agent_config.setdefault(agent_name, {}).setdefault(
+                "use_web", True
+            )
 
     return resolved
 

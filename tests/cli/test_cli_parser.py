@@ -5,12 +5,8 @@ import pytest
 import yaml
 from openai import OpenAIError
 
-from ursa.cli import (
-    _xdg_config_search_paths,
-    build_parser,
-    main,
-    resolve_config,
-)
+from ursa.cli import _xdg_config_search_paths, build_parser, main, resolve_config
+from ursa.cli.print_config import parse_print_config_spec
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -216,7 +212,7 @@ def test_cli_parses_typed_flags(tmp_path):
     assert config.llm_model.max_completion_tokens == 2048
 
 
-def test_print_config_flag_sets_bool_and_preserves_defaults(
+def test_print_config_flag_defaults_to_resolved_string(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-missing"))
@@ -225,10 +221,25 @@ def test_print_config_flag_sets_bool_and_preserves_defaults(
     parser = build_parser()
     args = parser.parse_args(["--print-config"])
 
-    assert args["print_config"] is True
+    assert args["print_config"] == "resolved"
 
     config = resolve_config(args)
-    assert config.model_dump() == UrsaConfig().model_dump()
+    assert config.model_dump() == resolve_ursa_config(UrsaConfig()).model_dump()
+
+
+def test_parse_print_config_spec_accepts_stage_only_and_level_stage():
+    assert parse_print_config_spec("resolved") == ("final", "resolved")
+    assert parse_print_config_spec("merged") == ("final", "merged")
+    assert parse_print_config_spec("file,resolved") == (
+        "file",
+        "resolved",
+    )
+
+
+@pytest.mark.parametrize("spec", ["bogus", "final,bogus", "bogus,resolved"])
+def test_parse_print_config_spec_rejects_invalid_values(spec):
+    with pytest.raises(ValueError):
+        parse_print_config_spec(spec)
 
 
 def test_resolve_config_preserves_cli_tmp_workspace_owner():
@@ -846,7 +857,7 @@ def test_model_config_resolve_provider_returns_self_when_unset():
     assert resolved is cfg
 
 
-def test_resolve_config_preserves_unresolved_inference_provider(tmp_path):
+def test_resolve_config_resolves_inference_provider_at_final_stage(tmp_path):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
         "\n".join([
@@ -865,7 +876,7 @@ def test_resolve_config_preserves_unresolved_inference_provider(tmp_path):
     config = resolve_config(args)
 
     assert config.llm_model.inference_provider == "openai_public"
-    assert config.llm_model.base_url is None
+    assert config.llm_model.base_url == "https://api.openai.com/v1"
     assert config.inference_providers["openai_public"].base_url == (
         "https://api.openai.com/v1"
     )
@@ -878,6 +889,25 @@ def test_resolve_ursa_config_promotes_use_web_to_agent_config():
 
     for agent_name in ["chat", "execute", "deep_review", "prompt"]:
         assert resolved.agent_config[agent_name]["use_web"] is True
+
+
+def test_resolve_ursa_config_use_web_only_fills_missing_values():
+    config = UrsaConfig(
+        use_web=True,
+        agent_config={
+            "chat": {"use_web": False},
+            "execute": {},
+            "prompt": {"temperature": 0.2},
+        },
+    )
+
+    resolved = resolve_ursa_config(config)
+
+    assert resolved.agent_config["chat"]["use_web"] is False
+    assert resolved.agent_config["execute"]["use_web"] is True
+    assert resolved.agent_config["deep_review"]["use_web"] is True
+    assert resolved.agent_config["prompt"]["use_web"] is True
+    assert resolved.agent_config["prompt"]["temperature"] == 0.2
 
 
 def test_resolve_ursa_config_creates_tmp_workspace():

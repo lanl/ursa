@@ -1,6 +1,10 @@
 # Configuration files, CLI flags, and environment variables
 
-URSA supports layered configuration. Higher-precedence sources are merged on top of lower-precedence sources to produce a single effective configuration. Prefer YAML files for reusable settings, CLI flags for temporary overrides, and environment variables for secrets or automation.
+URSA supports layered configuration. Higher-precedence sources are merged on
+top of lower-precedence sources to produce a single merged configuration, which
+is then resolved into the effective runtime configuration. Prefer YAML files
+for reusable settings, CLI flags for temporary overrides, and environment
+variables for secrets or automation.
 
 ## Configuration precedence
 
@@ -12,7 +16,8 @@ URSA loads configuration in this order, with later sources overriding earlier on
 4. Environment variables
 5. CLI flags
 
-See the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/) for background on XDG-compliant config locations.
+See the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)
+for background on XDG-compliant config locations.
 
 ## YAML files: preferred
 
@@ -20,10 +25,13 @@ See the [XDG Base Directory Specification](https://specifications.freedesktop.or
 llm_model:
   model: openai:gpt-5.4
   api_key_env: OPENAI_API_KEY
-
 workspace: ./ursa-workspace
 group: default
 use_web: false
+agent_config:
+  execute:
+    safe_codes:
+      - python
 ```
 
 Run:
@@ -102,6 +110,26 @@ mcp_servers:
 
 ## Inspect the active configuration
 
+By default, `--print-config` prints the resolved final configuration:
+
 ```bash
 ursa --print-config
+ursa --print-config=resolved
 ```
+
+To see the configuration before final resolution:
+
+```bash
+ursa --print-config=merged
+```
+
+You can also inspect a specific configuration level before or after resolution:
+
+```bash
+ursa --print-config=user,merged
+ursa --print-config=project,merged
+ursa --print-config=file,resolved
+ursa --print-config=final,resolved
+```
+
+Levels are `user`, `project`, `file`, and `final` (default). Stages are `merged` and `resolved`.

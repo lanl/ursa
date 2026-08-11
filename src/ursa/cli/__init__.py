@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 from warnings import filterwarnings
 
-import yaml
 from jsonargparse import ArgumentParser, set_parsing_settings
 
 from ursa import __version__
@@ -32,6 +31,7 @@ from ursa.cli.groups import (
     show_group,
     update_group,
 )
+from ursa.cli.print_config import print_config
 from ursa.cli.rag_management import (
     RAG_COMMANDS,
     add_rag_subcommands,
@@ -91,8 +91,16 @@ def build_parser() -> ArgumentParser:
     parser.add_argument("--log-level", default="error", type=LoggingLevel)
     parser.add_argument(
         "--print-config",
-        action="store_true",
-        help="Print the Ursa configuration and exit",
+        nargs="?",
+        const="resolved",
+        default=None,
+        type=str,
+        help=(
+            "Print configuration and exit. Defaults to resolved output. "
+            "Accepted forms: --print-config, --print-config=resolved, "
+            "--print-config=merged, or --print-config=LEVEL,STAGE where "
+            "LEVEL is one of final, file, project, user and STAGE is merged or resolved."
+        ),
     )
     parser.add_class_arguments(
         UrsaConfig,
@@ -160,23 +168,12 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def _config_path_from_namespace(cfg) -> Path | None:
-    """Return a root or subcommand-local config path from parsed CLI args."""
-    config_path = getattr(cfg, "config", None)
-    subcommand = cfg.get("subcommand", None)
-    if subcommand is not None:
-        cmd_cfg = cfg.get(subcommand, None)
-        cmd_config_path = (
-            getattr(cmd_cfg, "config", None) if cmd_cfg is not None else None
-        )
-        config_path = cmd_config_path or config_path
-    return config_path
-
-
 def _config_search_paths(cfg) -> list[Path]:
     """Return config files in increasing precedence order."""
     paths: list[Path] = []
-    explicit_config = _config_path_from_namespace(cfg)
+    from ursa.cli.print_config import config_path_from_namespace
+
+    explicit_config = config_path_from_namespace(cfg)
     implicit_paths = [
         *_xdg_config_search_paths(),
         Path.cwd() / ".ursa" / "config.yaml",
@@ -197,7 +194,13 @@ def _config_search_paths(cfg) -> list[Path]:
 
 
 def resolve_config(cfg) -> UrsaConfig:
-    """Produce the effective UrsaConfig from the parsed arguments."""
+    """Produce the fully resolved UrsaConfig from the parsed arguments.
+
+    This function merges configuration layers in precedence order and then
+    applies derived resolution semantics such as temporary workspace
+    materialization, top-level ``use_web`` promotion into ``agent_config``,
+    and group-based model endpoint policy enforcement.
+    """
     cfg_dict = cfg.as_dict()
     # Change `name` to `agent_name` for consistency with agent
     #    arguments.
@@ -210,22 +213,19 @@ def resolve_config(cfg) -> UrsaConfig:
     else:
         cfg_dict.pop("name", None)
 
-    cli_config = UrsaConfig.model_validate(cfg_dict, extra="ignore")
     config = UrsaConfig()
     for config_path in _config_search_paths(cfg):
         config.update(UrsaConfig.from_file(config_path))
-    config.update(cli_config)
 
-    if str(config.workspace) == "tmp":
-        return resolve_ursa_config(config)
+    cli_updates = cfg_dict.copy()
+    cli_updates.pop("subcommand", None)
+    cli_updates.pop("config", None)
+    cli_updates.pop("print_config", None)
+    if cli_updates.get("rag_tools") is None:
+        cli_updates.pop("rag_tools", None)
 
-    if config.use_web:
-        return resolve_ursa_config(config)
-
-    if config.group != "default":
-        return resolve_ursa_config(config)
-
-    return config
+    config.update(UrsaConfig.model_validate(cli_updates, extra="ignore"))
+    return resolve_ursa_config(config)
 
 
 def _initialize_hitl(config: UrsaConfig):
@@ -315,12 +315,11 @@ def main(args=None):
         if handle_rag_command(cfg, ursa_config):
             return
 
+    if print_config(cfg, _config_search_paths(cfg)):
+        exit(0)
+
     ursa_config = resolve_config(cfg)
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
-
-    if cfg["print_config"]:
-        print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))  # noqa: T201
-        exit(0)
 
     legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"
     if ursa_config.agent_name is None and legacy_checkpoint.is_file():
