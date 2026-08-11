@@ -9,7 +9,8 @@ URSA loads configuration in this order, with later sources overriding earlier on
 1. XDG-compliant user config, typically `~/.config/ursa/config.yaml`
 2. Project-local `./.ursa/config.yaml`
 3. The file passed to `--config`
-4. CLI flags
+4. Environment variables
+5. CLI flags
 
 See the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/) for background on XDG-compliant config locations.
 

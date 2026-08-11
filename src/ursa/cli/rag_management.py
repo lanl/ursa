@@ -5,9 +5,6 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
-from langchain.embeddings import init_embeddings
-
 from ursa.cli.config import ModelConfig, UrsaConfig
 from ursa.rag.persistence import (
     build_persistent_rag_agent,
@@ -21,7 +18,6 @@ from ursa.rag.persistence import (
     validate_rag_agent_name,
 )
 from ursa.security import (
-    enforce_group_base_url_policy,
     enforce_model_group_policy,
 )
 

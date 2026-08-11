@@ -52,7 +52,9 @@ def _xdg_config_search_paths() -> list[Path]:
     for config_dir in config_dirs.split(":"):
         if not config_dir:
             continue
-        candidates.append(Path(config_dir).expanduser() / "ursa" / "config.yaml")
+        candidates.append(
+            Path(config_dir).expanduser() / "ursa" / "config.yaml"
+        )
 
     config_home = os.getenv("XDG_CONFIG_HOME")
     if config_home:
