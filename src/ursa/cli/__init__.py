@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from pathlib import Path
 from warnings import filterwarnings
@@ -43,6 +44,27 @@ set_parsing_settings(docstring_parse_attribute_docstrings=True)
 filterwarnings("ignore", message="Pydantic serializer warnings:*")
 
 
+def _xdg_config_search_paths() -> list[Path]:
+    """Return candidate XDG config paths in increasing precedence order."""
+    candidates: list[Path] = []
+
+    config_dirs = os.getenv("XDG_CONFIG_DIRS", "/etc/xdg")
+    for config_dir in config_dirs.split(":"):
+        if not config_dir:
+            continue
+        candidates.append(Path(config_dir).expanduser() / "ursa" / "config.yaml")
+
+    config_home = os.getenv("XDG_CONFIG_HOME")
+    if config_home:
+        candidates.append(
+            Path(config_home).expanduser() / "ursa" / "config.yaml"
+        )
+    else:
+        candidates.append(Path.home() / ".config" / "ursa" / "config.yaml")
+
+    return candidates
+
+
 def build_parser() -> ArgumentParser:
     parser = ArgumentParser(
         prog="ursa",
@@ -58,7 +80,10 @@ def build_parser() -> ArgumentParser:
         "--config",
         default=None,
         type=Path,
-        help="Path to a YAML/JSON file with additional configuration. CLI Opts have priority",
+        help=(
+            "Path to a YAML/JSON file with additional configuration. "
+            "Higher-precedence configuration layers override lower-precedence ones."
+        ),
     )
     parser.add_argument("--log-level", default="error", type=LoggingLevel)
     parser.add_argument(
@@ -100,7 +125,8 @@ def build_parser() -> ArgumentParser:
         help=(
             "Path to a YAML/JSON file with additional configuration "
             "(LLM model, endpoint, embedding model, MCP servers, etc.) "
-            "for the URSA instance hosted by the MCP server. CLI opts have priority."
+            "for the URSA instance hosted by the MCP server. "
+            "Higher-precedence configuration layers override lower-precedence ones."
         ),
     )
     mcp_parser.add_class_arguments(MCPServerConfig, help="MCP server options")
@@ -144,6 +170,29 @@ def _config_path_from_namespace(cfg) -> Path | None:
     return config_path
 
 
+def _config_search_paths(cfg) -> list[Path]:
+    """Return config files in increasing precedence order."""
+    paths: list[Path] = []
+    explicit_config = _config_path_from_namespace(cfg)
+    implicit_paths = [
+        *_xdg_config_search_paths(),
+        Path.cwd() / ".ursa" / "config.yaml",
+    ]
+    seen: set[Path] = set()
+    for candidate in implicit_paths:
+        candidate = candidate.expanduser()
+        if candidate == explicit_config:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            paths.append(candidate)
+    if explicit_config:
+        paths.append(explicit_config)
+    return paths
+
+
 def resolve_config(cfg) -> UrsaConfig:
     """Produce the effective UrsaConfig from the parsed arguments."""
     cfg_dict = cfg.as_dict()
@@ -159,9 +208,8 @@ def resolve_config(cfg) -> UrsaConfig:
         cfg_dict.pop("name", None)
 
     cli_config = UrsaConfig.model_validate(cfg_dict, extra="ignore")
-    config_path = _config_path_from_namespace(cfg)
     config = UrsaConfig()
-    if config_path:
+    for config_path in _config_search_paths(cfg):
         config.update(UrsaConfig.from_file(config_path))
     return config.update(cli_config)
 
@@ -279,19 +327,25 @@ def main(args=None):
             hitl = _initialize_hitl(ursa_config)
             UrsaRepl(hitl).run()
 
-        case "exec":
-            from ursa.cli.hitl import UrsaRepl
-
-            hitl = _initialize_hitl(ursa_config)
-            UrsaRepl(hitl).run_prompt(cmd_config.prompt)
-
         case "mcp-server":
-            hitl = _initialize_hitl(ursa_config)
+            from ursa.cli.hitl import HITL
+
+            hitl = HITL(ursa_config)
             mcp = hitl.as_mcp_server()
+
             run_kwargs = {
                 "transport": cmd_config.transport,
                 "log_level": cmd_config.log_level.upper(),
             }
-            if cmd_config.transport == "streamable-http":
-                run_kwargs.update(host=cmd_config.host, port=cmd_config.port)
+            if cmd_config.transport != "stdio":
+                run_kwargs["host"] = cmd_config.host
+                run_kwargs["port"] = cmd_config.port
             mcp.run(**run_kwargs)
+        case "exec":
+            from ursa.cli.hitl import UrsaExec
+
+            hitl = _initialize_hitl(ursa_config)
+            UrsaExec(hitl).run([cmd_config.prompt])
+        case _:
+            logging.error(f"Unknown subcommand {subcommand}")
+            raise NotImplementedError

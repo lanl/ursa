@@ -17,6 +17,8 @@ ursa rag-query --help
 
 ## Common top-level commands
 
+URSA merges configuration from XDG-compliant user config, project-local config, `--config`, and CLI flags, in that order.
+
 ```bash
 ursa --config config.yaml
 ursa --print-config

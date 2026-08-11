@@ -13,7 +13,7 @@ This guide walks through starting URSA from the terminal, configuring a model, c
 
 ## 1. Create a configuration file
 
-YAML configuration files are the recommended way to configure URSA because they are reusable and easy to edit.
+YAML configuration files are the recommended way to configure URSA because they are reusable and easy to edit. URSA also layers config from an XDG-compliant user config, a project-local `./.ursa/config.yaml`, any file passed by `--config`, and finally CLI flags.
 
 Create `config.yaml`:
 
