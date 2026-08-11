@@ -64,11 +64,11 @@ Then run:
 ursa --config config.yaml
 ```
 
-Inside the URSA prompt, type `help` or try:
+Inside the URSA app, type `/` to browse commands or try:
 
 ```text
-ursa> Summarize what URSA can help me do.
-ursa> execute Write and run a Python script that prints the first 10 prime numbers.
+Summarize what URSA can help me do.
+#execute Write and run a Python script that prints the first 10 prime numbers.
 ```
 
 ## Where to go next
