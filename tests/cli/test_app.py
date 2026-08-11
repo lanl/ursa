@@ -8,29 +8,32 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 import ursa.cli.app as app_module
+import ursa.cli.event_handler as event_handler_module
 import ursa.cli.tips as tips
-from ursa.cli.app import (
-    ActivityIndicator,
+import ursa.cli.turn as turn_module
+import ursa.cli.widgets as widgets_module
+from ursa.cli.app import UrsaTextualApp
+from ursa.cli.event_cards import (
     AgentEventCard,
     ArtifactCard,
     CommandSafetyIndicator,
     EventCard,
     FileActivityCard,
+    PlanCard,
+    RunCommandCard,
+    SearchEventCard,
+)
+from ursa.cli.helpers import _fuzzy_match, _reasoning_trace, _token_usage
+from ursa.cli.tips import TIPS
+from ursa.cli.turn import Turn
+from ursa.cli.widgets import (
+    ActivityIndicator,
     HotlistScreen,
     InformationScreen,
     MessageCard,
-    PlanCard,
     PromptArea,
-    RunCommandCard,
-    SearchEventCard,
-    Turn,
-    UrsaTextualApp,
     WelcomeBanner,
-    _fuzzy_match,
-    _reasoning_trace,
-    _token_usage,
 )
-from ursa.cli.tips import TIPS
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
@@ -606,8 +609,11 @@ async def test_event_summary_groups_follow_activity_order(tmp_path):
 async def test_activity_kinds_keep_independent_cards_open(
     tmp_path, monkeypatch
 ):
+    clock = [100.0]
+    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
-        app_module,
+        turn_module,
         "SUMMARY_GROUP_GRACE_SECONDS",
         1.0,
     )
@@ -691,7 +697,8 @@ async def test_same_event_kind_stays_grouped_within_three_second_grace(
     tmp_path, monkeypatch
 ):
     clock = [100.0]
-    monkeypatch.setattr(app_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     hitl = FakeHITL(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
@@ -731,7 +738,8 @@ async def test_same_event_kind_starts_new_group_after_three_seconds(
     tmp_path, monkeypatch
 ):
     clock = [100.0]
-    monkeypatch.setattr(app_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     hitl = FakeHITL(tmp_path)
 
     async def run_agent(_name, _prompt, callbacks=None):
@@ -764,7 +772,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        app_module,
+        turn_module,
         "SUMMARY_GROUP_GRACE_SECONDS",
         0.5,
     )
@@ -1286,7 +1294,7 @@ async def test_welcome_tip_is_selected_once_from_tip_catalog(
     tmp_path, monkeypatch
 ):
     selected = TIPS[-1]
-    monkeypatch.setattr(app_module, "random_tip", lambda: selected)
+    monkeypatch.setattr(widgets_module, "random_tip", lambda: selected)
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(80, 24)):
