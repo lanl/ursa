@@ -2,14 +2,14 @@
 
 """Plan generation and review event cards."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
-from rich.cells import cell_len, chop_cells
 from textual.app import ComposeResult
 from textual.widgets import Markdown, Static
 
 from ursa.cli.event_cards.base import EventCard
+from ursa.cli.helpers import _plan_step_text, _truncate_middle
 
 
 class PlanCard(EventCard):
@@ -57,7 +57,7 @@ class PlanCard(EventCard):
 
     def set_plan(self, steps: Sequence[Any]) -> None:
         self.steps = [
-            self._step_text(index, step) for index, step in enumerate(steps, 1)
+            _plan_step_text(index, step) for index, step in enumerate(steps, 1)
         ]
         self.state = "reviewing"
         self._resume_spinner()
@@ -87,27 +87,6 @@ class PlanCard(EventCard):
             self._spinner_timer.pause()
         self.refresh_content()
 
-    @staticmethod
-    def _step_text(index: int, step: Any) -> str:
-        if not isinstance(step, Mapping):
-            dump = getattr(step, "model_dump", None)
-            step = dump() if callable(dump) else {"name": str(step)}
-        name = str(step.get("name") or f"Step {index}")
-        description = " ".join(str(step.get("description") or "").split())
-        return f"{index}. {name}" + (f": {description}" if description else "")
-
-    @staticmethod
-    def _truncate_middle(text: str, width: int) -> str:
-        if cell_len(text) <= width:
-            return text
-        marker = " … truncated … "
-        available = width - cell_len(marker)
-        left = (available + 1) // 2
-        right = available // 2
-        prefix = chop_cells(text, left)[0]
-        suffix = chop_cells(text[::-1], right)[0][::-1]
-        return f"{prefix} _… truncated …_ {suffix}"
-
     def _step_width(self) -> int:
         """Use the complete rendered row, minus Markdown's list indentation."""
         markdown_width = self.query_one(Markdown).content_size.width
@@ -130,7 +109,7 @@ class PlanCard(EventCard):
             ]
         if not self.expanded:
             width = self._step_width()
-            visible = [self._truncate_middle(step, width) for step in visible]
+            visible = [_truncate_middle(step, width) for step in visible]
 
         body = [f"**{self.label}**  "]
         status_indent = " "

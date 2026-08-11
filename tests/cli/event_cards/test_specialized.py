@@ -1,0 +1,79 @@
+from textual.containers import VerticalScroll
+
+from tests.cli._app_fakes import FakeHITL
+from ursa.cli.app import UrsaTextualApp
+from ursa.cli.event_cards import AgentEventCard, ArtifactCard, SearchEventCard
+from ursa.cli.turn import Turn
+
+
+async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("investigate", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        await turn.event({
+            "agent": "HypothesizerAgent",
+            "stage": "generate",
+            "message": "Generating hypotheses",
+        })
+        await turn.event({
+            "agent": "HypothesizerAgent",
+            "stage": "critique_result",
+            "message": "Critiqued hypotheses",
+            "preview": "The second hypothesis survives.",
+        })
+        await turn.event({
+            "agent": "HypothesizerAgent",
+            "stage": "finalize_result",
+            "message": "Finalized hypotheses",
+            "artifact": {
+                "content": "# Final hypothesis",
+                "mime_type": "text/markdown",
+                "metadata": {"title": "Hypothesis"},
+            },
+        })
+        await pilot.pause()
+
+        agent_cards = list(turn.query(AgentEventCard))
+        assert len(agent_cards) == 1
+        assert len(agent_cards[0].lines) == 3
+        assert agent_cards[0].details == ["The second hypothesis survives."]
+        assert len(turn.query(ArtifactCard)) == 1
+
+
+async def test_search_and_lammps_events_render_specialized_details(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("search then simulate", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        await turn.event({
+            "tool": "run_web_search",
+            "stage": "search_result",
+            "phase": "end",
+            "message": "Web search complete",
+            "query": "ursa events",
+            "result_chars": 2048,
+        })
+        await turn.event({
+            "agent": "LammpsAgent",
+            "stage": "choose_potential",
+            "phase": "end",
+            "message": "Selected potential",
+            "potential_id": "Ni_u3.eam",
+            "chosen_index": 2,
+            "rationale": "Best match for nickel.",
+            "output_path": "runs/ni",
+        })
+        await pilot.pause()
+
+        search = turn.query_one(SearchEventCard)
+        assert len(search.lines) == 1
+        assert "ursa events" in search.lines[0]
+        assert search.details == ["2,048 result characters"]
+        lammps = turn.query_one(AgentEventCard)
+        assert len(lammps.lines) == 1
+        assert "Ni_u3.eam" in lammps.details[0]
+        assert "Best match for nickel." in lammps.details[0]
+        assert "Output: runs/ni" in lammps.details[0]
