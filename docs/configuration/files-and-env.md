@@ -16,18 +16,8 @@ URSA loads configuration in this order, with later sources overriding earlier on
 4. Environment variables
 5. CLI flags
 
-This precedence order is unchanged by sparse merging. Each source contributes
-only the keys it explicitly sets: an absent key leaves the lower-precedence
-value alone, while an explicit `null` clears a nullable value. For example, a
-project config can clear a user-level custom endpoint with:
-
-```yaml
-llm_model:
-  base_url: null
-```
-
-Non-nullable settings still require their declared type. In particular,
-`ssl_verify` is a boolean, defaults to `true`, and does not accept `null`.
+Higher-precedence sources only override settings they specify. Set a nullable
+setting to `null` to clear it.
 
 See the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)
 for background on XDG-compliant config locations.
@@ -136,15 +126,12 @@ To see non-default values before final resolution:
 ursa --print-config=merged
 ```
 
-Without a suffix, a level selects only that source. Add `+` to include all lower-precedence sources through that level:
+Without a suffix, a level selects only that source:
 
 ```bash
 ursa --print-config=user,merged
 ursa --print-config=project,merged
-ursa --print-config=project+,resolved
 ursa --print-config=file,resolved
-ursa --print-config=file+,resolved
-ursa --print-config=final,resolved
 ```
 
 Levels are:
@@ -154,10 +141,9 @@ Levels are:
 - `file`: only the file passed with `--config`
 - `final`: all files plus environment and CLI overrides
 
-For example, `project,resolved` resolves the project file by itself, while `project+,resolved` first merges the XDG configuration and project file. The cumulative form is useful when a project selects an inference provider defined in the user configuration. `final` is already cumulative. Stages are `merged` and `resolved`.
+Add `+` to include lower-precedence sources. For example, use
+`--print-config=project+,resolved` when a project selects a provider defined in
+the user config. Stages are `merged` and `resolved`.
 
-Resolved output materializes inherited provider fields and omits the consumed `inference_provider` name. Use merged output when you need to see which provider name a model selected. `ssl_verify` is always boolean after parsing; if omitted from a model, it inherits the provider value or defaults to `true`.
-
-Resolution can also materialize derived values. For example, `workspace: tmp`
-may appear as the allocated temporary-directory path in resolved output; merged
-output retains the configured value.
+Resolved output shows effective non-default settings. Merged output shows the
+configuration before provider inheritance and other resolution steps.
