@@ -108,19 +108,11 @@ For detailed commands to list, save, copy, share, import, and delete agents, see
 ursa --help
 ursa --print-config
 ursa --print-config=merged
-ursa --print-config=project+,resolved
 ursa --print-config=file,resolved
 ursa --config config.yaml
 ursa --config config.yaml --name my-agent
 ursa --config config.yaml --use-web
 ```
-
-Configuration sources remain ordered from user files through project and
-explicit files to environment variables and CLI flags. Sources are sparse: an
-omitted key leaves a lower-precedence value unchanged, while `null` clears a
-nullable setting. For model provider settings, omission means inheritance.
-`ssl_verify` is a boolean that defaults to `true`; use `true` or `false`, not
-`null`.
 
 Web tools are opt in. Use `--use-web` or `use_web: true` only when you want
 URSA to make network requests through its web-search tools. The top-level
