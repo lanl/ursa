@@ -5,10 +5,10 @@ from uuid import uuid4
 
 from langchain.chat_models import init_chat_model
 
-from ursa.agents import PlanningExecutionAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer
 from ursa.util.events import configure_event_logging
+from ursa.workflows import PlanningExecutionAgent
 
 configure_event_logging()
 

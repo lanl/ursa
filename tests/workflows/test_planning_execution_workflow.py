@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -11,15 +12,16 @@ from tests.composite_helpers import (
     CompositeFakeModel,
     request_text,
 )
-from ursa.agents.planning_agent import Plan, PlanStep
-from ursa.agents.planning_execution_agent import PlanningExecutionAgent
+from ursa.agents.execution_agent import ExecutionAgent
+from ursa.agents.planning_agent import Plan, PlanningAgent, PlanStep
 from ursa.util import Checkpointer
 from ursa.workflows.planning_execution_workflow import (
+    PlanningExecutionAgent,
     PlanningExecutorWorkflow,
 )
 
 
-def test_composite_uses_native_subgraphs_and_hands_off_step_context(tmp_path):
+def test_composite_uses_child_agent_nodes_and_hands_off_step_context(tmp_path):
     model = CompositeFakeModel()
     agent = PlanningExecutionAgent(
         llm=model,
@@ -30,6 +32,8 @@ def test_composite_uses_native_subgraphs_and_hands_off_step_context(tmp_path):
 
     state = agent.invoke("Solve this task")
 
+    assert isinstance(agent.planner_agent, PlanningAgent)
+    assert isinstance(agent.execution_agent, ExecutionAgent)
     assert agent.format_result(state) == "step-2-summary"
     assert state["step_idx"] == 2
     assert state["step_results"] == ["step-1-summary", "step-2-summary"]
@@ -61,7 +65,7 @@ def test_composite_uses_native_subgraphs_and_hands_off_step_context(tmp_path):
     agent.close()
 
 
-def test_parent_checkpointer_owns_isolated_native_subgraph_namespaces(
+def test_parent_checkpointer_owns_isolated_child_agent_namespaces(
     tmp_path: Path,
 ):
     checkpointer = Checkpointer.from_workspace(tmp_path)
@@ -84,6 +88,12 @@ def test_parent_checkpointer_owns_isolated_native_subgraph_namespaces(
     ).fetchall()
     assert {row[0] for row in namespaces} == {"", "planner", "executor"}
     assert agent.checkpointer is checkpointer
+    assert {
+        item.key
+        for item in agent.storage.search(
+            ("workspace", "safe_codes"), limit=1000
+        )
+    } == {"python", "julia"}
     agent.close()
 
 
@@ -248,14 +258,36 @@ def test_interrupted_tool_resumes_without_repeating_non_idempotent_work(
     agent.close()
 
 
-def test_compatibility_name_is_the_composite_and_rejects_child_injection(
+def test_deprecated_workflow_preserves_child_injection_and_string_result(
     tmp_path,
 ):
-    assert PlanningExecutorWorkflow is PlanningExecutionAgent
-    with pytest.raises(TypeError):
-        PlanningExecutorWorkflow(
-            llm=CompositeFakeModel(),
-            planner=object(),
-            executor=object(),
+    config = {"configurable": {"thread_id": "legacy"}}
+
+    class Planner:
+        calls = []
+
+        def invoke(self, prompt, *, config):
+            self.calls.append((prompt, config))
+            return {"plan": SimpleNamespace(steps=["first", "second"])}
+
+    class Executor:
+        calls = []
+
+        def invoke(self, prompt, *, config):
+            self.calls.append((prompt, config))
+            summary = f"summary-{len(self.calls)}"
+            return {"messages": [AIMessage(content=summary)]}
+
+    planner = Planner()
+    executor = Executor()
+    with pytest.warns(DeprecationWarning, match="PlanningExecutionAgent"):
+        workflow = PlanningExecutorWorkflow(
+            planner=planner,
+            executor=executor,
             workspace=tmp_path,
         )
+
+    assert workflow.invoke("legacy task", config=config) == "summary-2"
+    assert planner.calls[0][1] == config
+    assert [call[1] for call in executor.calls] == [config, config]
+    assert "Previous-step summary:\nsummary-1" in executor.calls[1][0]

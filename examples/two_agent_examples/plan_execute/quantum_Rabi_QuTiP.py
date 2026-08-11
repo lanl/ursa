@@ -1,7 +1,7 @@
 from langchain.chat_models import init_chat_model
 
-from ursa.agents import PlanningExecutionAgent
 from ursa.util.events import configure_event_logging
+from ursa.workflows import PlanningExecutionAgent
 
 configure_event_logging()
 

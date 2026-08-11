@@ -7,10 +7,10 @@ from rich import get_console
 from rich.panel import Panel
 from rich.text import Text
 
-from ursa.agents import PlanningExecutionAgent
 from ursa.observability.timing import render_session_summary
 from ursa.util import Checkpointer
 from ursa.util.events import configure_event_logging
+from ursa.workflows import PlanningExecutionAgent
 
 configure_event_logging()
 console = get_console()

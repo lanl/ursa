@@ -6,15 +6,15 @@ from typing import Any, Literal, cast
 
 from langchain.chat_models import BaseChatModel
 from langgraph.constants import END
-from langgraph.graph.state import StateGraph
 from langgraph.types import Command
 
-from ursa.agents.base import AgentContext
 from ursa.agents.hypothesizer_agent import (
-    HypothesizerGraphMixin,
+    DEFAULT_HYPOTHESIS_EXPERIENCE,
+    HypothesizerAgent,
     HypothesizerState,
 )
-from ursa.agents.planning_execution_agent import (
+from ursa.agents.planning_agent import PlanningState
+from ursa.workflows.planning_execution_workflow import (
     PlanExecuteState,
     PlanningExecutionAgent,
 )
@@ -23,27 +23,41 @@ from ursa.agents.planning_execution_agent import (
 class ThinkPlanExecuteState(PlanExecuteState, HypothesizerState, total=False):
     """Parent state shared with the planner, executor, and hypothesizer."""
 
+    hypothesis: str
     hypothesis_phase: Literal["initial", "results"]
 
 
-class ThinkPlanningExecutionAgent(
-    HypothesizerGraphMixin, PlanningExecutionAgent
-):
+class ThinkPlanningExecutionAgent(PlanningExecutionAgent):
     """Build, investigate, and revise a durable hypothesis space.
 
-    One parent runtime embeds URSA's hypothesizer, planner, and executor as
-    native checkpointed subgraphs. The hypothesizer first initializes or updates
-    its durable hypothesis space from the current user request. The planner then
-    creates a plan guided by that space, the executor performs each step, and
-    the resulting step summaries are sent through the hypothesizer again as new
-    evidence.
+    One parent runtime adapts URSA's hypothesizer, planner, and executor agents
+    into checkpointed child nodes. The hypothesizer first initializes or
+    updates its durable hypothesis space from the current user request. The
+    planner then creates a plan guided by that space, the executor performs each
+    step, and the resulting summaries return to the hypothesizer as new evidence.
     """
 
     state_type = ThinkPlanExecuteState
 
-    # HypothesizerGraphMixin also supports use as a standalone agent. In this
-    # composite, public input and follow-up formatting must retain the parent
-    # planning/execution contract.
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        experience_filename: str = DEFAULT_HYPOTHESIS_EXPERIENCE,
+        **kwargs: Any,
+    ) -> None:
+        # The graph is built during BaseAgent initialization, so this adapter
+        # setting must be available before the parent constructor runs.
+        self.experience_filename = (
+            HypothesizerAgent._validate_experience_filename(experience_filename)
+        )
+        super().__init__(llm, **kwargs)
+
+    @staticmethod
+    def _hypothesis_text(value: Any) -> str:
+        return HypothesizerAgent._response_text(value)
+
+    # Public input and follow-up formatting retain the parent workflow contract;
+    # adapters isolate the standalone child-agent contracts inside the graph.
     def _normalize_inputs(self, inputs: Any) -> dict[str, Any] | Command:
         return PlanningExecutionAgent._normalize_inputs(self, inputs)
 
@@ -58,7 +72,7 @@ class ThinkPlanningExecutionAgent(
         )
 
     def format_result(self, state: ThinkPlanExecuteState) -> str:
-        artifact = self._response_text(
+        artifact = self._hypothesis_text(
             state.get("hypothesis_space_markdown", "")
         )
         if artifact:
@@ -72,7 +86,7 @@ class ThinkPlanningExecutionAgent(
         self, state: ThinkPlanExecuteState
     ) -> ThinkPlanExecuteState:
         task = state["task"]
-        prior_artifact = self._response_text(
+        prior_artifact = self._hypothesis_text(
             state.get("hypothesis_space_markdown", "")
         )
         # A follow-up is new evidence for the original question rather than an
@@ -140,7 +154,7 @@ class ThinkPlanningExecutionAgent(
     def _adopt_hypothesis_space(
         self, state: ThinkPlanExecuteState
     ) -> ThinkPlanExecuteState:
-        artifact = self._response_text(
+        artifact = self._hypothesis_text(
             state.get("hypothesis_space_markdown", "")
         )
         if not artifact:
@@ -161,19 +175,62 @@ class ThinkPlanningExecutionAgent(
             return "END"
         raise ValueError(f"Unknown hypothesis update phase: {phase!r}.")
 
+    @staticmethod
+    def _hypothesizer_input(
+        state: ThinkPlanExecuteState,
+    ) -> HypothesizerState:
+        """Expose only the hypothesis-maintenance contract to the child."""
+        return cast(
+            HypothesizerState,
+            {
+                key: state[key]
+                for key in HypothesizerState.__annotations__
+                if key in state
+            },
+        )
+
+    @staticmethod
+    def _hypothesizer_output(
+        state: HypothesizerState,
+    ) -> ThinkPlanExecuteState:
+        """Map the child artifact state back into the composite state."""
+        return cast(ThinkPlanExecuteState, dict(state))
+
+    def _planner_input(self, state: ThinkPlanExecuteState) -> PlanningState:
+        planner_state = super()._planner_input(state)
+        planner_state["hypothesis"] = state.get("hypothesis", "")
+        return planner_state
+
+    def _step_prompt(self, state: ThinkPlanExecuteState) -> str:
+        prompt = super()._step_prompt(state)
+        hypothesis = str(state.get("hypothesis", "") or "").strip()
+        if not hypothesis:
+            return prompt
+        return f"Hypothesis to test or refine:\n{hypothesis}\n\n{prompt}"
+
     def _connect_pre_planner_nodes(self) -> None:
-        hypothesizer_builder = StateGraph(
-            self.state_type, context_schema=AgentContext
-        )
-        self._populate_hypothesizer_graph(hypothesizer_builder)
-        hypothesizer_subgraph = hypothesizer_builder.compile(
-            checkpointer=True, name="hypothesizer"
-        )
+        if not hasattr(self, "hypothesizer_agent"):
+            self.hypothesizer_agent = HypothesizerAgent(
+                self._child_llm_source,
+                # The child does not own persistence. Point its artifact
+                # directory at the parent's den while LangGraph owns
+                # checkpoint persistence.
+                workspace=self.den,
+                group=self.group,
+                thread_id=self.thread_id,
+                experience_filename=self.experience_filename,
+                enable_metrics=False,
+            )
 
         self.add_node(
             self._prepare_initial_hypothesis, "prepare_initial_hypothesis"
         )
-        self.add_node(hypothesizer_subgraph, "hypothesizer")
+        self.add_agent_node(
+            "hypothesizer",
+            self.hypothesizer_agent,
+            input_fn=self._hypothesizer_input,
+            output_fn=self._hypothesizer_output,
+        )
         self.add_node(self._adopt_hypothesis_space, "adopt_hypothesis_space")
         self.add_node(
             self._prepare_results_hypothesis_update,

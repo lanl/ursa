@@ -125,7 +125,7 @@ def test_planning_execution_registry_uses_one_base_agent_runtime(
     agent = adapter._agent_factory(tmp_path, "solve this")
     assert isinstance(agent, FakePlanningExecutionAgent)
     assert captured["class_path"] == (
-        "ursa.agents.planning_execution_agent.PlanningExecutionAgent"
+        "ursa.workflows.planning_execution_workflow.PlanningExecutionAgent"
     )
     assert captured["llm"] is model
     assert captured["workspace"] == str(tmp_path)

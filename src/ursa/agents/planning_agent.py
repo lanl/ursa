@@ -78,6 +78,7 @@ class PlanningState(TypedDict, total=False):
     """State dictionary for planning agent"""
 
     task: str
+    hypothesis: str
     plan: Plan
     review: str
     messages: Annotated[list, add_messages]

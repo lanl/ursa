@@ -7,6 +7,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 
 from tests.composite_helpers import CompositeFakeModel, request_text
+from ursa.agents.hypothesizer_agent import HypothesizerAgent
 from ursa.util import Checkpointer
 from ursa.workflows.think_plan_execute import (
     ThinkPlanningExecutionAgent,
@@ -68,6 +69,7 @@ def test_think_plan_execute_uses_ursa_hypothesizer_before_and_after_plan(
 
     state = agent.invoke("Investigate the system")
 
+    assert isinstance(agent.hypothesizer_agent, HypothesizerAgent)
     assert state["hypothesis"] == UPDATED_HYPOTHESIS_SPACE.strip()
     assert state["hypothesis_space_markdown"] == (
         UPDATED_HYPOTHESIS_SPACE.strip()

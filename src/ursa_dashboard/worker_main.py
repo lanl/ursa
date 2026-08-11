@@ -7,12 +7,50 @@ import logging
 import os
 import sys
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from ursa.util.http import inject_truststore_into_ssl
 
 logger = logging.getLogger(__name__)
+
+
+def _agent_with_tools_targets(root: Any) -> list[Any]:
+    """Return tool-capable agents reachable through workflow composition.
+
+    ``BaseAgent.add_agent_node`` exposes composed children through
+    ``agent_nodes``. The attribute fallbacks retain compatibility with older
+    workflow objects while registrations migrate to the generic interface.
+    """
+    from ursa.agents.base import AgentWithTools  # type: ignore
+
+    targets: list[Any] = []
+    pending = [root]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+
+        if isinstance(current, AgentWithTools):
+            targets.append(current)
+
+        children = getattr(current, "agent_nodes", None)
+        if isinstance(children, Mapping):
+            pending.extend(children.values())
+        elif isinstance(children, (list, tuple, set)):
+            pending.extend(children)
+
+        for attribute in ("executor", "execution_agent"):
+            child = getattr(current, attribute, None)
+            if child is not None:
+                pending.append(child)
+
+    return targets
+
 
 _UNSET = object()
 
@@ -268,32 +306,10 @@ def main() -> int:
         if mcp_enabled and isinstance(mcp_servers, dict) and mcp_servers:
 
             async def _attach_mcp_tools(agent_obj: Any) -> None:
-                from ursa.agents.base import AgentWithTools  # type: ignore
                 from ursa.util.mcp import start_mcp_client  # type: ignore
 
                 client = start_mcp_client(mcp_servers)
-
-                def _targets(root: Any) -> list[Any]:
-                    t: list[Any] = []
-                    seen: set[int] = set()
-
-                    def add(x: Any) -> None:
-                        if x is None:
-                            return
-                        ix = id(x)
-                        if ix in seen:
-                            return
-                        seen.add(ix)
-                        t.append(x)
-
-                    if isinstance(root, AgentWithTools):
-                        add(root)
-                    ex = getattr(root, "executor", None)
-                    if ex is not None and isinstance(ex, AgentWithTools):
-                        add(ex)
-                    return t
-
-                targets = _targets(agent_obj)
+                targets = _agent_with_tools_targets(agent_obj)
                 if not targets:
                     logger.warning(
                         "No compatible AgentWithTools target found; "
