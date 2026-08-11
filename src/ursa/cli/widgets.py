@@ -433,7 +433,8 @@ class WelcomeBanner(Vertical):
         self.hitl = hitl
         workspace = Path(self.hitl.workspace).resolve()
         try:
-            self.workspace_text = f"~/{workspace.relative_to(Path.home())}"
+            relative = workspace.relative_to(Path.home())
+            self.workspace_text = str(Path("~") / relative)
         except ValueError:
             self.workspace_text = str(workspace)
         self.version_text = f"v{URSA_VERSION}"

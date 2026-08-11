@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -201,8 +202,8 @@ async def test_file_hotlist_uses_at_trigger(tmp_path):
         await pilot.pause()
         assert isinstance(app.screen, HotlistScreen)
         assert app.screen.candidates == [
-            "docs/",
-            "docs/guide.md",
+            f"{Path('docs')}{os.sep}",
+            str(Path("docs/guide.md")),
             "notes.md",
         ]
         options = app.screen.query_one("#hotlist-options")
@@ -218,9 +219,10 @@ async def test_file_hotlist_uses_at_trigger(tmp_path):
 
         prompt.load_text("")
         await pilot.press("@")
+        await pilot.pause()
         await pilot.press("d", "o", "c", "s", "enter")
         await pilot.pause()
-        assert prompt.text == "@docs/ "
+        assert prompt.text == f"@{Path('docs')}{os.sep} "
 
 
 async def test_shift_enter_adds_a_prompt_newline(tmp_path):
@@ -288,11 +290,17 @@ async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
         assert prompt.region.height == 3  # One content row plus the border.
 
         prompt.load_text("\n".join(str(index) for index in range(30)))
-        await pilot.pause()
+        for _ in range(3):
+            await pilot.pause()
+            if prompt.region.height == 13:
+                break
         assert prompt.region.height == 13  # ceil(36 * 0.3) plus the border.
 
         await pilot.resize_terminal(100, 20)
-        await pilot.pause()
+        for _ in range(3):
+            await pilot.pause()
+            if prompt.region.height == 8:
+                break
         assert prompt.region.height == 8  # ceil(20 * 0.3) plus the border.
 
 
@@ -302,7 +310,10 @@ async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
     async with app.run_test(size=(40, 24)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("word " * 40)
-        await pilot.pause()
+        for _ in range(3):
+            await pilot.pause()
+            if prompt.region.height > 3:
+                break
 
         assert prompt.virtual_size.height > 1
         assert prompt.region.height == min(8, prompt.virtual_size.height) + 2
