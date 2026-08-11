@@ -1,7 +1,8 @@
 import logging
 import sys
+from os import getenv
 from pathlib import Path
-from warnings import filterwarnings
+from warnings import filterwarnings, warn
 
 from jsonargparse import ArgumentParser, set_parsing_settings
 
@@ -31,9 +32,10 @@ from ursa.cli.groups import (
     show_group,
     update_group,
 )
-from ursa.cli.print_config import print_config
+from ursa.cli.print_config import add_print_config_argument, print_config
 from ursa.cli.rag_management import (
     RAG_COMMANDS,
+    RAG_METADATA_COMMANDS,
     add_rag_subcommands,
     handle_rag_command,
 )
@@ -66,20 +68,7 @@ def build_parser() -> ArgumentParser:
         ),
     )
     parser.add_argument("--log-level", default="error", type=LoggingLevel)
-    parser.add_argument(
-        "--print-config",
-        nargs="?",
-        const="resolved",
-        default=None,
-        type=str,
-        help=(
-            "Print configuration and exit. Defaults to resolved output. "
-            "Accepted forms: --print-config, --print-config=resolved, "
-            "--print-config=merged, or --print-config=LEVEL,STAGE where "
-            "LEVEL is one of final, file, project, user (optionally suffixed "
-            "with + for cumulative input) and STAGE is merged or resolved."
-        ),
-    )
+    add_print_config_argument(parser)
     parser.add_class_arguments(
         UrsaConfig,
         help="URSA configuration",
@@ -147,15 +136,19 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def resolve_config(cfg, overrides) -> UrsaConfig:
+def resolve_config(cfg, overrides, *, group: str | None = None) -> UrsaConfig:
     """Produce the fully resolved UrsaConfig from the parsed arguments.
 
     This function merges configuration layers in precedence order and then
     applies derived resolution semantics such as temporary workspace
-    materialization, top-level ``use_web`` promotion into ``agent_config``,
-    and group-based model endpoint policy enforcement.
+    materialization, top-level ``use_web`` promotion into ``agent_config``, and
+    group-based endpoint policy enforcement. Consumers with a more specific
+    effective group supply it before resolution.
     """
-    return resolve_ursa_config(merge_ursa_config(cfg, overrides=overrides))
+    merged = merge_ursa_config(cfg, overrides=overrides)
+    if group is not None:
+        merged = merged.model_copy(update={"group": group})
+    return resolve_ursa_config(merged)
 
 
 def _initialize_hitl(config: UrsaConfig):
@@ -174,6 +167,22 @@ def _initialize_hitl(config: UrsaConfig):
         raise SystemExit(2) from None
 
 
+def _apply_legacy_name_env(cfg, overrides) -> None:
+    """Apply deprecated ``URSA_NAME`` when no modern name override is set."""
+    legacy_name = getenv("URSA_NAME")
+    if legacy_name is None:
+        return
+
+    warn(
+        "URSA_NAME is deprecated; use URSA_AGENT_NAME or --name instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
+    if overrides.get("agent_name", None) is None:
+        cfg["agent_name"] = legacy_name
+        overrides["agent_name"] = legacy_name
+
+
 def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
@@ -182,6 +191,7 @@ def main(args=None):
 
     subcommand = cfg.get("subcommand", None)
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
+    _apply_legacy_name_env(cfg, overrides)
 
     match subcommand:
         case "list-groups":
@@ -241,8 +251,13 @@ def main(args=None):
             )
             return
 
+    if subcommand in RAG_METADATA_COMMANDS:
+        if handle_rag_command(cfg):
+            return
+
     if subcommand in RAG_COMMANDS:
-        ursa_config = resolve_config(cfg, overrides)
+        cmd_config = cfg.get(subcommand, None)
+        ursa_config = resolve_config(cfg, overrides, group=cmd_config.group)
         if handle_rag_command(cfg, ursa_config):
             return
 
@@ -272,9 +287,7 @@ def main(args=None):
             UrsaRepl(hitl).run()
 
         case "mcp-server":
-            from ursa.cli.hitl import HITL
-
-            hitl = HITL(ursa_config)
+            hitl = _initialize_hitl(ursa_config)
             mcp = hitl.as_mcp_server()
 
             run_kwargs = {
@@ -286,10 +299,10 @@ def main(args=None):
                 run_kwargs["port"] = cmd_config.port
             mcp.run(**run_kwargs)
         case "exec":
-            from ursa.cli.hitl import UrsaExec
+            from ursa.cli.hitl import UrsaRepl
 
             hitl = _initialize_hitl(ursa_config)
-            UrsaExec(hitl).run([cmd_config.prompt])
+            UrsaRepl(hitl).run_prompt(cmd_config.prompt)
         case _:
             logging.error(f"Unknown subcommand {subcommand}")
             raise NotImplementedError

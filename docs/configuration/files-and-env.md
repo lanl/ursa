@@ -11,10 +11,9 @@ variables for secrets or automation.
 URSA loads configuration in this order, with later sources overriding earlier ones:
 
 1. XDG-compliant user config, typically `~/.config/ursa/config.yaml`
-2. Project-local `./.ursa/config.yaml`
-3. The file passed to `--config`
-4. Environment variables
-5. CLI flags
+2. The file passed to `--config`
+3. Environment variables
+4. CLI flags
 
 Higher-precedence sources only override settings they specify. Set a nullable
 setting to `null` to clear it.
@@ -113,14 +112,15 @@ mcp_servers:
 
 ## Inspect the active configuration
 
-By default, `--print-config` prints non-default values from the resolved final configuration. Null and default-valued fields are omitted:
+By default, `--print-config` prints the full resolved final configuration,
+including default and null values:
 
 ```bash
 ursa --print-config
 ursa --print-config=resolved
 ```
 
-To see non-default values before final resolution:
+To see the full configuration before final resolution:
 
 ```bash
 ursa --print-config=merged
@@ -130,20 +130,20 @@ Without a suffix, a level selects only that source:
 
 ```bash
 ursa --print-config=user,merged
-ursa --print-config=project,merged
-ursa --print-config=file,resolved
+ursa --config ./.ursa/config.yaml --print-config=file,resolved
 ```
 
 Levels are:
 
 - `user`: XDG configuration files
-- `project`: only `./.ursa/config.yaml`
 - `file`: only the file passed with `--config`
 - `final`: all files plus environment and CLI overrides
 
 Add `+` to include lower-precedence sources. For example, use
-`--print-config=project+,resolved` when a project selects a provider defined in
-the user config. Stages are `merged` and `resolved`.
+`ursa --config ./.ursa/config.yaml --print-config=file+,resolved` when an
+explicit file selects a provider defined in the user config. Stages are
+`merged` and `resolved`.
 
-Resolved output shows effective non-default settings. Merged output shows the
-configuration before provider inheritance and other resolution steps.
+Resolved output shows the complete effective configuration. Merged output shows
+the complete configuration before provider inheritance and other resolution
+steps.

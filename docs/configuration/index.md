@@ -6,11 +6,9 @@ URSA configuration has two useful views:
 - **merged config**: the result of applying configuration layers in precedence order
 - **resolved config**: the merged config plus derived behavior.
 
-URSA can also be configured with CLI flags and environment variables, but the recommended order is:
-
-1. **YAML configuration files** for reusable project settings.
-2. **CLI arguments** for one-off overrides.
-3. **Environment variables** mainly for secrets and automation.
+URSA also accepts CLI flags and environment variables. See
+[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+for the authoritative precedence order.
 
 ## Minimal config file
 
@@ -52,7 +50,9 @@ Use:
 ursa --print-config
 ```
 
-to inspect active, non-default resolved settings. Use `ursa --print-config=merged` to inspect non-default settings before resolution.
+to inspect the full resolved configuration, including defaults and null values.
+Use `ursa --print-config=merged` to inspect the full configuration before
+resolution.
 
 ## Model configuration
 
@@ -132,9 +132,13 @@ The selected provider must exist in `inference_providers`. Omit a model setting
 to inherit it from the provider. For nullable settings, use `null` to clear an
 inherited value.
 
-### Managing multiple inference providers across config layers
+### Sharing inference providers across configuration files
 
-`inference_providers` works especially well with URSA's layered configuration. A user-level config can define the available providers once, while a project-local config can choose which provider or model to use for that project, or override the API key environment variable for billing or access control purposes. See [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables] for how those layers are merged.
+`inference_providers` works especially well with URSA's layered configuration.
+A user-level config can define the available providers once, while a file passed
+with `--config` can choose a provider or model for a particular project. See
+[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+for how those sources are merged.
 
 For example, a user config might define reusable providers:
 
@@ -151,7 +155,8 @@ llm_model:
   inference_provider: openai_personal
 ```
 
-Then a project-local config can switch billing or model selection without redefining the provider details:
+Then an explicitly selected config file can switch billing or model selection
+without redefining the provider details:
 
 ```yaml
 llm_model:
@@ -159,7 +164,9 @@ llm_model:
   inference_provider: openai_project
 ```
 
-This pattern lets you keep a stable catalog of providers in user config while allowing each project to select the right provider, API key, or model.
+Pass that file with `ursa --config ./.ursa/config.yaml`. This keeps a stable
+provider catalog in user config while allowing each invocation to select the
+right provider, API key, or model.
 
 ## `use_web` and `agent_config`
 

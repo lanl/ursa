@@ -17,7 +17,9 @@ ursa rag-query --help
 
 ## Common top-level commands
 
-URSA merges configuration from XDG-compliant user config, project-local config, `--config`, and CLI flags, in that order.
+URSA can combine configuration files, environment variables, and CLI flags.
+See [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+for the authoritative precedence order.
 
 ```bash
 ursa --config config.yaml

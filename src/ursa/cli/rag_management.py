@@ -18,17 +18,17 @@ from ursa.rag.persistence import (
     validate_rag_agent_name,
 )
 from ursa.security import (
+    enforce_group_base_url_policy,
     enforce_model_group_policy,
 )
 
-RAG_COMMANDS = {
-    "rag-ingest",
-    "rag-query",
+RAG_METADATA_COMMANDS = {
     "list-rag-agents",
     "show-rag-agent",
     "delete-rag-agent",
     "save-rag-agent",
 }
+RAG_COMMANDS = {"rag-ingest", "rag-query", *RAG_METADATA_COMMANDS}
 
 
 def add_rag_subcommands(subparsers) -> None:
@@ -137,10 +137,12 @@ def _init_models(
         else _model_config_from_namespace(root_args)
     )
     group = getattr(cmd_args, "group", "default") or "default"
+    enforce_group_base_url_policy(llm_model.base_url, group)
     llm = llm_model.init_chat_model()
     enforce_model_group_policy(llm, group)
     embedding = None
     if emb_model is not None:
+        enforce_group_base_url_policy(emb_model.base_url, group)
         embedding = emb_model.init_embedding()
         enforce_model_group_policy(embedding, group)
     return llm, embedding

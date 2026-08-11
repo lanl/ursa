@@ -1,29 +1,15 @@
 from __future__ import annotations
 
 import yaml
+from jsonargparse import ArgumentParser
 
 from ursa.cli.config import (
-    UrsaConfig,
-    dict_diff,
     merge_ursa_config,
     resolve_ursa_config,
 )
 
-VALID_PRINT_CONFIG_LEVELS = {"final", "file", "project", "user"}
+VALID_PRINT_CONFIG_LEVELS = {"final", "file", "user"}
 VALID_PRINT_CONFIG_STAGES = {"merged", "resolved"}
-
-
-def _drop_none(value):
-    """Recursively omit null values from serialized configuration."""
-    if isinstance(value, dict):
-        return {
-            key: _drop_none(item)
-            for key, item in value.items()
-            if item is not None
-        }
-    if isinstance(value, list):
-        return [_drop_none(item) for item in value if item is not None]
-    return value
 
 
 def parse_print_config_spec(spec: str | None) -> tuple[str, str] | None:
@@ -48,6 +34,30 @@ def parse_print_config_spec(spec: str | None) -> tuple[str, str] | None:
     return level, stage
 
 
+def _validate_print_config_spec(spec: str) -> str:
+    """Validate a print-config value while preserving its CLI representation."""
+    parse_print_config_spec(spec)
+    return spec
+
+
+def add_print_config_argument(parser: ArgumentParser) -> None:
+    """Register the validated ``--print-config`` CLI option."""
+    parser.add_argument(
+        "--print-config",
+        nargs="?",
+        const="resolved",
+        default=None,
+        type=_validate_print_config_spec,
+        help=(
+            "Print configuration and exit. Defaults to resolved output. "
+            "Accepted forms: --print-config, --print-config=resolved, "
+            "--print-config=merged, or --print-config=LEVEL,STAGE where "
+            "LEVEL is one of final, file, user (optionally suffixed with + "
+            "for cumulative input) and STAGE is merged or resolved."
+        ),
+    )
+
+
 def print_config(cfg, overrides) -> bool:
     """Print config according to --print-config and return whether it handled output."""
     print_config_spec = parse_print_config_spec(cfg["print_config"])
@@ -55,17 +65,12 @@ def print_config(cfg, overrides) -> bool:
         return False
     level, stage = print_config_spec
     config = merge_ursa_config(cfg, level, overrides)
-    reference = UrsaConfig()
     if stage == "resolved":
         config = resolve_ursa_config(config)
-        reference = resolve_ursa_config(reference)
-    output = _drop_none(
-        dict_diff(
-            reference.model_dump(exclude_none=True),
-            config.model_dump(exclude_none=True),
-        )
-    )
     print(  # noqa: T201
-        yaml.safe_dump(output, sort_keys=False)
+        yaml.safe_dump(
+            config.model_dump(mode="json", context={"include_defaults": True}),
+            sort_keys=False,
+        )
     )
     return True

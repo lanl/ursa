@@ -1,10 +1,13 @@
+import gc
 import importlib
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from jsonargparse import Namespace
 from openai import OpenAIError
+from pydantic import ValidationError
 
 from ursa.cli import (
     build_parser,
@@ -17,6 +20,7 @@ from ursa.cli.config import (
     ModelConfig,
     UrsaConfig,
     config_search_paths,
+    load_config_file,
     merge_ursa_config,
     resolve_ursa_config,
     xdg_config_search_paths,
@@ -44,9 +48,12 @@ def _stub_mcp_server(monkeypatch):
 
 
 def _stub_cli_repl(monkeypatch):
-    monkeypatch.setattr("ursa.cli.hitl.HITL", MagicMock())
-    monkeypatch.setattr("ursa.cli.hitl.UrsaRepl", MagicMock())
+    hitl_class = MagicMock()
+    repl_class = MagicMock()
+    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.hitl.UrsaRepl", repl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    return hitl_class, repl_class
 
 
 def _parse_config_args(parser, args):
@@ -105,8 +112,9 @@ def test_cli_does_not_warn_without_legacy_checkpoint(
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize("args", [[], ["mcp-server"]])
 def test_cli_reports_model_initialization_error_without_traceback(
-    monkeypatch, capsys
+    monkeypatch, capsys, args
 ):
     error = OpenAIError(
         "The api_key client option must be set by setting the "
@@ -116,12 +124,106 @@ def test_cli_reports_model_initialization_error_without_traceback(
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     with pytest.raises(SystemExit, match="2"):
-        main([])
+        main(args)
 
     stderr = capsys.readouterr().err
     assert stderr.startswith("Error: unable to initialize the language model.")
     assert "OPENAI_API_KEY" in stderr
     assert "Traceback" not in stderr
+
+
+def test_exec_runs_prompt_with_repl(monkeypatch):
+    hitl_class, repl_class = _stub_cli_repl(monkeypatch)
+
+    main(["exec", "summarize this"])
+
+    hitl = hitl_class.return_value
+    repl_class.assert_called_once_with(hitl)
+    repl_class.return_value.run_prompt.assert_called_once_with("summarize this")
+
+
+@pytest.mark.parametrize(
+    ("modern_env", "cli_args", "expected"),
+    [
+        (None, [], "legacy-agent"),
+        ("modern-agent", [], "modern-agent"),
+        (None, ["--name", "cli-agent"], "cli-agent"),
+    ],
+)
+def test_legacy_ursa_name_is_supported_with_deprecation_warning(
+    monkeypatch, modern_env, cli_args, expected
+):
+    hitl_class, _ = _stub_cli_repl(monkeypatch)
+    monkeypatch.setenv("URSA_NAME", "legacy-agent")
+    if modern_env is not None:
+        monkeypatch.setenv("URSA_AGENT_NAME", modern_env)
+
+    with pytest.warns(FutureWarning, match="URSA_NAME is deprecated"):
+        main(cli_args)
+
+    (config,), _ = hitl_class.call_args
+    assert config.agent_name == expected
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["list-rag-agents"],
+        ["show-rag-agent", "docs"],
+        ["delete-rag-agent", "docs"],
+        ["save-rag-agent", "docs"],
+    ],
+)
+def test_rag_metadata_commands_dispatch_before_config_resolution(
+    monkeypatch, args
+):
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    handle = MagicMock(return_value=True)
+    monkeypatch.setattr("ursa.cli.handle_rag_command", handle)
+    monkeypatch.setattr(
+        "ursa.cli.resolve_config",
+        MagicMock(side_effect=AssertionError("must not resolve config")),
+    )
+
+    main(args)
+
+    handle.assert_called_once()
+    assert len(handle.call_args.args) == 1
+
+
+def test_rag_model_commands_resolve_with_subcommand_group(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    config_file = tmp_path / "rag.yaml"
+    config_file.write_text(
+        yaml.safe_dump({
+            "group": "file-group",
+            "llm_model": {"base_url": "https://models.example/v1"},
+        }),
+        encoding="utf-8",
+    )
+    policy_calls = []
+    monkeypatch.setattr(
+        "ursa.cli.config.enforce_group_base_url_policy",
+        lambda base_url, group: policy_calls.append((base_url, group)),
+    )
+    monkeypatch.setattr(
+        "ursa.cli.handle_rag_command", MagicMock(return_value=True)
+    )
+
+    main([
+        "rag-query",
+        "--name",
+        "docs",
+        "--group",
+        "rag-group",
+        "--config",
+        str(config_file),
+        "question",
+    ])
+
+    assert policy_calls == [("https://models.example/v1", "rag-group")]
 
 
 def test_mcp_server_passes_only_stdio_run_options(monkeypatch):
@@ -255,8 +357,8 @@ def test_parse_print_config_spec_accepts_stage_only_and_level_stage():
         "file",
         "resolved",
     )
-    assert parse_print_config_spec("project+,resolved") == (
-        "project+",
+    assert parse_print_config_spec("file+,resolved") == (
+        "file+",
         "resolved",
     )
 
@@ -265,6 +367,12 @@ def test_parse_print_config_spec_accepts_stage_only_and_level_stage():
 def test_parse_print_config_spec_rejects_invalid_values(spec):
     with pytest.raises(ValueError):
         parse_print_config_spec(spec)
+
+
+@pytest.mark.parametrize("spec", ["bogus", "final,bogus", "project,resolved"])
+def test_print_config_parser_rejects_invalid_values(spec):
+    with pytest.raises(SystemExit, match="2"):
+        build_parser().parse_args([f"--print-config={spec}"])
 
 
 def test_resolve_config_preserves_cli_tmp_workspace_owner():
@@ -523,6 +631,37 @@ def test_merge_ursa_config_applies_sparse_overrides(tmp_path, monkeypatch):
     assert config.llm_model.ssl_verify is True
 
 
+def test_merge_ursa_config_normalizes_empty_yaml(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "empty.yaml"
+    cfg_path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "ursa.cli.config.config_search_paths",
+        lambda cfg, level="final": [cfg_path],
+    )
+
+    config = merge_ursa_config(Namespace(), overrides={})
+
+    assert config == UrsaConfig()
+    assert load_config_file(cfg_path) == {}
+
+
+def test_load_config_file_rejects_non_mapping_yaml(tmp_path):
+    cfg_path = tmp_path / "list.yaml"
+    cfg_path.write_text("- invalid\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must contain a mapping"):
+        load_config_file(cfg_path)
+
+
+def test_agent_config_null_is_normalized_with_deprecation_warning(caplog):
+    caplog.set_level("WARNING", logger="ursa.cli.config")
+
+    config = UrsaConfig(agent_config=None)
+
+    assert config.agent_config == {}
+    assert "agent_config to null is deprecated" in caplog.text
+
+
 def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     xdg_home = tmp_path / "xdg-home"
     xdg_dir_1 = tmp_path / "xdg-dir-1"
@@ -532,15 +671,28 @@ def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_DIRS", f"{xdg_dir_1}:{xdg_dir_2}")
 
     assert xdg_config_search_paths() == [
-        xdg_dir_1 / "ursa" / "config.yaml",
         xdg_dir_2 / "ursa" / "config.yaml",
+        xdg_dir_1 / "ursa" / "config.yaml",
         xdg_home / "ursa" / "config.yaml",
     ]
 
 
-def test_config_search_paths_returns_existing_sources_in_precedence_order(
-    tmp_path, monkeypatch
-):
+def test_first_xdg_config_dir_has_higher_precedence(tmp_path, monkeypatch):
+    high = tmp_path / "high" / "ursa" / "config.yaml"
+    low = tmp_path / "low" / "ursa" / "config.yaml"
+    high.parent.mkdir(parents=True)
+    low.parent.mkdir(parents=True)
+    high.write_text("group: high\n", encoding="utf-8")
+    low.write_text("group: low\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_DIRS", f"{high.parents[1]}:{low.parents[1]}")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "missing"))
+
+    config = merge_ursa_config(Namespace(), overrides={})
+
+    assert config.group == "high"
+
+
+def test_config_search_paths_ignores_project_config(tmp_path, monkeypatch):
     xdg_dir = tmp_path / "xdg"
     project_dir = tmp_path / "project"
     explicit_cfg = tmp_path / "explicit.yaml"
@@ -557,7 +709,6 @@ def test_config_search_paths_returns_existing_sources_in_precedence_order(
 
     assert config_search_paths(Namespace(config=explicit_cfg)) == [
         user_cfg,
-        project_cfg,
         explicit_cfg,
     ]
 
@@ -833,6 +984,20 @@ def test_unknown_inference_provider_is_validation_error():
         )
 
 
+def test_invalid_provider_catalog_preserves_validation_error():
+    with pytest.raises(ValidationError) as exc_info:
+        UrsaConfig.model_validate({
+            "inference_providers": {"shared": {"ssl_verify": "not-a-boolean"}},
+            "llm_model": {"inference_provider": "shared"},
+        })
+
+    assert exc_info.value.errors()[0]["loc"] == (
+        "inference_providers",
+        "shared",
+        "ssl_verify",
+    )
+
+
 def test_model_config_kwargs_rejects_unresolved_inference_provider():
     cfg = ChatModelConfig(
         model="openai:gpt-5",
@@ -897,7 +1062,7 @@ def test_resolve_ursa_config_applies_inference_provider():
         ),
     ],
 )
-def test_print_config_omits_defaults_and_nulls(
+def test_print_config_includes_defaults_and_nulls(
     monkeypatch, capsys, stage, expected_model
 ):
     merged = UrsaConfig(
@@ -938,11 +1103,16 @@ def test_print_config_omits_defaults_and_nulls(
     assert print_config(Namespace(print_config=stage), {}) is True
 
     output = yaml.safe_load(capsys.readouterr().out)
-    assert "workspace" not in output
-    assert output["llm_model"] == expected_model
+    assert output["workspace"] == "."
+    assert output["agent_name"] is None
+    assert output["emb_model"] is None
+    assert output["agent_config"] == {}
+    for key, value in expected_model.items():
+        assert output["llm_model"][key] == value
     assert output["inference_providers"] == {
         "shared": {
             "base_url": "https://provider.example/v1",
+            "api_key_env": None,
             "ssl_verify": False,
         }
     }
@@ -950,6 +1120,11 @@ def test_print_config_omits_defaults_and_nulls(
         "example": {
             "transport": "stdio",
             "command": "example-server",
+            "args": [],
+            "env": None,
+            "cwd": None,
+            "encoding": "utf-8",
+            "encoding_error_handler": "strict",
         }
     }
 
@@ -981,6 +1156,29 @@ def test_resolve_ursa_config_creates_tmp_workspace():
     assert resolved.workspace.exists()
     assert resolved._temp_workspace is not None
     assert resolved._temp_workspace.name == str(resolved.workspace)
+
+
+def test_resolve_ursa_config_uses_existing_literal_tmp_directory(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tmp").mkdir()
+
+    resolved = resolve_ursa_config(UrsaConfig(workspace="tmp"))
+
+    assert resolved.workspace == Path("tmp")
+    assert resolved._temp_workspace is None
+
+
+def test_resolve_ursa_config_reuses_tmp_workspace_owner():
+    first = resolve_ursa_config(UrsaConfig(workspace="tmp"))
+    second = resolve_ursa_config(first)
+    workspace = second.workspace
+
+    assert second._temp_workspace is first._temp_workspace
+    del first
+    gc.collect()
+    assert workspace.exists()
 
 
 def test_resolve_ursa_config_checks_group_base_url_policy(monkeypatch):

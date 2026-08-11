@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.tools import BaseTool
 
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.rag import persistence
 from ursa.rag.persistence import (
     normalize_rag_tool_names,
@@ -70,6 +70,51 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
 
     assert cfg.subcommand == "rag-query"
     assert cfg["rag-query"].config == config_file
+
+
+def test_rag_models_check_group_policy_before_construction(monkeypatch):
+    from jsonargparse import Namespace
+
+    from ursa.cli.rag_management import _init_models
+
+    events = []
+    monkeypatch.setattr(
+        "ursa.cli.rag_management.enforce_group_base_url_policy",
+        lambda base_url, group: events.append(("url-policy", base_url, group)),
+    )
+    monkeypatch.setattr(
+        "ursa.cli.rag_management.enforce_model_group_policy",
+        lambda model, group: events.append(("model-policy", model, group)),
+    )
+    monkeypatch.setattr(
+        ChatModelConfig,
+        "init_chat_model",
+        lambda self: events.append(("init", "llm")) or "llm",
+    )
+    monkeypatch.setattr(
+        EmbModelConfig,
+        "init_embedding",
+        lambda self: events.append(("init", "embedding")) or "embedding",
+    )
+    config = UrsaConfig(
+        group="root-group",
+        llm_model={"base_url": "https://llm.example/v1"},
+        emb_model={
+            "model": "openai:text-embedding-test",
+            "base_url": "https://embedding.example/v1",
+        },
+    )
+
+    _init_models(Namespace(), Namespace(group="rag-group"), config=config)
+
+    assert events == [
+        ("url-policy", "https://llm.example/v1", "rag-group"),
+        ("init", "llm"),
+        ("model-policy", "llm", "rag-group"),
+        ("url-policy", "https://embedding.example/v1", "rag-group"),
+        ("init", "embedding"),
+        ("model-policy", "embedding", "rag-group"),
+    ]
 
 
 def test_resolve_ingest_source_validates_without_copying(tmp_path: Path):
