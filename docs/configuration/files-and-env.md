@@ -1,6 +1,17 @@
 # Configuration files, CLI flags, and environment variables
 
-URSA supports three configuration mechanisms. Prefer YAML files for project settings, CLI flags for temporary overrides, and environment variables for secrets or automation.
+URSA supports layered configuration. Higher-precedence sources are merged on top of lower-precedence sources to produce a single effective configuration. Prefer YAML files for reusable settings, CLI flags for temporary overrides, and environment variables for secrets or automation.
+
+## Configuration precedence
+
+URSA loads configuration in this order, with later sources overriding earlier ones:
+
+1. XDG-compliant user config, typically `~/.config/ursa/config.yaml`
+2. Project-local `./.ursa/config.yaml`
+3. The file passed to `--config`
+4. CLI flags
+
+See the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/) for background on XDG-compliant config locations.
 
 ## YAML files: preferred
 

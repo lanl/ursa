@@ -1,10 +1,16 @@
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from openai import OpenAIError
 
-from ursa.cli import build_parser, main, resolve_config
+from ursa.cli import (
+    _xdg_config_search_paths,
+    build_parser,
+    main,
+    resolve_config,
+)
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -209,7 +215,14 @@ def test_cli_parses_typed_flags(tmp_path):
     assert config.llm_model.max_completion_tokens == 2048
 
 
-def test_print_config_flag_sets_bool_and_preserves_defaults():
+def test_print_config_flag_sets_bool_and_preserves_defaults(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-missing"))
+    monkeypatch.setenv(
+        "XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs-missing")
+    )
+    monkeypatch.chdir(tmp_path)
     parser = build_parser()
     args = parser.parse_args(["--print-config"])
 
@@ -413,6 +426,177 @@ def test_config_file_and_cli_are_merged(tmp_path):
     assert config.llm_model.model_extra["temperature"] == 0.4
     assert config.emb_model.model == "openai:text-embedding-3-large"
     assert config.emb_model.model_extra["cache_dir"] == "/tmp/cache"
+
+
+def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
+    xdg_home = tmp_path / "xdg-home"
+    xdg_dir_1 = tmp_path / "xdg-dir-1"
+    xdg_dir_2 = tmp_path / "xdg-dir-2"
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
+    monkeypatch.setenv(
+        "XDG_CONFIG_DIRS", f"{xdg_dir_1}:{xdg_dir_2}"
+    )
+
+    assert _xdg_config_search_paths() == [
+        xdg_dir_1 / "ursa" / "config.yaml",
+        xdg_dir_2 / "ursa" / "config.yaml",
+        xdg_home / "ursa" / "config.yaml",
+    ]
+
+
+
+def test_resolve_config_merges_xdg_local_file_and_cli_layers(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.config.enforce_group_base_url_policy",
+        lambda base_url, group: None,
+    )
+    xdg_dir = tmp_path / "xdg-home"
+    xdg_dir_1 = tmp_path / "xdg-dir-1"
+    project_dir = tmp_path / "project"
+    explicit_cfg = tmp_path / "explicit.yaml"
+    cli_workspace = tmp_path / "cli-workspace"
+    cli_workspace.mkdir()
+
+    xdg_dir_config = xdg_dir_1 / "ursa" / "config.yaml"
+    xdg_dir_config.parent.mkdir(parents=True)
+    xdg_dir_config.write_text(
+        yaml.safe_dump({
+            "workspace": "xdg-dir-workspace",
+            "llm_model": {
+                "model": "openai:gpt-5-mini",
+                "max_completion_tokens": 1024,
+            },
+        })
+    )
+
+    xdg_config = xdg_dir / "ursa" / "config.yaml"
+    xdg_config.parent.mkdir(parents=True)
+    xdg_config.write_text(
+        yaml.safe_dump({
+            "workspace": "xdg-workspace",
+            "group": "xdg-group",
+            "llm_model": {
+                "model": "openai:gpt-5-mini",
+                "base_url": "https://xdg.example/v1",
+            },
+            "agent_config": {"chat": {"temperature": 0.1}},
+        })
+    )
+
+    local_config = project_dir / ".ursa" / "config.yaml"
+    local_config.parent.mkdir(parents=True)
+    local_config.write_text(
+        yaml.safe_dump({
+            "group": "local-group",
+            "llm_model": {
+                "model": "openai:gpt-5-mini",
+                "base_url": "https://local.example/v1",
+            },
+            "emb_model": {"model": "openai:text-embedding-3-small"},
+            "agent_config": {"chat": {"top_p": 0.9}},
+        })
+    )
+
+    explicit_cfg.write_text(
+        yaml.safe_dump({
+            "group": "file-group",
+            "llm_model": {
+                "model": "openai:gpt-5-mini",
+                "api_key_env": "EXPLICIT_KEY",
+            },
+            "agent_config": {"chat": {"seed": 7}},
+        })
+    )
+
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_dir))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(xdg_dir_1))
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "--config",
+        str(explicit_cfg),
+        "--workspace",
+        str(cli_workspace),
+        "--group",
+        "cli-group",
+        "--llm_model.model",
+        "openai:gpt-5-nano",
+    ])
+
+    config = resolve_config(args)
+
+    assert config.workspace == cli_workspace
+    assert config.group == "cli-group"
+    assert config.llm_model.model == "openai:gpt-5-nano"
+    assert config.llm_model.base_url == "https://local.example/v1"
+    assert config.llm_model.api_key_env == "EXPLICIT_KEY"
+    assert config.llm_model.max_completion_tokens == 1024
+    assert config.emb_model is not None
+    assert config.emb_model.model == "openai:text-embedding-3-small"
+    assert config.agent_config["chat"] == {
+        "temperature": 0.1,
+        "top_p": 0.9,
+        "seed": 7,
+    }
+
+
+def test_resolve_config_uses_local_and_xdg_defaults_without_explicit_config(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.config.enforce_group_base_url_policy",
+        lambda base_url, group: None,
+    )
+    xdg_config_dir = tmp_path / "xdg-home"
+    xdg_dir_config_dir = tmp_path / "xdg-dir"
+    xdg_config = xdg_config_dir / "ursa" / "config.yaml"
+    local_config = tmp_path / "local-config.yaml"
+
+    xdg_dir_config = xdg_dir_config_dir / "ursa" / "config.yaml"
+    xdg_dir_config.parent.mkdir(parents=True)
+    xdg_dir_config.write_text(
+        yaml.safe_dump({
+            "workspace": "xdg-dir-workspace",
+            "llm_model": {"model": "openai:gpt-5-mini"},
+        })
+    )
+
+    xdg_config.parent.mkdir(parents=True)
+    xdg_config.write_text(
+        yaml.safe_dump({
+            "group": "xdg-group",
+            "llm_model": {"model": "openai:gpt-5-mini"},
+        })
+    )
+    local_config.write_text(
+        yaml.safe_dump({
+            "group": "local-group",
+            "llm_model": {
+                "model": "openai:gpt-5-mini",
+                "base_url": "https://local.example/v1",
+            },
+        })
+    )
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_dir))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(xdg_dir_config_dir))
+    monkeypatch.chdir(tmp_path)
+    local_path = tmp_path / ".ursa" / "config.yaml"
+    local_path.parent.mkdir(parents=True)
+    local_path.write_text(local_config.read_text())
+
+    parser = build_parser()
+    args = parser.parse_args([])
+    config = resolve_config(args)
+
+    assert config.workspace == Path("xdg-dir-workspace")
+    assert config.group == "local-group"
+    assert config.llm_model.model == "openai:gpt-5-mini"
+    assert config.llm_model.base_url == "https://local.example/v1"
 
 
 def test_model_config_kwargs_includes_extra():
