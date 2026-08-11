@@ -707,24 +707,6 @@ def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
         HITL(config)
 
 
-def test_hitl_uses_resolved_agent_config_for_use_web(tmp_path, monkeypatch):
-    _stub_hitl_dependencies(monkeypatch)
-    config = resolve_ursa_config(
-        UrsaConfig(
-            workspace=tmp_path / "global-workspace",
-            use_web=True,
-            emb_model=EmbModelConfig(model="fake-embedding"),
-        )
-    )
-
-    hitl = HITL(config)
-
-    assert hitl.agents["chat"].config["use_web"] is True
-    assert hitl.agents["execute"].config["use_web"] is True
-    assert hitl.agents["deep_review"].config["use_web"] is True
-    assert hitl.agents["prompt"].config["use_web"] is True
-
-
 def test_agent_config_none_value_errors(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(

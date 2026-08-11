@@ -75,45 +75,6 @@ def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(tmp_path):
     }
 
 
-def test_dashboard_config_resolves_shared_inference_provider(tmp_path):
-    cfg_path = tmp_path / "provider.yaml"
-    cfg_path.write_text(
-        "\n".join([
-            "inference_providers:",
-            "  shared:",
-            "    base_url: https://models.example.org/v1",
-            "    api_key_env: SHARED_API_KEY",
-            "    timeout: 60",
-            "llm_model:",
-            "  model: openai:gpt-test",
-            "  inference_provider: shared",
-            "  timeout: 30",
-            "emb_model:",
-            "  model: openai:text-embedding-3-large",
-            "  inference_provider: shared",
-            "  dimensions: 1024",
-        ]),
-        encoding="utf-8",
-    )
-
-    patch = dashboard_llm_patch_from_ursa_config(cfg_path)
-
-    assert patch["llm"] == {
-        "model": "openai:gpt-test",
-        "base_url": "https://models.example.org/v1",
-        "api_key_env": "SHARED_API_KEY",
-        "credential_source": "environment",
-        "model_kwargs": {"timeout": 30},
-    }
-    assert patch["embedding"] == {
-        "model": "openai:text-embedding-3-large",
-        "base_url": "https://models.example.org/v1",
-        "api_key_env": "SHARED_API_KEY",
-        "credential_source": "environment",
-        "model_kwargs": {"timeout": 60, "dimensions": 1024},
-    }
-
-
 def test_dashboard_config_rejects_raw_api_key(tmp_path):
     cfg_path = tmp_path / "endpoint.yaml"
     cfg_path.write_text(

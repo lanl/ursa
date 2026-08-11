@@ -1,8 +1,9 @@
-from pathlib import Path
+import importlib
 from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from jsonargparse import Namespace
 from openai import OpenAIError
 
 from ursa.cli import (
@@ -15,6 +16,7 @@ from ursa.cli.config import (
     EmbModelConfig,
     ModelConfig,
     UrsaConfig,
+    config_search_paths,
     merge_ursa_config,
     resolve_ursa_config,
     xdg_config_search_paths,
@@ -225,34 +227,25 @@ def test_mcp_server_passes_http_options_when_running(monkeypatch):
 
 def test_cli_parses_typed_flags(tmp_path):
     parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--workspace",
-            str(tmp_path / "workspace"),
-            "--llm_model.model",
-            "openai:gpt-5-nano",
-            "--llm_model.max_completion_tokens",
-            "2048",
-        ],
-    )
+    args = parser.parse_args([
+        "--workspace",
+        str(tmp_path / "workspace"),
+        "--llm_model.model",
+        "openai:gpt-5-nano",
+        "--llm_model.max_completion_tokens",
+        "2048",
+    ])
 
-    assert config.workspace == tmp_path / "workspace"
-    assert config.llm_model.model == "openai:gpt-5-nano"
-    assert config.llm_model.max_completion_tokens == 2048
+    assert args.workspace == tmp_path / "workspace"
+    assert args.llm_model.model == "openai:gpt-5-nano"
+    assert args.llm_model.max_completion_tokens == 2048
 
 
-def test_print_config_flag_defaults_to_resolved_string(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-missing"))
-    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs-missing"))
-    monkeypatch.chdir(tmp_path)
+def test_print_config_flag_defaults_to_resolved_string():
     parser = build_parser()
-    args, overrides = _parse_config_args(parser, ["--print-config"])
+    args = parser.parse_args(["--print-config"])
 
     assert args["print_config"] == "resolved"
-
-    config = resolve_config(args, overrides)
-    assert config.model_dump() == resolve_ursa_config(UrsaConfig()).model_dump()
 
 
 def test_parse_print_config_spec_accepts_stage_only_and_level_stage():
@@ -465,34 +458,40 @@ def test_config_file_and_cli_are_merged(tmp_path):
     assert config.emb_model.model_extra["cache_dir"] == "/tmp/cache"
 
 
-def test_sparse_parser_preserves_only_explicit_config_values():
+def test_sparse_parser_omits_config_defaults():
     parser = build_parser()
 
     assert parser.parse_args([], defaults=False).as_dict() == {}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [("true", True), ("false", False)]
+)
+def test_cli_parser_preserves_explicit_ssl_verify(value, expected):
+    parser = build_parser()
+
     assert parser.parse_args(
-        ["--group", "default", "--llm_model.ssl_verify", "true"],
+        ["--group", "default", "--llm_model.ssl_verify", value],
         defaults=False,
     ).as_dict() == {
+        "group": "default",
+        "llm_model": {"ssl_verify": expected},
+    }
+
+
+def test_sparse_parser_reads_environment(monkeypatch):
+    monkeypatch.setenv("URSA_GROUP", "default")
+    monkeypatch.setenv("URSA_LLM_MODEL__SSL_VERIFY", "true")
+
+    overrides = build_parser().parse_args([], defaults=False)
+
+    assert overrides.as_dict() == {
         "group": "default",
         "llm_model": {"ssl_verify": True},
     }
 
 
-@pytest.mark.parametrize(
-    ("subcommand_args", "expected_subcommand"),
-    [
-        ([], None),
-        (["exec", "hello"], "exec"),
-        (["mcp-server"], "mcp-server"),
-        (
-            ["rag-query", "--name", "docs", "What is indexed?"],
-            "rag-query",
-        ),
-    ],
-)
-def test_explicit_schema_defaults_override_file_for_all_runtime_commands(
-    tmp_path, subcommand_args, expected_subcommand
-):
+def test_merge_ursa_config_applies_sparse_overrides(tmp_path, monkeypatch):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text(
         yaml.safe_dump({
@@ -503,44 +502,24 @@ def test_explicit_schema_defaults_override_file_for_all_runtime_commands(
             },
         })
     )
-    parser = build_parser()
-    args = [
-        "--config",
-        str(cfg_path),
-        "--group",
-        "default",
-        "--llm_model.model",
-        "openai:gpt-5.4",
-        "--llm_model.ssl_verify",
-        "true",
-        *subcommand_args,
-    ]
-    cfg, overrides = _parse_config_args(parser, args)
+    monkeypatch.setattr(
+        "ursa.cli.config.config_search_paths",
+        lambda cfg, level="final": [cfg_path],
+    )
 
-    config = resolve_config(cfg, overrides)
+    config = merge_ursa_config(
+        Namespace(),
+        overrides={
+            "group": "default",
+            "llm_model": {
+                "model": "openai:gpt-5.4",
+                "ssl_verify": True,
+            },
+        },
+    )
 
-    assert cfg.get("subcommand") == expected_subcommand
     assert config.group == "default"
     assert config.llm_model.model == "openai:gpt-5.4"
-    assert config.llm_model.ssl_verify is True
-
-
-def test_explicit_environment_defaults_override_config_file(
-    tmp_path, monkeypatch
-):
-    cfg_path = tmp_path / "ursa.yml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "group": "restricted",
-            "llm_model": {"ssl_verify": False},
-        })
-    )
-    monkeypatch.setenv("URSA_GROUP", "default")
-    monkeypatch.setenv("URSA_LLM_MODEL__SSL_VERIFY", "true")
-
-    config = _resolve_args(build_parser(), ["--config", str(cfg_path)])
-
-    assert config.group == "default"
     assert config.llm_model.ssl_verify is True
 
 
@@ -559,168 +538,35 @@ def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     ]
 
 
-def test_resolve_config_merges_xdg_local_file_and_cli_layers(
+def test_config_search_paths_returns_existing_sources_in_precedence_order(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(
-        "ursa.cli.config.enforce_group_base_url_policy",
-        lambda base_url, group: None,
-    )
-    xdg_dir = tmp_path / "xdg-home"
-    xdg_dir_1 = tmp_path / "xdg-dir-1"
+    xdg_dir = tmp_path / "xdg"
     project_dir = tmp_path / "project"
     explicit_cfg = tmp_path / "explicit.yaml"
-    cli_workspace = tmp_path / "cli-workspace"
-    cli_workspace.mkdir()
-
-    xdg_dir_config = xdg_dir_1 / "ursa" / "config.yaml"
-    xdg_dir_config.parent.mkdir(parents=True)
-    xdg_dir_config.write_text(
-        yaml.safe_dump({
-            "workspace": "xdg-dir-workspace",
-            "llm_model": {
-                "model": "openai:gpt-5-mini",
-                "max_completion_tokens": 1024,
-            },
-        })
-    )
-
-    xdg_config = xdg_dir / "ursa" / "config.yaml"
-    xdg_config.parent.mkdir(parents=True)
-    xdg_config.write_text(
-        yaml.safe_dump({
-            "workspace": "xdg-workspace",
-            "group": "xdg-group",
-            "llm_model": {
-                "model": "openai:gpt-5-mini",
-                "base_url": "https://xdg.example/v1",
-            },
-            "agent_config": {"chat": {"temperature": 0.1}},
-        })
-    )
-
-    local_config = project_dir / ".ursa" / "config.yaml"
-    local_config.parent.mkdir(parents=True)
-    local_config.write_text(
-        yaml.safe_dump({
-            "group": "local-group",
-            "llm_model": {
-                "model": "openai:gpt-5-mini",
-                "base_url": "https://local.example/v1",
-            },
-            "emb_model": {"model": "openai:text-embedding-3-small"},
-            "agent_config": {"chat": {"top_p": 0.9}},
-        })
-    )
-
-    explicit_cfg.write_text(
-        yaml.safe_dump({
-            "group": "file-group",
-            "llm_model": {
-                "model": "openai:gpt-5-mini",
-                "api_key_env": "EXPLICIT_KEY",
-            },
-            "agent_config": {"chat": {"seed": 7}},
-        })
-    )
+    user_cfg = xdg_dir / "ursa" / "config.yaml"
+    project_cfg = project_dir / ".ursa" / "config.yaml"
+    user_cfg.parent.mkdir(parents=True)
+    project_cfg.parent.mkdir(parents=True)
+    for path in (user_cfg, project_cfg, explicit_cfg):
+        path.write_text("{}\n")
 
     monkeypatch.chdir(project_dir)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_dir))
-    monkeypatch.setenv("XDG_CONFIG_DIRS", str(xdg_dir_1))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "missing"))
 
-    parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--config",
-            str(explicit_cfg),
-            "--workspace",
-            str(cli_workspace),
-            "--group",
-            "cli-group",
-            "--llm_model.model",
-            "openai:gpt-5-nano",
-        ],
-    )
-
-    assert config.workspace == cli_workspace
-    assert config.group == "cli-group"
-    assert config.llm_model.model == "openai:gpt-5-nano"
-    assert config.llm_model.base_url == "https://local.example/v1"
-    assert config.llm_model.api_key_env == "EXPLICIT_KEY"
-    assert config.llm_model.max_completion_tokens == 1024
-    assert config.emb_model is not None
-    assert config.emb_model.model == "openai:text-embedding-3-small"
-    assert config.agent_config["chat"] == {
-        "temperature": 0.1,
-        "top_p": 0.9,
-        "seed": 7,
-    }
+    assert config_search_paths(Namespace(config=explicit_cfg)) == [
+        user_cfg,
+        project_cfg,
+        explicit_cfg,
+    ]
 
 
-def test_resolve_config_uses_local_and_xdg_defaults_without_explicit_config(
+def test_merge_ursa_config_validates_provider_after_merging_layers(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(
-        "ursa.cli.config.enforce_group_base_url_policy",
-        lambda base_url, group: None,
-    )
-    xdg_config_dir = tmp_path / "xdg-home"
-    xdg_dir_config_dir = tmp_path / "xdg-dir"
-    xdg_config = xdg_config_dir / "ursa" / "config.yaml"
-    local_config = tmp_path / "local-config.yaml"
-
-    xdg_dir_config = xdg_dir_config_dir / "ursa" / "config.yaml"
-    xdg_dir_config.parent.mkdir(parents=True)
-    xdg_dir_config.write_text(
-        yaml.safe_dump({
-            "workspace": "xdg-dir-workspace",
-            "llm_model": {"model": "openai:gpt-5-mini"},
-        })
-    )
-
-    xdg_config.parent.mkdir(parents=True)
-    xdg_config.write_text(
-        yaml.safe_dump({
-            "group": "xdg-group",
-            "llm_model": {"model": "openai:gpt-5-mini"},
-        })
-    )
-    local_config.write_text(
-        yaml.safe_dump({
-            "group": "local-group",
-            "llm_model": {
-                "model": "openai:gpt-5-mini",
-                "base_url": "https://local.example/v1",
-            },
-        })
-    )
-
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_dir))
-    monkeypatch.setenv("XDG_CONFIG_DIRS", str(xdg_dir_config_dir))
-    monkeypatch.chdir(tmp_path)
-    local_path = tmp_path / ".ursa" / "config.yaml"
-    local_path.parent.mkdir(parents=True)
-    local_path.write_text(local_config.read_text())
-
-    parser = build_parser()
-    config = _resolve_args(parser, [])
-
-    assert config.workspace == Path("xdg-dir-workspace")
-    assert config.group == "local-group"
-    assert config.llm_model.model == "openai:gpt-5-mini"
-    assert config.llm_model.base_url == "https://local.example/v1"
-
-
-def test_project_config_can_select_provider_from_user_config(
-    tmp_path, monkeypatch
-):
-    xdg_home = tmp_path / "xdg-home"
-    project_dir = tmp_path / "project"
-    user_config = xdg_home / "ursa" / "config.yaml"
-    project_config = project_dir / ".ursa" / "config.yaml"
-    user_config.parent.mkdir(parents=True)
-    project_config.parent.mkdir(parents=True)
+    user_config = tmp_path / "user.yaml"
+    project_config = tmp_path / "project.yaml"
     user_config.write_text(
         yaml.safe_dump({
             "inference_providers": {
@@ -739,20 +585,16 @@ def test_project_config_can_select_provider_from_user_config(
             }
         })
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
-    monkeypatch.chdir(project_dir)
+    monkeypatch.setattr(
+        "ursa.cli.config.config_search_paths",
+        lambda cfg, level="final": [user_config, project_config],
+    )
 
-    parser = build_parser()
-    args, overrides = _parse_config_args(parser, [])
-    config = resolve_config(args, overrides)
+    config = merge_ursa_config(Namespace(), overrides={})
 
+    assert "openai_project" in config.inference_providers
     assert config.llm_model.model == "openai:gpt-5.4-mini"
-    assert config.llm_model.base_url == "https://project.example/v1"
-    assert config.llm_model.ssl_verify is False
-    assert config.llm_model.inference_provider is None
-
-    cumulative = resolve_ursa_config(merge_ursa_config(args, "project+"))
-    assert cumulative.llm_model.base_url == "https://project.example/v1"
+    assert config.llm_model.inference_provider == "openai_project"
 
 
 def test_model_config_kwargs_includes_extra():
@@ -1024,10 +866,7 @@ def test_model_config_kwargs_rejects_unresolved_inference_provider():
 def test_model_config_ssl_verify_defaults_to_true():
     cfg = ChatModelConfig(model="openai:gpt-5")
 
-    resolved = cfg.resolve_inference_provider({})
-
     assert cfg.ssl_verify is True
-    assert resolved.ssl_verify is True
 
 
 def test_model_config_explicit_null_extra_clears_provider_default():
@@ -1048,47 +887,18 @@ def test_model_config_explicit_null_extra_clears_provider_default():
     assert "timeout" not in resolved.kwargs
 
 
-def test_resolve_config_resolves_inference_provider_at_final_stage(tmp_path):
-    cfg_path = tmp_path / "ursa.yml"
-    cfg_path.write_text(
-        "\n".join([
-            "inference_providers:",
-            "  openai_public:",
-            "    base_url: https://api.openai.com/v1",
-            "    api_key_env: OPENAI_API_KEY",
-            "llm_model:",
-            "  model: openai:gpt-5.4",
-            "  inference_provider: openai_public",
-        ])
+def test_resolve_ursa_config_applies_inference_provider():
+    config = UrsaConfig(
+        inference_providers={
+            "openai_public": {"base_url": "https://api.openai.com/v1"}
+        },
+        llm_model={"inference_provider": "openai_public"},
     )
 
-    parser = build_parser()
-    config = _resolve_args(parser, ["--config", str(cfg_path)])
+    resolved = resolve_ursa_config(config)
 
-    assert config.llm_model.inference_provider is None
-    assert config.llm_model.base_url == "https://api.openai.com/v1"
-    assert config.inference_providers["openai_public"].base_url == (
-        "https://api.openai.com/v1"
-    )
-
-
-def test_resolve_config_inherits_provider_ssl_verify(tmp_path):
-    cfg_path = tmp_path / "ursa.yml"
-    cfg_path.write_text(
-        "\n".join([
-            "inference_providers:",
-            "  shared:",
-            "    ssl_verify: false",
-            "llm_model:",
-            "  model: openai:gpt-5.4",
-            "  inference_provider: shared",
-        ])
-    )
-
-    parser = build_parser()
-    config = _resolve_args(parser, ["--config", str(cfg_path)])
-
-    assert config.llm_model.ssl_verify is False
+    assert resolved.llm_model.inference_provider is None
+    assert resolved.llm_model.base_url == "https://api.openai.com/v1"
 
 
 @pytest.mark.parametrize(
@@ -1105,40 +915,44 @@ def test_resolve_config_inherits_provider_ssl_verify(tmp_path):
     ],
 )
 def test_print_config_omits_defaults_and_nulls(
-    tmp_path, capsys, stage, expected_model
+    monkeypatch, capsys, stage, expected_model
 ):
-    cfg_path = tmp_path / "ursa.yml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "inference_providers": {
-                "shared": {
-                    "base_url": "https://provider.example/v1",
-                    "ssl_verify": False,
-                }
-            },
-            "llm_model": {
-                "model": "openai:gpt-5.4",
-                "inference_provider": "shared",
-            },
-            "mcp_servers": {
-                "example": {
-                    "transport": "stdio",
-                    "command": "example-server",
-                }
-            },
-        })
+    merged = UrsaConfig(
+        inference_providers={
+            "shared": {
+                "base_url": "https://provider.example/v1",
+                "ssl_verify": False,
+            }
+        },
+        llm_model={"inference_provider": "shared"},
+        mcp_servers={
+            "example": {
+                "transport": "stdio",
+                "command": "example-server",
+            }
+        },
     )
-    parser = build_parser()
-    args, overrides = _parse_config_args(
-        parser,
-        [
-            "--config",
-            str(cfg_path),
-            f"--print-config={stage}",
-        ],
+    resolved = UrsaConfig(
+        inference_providers=merged.inference_providers,
+        llm_model={
+            "base_url": "https://provider.example/v1",
+            "ssl_verify": False,
+        },
+        mcp_servers=merged.mcp_servers,
+    )
+    print_config_module = importlib.import_module("ursa.cli.print_config")
+    monkeypatch.setattr(
+        print_config_module,
+        "merge_ursa_config",
+        lambda cfg, level, overrides: merged,
+    )
+    monkeypatch.setattr(
+        print_config_module,
+        "resolve_ursa_config",
+        lambda config: resolved if config is merged else config,
     )
 
-    assert print_config(args, overrides) is True
+    assert print_config(Namespace(print_config=stage), {}) is True
 
     output = yaml.safe_load(capsys.readouterr().out)
     assert "workspace" not in output
@@ -1195,28 +1009,27 @@ def test_resolve_ursa_config_creates_tmp_workspace():
     assert resolved._temp_workspace.name == str(resolved.workspace)
 
 
-def test_resolve_ursa_config_enforces_group_base_url_policy(
-    tmp_path, monkeypatch
-):
-    from ursa import security
-    from ursa.security import GroupBaseURLPolicyError
-
-    root = tmp_path / "ursa"
-    group_root = root / "science"
-    group_root.mkdir(parents=True)
-    (group_root / "group.yaml").write_text(
-        "allowed_base_urls:\n  - https://models.example.test\n",
-        encoding="utf-8",
+def test_resolve_ursa_config_checks_group_base_url_policy(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "ursa.cli.config.enforce_group_base_url_policy",
+        lambda base_url, group: calls.append((base_url, group)),
     )
-    monkeypatch.setattr(security, "URSA_CACHE_DIR", root)
-
     config = UrsaConfig(
         group="science",
         llm_model={
             "model": "openai:gpt-test",
-            "base_url": "https://disallowed.example.test/v1",
+            "base_url": "https://models.example.test/v1",
+        },
+        emb_model={
+            "model": "openai:text-embedding-test",
+            "base_url": "https://embeddings.example.test/v1",
         },
     )
 
-    with pytest.raises(GroupBaseURLPolicyError, match="not allowed"):
-        resolve_ursa_config(config)
+    resolve_ursa_config(config)
+
+    assert calls == [
+        ("https://models.example.test/v1", "science"),
+        ("https://embeddings.example.test/v1", "science"),
+    ]

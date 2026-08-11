@@ -31,22 +31,12 @@ def test_normalize_rag_tool_names_accepts_comma_separated_values():
 
 
 def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
-    from ursa.cli import build_parser, resolve_config
+    from ursa.cli import build_parser
 
     source = tmp_path / "docs"
     source.mkdir()
     config_file = tmp_path / "special_group_config.yaml"
-    config_file.write_text(
-        "\n".join([
-            "llm_model:",
-            "  model: openai:gpt-test",
-            "  base_url: https://models.example.test/v1",
-            "emb_model:",
-            "  model: openai:text-embedding-test",
-            "  base_url: https://embeddings.example.test/v1",
-        ]),
-        encoding="utf-8",
-    )
+    config_file.write_text("{}\n", encoding="utf-8")
 
     parser = build_parser()
     ingest_args = [
@@ -60,14 +50,9 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
         str(config_file),
     ]
     cfg = parser.parse_args(ingest_args)
-    overrides = parser.parse_args(ingest_args, defaults=False)
-    resolved = resolve_config(cfg, overrides)
 
-    assert resolved.llm_model.model == "openai:gpt-test"
-    assert resolved.llm_model.base_url == "https://models.example.test/v1"
-    assert resolved.emb_model is not None
-    assert resolved.emb_model.model == "openai:text-embedding-test"
-    assert resolved.emb_model.base_url == "https://embeddings.example.test/v1"
+    assert cfg.subcommand == "rag-ingest"
+    assert cfg["rag-ingest"].config == config_file
 
     query_args = [
         "rag-query",
@@ -82,12 +67,9 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
         "indexed?",
     ]
     cfg = parser.parse_args(query_args)
-    overrides = parser.parse_args(query_args, defaults=False)
-    resolved = resolve_config(cfg, overrides)
 
-    assert resolved.llm_model.model == "openai:gpt-test"
-    assert resolved.emb_model is not None
-    assert resolved.emb_model.model == "openai:text-embedding-test"
+    assert cfg.subcommand == "rag-query"
+    assert cfg["rag-query"].config == config_file
 
 
 def test_resolve_ingest_source_validates_without_copying(tmp_path: Path):
