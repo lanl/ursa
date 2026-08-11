@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from textual.containers import VerticalScroll
 from textual.widgets import Static
@@ -60,27 +61,27 @@ async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
         reading, editing = file_groups
         assert reading.files == {
             "Reading": {
-                "src/read.py": (None, None),
-                "src/other.py": (None, None),
+                str(Path("src/read.py")): (None, None),
+                str(Path("src/other.py")): (None, None),
             },
             "Editing": {},
         }
         assert editing.files == {
             "Reading": {},
             "Editing": {
-                "src/new.py": (1, 0),
-                "src/edit.py": (2, 1),
+                str(Path("src/new.py")): (1, 0),
+                str(Path("src/edit.py")): (2, 1),
             },
         }
         reading_summary = reading.query_one(".file-summary", Static).content
         editing_summary = editing.query_one(".file-summary", Static).content
         assert all(
             path in reading_summary.plain
-            for path in ("src/read.py", "src/other.py")
+            for path in (str(Path("src/read.py")), str(Path("src/other.py")))
         )
         assert all(
             path in editing_summary.plain
-            for path in ("src/new.py", "src/edit.py")
+            for path in (str(Path("src/new.py")), str(Path("src/edit.py")))
         )
         assert "+1 -0" in editing_summary.plain
         assert "+2 -1" in editing_summary.plain
@@ -245,6 +246,7 @@ async def test_activity_kinds_keep_independent_cards_open(
         assert reading.done
 
         finish_agent.set()
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
 
@@ -301,11 +303,35 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
     tmp_path,
     monkeypatch,
 ):
+    clock = [100.0]
+    monkeypatch.setattr(turn_module, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(event_handler_module, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
         turn_module,
         "SUMMARY_GROUP_GRACE_SECONDS",
         0.5,
     )
+    timers = []
+
+    class CapturedTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+        def fire(self):
+            assert not self.stopped
+            self.callback()
+
+    def capture_timer(_turn, delay, callback):
+        timer = CapturedTimer(delay, callback)
+        timers.append(timer)
+        return timer
+
+    monkeypatch.setattr(Turn, "set_timer", capture_timer)
     hitl = FakeHITL(tmp_path)
     first_emitted = asyncio.Event()
     emit_second = asyncio.Event()
@@ -350,19 +376,15 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         assert list(first.files["Reading"]) == ["fileA"]
         assert not first.done
 
-        # Stay comfortably inside the 500 ms production grace period even on
-        # a busy test runner.
-        await asyncio.sleep(0.1)
         emit_second.set()
         await second_emitted.wait()
         await pilot.pause()
         assert list(first.files["Reading"]) == ["fileA", "fileB"]
         assert not first.done
+        assert timers[0].stopped
+        assert timers[1].delay == 0.5
 
-        await asyncio.sleep(0.3)
-        await pilot.pause()
-        assert not first.done
-        await asyncio.sleep(0.25)
+        timers[1].fire()
         await pilot.pause()
         assert first.done
 
@@ -376,6 +398,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         assert not groups[1].done
 
         finish_agent.set()
+        await app.workers.wait_for_complete()
         await pilot.pause()
         assert groups[1].done
 
@@ -471,7 +494,7 @@ async def test_parallel_read_callbacks_render_as_one_group(tmp_path):
         ]
         assert list(groups[0].files["Reading"]) == [
             "README.md",
-            "tests/cli/test_config.py",
+            str(Path("tests/cli/test_config.py")),
             "pyproject.toml",
         ]
 

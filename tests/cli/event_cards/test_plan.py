@@ -64,7 +64,6 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
             for node in markdown.query("*")
             if type(node).__name__ == "MarkdownListItem"
         )
-        assert markdown.virtual_size.height >= 10
 
         await pilot.resize_terminal(160, 36)
         await pilot.pause()

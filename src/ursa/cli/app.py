@@ -360,7 +360,7 @@ class UrsaTextualApp(App[None]):
                 continue
             relative = str(path.relative_to(workspace))
             if path.is_dir():
-                candidates.append(f"{relative}/")
+                candidates.append(f"{relative}{os.sep}")
             elif path.is_file():
                 candidates.append(relative)
             if len(candidates) == 2000:

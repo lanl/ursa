@@ -49,8 +49,17 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
                 == "Click to expand"
             )
         artifact.mark_done()
-        await pilot.click(ArtifactCard)
+
+        class Click:
+            stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        click = Click()
+        artifact.on_click(click)
         turn.set_transcript(True)
+        assert click.stopped
         assert artifact.done
         assert artifact.expanded
         assert (
