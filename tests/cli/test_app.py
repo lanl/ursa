@@ -157,6 +157,37 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert activity.has_class("hidden")
 
 
+async def test_ctrl_c_cancels_running_agent_and_restores_prompt(tmp_path):
+    hitl = FakeHITL(tmp_path)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    hitl.run_agent = run_agent
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("w", "a", "i", "t", "enter")
+        await started.wait()
+        prompt = app.query_one(PromptArea)
+        assert prompt.disabled
+
+        await pilot.press("ctrl+c")
+        await cancelled.wait()
+        await pilot.pause()
+
+        assert not prompt.disabled
+        assert prompt.has_focus
+        assert len(app.query(MessageCard)) == 2
+        assert not any(worker.group == "agent" for worker in app.workers)
+
+
 async def test_transcript_retains_reasoning_and_filtered_file_completions(
     tmp_path,
 ):

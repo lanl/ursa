@@ -10,13 +10,14 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 
 # LangChain core bits
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
 # Your project imports
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
+from ursa.agents.chat_agent import BasicChatAgent
 from ursa.util import Checkpointer
 from ursa.util.checkpoint_retention import CheckpointPruneResult
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER
@@ -389,6 +390,41 @@ async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
     assert result["messages"][-1].text == "done"
     assert (agent.den / "db" / "checkpointer.db").is_file()
     assert (agent.den / "graph_store.sqlite").is_file()
+
+
+@pytest.mark.asyncio
+async def test_named_agent_restores_state_in_a_new_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    first = BasicChatAgent(
+        llm=TinyCountingModel(),
+        agent_name="resumed-agent",
+        enable_metrics=False,
+    )
+    try:
+        await first.ainvoke(first.format_query("first turn"))
+    finally:
+        await first.aclose()
+        first.close()
+
+    resumed = BasicChatAgent(
+        llm=TinyCountingModel(),
+        agent_name="resumed-agent",
+        enable_metrics=False,
+    )
+    try:
+        result = await resumed.ainvoke(resumed.format_query("second turn"))
+    finally:
+        await resumed.aclose()
+        resumed.close()
+
+    human_messages = [
+        message.content
+        for message in result["messages"]
+        if isinstance(message, HumanMessage)
+    ]
+    assert human_messages == ["first turn", "second turn"]
 
 
 @pytest.mark.asyncio

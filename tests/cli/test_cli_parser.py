@@ -84,6 +84,31 @@ def test_exec_uses_textual_one_shot_renderer(monkeypatch):
     run_once.assert_called_once_with(hitl, "#plan inspect this")
 
 
+@pytest.mark.parametrize("mode", ["interactive", "exec"])
+def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
+    hitl_class = MagicMock()
+    run_textual = MagicMock()
+    run_once = MagicMock()
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.app.run_textual", run_textual)
+    monkeypatch.setattr("ursa.cli.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    args = ["--name", "lab-assistant"]
+    if mode == "exec":
+        args.extend(["exec", "#plan inspect this"])
+
+    main(args)
+
+    config = hitl_class.call_args.args[0]
+    assert config.agent_name == "lab-assistant"
+    if mode == "interactive":
+        run_textual.assert_called_once_with(hitl_class.return_value)
+    else:
+        run_once.assert_called_once_with(
+            hitl_class.return_value, "#plan inspect this"
+        )
+
+
 def test_cli_reports_model_initialization_error_without_traceback(
     monkeypatch, capsys
 ):

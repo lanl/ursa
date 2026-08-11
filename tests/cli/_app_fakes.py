@@ -13,6 +13,7 @@ class FakeHITL:
     model = SimpleNamespace(model_name="test-model")
     embedding = None
     group = "default"
+    agent_name = None
     config = SimpleNamespace(mcp_servers={})
     agents = {"chat": FakeAgent(), "plan": FakeAgent()}
 

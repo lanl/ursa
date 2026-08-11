@@ -47,6 +47,7 @@ class UrsaTextualApp(App[None]):
     TITLE = "URSA"
     SUB_TITLE = "Textual HITL"
     BINDINGS: ClassVar = [
+        Binding("ctrl+c", "cancel_agent", "Cancel agent", show=False),
         Binding("ctrl+t", "toggle_transcript", "Transcript", show=True),
         Binding("ctrl+o", "toggle_outputs", "Outputs", show=True),
         Binding("ctrl+l", "clear_conversation", "Clear", show=True),
@@ -109,9 +110,14 @@ class UrsaTextualApp(App[None]):
         return threading.get_ident() == self._ui_thread_id
 
     def _update_status(self, state: str) -> None:
+        agent = (
+            f"  •  agent {agent_name}"
+            if (agent_name := getattr(self.hitl, "agent_name", None))
+            else ""
+        )
         self.query_one("#status", Static).update(
             f"{_model_name(self.hitl)} ({_endpoint(self.hitl.model)})  •  "
-            f"{self.total_tokens:,} tokens  •  {state}  •  "
+            f"{self.total_tokens:,} tokens{agent}  •  {state}  •  "
             "Ctrl+T transcript  •  Ctrl+O outputs"
         )
 
@@ -145,6 +151,9 @@ class UrsaTextualApp(App[None]):
             response = await self.hitl.run_agent(
                 name, prompt, callbacks=[handler]
             )
+        except asyncio.CancelledError:
+            succeeded = False
+            response = "*Agent run cancelled.*"
         except Exception as exc:
             succeeded = False
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
@@ -162,6 +171,12 @@ class UrsaTextualApp(App[None]):
 
     def _route_prompt(self, prompt: str) -> tuple[str, str]:
         return _route_prompt(self.hitl, prompt)
+
+    def action_cancel_agent(self) -> None:
+        """Cancel an active agent while leaving the conversation usable."""
+        prompt = self.query_one(PromptArea)
+        if prompt.disabled and self.workers.cancel_group(self, "agent"):
+            self._update_status("cancelling")
 
     @on(TextArea.Changed, "#prompt")
     def prompt_changed(self, event: TextArea.Changed) -> None:
@@ -343,6 +358,8 @@ class UrsaTextualApp(App[None]):
                 _endpoint(embedding) if embedding is not None else "none",
             ),
         ]
+        if agent_name := getattr(self.hitl, "agent_name", None):
+            rows.insert(3, ("Agent", str(agent_name)))
         model_table = "\n".join([
             "| Setting | Value |",
             "|---|---|",
@@ -381,7 +398,7 @@ class UrsaTextualApp(App[None]):
         rows = [
             ("Enter", "Submit prompt"),
             ("Shift+Enter", "Insert newline"),
-            ("Ctrl+C", "Clear prompt and remember it"),
+            ("Ctrl+C", "Clear prompt; cancel a running agent"),
             ("Up / Down", "Move vertically; prompt history at an edge"),
             ("Left / Right", "Move one character"),
             ("Ctrl/Alt/Option+Left / Right", "Move by word"),
