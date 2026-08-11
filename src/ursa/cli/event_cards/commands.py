@@ -53,6 +53,7 @@ class RunCommandCard(EventCard):
         self.output_expanded = False
         self._full_output = ""
         self.returncode: int | None = None
+        self.execution_failed = False
         self.safety_failed = False
         self.force_compact = False
         self._compact_frame = 0
@@ -69,11 +70,13 @@ class RunCommandCard(EventCard):
         )
         yield CommandSafetyIndicator()
         yield Static("", classes="command-output hidden")
+        yield Static("Click to expand", classes="event-expand-hint")
 
     def on_mount(self) -> None:
         self._compact_timer = self.set_interval(
             0.08, self._advance_compact_spinner, pause=True
         )
+        self._update_expand_hint()
 
     @property
     def FRAMES(self) -> tuple[str, ...]:
@@ -121,18 +124,35 @@ class RunCommandCard(EventCard):
             command = command[:119] + "…"
         return command
 
-    def _command_syntax(self, *, collapsed: bool) -> Syntax:
+    def _command_syntax(
+        self, *, collapsed: bool, expanded: bool = False
+    ) -> Syntax:
         lines = self.command.splitlines() or [self.command]
-        if collapsed:
+        if expanded:
+            command = "\n".join(lines)
+        elif collapsed:
             command = self._collapsed_command()
         else:
             command = self._preview_command("\n".join(lines))
         return Syntax(command, "bash", word_wrap=True)
 
+    def _render_command(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one(".command-source", Static).update(
+            self._command_syntax(
+                collapsed=self.completed and not self.output_expanded,
+                expanded=self.output_expanded,
+            )
+        )
+
     def update_event(self, payload: dict[str, Any]) -> None:
         stage = str(payload.get("stage") or "")
+        phase = str(payload.get("phase") or "")
         if isinstance(payload.get("returncode"), int):
             self.returncode = payload["returncode"]
+        if phase == "error" or payload.get("status") == "error":
+            self.execution_failed = True
         if stage == "safety_check":
             safety = self.query_one(CommandSafetyIndicator)
             if payload.get("safe") is True:
@@ -143,11 +163,7 @@ class RunCommandCard(EventCard):
                 safety.failed(str(payload.get("reason") or "") or None)
 
         output = payload.get("result")
-        if (
-            output is None
-            and stage == "execute"
-            and payload.get("phase") == "end"
-        ):
+        if output is None and stage == "execute" and phase == "end":
             artifacts = payload.get("artifacts")
             if isinstance(artifacts, list):
                 contents = [
@@ -158,7 +174,7 @@ class RunCommandCard(EventCard):
                 ]
                 if contents:
                     output = "\n".join(contents)
-        if output is not None:
+        if output is not None or phase == "error":
             self.complete(output)
 
     def complete(self, output: Any) -> None:
@@ -168,9 +184,7 @@ class RunCommandCard(EventCard):
         self.query_one(".command-compact-state", Static).update(
             self._completion_icon()
         )
-        self.query_one(".command-source", Static).update(
-            self._command_syntax(collapsed=True)
-        )
+        self._render_command()
         self._full_output = self._clean_output(output)
         if not self._full_output:
             self.force_compact = True
@@ -180,7 +194,7 @@ class RunCommandCard(EventCard):
     def _completion_icon(self) -> str:
         if self.safety_failed:
             return "⚔️"
-        if self.returncode not in (None, 0):
+        if self.execution_failed or self.returncode != 0:
             return "✗"
         return "✓"
 
@@ -195,9 +209,12 @@ class RunCommandCard(EventCard):
         self._update_visibility()
 
     def set_output_expanded(self, expanded: bool) -> None:
+        self.expanded = expanded
         self.output_expanded = expanded
+        self._render_command()
         self._render_output()
         self._update_visibility()
+        self._update_expand_hint()
 
     def _render_output(self) -> None:
         if not self.completed:

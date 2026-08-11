@@ -1,4 +1,5 @@
 from textual.containers import VerticalScroll
+from textual.widgets import RichLog, Static
 
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
@@ -40,6 +41,23 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
         assert len(agent_cards[0].lines) == 3
         assert agent_cards[0].details == ["The second hypothesis survives."]
         assert len(turn.query(ArtifactCard)) == 1
+
+        artifact = turn.query_one(ArtifactCard)
+        for card in turn.query(".event-card"):
+            assert (
+                str(card.query_one(".event-expand-hint", Static).content)
+                == "Click to expand"
+            )
+        artifact.mark_done()
+        await pilot.click(ArtifactCard)
+        turn.set_transcript(True)
+        assert artifact.done
+        assert artifact.expanded
+        assert (
+            str(artifact.query_one(".event-expand-hint", Static).content)
+            == "Click to collapse"
+        )
+        assert not turn.query_one(RichLog).has_class("hidden")
 
 
 async def test_search_and_lammps_events_render_specialized_details(tmp_path):

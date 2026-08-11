@@ -24,6 +24,7 @@ class FileActivityCard(EventCard):
     def compose(self) -> ComposeResult:
         yield Static("", classes="event-summary file-summary")
         yield Static("", classes="event-card-done")
+        yield Static("Click to expand", classes="event-expand-hint")
 
     def add_file(
         self,
@@ -128,7 +129,7 @@ class EditCard(EventCard):
         suffix = (
             ""
             if self.expanded or len(diff_lines) <= 8
-            else "\n… diff collapsed (Ctrl+T expands)"
+            else "\n… diff collapsed (Ctrl+O expands)"
         )
         body = (
             f"**{self.label}**  \n"

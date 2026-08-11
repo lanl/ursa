@@ -2,17 +2,45 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from textual import events
-from textual.widgets import Static
+from textual.binding import Binding
+from textual.widgets import Collapsible, Markdown, Static, Tab, TabPane
 
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
 from ursa.cli.tips import TIPS
 from ursa.cli.widgets import (
+    AgentsScreen,
     HotlistScreen,
     InformationScreen,
     PromptArea,
     WelcomeBanner,
 )
+
+
+class FakeToolArgs:
+    @classmethod
+    def model_json_schema(cls):
+        return {
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Workspace-relative file path.",
+                }
+            },
+            "required": ["path"],
+        }
+
+
+class FakeConfiguredTool:
+    name = "read_file"
+    description = "Read a file from the configured workspace."
+    args_schema = FakeToolArgs
+    return_direct = False
+    metadata = None
+
+
+class FakeMcpTool(FakeConfiguredTool):
+    name = "remote_read"
 
 
 async def test_agent_hotlist_routes_selected_agent(tmp_path):
@@ -75,9 +103,16 @@ async def test_macro_selectors_close_with_escape(tmp_path):
         await pilot.press("escape")
         await pilot.pause()
 
-        assert prompt.text == "Review docs carefully"
-        assert prompt.cursor_location == (0, 6)
+        assert prompt.text == "Review# docs carefully"
+        assert prompt.cursor_location == (0, 7)
         assert prompt.has_focus
+
+        await pilot.press("ctrl+z")
+        assert prompt.text == "Review docs carefully"
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert prompt.text == "Review# docs carefully"
+        assert not isinstance(app.screen, HotlistScreen)
 
         prompt.load_text("")
         await pilot.press("@")
@@ -87,6 +122,72 @@ async def test_macro_selectors_close_with_escape(tmp_path):
         await pilot.pause()
         assert prompt.text == "@"
         assert prompt.has_focus
+
+
+async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
+    tmp_path,
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text("alpha\nbeta")
+        prompt.move_cursor((0, 0))
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert isinstance(app.screen, HotlistScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert prompt.text == "/alpha\nbeta"
+        await pilot.press("ctrl+z")
+        assert prompt.text == "alpha\nbeta"
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert prompt.text == "/alpha\nbeta"
+        assert not isinstance(app.screen, HotlistScreen)
+
+
+async def test_macro_choice_is_undoable_without_reopening_picker(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text("Review docs")
+        prompt.move_cursor((0, 6))
+
+        await pilot.press("#", "p", "l", "enter")
+        await pilot.pause()
+        assert prompt.text == "#plan Review docs"
+
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert prompt.text == "Review# docs"
+        assert not isinstance(app.screen, HotlistScreen)
+
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert prompt.text == "#plan Review docs"
+        assert not isinstance(app.screen, HotlistScreen)
+
+
+async def test_programmatic_and_pasted_macro_characters_do_not_open_picker(
+    tmp_path,
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text("#plan programmatic")
+        await pilot.pause()
+        assert not isinstance(app.screen, HotlistScreen)
+
+        prompt.load_text("")
+        app.post_message(events.Paste("@notes.md /status"))
+        await pilot.pause()
+        assert prompt.text == "@notes.md /status"
+        assert not isinstance(app.screen, HotlistScreen)
 
 
 async def test_file_hotlist_uses_at_trigger(tmp_path):
@@ -232,6 +333,7 @@ async def test_welcome_banner_and_endpoint_status_are_visible(tmp_path):
         assert "test-model (https://llm.test/v1)" in str(
             app.query_one("#status", Static).content
         )
+        assert "Ctrl+" not in str(app.query_one("#status", Static).content)
 
 
 async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
@@ -301,8 +403,26 @@ async def test_workspace_uses_one_borderless_row_when_it_fits(tmp_path):
 
         assert row.has_class("workspace-inline")
         assert label.region.y == workspace.region.y
+        assert workspace.styles.content_align_horizontal == "left"
+        assert workspace.region.x == label.region.right
         assert values.region.y == row.region.bottom
         assert str(workspace.content) == str(Path("/tmp/ursa").resolve())
+
+
+async def test_picker_header_shares_the_top_row_with_exit_hint(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(HotlistScreen("Workspace paths", ["src/"]))
+        await pilot.pause()
+        hotlist = app.screen.query_one("#hotlist")
+        header = app.screen.query_one("#hotlist-header")
+        title = app.screen.query_one("#hotlist-title", Static)
+        exit_hint = app.screen.query_one("#hotlist-exit-hint", Static)
+
+        assert header.region.y == hotlist.content_region.y
+        assert title.region.y == exit_hint.region.y
+        assert str(exit_hint.content) == "Esc to Exit"
 
 
 async def test_slash_picker_opens_status_inside_textual(tmp_path):
@@ -361,27 +481,82 @@ async def test_command_picker_prioritizes_command_name_over_description(
         assert app.screen.query_one("#hotlist-options").highlighted == 0
 
 
-def test_command_details_cover_agents_and_the_full_app_keymap(tmp_path):
+async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
+    hitl = FakeHITL(tmp_path)
+    hitl.agents = {
+        "plan": hitl.agents["plan"],
+        "chat": hitl.agents["chat"],
+    }
+    for agent in hitl.agents.values():
+        agent.tools = {
+            "read_file": FakeConfiguredTool(),
+            "remote_read": FakeMcpTool(),
+        }
+        agent.tool_sources = {"remote_read": "laboratory"}
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("/", "a", "g", "e", "n", "t", "s", "enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, AgentsScreen)
+        panes = list(app.screen.query(TabPane))
+        assert len(panes) == 2
+        assert [tab.label_text for tab in app.screen.query(Tab)] == [
+            "#plan",
+            "#chat",
+        ]
+        tools = list(app.screen.query(Collapsible))
+        assert len(tools) == 4
+        assert all(tool.collapsed for tool in tools)
+        assert [str(tool.title) for tool in tools[:2]] == [
+            "read_file",
+            "remote_read (mcp: laboratory)",
+        ]
+
+        tools[0].collapsed = False
+        await pilot.pause()
+        detail = str(tools[0].query_one(Markdown).source)
+        assert "Read a file from the configured workspace." in detail
+        assert "FakeConfiguredTool" in detail
+        assert "FakeToolArgs" in detail
+        assert "Workspace-relative file path." in detail
+
+
+def test_command_details_and_keymap_come_from_live_bindings(
+    tmp_path, monkeypatch
+):
     app = UrsaTextualApp(FakeHITL(tmp_path))
     app.total_tokens = 1234
+    app.input_tokens = 1000
+    app.output_tokens = 234
+    app.cached_tokens = 456
+    monkeypatch.setattr(
+        PromptArea,
+        "BINDINGS",
+        [
+            *PromptArea.BINDINGS,
+            Binding("f12", "diagnostics", "Open diagnostics", show=False),
+        ],
+    )
 
-    agents = app._agents_markdown()
     status = app._status_markdown()
     keymap = app._keymap_markdown()
 
-    assert "## #chat" in agents
-    assert "A configured test agent." in agents
-    assert "`mode`" in agents and "`test`" in agents
     assert "1,234" in status
+    assert "1,000" in status
+    assert "234" in status
+    assert "456" in status
     assert "test-model" in status
     for expected in (
-        "Shift+Enter",
-        "Ctrl+C",
-        "Ctrl/Alt/Option+Left / Right",
-        "Ctrl+X / Ctrl+V",
-        "Picker Up / Down",
-        "Ctrl+T",
-        "Cmd+Up / Cmd+Down",
-        "Info Q / Esc",
+        "## Application",
+        "## Prompt editor",
+        "## Picker",
+        "## Information screen",
+        "Submit prompt",
+        "Choose workspace path",
+        "Previous choice",
+        "Scroll to bottom",
+        "Open diagnostics",
     ):
         assert expected in keymap

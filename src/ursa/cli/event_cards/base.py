@@ -20,9 +20,11 @@ class EventCard(Static):
     def compose(self) -> ComposeResult:
         yield Markdown("", classes="event-summary")
         yield Static("", classes="event-card-done")
+        yield Static("Click to expand", classes="event-expand-hint")
 
     def on_mount(self) -> None:
         self.refresh_content()
+        self._update_expand_hint()
 
     def mark_done(self) -> None:
         if self.done:
@@ -43,6 +45,16 @@ class EventCard(Static):
     def set_expanded(self, expanded: bool) -> None:
         self.expanded = expanded
         self.refresh_content()
+        self._update_expand_hint()
+
+    def _update_expand_hint(self) -> None:
+        if not self.is_mounted:
+            return
+        hints = list(self.query(".event-expand-hint"))
+        if hints:
+            hints[0].update(
+                "Click to collapse" if self.expanded else "Click to expand"
+            )
 
     def on_click(self, event: events.Click) -> None:
         event.stop()

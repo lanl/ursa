@@ -1,6 +1,8 @@
 """Pure helpers and constants shared by the Textual CLI."""
 
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from rich.cells import cell_len, chop_cells  # noqa: TID251
@@ -35,7 +37,7 @@ AGENT_LABELS = {
 }
 
 COMMAND_CHOICES = {
-    "agents": "Configured agents, descriptions, and options",
+    "agents": "Configured agents, descriptions, options, and tools",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",
 }
@@ -57,6 +59,12 @@ def _truncate_middle(text: str, width: int) -> str:
         return text
     marker = " … truncated … "
     available = width - cell_len(marker)
+    if available < 0:
+        if width <= 0:
+            return ""
+        if width == 1:
+            return "…"
+        return f"{chop_cells(text, width - 1)[0]}…"
     left = (available + 1) // 2
     right = available // 2
     prefix = chop_cells(text, left)[0]
@@ -86,9 +94,11 @@ def _embedding_name(hitl: HITL) -> str:
 
 def _route_prompt(hitl: HITL, prompt: str) -> tuple[str, str]:
     """Route a leading ``#agent`` macro, defaulting to chat."""
-    first, separator, rest = prompt.partition(" ")
-    if first.startswith("#") and first[1:] in hitl.agents:
-        return first[1:], rest if separator else ""
+    match = re.match(
+        r"^#(?P<name>\S+)(?:\s(?P<prompt>.*))?$", prompt, re.DOTALL
+    )
+    if match and match["name"] in hitl.agents:
+        return match["name"], match["prompt"] or ""
     return "chat", prompt
 
 
@@ -137,22 +147,87 @@ def _fuzzy_score(query: str, candidate: str) -> int | None:
     return max(scores) if scores else None
 
 
-def _token_usage(value: Any) -> int:
-    """Extract total token usage from common LangChain response shapes."""
-    seen: set[int] = set()
+@dataclass(frozen=True)
+class TokenUsage:
+    """Normalized token counts from one model response."""
 
-    def visit(item: Any) -> int:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+
+
+def _token_usage_breakdown(value: Any) -> TokenUsage:
+    """Extract token counts from common LangChain/provider response shapes."""
+    seen: set[int] = set()
+    candidates: list[TokenUsage] = []
+
+    def count(item: Any) -> int:
+        return (
+            item if isinstance(item, int) and not isinstance(item, bool) else 0
+        )
+
+    def mapping_usage(item: Mapping[str, Any]) -> TokenUsage:
+        input_tokens = max(
+            count(item.get(key))
+            for key in ("input_tokens", "prompt_tokens", "input_token_count")
+        )
+        output_tokens = max(
+            count(item.get(key))
+            for key in (
+                "output_tokens",
+                "completion_tokens",
+                "output_token_count",
+            )
+        )
+        cached_tokens = max(
+            count(item.get(key))
+            for key in (
+                "cached_tokens",
+                "cached_input_tokens",
+                "cache_read_input_tokens",
+                "prompt_cache_hits",
+            )
+        )
+        for details_key in (
+            "input_token_details",
+            "input_tokens_details",
+            "prompt_tokens_details",
+        ):
+            details = item.get(details_key)
+            if isinstance(details, Mapping):
+                cached_tokens = max(
+                    cached_tokens,
+                    count(details.get("cached_tokens")),
+                    count(details.get("cache_read")),
+                )
+        total_tokens = max(
+            count(item.get("total_tokens")),
+            count(item.get("total_token_count")),
+            input_tokens + output_tokens,
+        )
+        return TokenUsage(
+            input_tokens,
+            output_tokens,
+            cached_tokens,
+            total_tokens,
+        )
+
+    def visit(item: Any) -> None:
         if item is None or id(item) in seen:
-            return 0
+            return
         seen.add(id(item))
-        if isinstance(item, dict):
-            for key in ("total_tokens", "total_token_count"):
-                count = item.get(key)
-                if isinstance(count, int):
-                    return count
-            return max((visit(child) for child in item.values()), default=0)
+        if isinstance(item, Mapping):
+            usage = mapping_usage(item)
+            if usage != TokenUsage():
+                candidates.append(usage)
+            for child in item.values():
+                visit(child)
+            return
         if isinstance(item, (list, tuple)):
-            return max((visit(child) for child in item), default=0)
+            for child in item:
+                visit(child)
+            return
         for attribute in (
             "llm_output",
             "usage_metadata",
@@ -161,12 +236,29 @@ def _token_usage(value: Any) -> int:
             "message",
         ):
             if hasattr(item, attribute):
-                count = visit(getattr(item, attribute))
-                if count:
-                    return count
-        return 0
+                visit(getattr(item, attribute))
 
-    return visit(value)
+    visit(value)
+    if not candidates:
+        return TokenUsage()
+    best = max(
+        candidates,
+        key=lambda usage: (
+            bool(usage.input_tokens) + bool(usage.output_tokens),
+            usage.total_tokens,
+        ),
+    )
+    return TokenUsage(
+        best.input_tokens,
+        best.output_tokens,
+        max(usage.cached_tokens for usage in candidates),
+        best.total_tokens,
+    )
+
+
+def _token_usage(value: Any) -> int:
+    """Extract total token usage from common LangChain response shapes."""
+    return _token_usage_breakdown(value).total_tokens
 
 
 def _model_name(hitl: HITL) -> str:

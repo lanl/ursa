@@ -232,6 +232,28 @@ async def test_agent_with_tools_add_mcp_tools_filters_by_name(
     assert agent.tools == {"beta": beta}
 
 
+@pytest.mark.asyncio
+async def test_agent_with_tools_returns_mcp_tool_provenance_without_mutation(
+    chat_model, tmp_path
+):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    client = AsyncMock()
+    client.connections = {"laboratory": {}, "archive": {}}
+
+    async def get_tools(*, server_name):
+        return [alpha] if server_name == "laboratory" else [beta]
+
+    client.get_tools.side_effect = get_tools
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+
+    sources = await agent.add_mcp_tools(client)
+
+    assert sources == {"alpha": "laboratory", "beta": "archive"}
+    assert agent.tools["alpha"].metadata is None
+    assert agent.tools["beta"].metadata is None
+
+
 def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):
     class WriteToolAgent(AgentWithTools, BaseAgent):
         def __init__(self, **kwargs):

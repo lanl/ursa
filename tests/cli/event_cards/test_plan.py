@@ -57,8 +57,8 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
         assert "6. Step 6" in source
         assert "7. Step 7" in source
         assert "_… truncated …_" in source
-        hint = plan.query_one(".plan-expand-hint", Static)
-        assert not hint.has_class("hidden")
+        hint = plan.query_one(".event-expand-hint", Static)
+        assert str(hint.content) == "Click to expand"
         assert all(
             node.region.height == 1
             for node in markdown.query("*")
@@ -139,9 +139,12 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
         assert not plans[1].expanded
         assert plans[1].state == "complete"
 
-        await pilot.click(PlanCard)
-        assert plans[0].expanded
-        assert plans[0].query_one(".plan-expand-hint").has_class("hidden")
+        await pilot.press("ctrl+o")
+        assert all(plan.expanded for plan in plans)
+        assert (
+            str(plans[0].query_one(".event-expand-hint", Static).content)
+            == "Click to collapse"
+        )
         assert "middle steps hidden" not in str(
             plans[0].query_one(Markdown).source
         )
@@ -153,6 +156,13 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
         assert any(
             type(node).__name__ == "MarkdownBlockQuote"
             for node in plans[0].query_one(Markdown).query("*")
+        )
+
+        await pilot.press("ctrl+o")
+        assert all(not plan.expanded for plan in plans)
+        assert (
+            str(plans[0].query_one(".event-expand-hint", Static).content)
+            == "Click to expand"
         )
 
 
@@ -184,6 +194,32 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
         source = str(plan.query_one(Markdown).source)
         assert plan.state == "complete"
 
+        await asyncio.sleep(0.7)
+        await pilot.pause()
+        assert str(plan.query_one(Markdown).source) == source
+
+
+async def test_failed_agent_stops_drafting_plan_spinner(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("make a plan", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        await turn.event({
+            "agent": "PlanningAgent",
+            "stage": "generate",
+            "message": "Drafting plan",
+        })
+        plan = turn.query_one(PlanCard)
+
+        turn.finish_activity(succeeded=False)
+        await pilot.pause()
+
+        assert plan.state == "revision_needed"
+        assert "draft completed" in plan.review_reason
+        source = str(plan.query_one(Markdown).source)
+        assert "Plan drafting failed" in source
+        assert "Drafting Plan" not in source
         await asyncio.sleep(0.7)
         await pilot.pause()
         assert str(plan.query_one(Markdown).source) == source

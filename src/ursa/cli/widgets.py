@@ -7,16 +7,26 @@ from math import ceil
 from pathlib import Path
 
 from rich.cells import cell_len, chop_cells
-from textual import events, on
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Input, Markdown, OptionList, Static, TextArea
+from textual.widgets import (
+    Collapsible,
+    Input,
+    Markdown,
+    OptionList,
+    Static,
+    TabbedContent,
+    TabPane,
+    TextArea,
+)
 from textual.widgets.option_list import Option
 
 from ursa.agents.base import URSA_VERSION
+from ursa.cli.agent_info import AgentDetails, ToolDetails
 from ursa.cli.helpers import (
     _embedding_name,
     _endpoint,
@@ -30,10 +40,77 @@ from ursa.cli.tips import random_tip
 class PromptArea(TextArea):
     """A multiline editor whose bare Enter submits the current prompt."""
 
+    BINDINGS = [
+        Binding(
+            "enter", "submit_prompt", "Submit prompt", show=False, priority=True
+        ),
+        Binding(
+            "shift+enter",
+            "insert_newline",
+            "Insert newline",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "ctrl+c", "clear_prompt", "Clear prompt", show=False, priority=True
+        ),
+        Binding(
+            "up",
+            "history_up",
+            "Cursor or prompt history up",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "down",
+            "history_down",
+            "Cursor or prompt history down",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "alt+left,meta+left,alt+b",
+            "cursor_word_left",
+            "Cursor word left",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "alt+right,meta+right,alt+f",
+            "cursor_word_right",
+            "Cursor word right",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "@",
+            "file_macro",
+            "Choose workspace path",
+            show=False,
+            priority=True,
+        ),
+        Binding("#", "agent_macro", "Choose agent", show=False, priority=True),
+        Binding(
+            "/",
+            "command_macro",
+            "Open command picker",
+            show=False,
+            priority=True,
+        ),
+    ]
+
     class Submitted(Message):
         def __init__(self, text: str) -> None:
             super().__init__()
             self.text = text
+
+    class MacroTyped(Message):
+        """A macro trigger inserted by a real keyboard event."""
+
+        def __init__(self, trigger: str, location: tuple[int, int]) -> None:
+            super().__init__()
+            self.trigger = trigger
+            self.location = location
 
     def __init__(self) -> None:
         super().__init__(
@@ -61,44 +138,24 @@ class PromptArea(TextArea):
             len(self.document.lines[-1]),
         ))
 
-    async def _on_key(self, event: events.Key) -> None:
-        if event.key in {"alt+left", "meta+left", "alt+b"}:
-            event.prevent_default()
-            event.stop()
-            self.action_cursor_word_left()
-            return
-        if event.key in {"alt+right", "meta+right", "alt+f"}:
-            event.prevent_default()
-            event.stop()
-            self.action_cursor_word_right()
-            return
-        if event.key == "ctrl+c":
-            event.prevent_default()
-            event.stop()
-            self._remember(self.text)
-            self._history_index = len(self.prompt_history)
-            self.load_text("")
-            return
-        if event.key == "shift+enter":
-            event.prevent_default()
-            event.stop()
-            self.insert("\n")
-            return
-        if event.key == "enter":
-            event.prevent_default()
-            event.stop()
-            text = self.text.strip()
-            if text:
-                self._remember(text)
-                self.post_message(self.Submitted(text))
-            return
-        if (
-            event.key == "up"
-            and self.prompt_history
-            and (not self.text or self.cursor_location[0] == 0)
+    def action_submit_prompt(self) -> None:
+        text = self.text.strip()
+        if text:
+            self._remember(text)
+            self.post_message(self.Submitted(text))
+
+    def action_insert_newline(self) -> None:
+        self.insert("\n")
+
+    def action_clear_prompt(self) -> None:
+        self._remember(self.text)
+        self._history_index = len(self.prompt_history)
+        self.load_text("")
+
+    def action_history_up(self) -> None:
+        if self.prompt_history and (
+            not self.text or self.cursor_location[0] == 0
         ):
-            event.prevent_default()
-            event.stop()
             index = (
                 len(self.prompt_history)
                 if self._history_index is None
@@ -106,9 +163,10 @@ class PromptArea(TextArea):
             )
             self._load_history(max(0, index - 1))
             return
-        if event.key == "down" and self._history_index is not None:
-            event.prevent_default()
-            event.stop()
+        self.action_cursor_up()
+
+    def action_history_down(self) -> None:
+        if self._history_index is not None:
             next_index = self._history_index + 1
             if next_index < len(self.prompt_history):
                 self._load_history(next_index)
@@ -116,13 +174,32 @@ class PromptArea(TextArea):
                 self._history_index = None
                 self.load_text("")
             return
-        await super()._on_key(event)
+        self.action_cursor_down()
+
+    def _insert_macro(self, trigger: str) -> None:
+        location = self.cursor_location
+        self.insert(trigger)
+        self.post_message(self.MacroTyped(trigger, location))
+
+    def action_file_macro(self) -> None:
+        self._insert_macro("@")
+
+    def action_agent_macro(self) -> None:
+        self._insert_macro("#")
+
+    def action_command_macro(self) -> None:
+        self._insert_macro("/")
 
 
 class HotlistScreen(ModalScreen[str | None]):
     """Fuzzy-searchable picker overlaid above the prompt."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel picker", priority=True),
+        Binding("up", "previous_choice", "Previous choice", priority=True),
+        Binding("down", "next_choice", "Next choice", priority=True),
+        Binding("enter", "select_choice", "Select choice", priority=True),
+    ]
 
     def __init__(self, title: str, candidates: Sequence[str]) -> None:
         super().__init__()
@@ -132,7 +209,9 @@ class HotlistScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="hotlist"):
-            yield Static(self.picker_title, classes="hotlist-title")
+            with Horizontal(id="hotlist-header"):
+                yield Static(self.picker_title, id="hotlist-title")
+                yield Static("Esc to Exit", id="hotlist-exit-hint")
             yield Input(placeholder="fzf search…", id="hotlist-query")
             yield OptionList(
                 *(
@@ -146,19 +225,15 @@ class HotlistScreen(ModalScreen[str | None]):
         self.query_one(Input).focus()
         self._highlight_first()
 
-    def on_key(self, event: events.Key) -> None:
+    def action_previous_choice(self) -> None:
+        self.query_one(OptionList).action_cursor_up()
+
+    def action_next_choice(self) -> None:
+        self.query_one(OptionList).action_cursor_down()
+
+    def action_select_choice(self) -> None:
         options = self.query_one(OptionList)
-        if event.key == "down":
-            event.prevent_default()
-            event.stop()
-            options.action_cursor_down()
-        elif event.key == "up":
-            event.prevent_default()
-            event.stop()
-            options.action_cursor_up()
-        elif event.key == "enter" and options.option_count:
-            event.prevent_default()
-            event.stop()
+        if options.option_count:
             options.action_select()
 
     @on(Input.Changed)
@@ -191,8 +266,13 @@ class InformationScreen(ModalScreen[None]):
     """Scrollable command output displayed without leaving the application."""
 
     BINDINGS = [
-        Binding("escape", "close", "Close"),
-        Binding("q", "close", "Close"),
+        Binding("escape,q", "close", "Close", priority=True),
+        Binding("up", "scroll_up", "Scroll up", priority=True),
+        Binding("down", "scroll_down", "Scroll down", priority=True),
+        Binding("home", "scroll_home", "Scroll to top", priority=True),
+        Binding("end", "scroll_end", "Scroll to bottom", priority=True),
+        Binding("pageup", "page_up", "Page up", priority=True),
+        Binding("pagedown", "page_down", "Page down", priority=True),
     ]
 
     def __init__(self, title: str, content: str) -> None:
@@ -207,6 +287,137 @@ class InformationScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+    def _scroll_view(self) -> VerticalScroll:
+        return self.query_one("#information-body", VerticalScroll)
+
+    def action_scroll_up(self) -> None:
+        self._scroll_view().action_scroll_up()
+
+    def action_scroll_down(self) -> None:
+        self._scroll_view().action_scroll_down()
+
+    def action_scroll_home(self) -> None:
+        self._scroll_view().action_scroll_home()
+
+    def action_scroll_end(self) -> None:
+        self._scroll_view().action_scroll_end()
+
+    def action_page_up(self) -> None:
+        self._scroll_view().action_page_up()
+
+    def action_page_down(self) -> None:
+        self._scroll_view().action_page_down()
+
+
+def _markdown_cell(value: object) -> str:
+    """Escape a value for a compact Markdown table cell."""
+    return str(value).replace("`", "\\`").replace("|", "\\|").replace("\n", " ")
+
+
+def _tool_markdown(tool: ToolDetails) -> str:
+    """Render expanded tool metadata inspired by the legacy Rich report."""
+    return "\n\n".join(
+        filter(
+            None,
+            (
+                tool.description,
+                "\n".join([
+                    "| Setting | Value |",
+                    "|---|---|",
+                    *(
+                        [
+                            "| Source | "
+                            f"`MCP: {_markdown_cell(tool.mcp_server)}` |"
+                        ]
+                        if tool.mcp_server
+                        else []
+                    ),
+                    f"| Class | `{_markdown_cell(tool.class_name)}` |",
+                    f"| Args schema | `{_markdown_cell(tool.schema_name)}` |",
+                    "| Return directly | "
+                    f"`{_markdown_cell(tool.return_direct)}` |",
+                ]),
+                (
+                    "\n".join([
+                        "### Arguments",
+                        "",
+                        "| Name | Type | Required | Description |",
+                        "|---|---|---|---|",
+                        *(
+                            "| "
+                            f"`{_markdown_cell(argument.name)}` | "
+                            f"`{_markdown_cell(argument.type_name)}` | "
+                            f"{'yes' if argument.required else 'no'} | "
+                            f"{_markdown_cell(argument.description)} |"
+                            for argument in tool.arguments
+                        ),
+                    ])
+                    if tool.arguments
+                    else ""
+                ),
+            ),
+        )
+    )
+
+
+class AgentsScreen(InformationScreen):
+    """Tabbed descriptions and configured-tool details for all agents."""
+
+    def __init__(self, agents: tuple[AgentDetails, ...]) -> None:
+        super().__init__("Agents", "")
+        self.agents = agents
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="information"):
+            yield Static(self.screen_title, id="information-title")
+            with TabbedContent(id="agents-tabs"):
+                for index, agent in enumerate(self.agents):
+                    with TabPane(f"#{agent.name}", id=f"agent-tab-{index}"):
+                        with VerticalScroll(classes="agent-details"):
+                            yield Markdown(agent.description)
+                            if agent.config:
+                                yield Markdown(
+                                    "\n".join([
+                                        "### Configuration",
+                                        "",
+                                        "| Option | Value |",
+                                        "|---|---|",
+                                        *(
+                                            f"| `{_markdown_cell(key)}` | "
+                                            f"`{_markdown_cell(value)}` |"
+                                            for key, value in agent.config
+                                        ),
+                                    ])
+                                )
+                            yield Static(
+                                "Configured tools", classes="agent-tools-title"
+                            )
+                            if agent.tool_error:
+                                yield Static(
+                                    "Unable to load tools: " + agent.tool_error,
+                                    classes="agent-tools-error",
+                                )
+                            elif not agent.tools:
+                                yield Static(
+                                    "No configured tools.",
+                                    classes="agent-tools-empty",
+                                )
+                            for tool in agent.tools:
+                                with Collapsible(
+                                    title=(
+                                        f"{tool.name} (mcp: {tool.mcp_server})"
+                                        if tool.mcp_server
+                                        else tool.name
+                                    ),
+                                    collapsed=True,
+                                    classes="agent-tool",
+                                ):
+                                    yield Markdown(_tool_markdown(tool))
+
+    def _scroll_view(self) -> VerticalScroll:
+        tabs = self.query_one(TabbedContent)
+        return self.query_one(f"#{tabs.active} .agent-details", VerticalScroll)
 
 
 class WelcomeBanner(Vertical):

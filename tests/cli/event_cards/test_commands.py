@@ -6,8 +6,10 @@ from textual.widgets import Static
 from tests.cli._app_fakes import FakeHITL, emit_event
 from ursa.cli.app import UrsaTextualApp
 from ursa.cli.event_cards import CommandSafetyIndicator, RunCommandCard
+from ursa.cli.event_handler import TextualEventHandler
 from ursa.cli.turn import Turn
 from ursa.cli.widgets import ActivityIndicator
+from ursa.util.events import DEFAULT_EVENT_NAME
 
 
 def test_long_command_preview_keeps_top_and_bottom_eight_lines():
@@ -63,6 +65,85 @@ async def test_overlapping_commands_stay_compact_and_complete_independently(
             str(cards[1].query_one(".command-compact-state", Static).content)
             in ActivityIndicator.FRAMES
         )
+
+
+async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("run both", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        for run_id in ("one", "two"):
+            await handler.on_tool_start(
+                {"name": "run_command"},
+                "",
+                run_id=run_id,
+                inputs={"query": "echo same"},
+            )
+        await handler.on_custom_event(
+            DEFAULT_EVENT_NAME,
+            {
+                "tool": "run_command",
+                "stage": "safety_check",
+                "query": "echo same",
+                "safe": True,
+            },
+            run_id="two",
+        )
+        await handler.on_tool_error(RuntimeError("first failed"), run_id="one")
+        await handler.on_tool_end("second output", run_id="two")
+        await pilot.pause()
+
+        first, second = turn.query(RunCommandCard)
+        assert first.execution_failed
+        assert first.query_one(".command-compact-state", Static).content == "✗"
+        assert not second.execution_failed
+        assert second.query_one(CommandSafetyIndicator).status == "passed"
+        assert second.query_one(".command-compact-state", Static).content == "✗"
+        assert (
+            second.query_one(".command-output", Static).content.code
+            == "second output"
+        )
+
+
+async def test_solitary_command_after_overlap_returns_to_detailed_layout(
+    tmp_path,
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("run commands", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        for command_id in ("one", "two"):
+            await turn.event({
+                "tool": "run_command",
+                "phase": "start",
+                "query": command_id,
+                "_command_id": command_id,
+            })
+        for command_id in ("one", "two"):
+            await turn.event({
+                "tool": "run_command",
+                "phase": "end",
+                "query": command_id,
+                "_command_id": command_id,
+                "returncode": 0,
+                "result": "done",
+            })
+        await turn.event({
+            "tool": "run_command",
+            "phase": "start",
+            "query": "three",
+            "_command_id": "three",
+        })
+        await pilot.pause()
+
+        first, second, third = turn.query(RunCommandCard)
+        assert first.multi_command
+        assert second.multi_command
+        assert not third.multi_command
+        assert third.query_one(".command-compact").has_class("hidden")
 
 
 async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
@@ -159,6 +240,11 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
 
         await pilot.press("ctrl+o")
         assert not output.has_class("hidden")
+        assert source.content.code == command
+
+        await pilot.press("ctrl+o")
+        assert output.has_class("hidden")
+        assert source.content.code == "echo line-1 …"
 
 
 async def test_single_command_output_preserves_top_and_bottom_until_expanded(
@@ -262,6 +348,10 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
         assert [card.completed for card in cards] == [True, True, True]
         assert [card.returncode for card in cards] == [0, 2, None]
         assert [card.safety_failed for card in cards] == [False, False, True]
+        assert [
+            card.query_one(".command-compact-state", Static).content
+            for card in cards
+        ] == ["✓", "✗", "⚔️"]
         assert all(
             not card.query_one(".command-compact").has_class("hidden")
             for card in cards
