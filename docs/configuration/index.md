@@ -132,9 +132,6 @@ The selected provider must exist in `inference_providers`. Omit a model setting
 to inherit it from the provider. For nullable settings, use `null` to clear an
 inherited value.
 
-`ssl_verify` accepts `true` or `false` and defaults to `true`. Omit it to
-inherit the provider's value.
-
 ### Managing multiple inference providers across config layers
 
 `inference_providers` works especially well with URSA's layered configuration. A user-level config can define the available providers once, while a project-local config can choose which provider or model to use for that project, or override the API key environment variable for billing or access control purposes. See [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables] for how those layers are merged.
