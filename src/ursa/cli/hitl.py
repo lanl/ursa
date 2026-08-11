@@ -123,42 +123,24 @@ class HITL:
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
-        agent_overrides = dict(config.agent_config or {})
-
         self.agent_name = self.config.agent_name
         self.group = self.config.group
 
-        enforce_group_base_url_policy(
-            self.config.llm_model.base_url, self.group
+        self.model: BaseChatModel = self.config.llm_model.init_chat_model(
+            self.config.inference_providers
         )
-        self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
-        if self.config.emb_model:
-            enforce_group_base_url_policy(
-                self.config.emb_model.base_url, self.group
-            )
+
         self.embedding = (
-            self.config.emb_model.init_embedding()
-            if self.config.emb_model
+            self.config.emb_model.init_embedding(
+                self.config.inference_providers
+            )
+            if self.config.emb_model is not None
             else None
         )
         enforce_model_group_policy(self.embedding, self.group)
 
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
-        if base_url := getattr(self.config.llm_model, "base_url"):
-            if model_base_url := get_base_url(self.model):
-                if base_url != model_base_url:
-                    logging.error(
-                        f"Model base url ({model_base_url}) and config ({base_url}) do not match"
-                    )
-
-        if self.embedding:
-            if base_url := getattr(self.config.emb_model, "base_url"):
-                if model_base_url := get_base_url(self.model):
-                    if base_url != model_base_url:
-                        logging.error(
-                            f"Model base url ({model_base_url}) and config ({base_url}) do not match"
-                        )
 
         rag_tool_config = {
             "rag_tools": self.config.rag_tools,
@@ -201,7 +183,7 @@ class HITL:
             self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
 
         # Apply agent-specific configuration overrides
-        for agent, agent_config in agent_overrides.items():
+        for agent, agent_config in self.config.agent_config.items():
             assert agent in self.agents, (
                 f"Unknown agent {agent}, Know agents: {','.join(self.agents.keys())}"
             )
