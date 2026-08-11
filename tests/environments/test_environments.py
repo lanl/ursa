@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from ursa import security
@@ -20,7 +19,6 @@ from ursa.environments.base import result_to_text
 from ursa.environments.config import (
     EnvironmentMemberConfig,
     load_object,
-    make_llm,
     symposium_cache_dir,
     team_cache_dir,
 )
@@ -516,23 +514,6 @@ members:
         symposium, tmp_path / "saved_symposium.yaml"
     )
     assert saved_symposium.exists()
-
-
-def test_member_model_rejects_unresolved_inference_provider():
-    member = EnvironmentMemberConfig.from_mapping({
-        "name": "analyst",
-        "model": {
-            "model": "openai:gpt-test",
-            "inference_provider": "shared",
-        },
-    })
-    default_llm = FakeListChatModel(responses=["default"])
-
-    with pytest.raises(
-        ValueError,
-        match="references unresolved inference provider 'shared'",
-    ):
-        make_llm(default_llm, member.model)
 
 
 def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):

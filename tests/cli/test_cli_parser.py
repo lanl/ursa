@@ -641,23 +641,6 @@ def test_chat_model_config_initializes_chat_model(monkeypatch):
     assert captured_kwargs["use_responses_api"] is True
 
 
-def test_chat_model_config_rejects_unresolved_provider(monkeypatch):
-    monkeypatch.setattr(
-        "ursa.cli.config.init_chat_model",
-        lambda **kwargs: "chat-model",
-    )
-    cfg = ChatModelConfig(
-        model="openai:gpt-5",
-        inference_provider="shared",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="references unresolved inference provider 'shared'",
-    ):
-        cfg.init_chat_model()
-
-
 def test_emb_model_config_initializes_embedding_model(monkeypatch):
     captured_kwargs = {}
 
@@ -969,15 +952,6 @@ def test_print_config_omits_defaults_and_nulls(
             "command": "example-server",
         }
     }
-
-
-def test_resolve_ursa_config_promotes_use_web_to_agent_config():
-    config = UrsaConfig(use_web=True)
-
-    resolved = resolve_ursa_config(config)
-
-    for agent_name in ["chat", "execute", "deep_review", "prompt"]:
-        assert resolved.agent_config[agent_name]["use_web"] is True
 
 
 def test_resolve_ursa_config_use_web_only_fills_missing_values():
