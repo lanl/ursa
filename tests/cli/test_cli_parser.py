@@ -219,9 +219,7 @@ def test_print_config_flag_sets_bool_and_preserves_defaults(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-missing"))
-    monkeypatch.setenv(
-        "XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs-missing")
-    )
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs-missing"))
     monkeypatch.chdir(tmp_path)
     parser = build_parser()
     args = parser.parse_args(["--print-config"])
@@ -434,16 +432,13 @@ def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     xdg_dir_2 = tmp_path / "xdg-dir-2"
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
-    monkeypatch.setenv(
-        "XDG_CONFIG_DIRS", f"{xdg_dir_1}:{xdg_dir_2}"
-    )
+    monkeypatch.setenv("XDG_CONFIG_DIRS", f"{xdg_dir_1}:{xdg_dir_2}")
 
     assert _xdg_config_search_paths() == [
         xdg_dir_1 / "ursa" / "config.yaml",
         xdg_dir_2 / "ursa" / "config.yaml",
         xdg_home / "ursa" / "config.yaml",
     ]
-
 
 
 def test_resolve_config_merges_xdg_local_file_and_cli_layers(

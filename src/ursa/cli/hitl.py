@@ -28,7 +28,6 @@ from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import UrsaConfig
 from ursa.security import (
-    enforce_group_base_url_policy,
     enforce_model_group_policy,
 )
 from ursa.util.has_optional_dep_group import has_optional_dep_group

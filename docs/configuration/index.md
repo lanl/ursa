@@ -96,6 +96,73 @@ llm_model:
 
 Then set the key in your shell or secret manager.
 
+## Inference providers
+
+Use `inference_providers` to define reusable provider-level settings once, then reference them from `llm_model` or `emb_model` with `inference_provider`.
+
+```yaml
+inference_providers:
+  openai_public:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    ssl_verify: true
+
+llm_model:
+  model: openai:gpt-5.4
+  inference_provider: openai_public
+
+emb_model:
+  model: openai:text-embedding-3-large
+  inference_provider: openai_public
+```
+
+This is useful when multiple model configs share the same endpoint, credentials, or SSL settings. Model-specific settings override values inherited from the referenced provider. For example, this keeps the shared endpoint but uses a different credential source for just the LLM:
+
+```yaml
+inference_providers:
+  openai_public:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+
+llm_model:
+  model: openai:gpt-5.4
+  inference_provider: openai_public
+  api_key_env: PROJECT_OPENAI_API_KEY
+```
+
+Provider references must name an entry in `inference_providers`.
+
+### Managing multiple inference providers across config layers
+
+`inference_providers` works especially well with URSA's layered configuration. A user-level config can define the available providers once, while a project-local config can choose which provider or model to use for that project, or override the API key environment variable for billing or access control purposes. See [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables] for how those layers are merged.
+
+For example, a user config might define reusable providers:
+
+```yaml
+inference_providers:
+  openai_personal:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+
+  openai_project:
+    base_url: https://api.openai.com/v1
+    api_key_env: PROJECT_OPENAI_API_KEY
+
+llm_model:
+  model: openai:gpt-5.4
+  inference_provider: openai_personal
+```
+
+Then a project-local config can switch billing or model selection without redefining the provider details:
+
+```yaml
+llm_model:
+  model: openai:gpt-5.4-mini
+  inference_provider: openai_project
+```
+
+This pattern lets you keep a stable catalog of providers in user config while allowing each project to select the right provider, API key, or model.
+
 ## More configuration topics
 
 - [OpenAI-compatible endpoints][openai-compatible-endpoints]

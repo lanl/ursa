@@ -1,4 +1,3 @@
-from ursa.security import enforce_group_base_url_policy
 import json
 import logging
 import re
@@ -25,6 +24,7 @@ from pydantic import (
     field_validator,
 )
 
+from ursa.security import enforce_group_base_url_policy
 from ursa.util.http import (
     build_httpx_async_client,
     build_httpx_client,
