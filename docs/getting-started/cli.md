@@ -50,43 +50,34 @@ See [Configuration](../configuration/index.md) for Ollama, Anthropic, Google Gen
 ursa --config config.yaml
 ```
 
-You should see the URSA prompt:
-
-```text
-ursa>
-```
-
-Type `help` or `?` inside the prompt to see available interactive commands.
+You should see the full-screen URSA interface. Type `/` to browse app
+commands, or open `/keymap` for the complete keyboard map.
 
 ## 3. Chat with the assistant
 
 ```text
-ursa> Summarize what URSA can help me do.
+Summarize what URSA can help me do.
 ```
 
 Plain text input is handled by the default chat behavior.
 
 ## 4. Use the planning agent
 
-Run the planning agent with the `plan` command:
+Run the planning agent with the `#plan` macro. Typing `#` opens the agent
+picker and inserts the selected behavior at the front of the prompt:
 
 ```text
-ursa> plan Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
+#plan Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
 ```
 
-You can also type the agent name first and provide the prompt interactively:
-
-```text
-ursa> plan
-plan: Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
-```
+The leading `#` is required; `plan ...` without it is ordinary chat input.
 
 ## 5. Use the execution agent
 
 The execution agent can write files and run commands in the configured workspace.
 
 ```text
-ursa> execute Write and run a Python script that prints the first 10 prime numbers.
+#execute Write and run a Python script that prints the first 10 prime numbers.
 ```
 
 Review the actions and outputs carefully. For more safety guidance, see

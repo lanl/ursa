@@ -2,45 +2,32 @@
 
 ## Previous Human-in-the-Loop Example has been Deprecated
 
-The HITL interface can now be accessed via the URSA CLI, launch with:
+Launch the HITL interface with:
 
 `$ ursa`
 
-and help on commands can he accessed with 
-
-`$ ursa --help`
+Use `/` inside the app to browse commands, `#` to choose an agent behavior,
+and `@` to insert a workspace file or directory. Run `ursa --help` for
+startup and configuration options.
 
 
 ## Basic Usage
 
-To prompt an URSA agent through the CLI, first select an agent, then issue a prompt to the agent:
+Plain text is handled by the default chat agent. To use another agent, type
+`#` and choose it from the fuzzy-searchable picker. The selected macro is
+inserted at the start of the prompt:
 
 ```
-ursa> execute
-execute: Make me a histogram of the first 10000 prime number spacings
+#execute Make me a histogram of the first 10000 prime number spacings
 ```
 
-You can also issue the prompt in one line by prepending the agent name:
-```
-ursa> execute Make me a histogram of the first 10000 prime number spacings`
-```
-
-to see the names of available agents, prompt the CLI with `help`:
-```
-ursa> help
-
-Documented commands (type help <topic>):
-========================================
-EOF  agents  arxiv  chat  clear  execute  exit  help  models  web
-
-Undocumented commands:
-======================
-hypothesize  plan
-
-```
+The `#` prefix is required. Bare text such as `execute ...` is sent to chat.
+Use `/agents` to see every configured agent and its options, `/status` for
+models, endpoints, token usage, MCP servers, and the active persistent agent,
+and `/keymap` for the complete keyboard map.
 
 
 Some additional documentation on the URSA github repo: [LINK](https://github.com/lanl/ursa)
 with more to come.
 
-We should have an in-depth documentation for it, but right now it's documented a bit on the main README and through the help flags with the CLI call. 
+See the main CLI guide for configuration and persistent-agent usage.
