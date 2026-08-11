@@ -1,16 +1,13 @@
 # Configuration files, CLI flags, and environment variables
 
-URSA supports layered configuration. Higher-precedence sources are merged on
-top of lower-precedence sources to produce a single merged configuration, which
-is then resolved into the effective runtime configuration. Prefer YAML files
-for reusable settings, CLI flags for temporary overrides, and environment
-variables for secrets or automation.
+URSA configs can be layered. Use YAML files for reusable settings, environment
+variables for secrets or automation, and CLI flags for temporary overrides.
 
 ## Configuration precedence
 
 URSA loads configuration in this order, with later sources overriding earlier ones:
 
-1. XDG-compliant user config, typically `~/.config/ursa/config.yaml`
+1. XDG system and user config files, including `~/.config/ursa/config.yaml`
 2. The file passed to `--config`
 3. Environment variables
 4. CLI flags
@@ -18,8 +15,7 @@ URSA loads configuration in this order, with later sources overriding earlier on
 Higher-precedence sources only override settings they specify. Set a nullable
 setting to `null` to clear it.
 
-See the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/)
-for background on XDG-compliant config locations.
+XDG files follow the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/).
 
 ## YAML files: preferred
 
@@ -112,38 +108,26 @@ mcp_servers:
 
 ## Inspect the active configuration
 
-By default, `--print-config` prints the full resolved final configuration,
-including default and null values:
+`--print-config` prints the full active configuration, including defaults and
+null values:
 
 ```bash
 ursa --print-config
 ursa --print-config=resolved
 ```
 
-To see the full configuration before final resolution:
+To inspect values before provider settings and other derived values are applied:
 
 ```bash
 ursa --print-config=merged
 ```
 
-Without a suffix, a level selects only that source:
+You can also inspect a particular file layer:
 
 ```bash
-ursa --print-config=user,merged
 ursa --config ./.ursa/config.yaml --print-config=file,resolved
 ```
 
-Levels are:
-
-- `user`: XDG configuration files
-- `file`: only the file passed with `--config`
-- `final`: all files plus environment and CLI overrides
-
-Add `+` to include lower-precedence sources. For example, use
-`ursa --config ./.ursa/config.yaml --print-config=file+,resolved` when an
-explicit file selects a provider defined in the user config. Stages are
-`merged` and `resolved`.
-
-Resolved output shows the complete effective configuration. Merged output shows
-the complete configuration before provider inheritance and other resolution
-steps.
+The complete form is `--print-config=LEVEL[+],STAGE`. Levels are `user`, `file`,
+and `final`; stages are `merged` and `resolved`. Add `+` to include
+lower-precedence sources.

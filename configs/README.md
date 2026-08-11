@@ -19,25 +19,17 @@ Supported environmental variables for the CLI can be viewed by running: `ursa --
 
 ## Default Configuration Options
 
-The default configuration is defined by [src/ursa/cli/config.py](../src/ursa/cli/config.py).
-An [example configuration file](./example.yaml) is provided.
-
-For configuration concepts, precedence, and printing merged vs resolved config, see:
-
-- <https://lanl.github.io/ursa/configuration/>
-- <https://lanl.github.io/ursa/configuration/files-and-env/>
-
-To see the full resolved configuration, including defaults, run:
-`ursa --print-config`.
+See the [example configuration file](./example.yaml) and the
+[configuration guide](https://lanl.github.io/ursa/configuration/). To print the
+full active configuration, including defaults, run `ursa --print-config`.
 
 Configuration files can be provided in [JSON](https://www.json.org/) or [YAML](https://yaml.org/) formats.
 
 ## Configuring Agents
 
-For `agent_config`, `use_web`, and per-agent configuration behavior, see:
-
-- <https://lanl.github.io/ursa/configuration/>
-- <https://lanl.github.io/ursa/getting-started/cli/>
+Set per-agent options under `agent_config`, keyed by the agent's HITL command
+name. See the [configuration guide](https://lanl.github.io/ursa/configuration/)
+for an example.
 
 The current agent configuration (excluding defaults) can be viewed using the `agents` command
 from URSA's HITL (run `ursa` then type `agents`).
