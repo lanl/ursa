@@ -11,7 +11,7 @@ TIPS = (
     "Ctrl+C clears the prompt; Up restores it from history.",
     "Ctrl+T toggles the complete event transcript.",
     "Ctrl+O expands or collapses full command output.",
-    "Cmd+Up and Cmd+Down move between turn markers.",
+    "Alt+Up and Alt+Down move between turn markers.",
     "The prompt grows automatically, up to ten lines.",
 )
 

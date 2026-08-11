@@ -29,11 +29,12 @@ class PlanCard(EventCard):
 
     def compose(self) -> ComposeResult:
         yield Markdown("", classes="event-summary")
-        yield Static("Click to expand", classes="plan-expand-hint")
+        yield Static("Click to expand", classes="event-expand-hint")
 
     def on_mount(self) -> None:
         self._spinner_timer = self.set_interval(0.3, self._advance_spinner)
         self.refresh_content()
+        self._update_expand_hint()
 
     def on_resize(self) -> None:
         self.refresh_content()
@@ -76,13 +77,18 @@ class PlanCard(EventCard):
         self.refresh_content()
 
     def finish_pending_review(self, *, succeeded: bool) -> None:
-        if self.state != "reviewing":
+        if self.state not in {"drafting", "reviewing"}:
             return
         if succeeded:
             self.finish_review(True)
             return
+        pending_state = self.state
         self.state = "revision_needed"
-        self.review_reason = "Planning stopped before review completed."
+        self.review_reason = (
+            "Planning stopped before the draft completed."
+            if pending_state == "drafting"
+            else "Planning stopped before review completed."
+        )
         if self._spinner_timer is not None:
             self._spinner_timer.pause()
         self.refresh_content()
@@ -91,7 +97,7 @@ class PlanCard(EventCard):
         """Use the complete rendered row, minus Markdown's list indentation."""
         markdown_width = self.query_one(Markdown).content_size.width
         content_width = markdown_width or max(0, self.content_size.width - 4)
-        return max(40, content_width - 4)
+        return max(0, content_width - 4)
 
     def refresh_content(self) -> None:
         if not self.is_mounted:
@@ -114,8 +120,13 @@ class PlanCard(EventCard):
         body = [f"**{self.label}**  "]
         status_indent = " "
         if not self.steps:
-            spinner = self.SPINNER_FRAMES[self._frame]
-            body.append(f"{status_indent}✍️ Drafting Plan{spinner}")
+            if self.state == "drafting":
+                spinner = self.SPINNER_FRAMES[self._frame]
+                body.append(f"{status_indent}✍️ Drafting Plan{spinner}")
+            elif self.state == "revision_needed":
+                body.append(f"{status_indent}❌ Plan drafting failed")
+            elif self.state == "complete":
+                body.append(f"{status_indent}✅ 📋 Plan is complete")
         else:
             plan_label = (
                 "Initial Plan" if self.revision == 1 else "Revised Plan"
@@ -142,8 +153,4 @@ class PlanCard(EventCard):
                     *(f"> {line}" for line in self.review_reason.splitlines()),
                 ])
 
-        expandable = bool(
-            self.steps and not self.expanded and len(self.steps) > 4
-        )
-        self.query_one(".plan-expand-hint").set_class(not expandable, "hidden")
         self.query_one(Markdown).update("\n".join(body))

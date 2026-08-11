@@ -11,7 +11,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Markdown, Static
+from textual.widgets import RichLog, Static
 
 from ursa.cli.event_cards import (
     AgentEventCard,
@@ -55,13 +55,14 @@ class Turn(Static):
         # the read/decide/mount/update sequence atomic so those callbacks all
         # observe the same current summary group.
         self._event_lock = asyncio.Lock()
-        self.outputs_expanded = False
+        self.card_details_expanded = False
 
     def compose(self) -> ComposeResult:
         yield MessageCard("user", self.prompt)
         yield Vertical(classes="events")
-        yield Markdown("", classes="transcript hidden")
+        yield RichLog(classes="transcript hidden", highlight=True, wrap=True)
         yield ActivityIndicator()
+        yield Static("", classes="turn-end-marker")
 
     async def event(
         self, payload: dict[str, Any], record_transcript: bool = True
@@ -180,7 +181,10 @@ class Turn(Static):
             if edit_card is not None:
                 edit_key = self._next_summary_key("edit")
                 await self._replace_or_mount(edit_key, edit_card)
-                self.set_timer(3, lambda: edit_card.set_expanded(False))
+                self.set_timer(
+                    3,
+                    lambda: edit_card.set_expanded(self.card_details_expanded),
+                )
             return
 
         label = str(payload.get("message") or stage or tool or "Event")
@@ -248,10 +252,9 @@ class Turn(Static):
 
     def record_transcript(self, payload: Mapping[str, Any]) -> None:
         """Append one raw callback record to the full transcript."""
-        self.transcript.append(json.dumps(payload, default=str, sort_keys=True))
-        self.query_one(".transcript", Markdown).update(
-            "\n".join(f"```json\n{line}\n```" for line in self.transcript)
-        )
+        line = json.dumps(payload, default=str, sort_keys=True)
+        self.transcript.append(line)
+        self.query_one(".transcript", RichLog).write(line)
 
     def _latest_file_card(
         self, operation: str, path: str
@@ -333,7 +336,7 @@ class Turn(Static):
         command_id = str(payload.get("_command_id") or "")
         key = f"command:{command_id}" if command_id else ""
         card = self.cards.get(key) if key else None
-        if card is None:
+        if card is None and not command_id:
             for candidate in reversed(list(self.cards.values())):
                 if (
                     isinstance(candidate, RunCommandCard)
@@ -343,6 +346,15 @@ class Turn(Static):
                     card = candidate
                     break
         if card is None:
+            if self._commands_overlapped and not any(
+                command.completed is False for command in self._commands
+            ):
+                # A new solitary command starts a fresh layout batch. Preserve
+                # compact history from an earlier overlapping batch without
+                # forcing all later commands to remain compact forever.
+                for previous in self._commands:
+                    previous.force_compact = True
+                self._commands_overlapped = False
             self._command_count += 1
             key = key or f"command:{self._command_count}"
             card = RunCommandCard(key, command or "(command unavailable)")
@@ -375,7 +387,7 @@ class Turn(Static):
             command_card.set_multi_command(
                 command_card not in detailed or command_card.force_compact
             )
-            command_card.set_output_expanded(self.outputs_expanded)
+            command_card.set_output_expanded(self.card_details_expanded)
 
     def update_activity(self, message: str) -> None:
         self.query_one(ActivityIndicator).update_message(message)
@@ -398,19 +410,27 @@ class Turn(Static):
             await previous.remove()
         self.cards[key] = card
         await self.query_one(".events", Vertical).mount(card)
+        if self.card_details_expanded:
+            card.set_expanded(True)
 
     async def add_response(self, response: str) -> None:
-        await self.mount(MessageCard("assistant", response))
+        self.transcript.append(response)
+        self.query_one(".transcript", RichLog).write(response)
+        message = MessageCard("assistant", response)
+        await self.mount(message, before=self.query_one(".turn-end-marker"))
+        message.set_class(self._transcript_enabled(), "hidden")
+
+    def _transcript_enabled(self) -> bool:
+        return not self.query_one(".transcript").has_class("hidden")
 
     def set_transcript(self, enabled: bool) -> None:
         self.query_one(".transcript").set_class(not enabled, "hidden")
         self.query_one(".events").set_class(enabled, "hidden")
-        for card in self.cards.values():
-            if not isinstance(card, RunCommandCard):
-                card.set_expanded(enabled)
+        for message in self.query(MessageCard):
+            if message.role == "assistant":
+                message.set_class(enabled, "hidden")
 
-    def set_outputs_expanded(self, expanded: bool) -> None:
-        self.outputs_expanded = expanded
+    def set_card_details_expanded(self, expanded: bool) -> None:
+        self.card_details_expanded = expanded
         for card in self.cards.values():
-            if isinstance(card, RunCommandCard):
-                card.set_output_expanded(expanded)
+            card.set_expanded(expanded)

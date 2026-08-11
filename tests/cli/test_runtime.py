@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastmcp.client import Client
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
@@ -135,6 +136,46 @@ async def test_named_cli_agent_still_gets_async_checkpointer(
     assert agent._agent is not None
     assert requested_paths == [persistent_den]
     assert agent._agent.checkpointer is expected_checkpointer
+
+
+@pytest.mark.asyncio
+async def test_named_cli_agent_resources_close_once(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(
+        UrsaConfig(
+            workspace=tmp_path / "workspace",
+            agent_name="persistent-agent",
+        )
+    )
+    persistent_den = tmp_path / "persistent-agent-den"
+
+    class DummyPersistentAgent:
+        def __init__(self, **_kwargs):
+            self.den = persistent_den
+            self.checkpointer = None
+            self.async_close_count = 0
+            self.close_count = 0
+
+        async def aclose(self):
+            self.async_close_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    hitl.agents["chat"] = AgentHITL(agent_class=DummyPersistentAgent)
+    wrapper = await hitl.get_agent("chat")
+    assert wrapper._agent is not None
+    checkpointer = wrapper._agent.checkpointer
+    assert isinstance(checkpointer, AsyncSqliteSaver)
+    assert checkpointer.conn.is_alive()
+
+    await hitl.close()
+    await hitl.aclose()
+
+    assert wrapper._agent.async_close_count == 1
+    assert wrapper._agent.close_count == 1
+    assert checkpointer.conn._connection is None
+    assert not checkpointer.conn.is_alive()
 
 
 def _stub_hitl_dependencies(monkeypatch):
@@ -666,6 +707,7 @@ async def test_mcp_tools(ursa_config: UrsaConfig):
     assert agent._agent is not None
     assert isinstance(agent._agent, AgentWithTools)
     assert "add" in agent._agent.tools
+    assert agent.tool_sources["add"] == "demo"
 
 
 @pytest.fixture

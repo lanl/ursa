@@ -150,6 +150,27 @@ async def test_activity_kinds_keep_independent_cards_open(
         "SUMMARY_GROUP_GRACE_SECONDS",
         1.0,
     )
+    timers = []
+
+    class CapturedTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+        def fire(self):
+            assert not self.stopped
+            self.callback()
+
+    def capture_timer(_turn, delay, callback):
+        timer = CapturedTimer(delay, callback)
+        timers.append(timer)
+        return timer
+
+    monkeypatch.setattr(Turn, "set_timer", capture_timer)
     hitl = FakeHITL(tmp_path)
     reading_started = asyncio.Event()
     switch_to_editing = asyncio.Event()
@@ -204,7 +225,6 @@ async def test_activity_kinds_keep_independent_cards_open(
         assert not reading.done
         assert not editing.done
 
-        await asyncio.sleep(0.6)
         return_to_reading.set()
         await reading_updated.wait()
         await pilot.pause()
@@ -213,12 +233,14 @@ async def test_activity_kinds_keep_independent_cards_open(
         assert not reading.done
         assert not editing.done
 
-        await asyncio.sleep(0.45)
+        old_reading_timer, editing_timer, current_reading_timer = timers
+        assert old_reading_timer.stopped
+        editing_timer.fire()
         await pilot.pause()
         assert not reading.done
         assert editing.done
 
-        await asyncio.sleep(0.6)
+        current_reading_timer.fire()
         await pilot.pause()
         assert reading.done
 

@@ -20,10 +20,14 @@ class FakeHITL:
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.calls = []
+        self.closed = False
 
     async def run_agent(self, name, prompt, callbacks=None):
         self.calls.append((name, prompt))
         return "Finished"
+
+    async def aclose(self):
+        self.closed = True
 
 
 async def emit_event(handler, payload=None, **details):

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 import threading
@@ -22,10 +23,12 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
+from ursa.cli.agent_info import load_agent_details
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.event_handler import TextualEventHandler
 from ursa.cli.helpers import (
     COMMAND_CHOICES,
+    TokenUsage,
     _embedding_name,
     _endpoint,
     _model_name,
@@ -34,6 +37,7 @@ from ursa.cli.helpers import (
 from ursa.cli.runtime import HITL
 from ursa.cli.turn import Turn
 from ursa.cli.widgets import (
+    AgentsScreen,
     HotlistScreen,
     InformationScreen,
     MessageCard,
@@ -48,34 +52,36 @@ class UrsaTextualApp(App[None]):
     TITLE = "URSA"
     SUB_TITLE = "Textual HITL"
     BINDINGS: ClassVar = [
-        Binding("ctrl+c", "cancel_agent", "Cancel agent", show=False),
-        Binding("ctrl+t", "toggle_transcript", "Transcript", show=True),
-        Binding("ctrl+o", "toggle_outputs", "Outputs", show=True),
-        Binding("ctrl+l", "clear_conversation", "Clear", show=True),
-        Binding("ctrl+q", "quit", "Quit", show=True),
         Binding(
-            "super+up",
+            "ctrl+c",
+            "cancel_agent",
+            "Explain active-turn cancellation",
+            show=False,
+        ),
+        Binding(
+            "ctrl+d",
+            "hard_quit",
+            "Abruptly quit URSA",
+            show=False,
+            priority=True,
+        ),
+        Binding("ctrl+t", "toggle_transcript", "Toggle transcript", show=True),
+        Binding(
+            "ctrl+o", "toggle_card_details", "Toggle card details", show=True
+        ),
+        Binding(
+            "ctrl+l", "clear_conversation", "Clear conversation", show=True
+        ),
+        Binding("ctrl+q", "quit", "Quit gracefully", show=True, priority=True),
+        Binding(
+            "alt+up",
             "previous_turn_marker",
             "Previous turn marker",
             show=False,
             priority=True,
         ),
         Binding(
-            "super+down",
-            "next_turn_marker",
-            "Next turn marker",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "meta+up",
-            "previous_turn_marker",
-            "Previous turn marker",
-            show=False,
-            priority=True,
-        ),
-        Binding(
-            "meta+down",
+            "alt+down",
             "next_turn_marker",
             "Next turn marker",
             show=False,
@@ -88,13 +94,17 @@ class UrsaTextualApp(App[None]):
         super().__init__()
         self.hitl = hitl
         self.total_tokens = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cached_tokens = 0
         self.transcript_mode = False
-        self.outputs_expanded = False
+        self.card_details_expanded = False
         self.current_turn: Turn | None = None
         self._hotlist_open = False
-        self._hash_hotlist_origin: tuple[str, tuple[int, int]] | None = None
+        self._hotlist_origin: tuple[str, tuple[int, int]] | None = None
         self._ui_thread_id: int | None = None
         self._turn_navigation_marker: Widget | None = None
+        self._quit_after_turn = False
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(WelcomeBanner(self.hitl), id="conversation")
@@ -109,6 +119,10 @@ class UrsaTextualApp(App[None]):
     def on_resize(self) -> None:
         self.call_after_refresh(self._resize_prompt, self.query_one(PromptArea))
 
+    async def on_unmount(self) -> None:
+        """Release runtime resources on every graceful Textual shutdown."""
+        await self.hitl.aclose()
+
     @property
     def is_ui_thread(self) -> bool:
         return threading.get_ident() == self._ui_thread_id
@@ -121,12 +135,14 @@ class UrsaTextualApp(App[None]):
         )
         self.query_one("#status", Static).update(
             f"{_model_name(self.hitl)} ({_endpoint(self.hitl.model)})  •  "
-            f"{self.total_tokens:,} tokens{agent}  •  {state}  •  "
-            "Ctrl+T transcript  •  Ctrl+O outputs"
+            f"{self.total_tokens:,} tokens{agent}  •  {state}"
         )
 
-    def add_tokens(self, count: int) -> None:
-        self.total_tokens += count
+    def add_tokens(self, usage: TokenUsage) -> None:
+        self.total_tokens += usage.total_tokens
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.cached_tokens += usage.cached_tokens
         self._update_status("working")
 
     @on(PromptArea.Submitted)
@@ -135,7 +151,7 @@ class UrsaTextualApp(App[None]):
         prompt_widget.load_text("")
         turn = Turn(event.text, self.hitl.workspace)
         await self.query_one("#conversation", VerticalScroll).mount(turn)
-        turn.set_outputs_expanded(self.outputs_expanded)
+        turn.set_card_details_expanded(self.card_details_expanded)
         self.current_turn = turn
         self._turn_navigation_marker = turn.query_one(".events")
         self.query_one("#conversation", VerticalScroll).scroll_end(
@@ -155,9 +171,6 @@ class UrsaTextualApp(App[None]):
             response = await self.hitl.run_agent(
                 name, prompt, callbacks=[handler]
             )
-        except asyncio.CancelledError:
-            succeeded = False
-            response = "*Agent run cancelled.*"
         except Exception as exc:
             succeeded = False
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
@@ -172,38 +185,57 @@ class UrsaTextualApp(App[None]):
         prompt_widget.disabled = False
         prompt_widget.focus()
         self._update_status("ready")
+        if self._quit_after_turn:
+            self.exit()
 
     def _route_prompt(self, prompt: str) -> tuple[str, str]:
         return _route_prompt(self.hitl, prompt)
 
     def action_cancel_agent(self) -> None:
-        """Cancel an active agent while leaving the conversation usable."""
+        """Explain that an active agent cannot be cancelled safely."""
         prompt = self.query_one(PromptArea)
-        if prompt.disabled and self.workers.cancel_group(self, "agent"):
-            self._update_status("cancelling")
+        if prompt.disabled:
+            self.notify(
+                "Cancelling an active turn is not supported. "
+                "Press Ctrl+D to abruptly quit URSA.",
+                title="Turn is still running",
+                severity="warning",
+            )
+
+    def action_hard_quit(self) -> None:
+        """Abruptly terminate URSA without waiting for active work."""
+        os._exit(130)
+
+    def action_quit(self) -> None:
+        """Quit after the active turn, or immediately when idle."""
+        if self.query_one(PromptArea).disabled:
+            self._quit_after_turn = True
+            self.notify(
+                "URSA will quit when the active turn finishes. "
+                "Press Ctrl+D to quit immediately.",
+                title="Waiting for active turn",
+                severity="information",
+            )
+            return
+        self.exit()
 
     @on(TextArea.Changed, "#prompt")
     def prompt_changed(self, event: TextArea.Changed) -> None:
+        """Resize for all edits without treating programmatic edits as macros."""
         prompt = event.text_area
         self.call_after_refresh(self._resize_prompt, prompt)
+
+    @on(PromptArea.MacroTyped)
+    def macro_typed(self, event: PromptArea.MacroTyped) -> None:
+        """Open a picker only for a macro character typed by the user."""
         if self._hotlist_open:
             return
-        row, column = prompt.cursor_location
-        line = prompt.document.lines[row]
-        if column and line[column - 1 : column] in {"@", "#"}:
-            trigger = line[column - 1]
-            if trigger == "#":
-                lines = prompt.text.split("\n")
-                lines[row] = lines[row][: column - 1] + lines[row][column:]
-                self._hash_hotlist_origin = (
-                    "\n".join(lines),
-                    (row, column - 1),
-                )
-            self._hotlist_open = True
-            self.call_after_refresh(self._open_hotlist, trigger)
-        elif row == 0 and column == 1 and line == "/":
-            self._hotlist_open = True
-            self.call_after_refresh(self._open_hotlist, "/")
+        row, column = event.location
+        if event.trigger == "/" and (row, column) != (0, 0):
+            return
+        self._hotlist_origin = (event.trigger, event.location)
+        self._hotlist_open = True
+        self.call_after_refresh(self._open_hotlist, event.trigger)
 
     def _resize_prompt(self, prompt: TextArea) -> None:
         """Fit the prompt to its visual lines within 30% of the terminal."""
@@ -228,11 +260,15 @@ class UrsaTextualApp(App[None]):
         )
 
     def _insert_hotlist_choice(self, trigger: str, choice: str | None) -> None:
+        prompt = self.query_one(PromptArea)
+        origin = self._hotlist_origin
         if trigger == "/":
-            prompt = self.query_one(PromptArea)
-            prompt.load_text("")
             self._hotlist_open = False
+            self._hotlist_origin = None
             if choice:
+                if origin is not None:
+                    _, start = origin
+                    prompt.replace("", start, (start[0], start[1] + 1))
                 self.call_after_refresh(
                     self._show_command, choice.split(" — ", 1)[0]
                 )
@@ -242,16 +278,16 @@ class UrsaTextualApp(App[None]):
         if trigger == "#":
             self._insert_agent_choice(choice)
             return
-        if choice:
-            prompt = self.query_one(PromptArea)
-            row, column = prompt.cursor_location
+        if choice and origin is not None:
+            _, start = origin
             prompt.replace(
                 f"{trigger}{choice} ",
-                (row, column - 1),
-                (row, column),
+                start,
+                (start[0], start[1] + 1),
             )
         self._hotlist_open = False
-        self.query_one(PromptArea).focus()
+        self._hotlist_origin = None
+        prompt.focus()
 
     @staticmethod
     def _cursor_offset(text: str, location: tuple[int, int]) -> int:
@@ -266,33 +302,40 @@ class UrsaTextualApp(App[None]):
 
     def _insert_agent_choice(self, choice: str | None) -> None:
         prompt = self.query_one(PromptArea)
-        origin = self._hash_hotlist_origin
-        if origin is None:
-            original_text = prompt.text
-            original_location = prompt.cursor_location
-        else:
-            original_text, original_location = origin
+        origin = self._hotlist_origin
 
-        if choice is None:
-            result = original_text
-            result_location = original_location
-        else:
-            original_offset = self._cursor_offset(
-                original_text, original_location
+        if choice is not None and origin is not None:
+            _, trigger_location = origin
+            original_text = prompt.text
+            trigger_offset = self._cursor_offset(
+                original_text, trigger_location
             )
-            existing = re.match(r"^#[^\s]+[ \t]*", original_text)
+            text_without_trigger = (
+                original_text[:trigger_offset]
+                + original_text[trigger_offset + 1 :]
+            )
+            existing = re.match(r"^#[^\s]+[ \t]*", text_without_trigger)
             prefix_end = existing.end() if existing else 0
-            body = original_text[prefix_end:]
-            body_offset = max(0, original_offset - prefix_end)
+            body = text_without_trigger[prefix_end:]
+            body_offset = max(0, trigger_offset - prefix_end)
             prefix = f"#{choice} "
             result = prefix + body
             result_location = self._offset_location(
                 result, len(prefix) + body_offset
             )
+            end = (
+                len(prompt.document.lines) - 1,
+                len(prompt.document.lines[-1]),
+            )
+            prompt.replace(
+                result,
+                (0, 0),
+                end,
+                maintain_selection_offset=False,
+            )
+            prompt.move_cursor(result_location)
 
-        prompt.load_text(result)
-        prompt.move_cursor(result_location)
-        self._hash_hotlist_origin = None
+        self._hotlist_origin = None
         self._hotlist_open = False
         prompt.focus()
 
@@ -306,6 +349,8 @@ class UrsaTextualApp(App[None]):
             ]
         workspace = Path(self.hitl.workspace)
         ignored = {".git", ".venv", "__pycache__", "node_modules"}
+        # TODO: Traverse asynchronously and remove the arbitrary result cap;
+        # large workspaces currently block the UI and stop at 2,000 paths.
         paths: Iterable[Path] = (
             workspace.rglob("*") if workspace.exists() else ()
         )
@@ -322,9 +367,15 @@ class UrsaTextualApp(App[None]):
                 break
         return sorted(candidates)
 
-    def _show_command(self, command: str) -> None:
+    async def _show_command(self, command: str) -> None:
+        if command == "agents":
+            details = await load_agent_details(self.hitl)
+            self.push_screen(
+                AgentsScreen(details),
+                callback=lambda _: self.query_one(PromptArea).focus(),
+            )
+            return
         content = {
-            "agents": self._agents_markdown,
             "status": self._status_markdown,
             "keymap": self._keymap_markdown,
         }.get(command)
@@ -336,30 +387,13 @@ class UrsaTextualApp(App[None]):
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
 
-    def _agents_markdown(self) -> str:
-        sections: list[str] = []
-        for name, agent in self.hitl.agents.items():
-            description = str(
-                agent.description or "No description available."
-            ).strip()
-            sections.extend((f"## #{name}", description))
-            if agent.config:
-                sections.append(
-                    "\n".join([
-                        "| Option | Value |",
-                        "|---|---|",
-                        *(
-                            f"| `{key}` | `{value}` |"
-                            for key, value in agent.config.items()
-                        ),
-                    ])
-                )
-        return "\n\n".join(sections)
-
     def _status_markdown(self) -> str:
         embedding = getattr(self.hitl, "embedding", None)
         rows = [
-            ("Tokens", f"{self.total_tokens:,}"),
+            ("Input tokens", f"{self.input_tokens:,}"),
+            ("Output tokens", f"{self.output_tokens:,}"),
+            ("Cached tokens", f"{self.cached_tokens:,}"),
+            ("Total tokens", f"{self.total_tokens:,}"),
             ("Workspace", str(Path(self.hitl.workspace).resolve())),
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
             ("LLM model", _model_name(self.hitl)),
@@ -406,42 +440,51 @@ class UrsaTextualApp(App[None]):
         )
 
     @staticmethod
-    def _keymap_markdown() -> str:
-        rows = [
-            ("Enter", "Submit prompt"),
-            ("Shift+Enter", "Insert newline"),
-            ("Ctrl+C", "Clear prompt; cancel a running agent"),
-            ("Up / Down", "Move vertically; prompt history at an edge"),
-            ("Left / Right", "Move one character"),
-            ("Ctrl/Alt/Option+Left / Right", "Move by word"),
-            ("Home / End or Ctrl+A / Ctrl+E", "Start / end of line"),
-            ("PageUp / PageDown", "Move one editor page"),
-            ("Shift+movement", "Extend selection"),
-            ("Backspace / Delete", "Delete left / right"),
-            ("Ctrl+W / Ctrl+F", "Delete word left / right"),
-            ("Ctrl+U / Ctrl+K", "Delete to line start / end"),
-            ("Ctrl+X / Ctrl+V", "Cut / paste"),
-            ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
-            ("Tab", "Indent"),
-            ("@", "Workspace file or directory picker"),
-            ("#", "Agent picker and routing"),
-            ("/", "Command picker"),
-            ("Picker typing", "Fuzzy-filter choices"),
-            ("Picker Up / Down", "Select previous / next choice"),
-            ("Picker Enter / Esc", "Choose / cancel"),
-            ("Ctrl+T", "Toggle full event transcript"),
-            ("Ctrl+O", "Expand or collapse command output"),
-            ("Cmd+Up / Cmd+Down", "Previous / next turn marker"),
-            ("Ctrl+L", "Clear conversation"),
-            ("Ctrl+Q", "Quit"),
-            ("Info Up/Down/PageUp/PageDown", "Scroll command details"),
-            ("Info Q / Esc", "Close command details"),
-        ]
-        return "\n".join([
-            "| Key | Action |",
-            "|---|---|",
-            *(f"| `{key}` | {action} |" for key, action in rows),
-        ])
+    def _effective_bindings(owner: type[Any]) -> list[Binding]:
+        """Collect Textual bindings with subclass definitions taking priority."""
+        bindings: dict[str, Binding] = {}
+        for base in reversed(owner.__mro__):
+            declared = base.__dict__.get("BINDINGS", ())
+            for binding in Binding.make_bindings(declared):
+                bindings[binding.key] = binding
+        return list(bindings.values())
+
+    def _keymap_markdown(self) -> str:
+        sections = (
+            ("Application", type(self)),
+            ("Prompt editor", PromptArea),
+            ("Picker", HotlistScreen),
+            ("Information screen", InformationScreen),
+        )
+        priority_keys = {
+            binding.key
+            for binding in self._effective_bindings(type(self))
+            if binding.priority
+        }
+        output: list[str] = []
+        for title, owner in sections:
+            actions: dict[tuple[str, str], list[str]] = {}
+            for binding in self._effective_bindings(owner):
+                if binding.system or not binding.description:
+                    continue
+                if owner is not type(self) and binding.key in priority_keys:
+                    continue
+                identity = (binding.action, binding.description)
+                actions.setdefault(identity, []).append(
+                    self.get_key_display(binding)
+                )
+            output.extend([
+                f"## {title}",
+                "",
+                "| Key | Action |",
+                "|---|---|",
+                *(
+                    f"| `{' / '.join(keys)}` | {description} |"
+                    for (_, description), keys in actions.items()
+                ),
+                "",
+            ])
+        return "\n".join(output).rstrip()
 
     def action_toggle_transcript(self) -> None:
         self.transcript_mode = not self.transcript_mode
@@ -449,10 +492,10 @@ class UrsaTextualApp(App[None]):
             turn.set_transcript(self.transcript_mode)
         self._update_status("transcript" if self.transcript_mode else "ready")
 
-    def action_toggle_outputs(self) -> None:
-        self.outputs_expanded = not self.outputs_expanded
+    def action_toggle_card_details(self) -> None:
+        self.card_details_expanded = not self.card_details_expanded
         for turn in self.query(Turn):
-            turn.set_outputs_expanded(self.outputs_expanded)
+            turn.set_card_details_expanded(self.card_details_expanded)
 
     def _turn_markers(self) -> list[Widget]:
         markers: list[Widget] = []
@@ -466,6 +509,7 @@ class UrsaTextualApp(App[None]):
             markers.extend((messages[0], activity))
             if len(messages) > 1:
                 markers.append(messages[-1])
+            markers.append(turn.query_one(".turn-end-marker"))
         return markers
 
     def _navigate_turn_markers(self, offset: int) -> None:
@@ -480,29 +524,11 @@ class UrsaTextualApp(App[None]):
         target = markers[target_index]
         self._turn_navigation_marker = target
         conversation = self.query_one("#conversation", VerticalScroll)
-        target_y = (
-            conversation.scroll_y
-            + target.region.y
-            - conversation.content_region.y
-        )
-        if offset < 0 and target_y >= conversation.scroll_y:
-            target_y = conversation.scroll_y - max(1, target.region.height)
-        elif offset > 0 and target_y <= conversation.scroll_y:
-            target_y = conversation.scroll_y + max(1, target.region.height)
-        # Deferred scrolling raced the conversation's bottom anchor and could
-        # be overwritten after this action returned. Apply the marker scroll
-        # in the current refresh and explicitly align it to the top.
-        conversation.scroll_to_widget(
-            target,
-            top=True,
-            animate=False,
-            immediate=True,
-            force=True,
-            origin_visible=False,
-        )
-        # Nested turn children report virtual coordinates relative to their
-        # turn, not to the conversation. Convert their current screen region
-        # into a conversation scroll offset so every marker visibly moves.
+        target_y = target.virtual_region.y
+        ancestor = target.parent
+        while ancestor is not None and ancestor is not conversation:
+            target_y += ancestor.virtual_region.y
+            ancestor = ancestor.parent
         conversation.scroll_to(
             y=max(0, target_y),
             animate=False,
@@ -518,6 +544,14 @@ class UrsaTextualApp(App[None]):
         self._navigate_turn_markers(1)
 
     async def action_clear_conversation(self) -> None:
+        if self.query_one(PromptArea).disabled:
+            self.notify(
+                "Clearing the conversation is not allowed while a turn is "
+                "active. Press Ctrl+D to abruptly quit URSA.",
+                title="Turn is still running",
+                severity="warning",
+            )
+            return
         await self.query_one("#conversation", VerticalScroll).remove_children()
         await self.query_one("#conversation", VerticalScroll).mount(
             WelcomeBanner(self.hitl)
@@ -527,7 +561,10 @@ class UrsaTextualApp(App[None]):
 
 def run_textual(hitl: HITL) -> None:
     """Launch the experimental full-screen interface."""
-    UrsaTextualApp(hitl).run()
+    try:
+        UrsaTextualApp(hitl).run()
+    finally:
+        asyncio.run(hitl.aclose())
 
 
 def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
@@ -538,7 +575,12 @@ def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
     agent, routed_prompt = _route_prompt(hitl, prompt)
 
     async def invoke() -> str:
-        return await hitl.run_agent(agent, routed_prompt, callbacks=[handler])
+        try:
+            return await hitl.run_agent(
+                agent, routed_prompt, callbacks=[handler]
+            )
+        finally:
+            await hitl.aclose()
 
     response = asyncio.run(invoke())
     if handler.emitted_any:

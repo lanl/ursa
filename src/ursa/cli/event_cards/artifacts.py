@@ -22,3 +22,11 @@ class ArtifactCard(EventCard):
             render_event_artifacts(self.artifacts), classes="event-summary"
         )
         yield Static("", classes="event-card-done")
+        yield Static("Click to expand", classes="event-expand-hint")
+
+    def refresh_content(self) -> None:
+        """Refresh without assuming the summary widget is Markdown."""
+        if self.is_mounted:
+            self.query_one(".event-summary", Static).update(
+                render_event_artifacts(self.artifacts)
+            )

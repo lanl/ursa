@@ -1,6 +1,9 @@
+import asyncio
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Annotated
 
+from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp import StdioServerParameters
 from mcp.client.session_group import (
@@ -10,6 +13,31 @@ from mcp.client.session_group import (
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
+
+
+async def load_mcp_tools_with_sources(
+    client: MultiServerMCPClient,
+) -> tuple[list[BaseTool], dict[str, str]]:
+    """Load MCP tools and retain their configured server names separately."""
+    connections = getattr(client, "connections", None)
+    if not isinstance(connections, Mapping):
+        return await client.get_tools(), {}
+
+    server_names = list(connections)
+    tools_by_server = await asyncio.gather(
+        *(
+            client.get_tools(server_name=server_name)
+            for server_name in server_names
+        )
+    )
+    tools: list[BaseTool] = []
+    sources: dict[str, str] = {}
+    for server_name, server_tools in zip(
+        server_names, tools_by_server, strict=True
+    ):
+        tools.extend(server_tools)
+        sources.update({tool.name: server_name for tool in server_tools})
+    return tools, sources
 
 
 def validate_server_parameters(config: dict):

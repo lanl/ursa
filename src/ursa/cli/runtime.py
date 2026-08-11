@@ -1,5 +1,6 @@
 # ruff: noqa: TID251
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ import aiosqlite
 from fastmcp import FastMCP
 from langchain.chat_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ursa import agents
@@ -31,6 +33,7 @@ class AgentHITL:
     agent_class: Any
     config: dict = field(default_factory=dict)
     state: Any | None = None
+    tool_sources: dict[str, str] = field(default_factory=dict, init=False)
     _agent: BaseAgent | None = field(default=None, init=False)
 
     async def instantiate(
@@ -49,7 +52,7 @@ class AgentHITL:
 
         # Attach tools from MCP client
         if mcp_client and isinstance(self._agent, AgentWithTools):
-            await self._agent.add_mcp_tools(mcp_client)
+            self.tool_sources = await self._agent.add_mcp_tools(mcp_client)
 
     @property
     def description(self):
@@ -195,6 +198,8 @@ class HITL:
 
         self.last_agent_result = None
         self.last_agent = None
+        self._runtime_checkpointers: list[AsyncSqliteSaver] = []
+        self._closed = False
 
     async def _get_checkpointer(
         self, checkpoint_path: Path
@@ -205,6 +210,9 @@ class HITL:
         return AsyncSqliteSaver(conn)
 
     async def get_agent(self, name: str):
+        if self._closed:
+            raise RuntimeError("HITL runtime is closed")
+
         agent = self.agents[name]
 
         # Lazily instantiate the agents
@@ -222,10 +230,14 @@ class HITL:
             # ephemeral and intentionally run without a checkpointer so they do
             # not leave checkpoint files in the workspace.
             if self.agent_name is not None:
+                sync_checkpointer = agent._agent.checkpointer
                 async_checkpointer = await self._get_checkpointer(
                     agent._agent.den
                 )
                 agent._agent.checkpointer = async_checkpointer
+                self._runtime_checkpointers.append(async_checkpointer)
+                if isinstance(sync_checkpointer, SqliteSaver):
+                    sync_checkpointer.conn.close()
 
         assert agent._agent is not None
         return agent
@@ -248,6 +260,37 @@ class HITL:
         self.last_agent_result = msg
         self.last_agent = agent._agent
         return msg
+
+    async def aclose(self) -> None:
+        """Close instantiated agents and runtime-owned persistence resources."""
+        if self._closed:
+            return
+        self._closed = True
+
+        for wrapper in self.agents.values():
+            agent = wrapper._agent
+            if agent is None:
+                continue
+            try:
+                await agent.aclose()
+            except Exception:
+                logging.exception("Failed to close async agent resources")
+            try:
+                agent.close()
+            except Exception:
+                logging.exception("Failed to close sync agent resources")
+
+        for checkpointer in self._runtime_checkpointers:
+            try:
+                await checkpointer.conn.close()
+                await asyncio.to_thread(checkpointer.conn.join)
+            except Exception:
+                logging.exception("Failed to close agent checkpointer")
+        self._runtime_checkpointers.clear()
+
+    async def close(self) -> None:
+        """Compatibility alias for :meth:`aclose`."""
+        await self.aclose()
 
     def as_mcp_server(self, **kwargs):
         from ursa import __version__ as ursa_version

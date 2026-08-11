@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import ToolMessage
 
-from ursa.cli.helpers import FILE_TOOLS, _reasoning_trace, _token_usage
+from ursa.cli.helpers import (
+    FILE_TOOLS,
+    TokenUsage,
+    _reasoning_trace,
+    _token_usage_breakdown,
+)
 from ursa.cli.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
 
@@ -52,8 +57,21 @@ class TextualEventHandler(AsyncCallbackHandler):
         if record_transcript:
             await self._record({"type": "activity", "message": message})
 
-    async def on_custom_event(self, name: str, data: Any, **_: Any) -> None:
+    async def on_custom_event(
+        self,
+        name: str,
+        data: Any,
+        *,
+        run_id: Any = None,
+        **_: Any,
+    ) -> None:
         if name == DEFAULT_EVENT_NAME and isinstance(data, dict):
+            data = dict(data)
+            if data.get("tool") == "run_command" and run_id is not None:
+                # LangChain assigns custom events emitted inside a tool to the
+                # tool run. The query text is not a unique identifier when
+                # identical commands execute concurrently.
+                data["_command_id"] = str(run_id)
             tool = str(data.get("tool") or "")
             # The file tools publish their own structured range events while
             # LangChain also emits tool start/end callbacks. The callback is
@@ -67,7 +85,7 @@ class TextualEventHandler(AsyncCallbackHandler):
                         "failed",
                         "no changes made",
                     )):
-                        await self._emit(dict(data))
+                        await self._emit(data)
                     else:
                         await self._record(dict(data))
                     return
@@ -75,9 +93,9 @@ class TextualEventHandler(AsyncCallbackHandler):
                     pending.get("tool") == tool
                     for pending in self.tools.values()
                 ):
-                    await self._record(dict(data))
+                    await self._record(data)
                     return
-            await self._emit(dict(data))
+            await self._emit(data)
 
     async def on_llm_start(self, *_: Any, **__: Any) -> None:
         await self._update_activity("Thinking…", record_transcript=True)
@@ -152,13 +170,13 @@ class TextualEventHandler(AsyncCallbackHandler):
         })
 
     async def on_llm_end(self, response: Any, **_: Any) -> None:
-        count = _token_usage(response)
-        await self._record({"type": "llm_end", "total_tokens": count})
+        usage = _token_usage_breakdown(response)
+        await self._record({"type": "llm_end", **usage.__dict__})
         if self.app.is_ui_thread:
-            self._record_tokens(count)
+            self._record_tokens(usage)
         else:
-            self.app.call_from_thread(self._record_tokens, count)
+            self.app.call_from_thread(self._record_tokens, usage)
 
-    def _record_tokens(self, count: int) -> None:
-        self.turn.add_tokens(count)
-        self.app.add_tokens(count)
+    def _record_tokens(self, usage: TokenUsage) -> None:
+        self.turn.add_tokens(usage.total_tokens)
+        self.app.add_tokens(usage)
