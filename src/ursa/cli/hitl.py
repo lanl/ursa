@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import sys
 import threading
 from cmd import Cmd
 from collections.abc import Sequence
@@ -307,10 +308,19 @@ class AsyncLoopThread:
     def submit(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
 
+def safe_prompt() -> str:
+    base_prompt = "ursa 🐻> "
+    fallback_prompt = "ursa> "
+    
+    try:
+        base_prompt.encode(sys.stdout.encoding or "utf-8")
+        return base_prompt
+    except (UnicodeEncodeError, TypeError):
+        return fallback_prompt
 
 class UrsaRepl(Cmd):
     exit_message: str = "[dim]Exiting ursa..."
-    prompt: str = "ursa> "
+    prompt: str = safe_prompt()
 
     def __init__(self, hitl: HITL, **kwargs):
         super().__init__(**kwargs)
@@ -424,7 +434,9 @@ class UrsaRepl(Cmd):
         self.run_agent("chat", prompt)
 
     def postcmd(self, stop: bool, line: str):
-        print(file=self.stdout)
+        # A dim rule chunks scrollback into per-turn blocks (issue 264).
+        self.console.print()
+        self.console.rule(style="dim")
         return stop
 
     def do_exit(self, _: str):
