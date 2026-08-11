@@ -1,9 +1,9 @@
 # Configuration
 
 YAML files make model, workspace, agent, RAG, and MCP settings easy to reuse.
-URSA configs can also be layered with environment variables and CLI flags. See
-[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
-for the precedence order and inspection commands.
+URSA configs can also be
+[layered with environment variables and CLI flags][configuration-files-cli-flags-and-environment-variables],
+with commands to inspect the resulting configuration.
 
 ## Minimal config file
 
