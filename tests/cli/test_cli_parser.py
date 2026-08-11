@@ -18,21 +18,21 @@ def _stub_mcp_server(monkeypatch):
     hitl = MagicMock()
     hitl.as_mcp_server.return_value = mcp
     hitl_class = MagicMock(return_value=hitl)
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     return hitl, mcp
 
 
-def _stub_cli_repl(monkeypatch):
-    monkeypatch.setattr("ursa.cli.hitl.HITL", MagicMock())
-    monkeypatch.setattr("ursa.cli.hitl.UrsaRepl", MagicMock())
+def _stub_cli_app(monkeypatch):
+    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock())
+    monkeypatch.setattr("ursa.cli.app.run_textual", MagicMock())
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
 
 def test_cli_warns_about_legacy_unnamed_checkpoint(
     monkeypatch, tmp_path, capsys
 ):
-    _stub_cli_repl(monkeypatch)
+    _stub_cli_app(monkeypatch)
     checkpoint = tmp_path / "db" / "checkpointer.db"
     checkpoint.parent.mkdir()
     checkpoint.touch()
@@ -52,7 +52,7 @@ def test_cli_warns_about_legacy_unnamed_checkpoint(
 def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
     monkeypatch, tmp_path, capsys
 ):
-    _stub_cli_repl(monkeypatch)
+    _stub_cli_app(monkeypatch)
     checkpoint = tmp_path / "db" / "checkpointer.db"
     checkpoint.parent.mkdir()
     checkpoint.touch()
@@ -65,11 +65,23 @@ def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
 def test_cli_does_not_warn_without_legacy_checkpoint(
     monkeypatch, tmp_path, capsys
 ):
-    _stub_cli_repl(monkeypatch)
+    _stub_cli_app(monkeypatch)
 
     main(["--workspace", str(tmp_path)])
 
     assert capsys.readouterr().err == ""
+
+
+def test_exec_uses_textual_one_shot_renderer(monkeypatch):
+    hitl = MagicMock()
+    run_once = MagicMock()
+    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(return_value=hitl))
+    monkeypatch.setattr("ursa.cli.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    main(["exec", "#plan inspect this"])
+
+    run_once.assert_called_once_with(hitl, "#plan inspect this")
 
 
 def test_cli_reports_model_initialization_error_without_traceback(
@@ -79,7 +91,7 @@ def test_cli_reports_model_initialization_error_without_traceback(
         "The api_key client option must be set by setting the "
         "OPENAI_API_KEY environment variable"
     )
-    monkeypatch.setattr("ursa.cli.hitl.HITL", MagicMock(side_effect=error))
+    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(side_effect=error))
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     with pytest.raises(SystemExit, match="2"):
@@ -111,7 +123,7 @@ def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
     hitl_class = MagicMock()
     hitl_class.return_value = MagicMock()
     hitl_class.return_value.as_mcp_server.return_value = MagicMock()
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     config_file = tmp_path / "mcp.yaml"
@@ -140,7 +152,7 @@ def test_mcp_server_config_flag_parses_alongside_transport(
     hitl_class.return_value = MagicMock()
     mcp = MagicMock()
     hitl_class.return_value.as_mcp_server.return_value = mcp
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     config_file = tmp_path / "mcp.yaml"
