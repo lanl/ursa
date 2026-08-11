@@ -367,7 +367,10 @@ def xdg_config_search_paths() -> list[Path]:
     candidates: list[Path] = []
     # XDG_CONFIG_DIRS lists its most-preferred directory first, whereas config
     # merging consumes sources from lowest to highest precedence.
-    config_dirs = getenv("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
+    path_list_separator = ";" if Path.cwd().drive else ":"
+    config_dirs = getenv("XDG_CONFIG_DIRS", "/etc/xdg").split(
+        path_list_separator
+    )
     for config_dir in reversed(config_dirs):
         if config_dir:
             candidates.append(
