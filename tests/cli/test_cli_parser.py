@@ -547,3 +547,145 @@ def test_model_config_omits_blank_api_key_env(monkeypatch):
     assert cfg.api_key_env is None
     assert "api_key" not in kwargs
     assert "api_key_env" not in kwargs
+
+
+def test_inference_provider_applies_to_llm_model():
+    config = UrsaConfig(
+        inference_providers={
+            "local-openai": {
+                "base_url": " https://models.example.org/v1 ",
+                "ssl_verify": False,
+                "api_key_env": "PROVIDER_API_KEY",
+                "timeout": 45,
+            }
+        },
+        llm_model={
+            "model": "openai:gpt-5",
+            "inference_provider": "local-openai",
+        },
+    )
+
+    resolved = config.llm_model.resolve_inference_provider(
+        config.inference_providers
+    )
+
+    assert config.llm_model.inference_provider == "local-openai"
+    assert config.llm_model.base_url is None
+    assert resolved.base_url == "https://models.example.org/v1"
+    assert resolved.ssl_verify is False
+    assert resolved.api_key_env == "PROVIDER_API_KEY"
+    assert resolved.model_extra["timeout"] == 45
+
+
+def test_inference_provider_applies_to_embedding_model():
+    config = UrsaConfig(
+        inference_providers={
+            "local-embeddings": {
+                "base_url": "https://embeddings.example.org/v1",
+                "ssl_verify": False,
+                "cache_dir": "/tmp/provider-cache",
+            }
+        },
+        emb_model={
+            "model": "openai:text-embedding-3-large",
+            "inference_provider": "local-embeddings",
+        },
+    )
+
+    assert config.emb_model is not None
+    resolved = config.emb_model.resolve_inference_provider(
+        config.inference_providers
+    )
+    assert config.emb_model.inference_provider == "local-embeddings"
+    assert config.emb_model.base_url is None
+    assert resolved.base_url == "https://embeddings.example.org/v1"
+    assert resolved.ssl_verify is False
+    assert resolved.model_extra["cache_dir"] == "/tmp/provider-cache"
+
+
+def test_model_config_explicit_values_override_inference_provider():
+    config = UrsaConfig(
+        inference_providers={
+            "shared": {
+                "base_url": "https://provider.example.org/v1",
+                "ssl_verify": False,
+                "api_key_env": "PROVIDER_API_KEY",
+                "timeout": 30,
+                "seed": 111,
+            }
+        },
+        llm_model={
+            "model": "openai:gpt-5",
+            "inference_provider": "shared",
+            "base_url": "https://model.example.org/v1",
+            "ssl_verify": True,
+            "api_key_env": "MODEL_API_KEY",
+            "timeout": 60,
+        },
+    )
+
+    resolved = config.llm_model.resolve_inference_provider(
+        config.inference_providers
+    )
+
+    assert resolved.base_url == "https://model.example.org/v1"
+    assert resolved.ssl_verify is True
+    assert resolved.api_key_env == "MODEL_API_KEY"
+    assert resolved.model_extra["timeout"] == 60
+    assert resolved.model_extra["seed"] == 111
+
+
+def test_unknown_inference_provider_is_validation_error():
+    with pytest.raises(
+        ValueError, match="Unknown inference_provider 'missing'"
+    ):
+        UrsaConfig(
+            llm_model={
+                "model": "openai:gpt-5",
+                "inference_provider": "missing",
+            }
+        )
+
+
+def test_inference_provider_is_not_forwarded_to_langchain_kwargs():
+    cfg = ChatModelConfig(
+        model="openai:gpt-5",
+        inference_provider="shared-provider",
+    )
+
+    kwargs = cfg.kwargs
+
+    assert "inference_provider" not in kwargs
+
+
+def test_model_config_resolve_provider_returns_self_when_unset():
+    cfg = ChatModelConfig(model="openai:gpt-5")
+
+    resolved = cfg.resolve_inference_provider({})
+
+    assert resolved is cfg
+
+
+def test_print_config_preserves_unresolved_inference_provider(tmp_path):
+    cfg_path = tmp_path / "ursa.yml"
+    cfg_path.write_text(
+        "\n".join([
+            "inference_providers:",
+            "  openai_public:",
+            "    base_url: https://api.openai.com/v1",
+            "    api_key_env: OPENAI_API_KEY",
+            "llm_model:",
+            "  model: openai:gpt-5.4",
+            "  inference_provider: openai_public",
+        ])
+    )
+
+    parser = build_parser()
+    args = parser.parse_args(["--config", str(cfg_path)])
+    config = resolve_config(args)
+
+    assert config.llm_model.inference_provider == "openai_public"
+    assert config.llm_model.base_url is None
+    assert config.inference_providers["openai_public"].base_url == (
+        "https://api.openai.com/v1"
+    )
