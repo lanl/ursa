@@ -17,17 +17,23 @@ from ursa.cli.widgets import ActivityIndicator
 class CommandSafetyIndicator(ActivityIndicator):
     """Safety-check state for a single command invocation."""
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.status = "pending"
+
     def compose(self) -> ComposeResult:
         yield Static(self.FRAMES[0], classes="activity-spinner")
         yield Static("Running safety check", classes="activity-text")
 
     def passed(self) -> None:
+        self.status = "passed"
         if self._timer is not None:
             self._timer.pause()
         self.query_one(".activity-spinner", Static).update("✓")
         self.query_one(".activity-text", Static).update("Safety check passed")
 
     def failed(self, reason: str | None = None) -> None:
+        self.status = "failed"
         if self._timer is not None:
             self._timer.pause()
         self.query_one(".activity-spinner", Static).update("⚔️")

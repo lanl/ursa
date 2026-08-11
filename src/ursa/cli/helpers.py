@@ -3,6 +3,8 @@
 from collections.abc import Mapping
 from typing import Any
 
+from rich.cells import cell_len, chop_cells  # noqa: TID251
+
 from ursa.cli.runtime import HITL
 
 SUMMARY_GROUP_GRACE_SECONDS = 3.0
@@ -37,6 +39,29 @@ COMMAND_CHOICES = {
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",
 }
+
+
+def _plan_step_text(index: int, step: Any) -> str:
+    """Normalize one plan step into numbered display text."""
+    if not isinstance(step, Mapping):
+        dump = getattr(step, "model_dump", None)
+        step = dump() if callable(dump) else {"name": str(step)}
+    name = str(step.get("name") or f"Step {index}")
+    description = " ".join(str(step.get("description") or "").split())
+    return f"{index}. {name}" + (f": {description}" if description else "")
+
+
+def _truncate_middle(text: str, width: int) -> str:
+    """Fit text to a terminal-cell width while preserving both ends."""
+    if cell_len(text) <= width:
+        return text
+    marker = " … truncated … "
+    available = width - cell_len(marker)
+    left = (available + 1) // 2
+    right = available // 2
+    prefix = chop_cells(text, left)[0]
+    suffix = chop_cells(text[::-1], right)[0][::-1]
+    return f"{prefix} _… truncated …_ {suffix}"
 
 
 def _endpoint(value: Any) -> str:
