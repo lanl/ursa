@@ -154,7 +154,7 @@ def build_parser() -> ArgumentParser:
 
 def _initialize_hitl(config: UrsaConfig):
     """Create the CLI controller and report provider initialization errors cleanly."""
-    from ursa.cli.hitl import HITL
+    from ursa.cli.runtime import HITL
 
     try:
         return HITL(config)
@@ -297,10 +297,10 @@ def main(args=None):
 
     match subcommand:
         case None:
-            from ursa.cli.hitl import UrsaRepl
+            from ursa.cli.app import run_textual
 
             hitl = _initialize_hitl(ursa_config)
-            UrsaRepl(hitl).run()
+            run_textual(hitl)
 
         case "mcp-server":
             hitl = _initialize_hitl(ursa_config)
@@ -315,10 +315,10 @@ def main(args=None):
                 run_kwargs["port"] = cmd_config.port
             mcp.run(**run_kwargs)
         case "exec":
-            from ursa.cli.hitl import UrsaRepl
+            from ursa.cli.app import run_textual_once
 
             hitl = _initialize_hitl(ursa_config)
-            UrsaRepl(hitl).run_prompt(cmd_config.prompt)
+            run_textual_once(hitl, cmd_config.prompt)
         case _:
             logging.error(f"Unknown subcommand {subcommand}")
             raise NotImplementedError
