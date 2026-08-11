@@ -668,7 +668,11 @@ def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     xdg_dir_2 = tmp_path / "xdg-dir-2"
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
-    monkeypatch.setenv("XDG_CONFIG_DIRS", f"{xdg_dir_1}:{xdg_dir_2}")
+    path_list_separator = ";" if tmp_path.drive else ":"
+    monkeypatch.setenv(
+        "XDG_CONFIG_DIRS",
+        path_list_separator.join((str(xdg_dir_1), str(xdg_dir_2))),
+    )
 
     assert xdg_config_search_paths() == [
         xdg_dir_2 / "ursa" / "config.yaml",
@@ -684,7 +688,13 @@ def test_first_xdg_config_dir_has_higher_precedence(tmp_path, monkeypatch):
     low.parent.mkdir(parents=True)
     high.write_text("group: high\n", encoding="utf-8")
     low.write_text("group: low\n", encoding="utf-8")
-    monkeypatch.setenv("XDG_CONFIG_DIRS", f"{high.parents[1]}:{low.parents[1]}")
+    path_list_separator = ";" if tmp_path.drive else ":"
+    monkeypatch.setenv(
+        "XDG_CONFIG_DIRS",
+        path_list_separator.join(
+            (str(high.parents[1]), str(low.parents[1]))
+        ),
+    )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "missing"))
 
     config = merge_ursa_config(Namespace(), overrides={})
