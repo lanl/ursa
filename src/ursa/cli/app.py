@@ -9,6 +9,7 @@ import re
 import sys
 import threading
 from collections.abc import Iterable, Mapping
+from math import ceil
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -105,6 +106,9 @@ class UrsaTextualApp(App[None]):
         self._update_status("ready")
         self.query_one(PromptArea).focus()
 
+    def on_resize(self) -> None:
+        self.call_after_refresh(self._resize_prompt, self.query_one(PromptArea))
+
     @property
     def is_ui_thread(self) -> bool:
         return threading.get_ident() == self._ui_thread_id
@@ -181,7 +185,7 @@ class UrsaTextualApp(App[None]):
     @on(TextArea.Changed, "#prompt")
     def prompt_changed(self, event: TextArea.Changed) -> None:
         prompt = event.text_area
-        prompt.styles.height = min(10, max(1, len(prompt.document.lines))) + 2
+        self.call_after_refresh(self._resize_prompt, prompt)
         if self._hotlist_open:
             return
         row, column = prompt.cursor_location
@@ -200,6 +204,14 @@ class UrsaTextualApp(App[None]):
         elif row == 0 and column == 1 and line == "/":
             self._hotlist_open = True
             self.call_after_refresh(self._open_hotlist, "/")
+
+    def _resize_prompt(self, prompt: TextArea) -> None:
+        """Fit the prompt to its visual lines within 30% of the terminal."""
+        max_content_height = ceil(self.size.height * 0.3)
+        content_height = min(
+            max_content_height, max(1, prompt.virtual_size.height)
+        )
+        prompt.styles.height = content_height + 2
 
     def _open_hotlist(self, trigger: str) -> None:
         candidates = self._hotlist_candidates(trigger)

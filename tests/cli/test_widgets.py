@@ -179,16 +179,32 @@ async def test_ctrl_c_clears_prompt_and_adds_it_to_history(tmp_path):
         assert prompt.text == "draft"
 
 
-async def test_prompt_grows_from_one_to_ten_content_lines(tmp_path):
+async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
         prompt = app.query_one(PromptArea)
         assert prompt.region.height == 3  # One content row plus the border.
 
-        prompt.load_text("\n".join(str(index) for index in range(12)))
+        prompt.load_text("\n".join(str(index) for index in range(30)))
         await pilot.pause()
-        assert prompt.region.height == 12
+        assert prompt.region.height == 13  # ceil(36 * 0.3) plus the border.
+
+        await pilot.resize_terminal(100, 20)
+        await pilot.pause()
+        assert prompt.region.height == 8  # ceil(20 * 0.3) plus the border.
+
+
+async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(40, 24)) as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text("word " * 40)
+        await pilot.pause()
+
+        assert prompt.virtual_size.height > 1
+        assert prompt.region.height == min(8, prompt.virtual_size.height) + 2
 
 
 async def test_welcome_banner_and_endpoint_status_are_visible(tmp_path):
