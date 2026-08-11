@@ -1,5 +1,17 @@
 # Change Log
 
+## Unreleased
+
+### Workflows
+
+- Added parent-owned agent-node composition with explicit state adapters,
+  nested checkpoint namespaces, child lifecycle propagation, and dashboard
+  discovery for tool-capable child agents.
+- Added persistent planning/execution and think-plan-execute workflows.
+- Moved `PlanningExecutionAgent` from `ursa.agents` to `ursa.workflows`.
+  Deprecated `PlanningExecutorWorkflow` and `SimulationUseWorkflow` remain
+  available with their original constructors during migration.
+
 ## v0.16.4
 
 Changes since `v0.16.3`:

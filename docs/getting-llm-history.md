@@ -26,15 +26,17 @@ llm.save_messages(Path("messages.json"), indent=2)
 
 ## Retrieving history for planning and execution
 
-`PlanningExecutionAgent` owns one persistent graph containing native planner and
-executor subgraphs. Pass the traced model once; every planning, execution,
-review, and recap call uses that model and appears in the same history.
+`PlanningExecutionAgent` owns one graph containing adapted planner and executor
+child-agent nodes. Pass the traced model once; every planning, execution,
+review, and recap call uses that model and appears in the same history. Add a
+checkpointer or persistent `agent_name` when graph state must survive across
+processes or sessions.
 
 ```python
 import tempfile
 from pathlib import Path
 
-from ursa.agents import PlanningExecutionAgent
+from ursa.workflows import PlanningExecutionAgent
 from ursa.util.traced import TracedChatOpenAI
 
 llm = TracedChatOpenAI(
@@ -52,5 +54,5 @@ agent.close()
 ```
 
 The parent agent owns the workspace, thread, callbacks, telemetry, checkpointer,
-and store. The nested planner and executor inherit those resources; do not
+and store. Its planner and executor nodes inherit those resources; do not
 construct or inject separate child agents.

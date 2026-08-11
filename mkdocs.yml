@@ -82,6 +82,7 @@ nav:
       - LAMMPS Agent: agents/lammps.md
       - Planning Agent: agents/planning.md
       - Planning and Execution Agent: agents/planning-execution.md
+      - Composing agent nodes: agents/composing-agent-nodes.md
   - Environments:
       - Overview: environments/index.md
       - Agent Teams: environments/agent-teams.md
@@ -95,6 +96,7 @@ nav:
       - MCP reference: reference/mcp.md
       - Event logging: reference/logging_events.md
       - Metrics: reference/metrics.md
+      - LLM history: getting-llm-history.md
       - Plan-Execute checkpointing: reference/plan-execute-checkpointing.md
       - Tutorials and examples:
           - Combining arXiv agent and execution agent: reference/tutorials/arxiv-execution.md
@@ -102,6 +104,7 @@ nav:
           - Neutron Star: reference/tutorials/neutron-star.md
       - API Reference:
           - agents: reference/api/agents.md
+          - workflows: reference/api/workflows.md
           - environments: reference/api/environments.md
           - prompt_library: reference/api/prompt-library.md
           - tools: reference/api/tools.md
