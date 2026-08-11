@@ -141,13 +141,15 @@ def _init_models(
         else _model_config_from_namespace(root_args)
     )
     group = getattr(cmd_args, "group", "default") or "default"
-    enforce_group_base_url_policy(llm_model.base_url, group)
-    llm = init_chat_model(**llm_model.kwargs)
+    llm = llm_model.init_chat_model(
+        config.inference_providers if config is not None else {}
+    )
     enforce_model_group_policy(llm, group)
     embedding = None
-    if emb_model:
-        enforce_group_base_url_policy(emb_model.base_url, group)
-        embedding = init_embeddings(**emb_model.kwargs)
+    if emb_model is not None:
+        embedding = emb_model.init_embedding(
+            config.inference_providers if config is not None else {}
+        )
         enforce_model_group_policy(embedding, group)
     return llm, embedding
 
