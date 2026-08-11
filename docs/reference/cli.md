@@ -17,9 +17,9 @@ ursa rag-query --help
 
 ## Common top-level commands
 
-URSA can combine configuration files, environment variables, and CLI flags.
-See [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
-for the authoritative precedence order.
+URSA configs can be layered. See
+[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+for the precedence order.
 
 ```bash
 ursa --config config.yaml
