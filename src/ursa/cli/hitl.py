@@ -25,7 +25,7 @@ from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import (
     enforce_model_group_policy,
 )
@@ -116,7 +116,7 @@ def get_base_url(model: BaseChatModel) -> str | None:
 
 class HITL:
     def __init__(self, config: UrsaConfig):
-        self.config = UrsaConfig.resolve_config(config)
+        self.config = resolve_ursa_config(config)
         self.thread_id = self.config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace

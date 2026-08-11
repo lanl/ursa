@@ -81,7 +81,10 @@ def start_mcp_client(
 
 def _serialize_server_config(config: ServerParameters):
     """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
-    config = {"transport": transport(config), **config.model_dump()}
+    config = {
+        "transport": transport(config),
+        **config.model_dump(exclude_defaults=True, exclude_none=True),
+    }
     for k, v in config.items():
         if isinstance(v, timedelta):
             config[k] = v.total_seconds()

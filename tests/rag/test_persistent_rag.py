@@ -49,7 +49,7 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
     )
 
     parser = build_parser()
-    cfg = parser.parse_args([
+    ingest_args = [
         "rag-ingest",
         str(source),
         "--name",
@@ -58,8 +58,10 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
         "special-group",
         "--config",
         str(config_file),
-    ])
-    resolved = resolve_config(cfg)
+    ]
+    cfg = parser.parse_args(ingest_args)
+    overrides = parser.parse_args(ingest_args, defaults=False)
+    resolved = resolve_config(cfg, overrides)
 
     assert resolved.llm_model.model == "openai:gpt-test"
     assert resolved.llm_model.base_url == "https://models.example.test/v1"
@@ -67,7 +69,7 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
     assert resolved.emb_model.model == "openai:text-embedding-test"
     assert resolved.emb_model.base_url == "https://embeddings.example.test/v1"
 
-    cfg = parser.parse_args([
+    query_args = [
         "rag-query",
         "--name",
         "new-rag-agent",
@@ -78,8 +80,10 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
         "What",
         "is",
         "indexed?",
-    ])
-    resolved = resolve_config(cfg)
+    ]
+    cfg = parser.parse_args(query_args)
+    overrides = parser.parse_args(query_args, defaults=False)
+    resolved = resolve_config(cfg, overrides)
 
     assert resolved.llm_model.model == "openai:gpt-test"
     assert resolved.emb_model is not None

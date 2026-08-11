@@ -137,15 +137,11 @@ def _init_models(
         else _model_config_from_namespace(root_args)
     )
     group = getattr(cmd_args, "group", "default") or "default"
-    llm = llm_model.init_chat_model(
-        config.inference_providers if config is not None else {}
-    )
+    llm = llm_model.init_chat_model()
     enforce_model_group_policy(llm, group)
     embedding = None
     if emb_model is not None:
-        embedding = emb_model.init_embedding(
-            config.inference_providers if config is not None else {}
-        )
+        embedding = emb_model.init_embedding()
         enforce_model_group_policy(embedding, group)
     return llm, embedding
 

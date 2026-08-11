@@ -2,7 +2,7 @@
 # For most keys, the exact configuration options are a combination of model/agent dependent
 # A subset of these options are surfaced via command line flags or environmental variables.
 # The rest must be set by providing a configuration file via the `--config` flag
-# To see the default resolved configuration run `ursa --print-config`
+# To see active non-default resolved settings run `ursa --print-config`
 workspace: tmp
 group: default
 use_web: true
@@ -10,6 +10,7 @@ inference_providers:
   openai_public:
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
+    # ssl_verify is boolean and defaults to true.
 llm_model:
   # Additional configuration options can be specified here
   # Exact options are model dependent, see the LangGraph docs
@@ -18,6 +19,7 @@ llm_model:
   model: openai:gpt-5.2
   max_completion_tokens: 10000
   inference_provider: openai_public
+  # Omitted provider settings are inherited. Use null only to clear a nullable value.
 emb_model:
   # The embedding model (default none) can similarly be configured
   # Exact options are model/provider dependent, see the LangGraph docs

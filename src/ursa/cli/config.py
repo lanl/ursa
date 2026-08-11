@@ -4,7 +4,7 @@ import re
 import sys
 from copy import deepcopy
 from dataclasses import dataclass
-from os import environ
+from os import environ, getenv
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal, Self
@@ -93,12 +93,8 @@ class ModelConfig(BaseModel):
     ] = None
     """Optional named inference provider to inherit shared settings from."""
 
-    ssl_verify: bool | None = None
-    """Flag for verifying SSL certs. during API access.
-
-    ``None`` inherits the inference-provider value, or enables verification
-    when no provider value is configured.
-    """
+    ssl_verify: bool = True
+    """Flag for verifying SSL certs. during API access."""
 
     def _model_provider(self) -> str:
         return self.model.split(":", 1)[0]
@@ -108,8 +104,6 @@ class ModelConfig(BaseModel):
     ) -> Self:
         """Return a copy with provider defaults merged under model-specific overrides."""
         if self.inference_provider is None:
-            if self.ssl_verify is None:
-                return self.model_copy(update={"ssl_verify": True})
             return self
 
         provider_name = self.inference_provider
@@ -118,13 +112,16 @@ class ModelConfig(BaseModel):
             raise ValueError(f"Unknown inference_provider '{provider_name}'")
         assert isinstance(provider_config, InferenceProviderConfig)
 
-        values = {
-            **provider_config.model_dump(mode="python", exclude_unset=True),
-            **self.model_dump(mode="python", exclude_none=True),
+        provider_values = provider_config.model_dump(
+            mode="python", exclude_unset=True
+        )
+        model_values = self.model_dump(mode="python", exclude_unset=True)
+
+        return type(self).model_validate({
+            **provider_values,
+            **model_values,
             "inference_provider": None,
-        }
-        values.setdefault("ssl_verify", True)
-        return type(self).model_validate(values)
+        })
 
     @staticmethod
     def _merge_provider_kwargs(
@@ -142,9 +139,13 @@ class ModelConfig(BaseModel):
         """Return a dict suitable for init_chat_model/init_embedding_model
         Removes parameters set to `None`
         """
+        if self.inference_provider is not None:
+            raise ValueError(
+                f"Model config references unresolved inference provider "
+                f"'{self.inference_provider}'"
+            )
         kwargs = {k: v for k, v in self.model_dump().items() if v is not None}
         ssl_verify = kwargs.pop("ssl_verify", True)
-        kwargs.pop("inference_provider", None)
         model_provider = self._model_provider()
         if model_provider in {"openai", "azure_openai"}:
             kwargs["http_client"] = build_httpx_client(verify=ssl_verify)
@@ -191,6 +192,8 @@ class ModelConfig(BaseModel):
 class ChatModelConfig(ModelConfig):
     """Configuration for instantiating a chat model"""
 
+    model: str = "openai:gpt-5.4"
+
     max_completion_tokens: int | None = None
     """Maximum tokens for LLM to output"""
 
@@ -204,26 +207,18 @@ class ChatModelConfig(ModelConfig):
                 kwargs.setdefault("use_responses_api", True)
         return kwargs
 
-    def init_chat_model(
-        self,
-        inference_providers: dict[str, InferenceProviderConfig] | None = None,
-    ) -> BaseChatModel:
-        resolved = self.resolve_inference_provider(inference_providers or {})
-        llm = init_chat_model(**resolved.kwargs)
-        resolved.check_instantiated_model(llm)
+    def init_chat_model(self) -> BaseChatModel:
+        llm = init_chat_model(**self.kwargs)
+        self.check_instantiated_model(llm)
         return llm
 
 
 class EmbModelConfig(ModelConfig):
     """Configuration for instantiating an embeddings model"""
 
-    def init_embedding(
-        self,
-        inference_providers: dict[str, InferenceProviderConfig] | None = None,
-    ) -> Embeddings:
-        resolved = self.resolve_inference_provider(inference_providers or {})
-        emb = init_embeddings(**resolved.kwargs)
-        resolved.check_instantiated_model(emb)
+    def init_embedding(self) -> Embeddings:
+        emb = init_embeddings(**self.kwargs)
+        self.check_instantiated_model(emb)
         return emb
 
 
@@ -258,11 +253,7 @@ class UrsaConfig(BaseModel):
     )
     """Named reusable inference provider configurations."""
 
-    llm_model: ChatModelConfig = Field(
-        default_factory=lambda: ChatModelConfig(
-            model="openai:gpt-5.4",
-        )
-    )
+    llm_model: ChatModelConfig = Field(default_factory=ChatModelConfig)
     """Default LLM"""
 
     emb_model: EmbModelConfig | None = None
@@ -303,40 +294,9 @@ class UrsaConfig(BaseModel):
             )
         return mc
 
-    def model_post_init(self, __context):
-        """Handle temporary workspace creation post validation."""
-
-    def update(self, other: "UrsaConfig") -> "UrsaConfig":
-        """Merge non-default values from another config into this config."""
-        defaults = type(self)().model_dump(mode="python")
-        updates = dict_diff(defaults, other.model_dump(mode="python"))
-        merged = deep_merge_dicts(self.model_dump(mode="python"), updates)
-        updated = type(self).model_validate(merged)
-
-        for field_name in type(self).model_fields:
-            setattr(self, field_name, getattr(updated, field_name))
-
-        if other._temp_workspace and other.workspace == self.workspace:
-            self._temp_workspace = other._temp_workspace
-        elif (
-            self._temp_workspace
-            and Path(self._temp_workspace.name) != self.workspace
-        ):
-            self._temp_workspace = None
-        return self
-
-    @classmethod
-    def from_namespace(cls, cfg: Namespace):
-        """Instantiate from a jsonargparse namespace."""
-        return cls.model_validate(cfg.as_dict(), extra="ignore")
-
     @classmethod
     def from_file(cls, path: Path):
         return cls.model_validate(load_config_file(path))
-
-    @classmethod
-    def resolve_config(cls, config: "UrsaConfig") -> "UrsaConfig":
-        return resolve_ursa_config(config)
 
     @field_serializer("workspace")
     def serialize_workspace(self, workspace: Path, _info):
@@ -353,12 +313,108 @@ class UrsaConfig(BaseModel):
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
-    """Load and validate raw config-file data before config merging."""
+    """Load raw config-file data for merging before validation."""
     loader = yaml.safe_load if path.suffix in [".yaml", ".yml"] else json.load
     with open(path, "r") as fid:
         data = loader(fid)
 
     return deep_interp_env(data)
+
+
+def config_path_from_namespace(cfg: Namespace) -> Path | None:
+    """Return a root or subcommand-local explicit config path."""
+    config_path = getattr(cfg, "config", None)
+    subcommand = cfg.get("subcommand", None)
+    if subcommand is not None:
+        cmd_cfg = cfg.get(subcommand, None)
+        cmd_config_path = (
+            getattr(cmd_cfg, "config", None) if cmd_cfg is not None else None
+        )
+        config_path = cmd_config_path or config_path
+    return config_path
+
+
+def xdg_config_search_paths() -> list[Path]:
+    """Return candidate XDG config paths in increasing precedence order."""
+    candidates: list[Path] = []
+    for config_dir in getenv("XDG_CONFIG_DIRS", "/etc/xdg").split(":"):
+        if config_dir:
+            candidates.append(
+                Path(config_dir).expanduser() / "ursa" / "config.yaml"
+            )
+
+    config_home = getenv("XDG_CONFIG_HOME")
+    candidates.append(
+        Path(config_home).expanduser() / "ursa" / "config.yaml"
+        if config_home
+        else Path.home() / ".config" / "ursa" / "config.yaml"
+    )
+    return candidates
+
+
+def config_search_paths(cfg: Namespace, level: str = "final") -> list[Path]:
+    """Return isolated or cumulative config paths for a precedence level."""
+    cumulative = level.endswith("+")
+    level = level.removesuffix("+")
+    explicit_path = config_path_from_namespace(cfg)
+    project_path = Path.cwd() / ".ursa" / "config.yaml"
+
+    seen: set[Path] = set()
+    user_paths: list[Path] = []
+    for candidate in xdg_config_search_paths():
+        candidate = candidate.expanduser()
+        if candidate in {explicit_path, project_path} or candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            user_paths.append(candidate)
+
+    project_paths = (
+        [project_path]
+        if project_path != explicit_path and project_path.is_file()
+        else []
+    )
+    file_paths = [explicit_path] if explicit_path is not None else []
+
+    if level == "user":
+        return user_paths
+    if level == "project" and not cumulative:
+        return project_paths
+    if level == "project":
+        return [*user_paths, *project_paths]
+    if level == "file" and not cumulative:
+        return file_paths
+    return [*user_paths, *project_paths, *file_paths]
+
+
+def merge_ursa_config(
+    cfg: Namespace,
+    level: str = "final",
+    overrides: Namespace | dict[str, Any] | None = None,
+) -> UrsaConfig:
+    """Merge sparse configuration sources, then validate the result once."""
+    merged: dict[str, Any] = {}
+    for config_path in config_search_paths(cfg, level):
+        merged = deep_merge_dicts(merged, load_config_file(config_path))
+
+    if level.removesuffix("+") == "final":
+        if overrides is None:
+            raise ValueError("Final config merging requires sparse overrides")
+        override_values = (
+            overrides.as_dict()
+            if isinstance(overrides, Namespace)
+            else overrides
+        )
+        merged = deep_merge_dicts(
+            merged,
+            {
+                key: value
+                for key, value in override_values.items()
+                if key in UrsaConfig.model_fields
+            },
+        )
+
+    return UrsaConfig.model_validate(merged)
 
 
 @dataclass
