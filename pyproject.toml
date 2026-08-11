@@ -48,6 +48,7 @@ dependencies = [
     "fastmcp~=3.0",
     "pyyaml>=6.0.3",
     "justext>=3.0.2",
+    "textual>=6.0,<7.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -132,7 +133,7 @@ pycodestyle.max-doc-length = 80
 "examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
-ursa = ["observability/pricing.json"]
+ursa = ["cli/*.tcss", "observability/pricing.json"]
 ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]
