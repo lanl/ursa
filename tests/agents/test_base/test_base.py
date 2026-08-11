@@ -12,6 +12,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 # LangChain core bits
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
 
@@ -97,6 +98,169 @@ class Agent(BaseAgent):
         self.add_node(self._run_impl, "run_impl")
         self.graph.set_entry_point("run_impl")
         self.graph.set_finish_point("run_impl")
+
+
+class ChildNodeState(TypedDict, total=False):
+    value: str
+
+
+class ParentNodeState(TypedDict, total=False):
+    source: str
+    result: str
+
+
+class ChildNodeAgent(BaseAgent[ChildNodeState]):
+    state_type = ChildNodeState
+
+    @staticmethod
+    def _uppercase(state: ChildNodeState) -> ChildNodeState:
+        return {"value": state["value"].upper()}
+
+    def _build_graph(self):
+        self.add_node(self._uppercase, "uppercase")
+        self.graph.set_entry_point("uppercase")
+        self.graph.set_finish_point("uppercase")
+
+
+class ParentNodeAgent(BaseAgent[ParentNodeState]):
+    state_type = ParentNodeState
+
+    def __init__(self, *args, child: ChildNodeAgent, **kwargs):
+        self.child = child
+        super().__init__(*args, **kwargs)
+
+    def _build_graph(self):
+        self.add_agent_node(
+            "child",
+            self.child,
+            input_fn=lambda state: {"value": state["source"]},
+            output_fn=lambda state: {"result": state["value"]},
+        )
+        self.graph.set_entry_point("child")
+        self.graph.set_finish_point("child")
+
+
+def test_add_agent_node_requires_adapters_and_exposes_one_subgraph(
+    tmp_path,
+):
+    model = TinyCountingModel()
+    child = ChildNodeAgent(model, workspace=tmp_path, enable_metrics=False)
+    parent = ParentNodeAgent(
+        model,
+        child=child,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+
+    result = parent.invoke({"source": "adapt me"})
+
+    assert result == {"source": "adapt me", "result": "ADAPT ME"}
+    assert parent.agent_nodes == {"child": child}
+    with pytest.raises(TypeError):
+        parent.agent_nodes["other"] = child
+    assert [name for name, _graph in parent.compiled_graph.get_subgraphs()] == [
+        "child"
+    ]
+    assert len(parent.compiled_graph.get_graph().nodes) == 3
+    parent.close()
+
+
+def test_add_agent_node_rejects_missing_adapters(tmp_path):
+    class InvalidParentNodeAgent(ParentNodeAgent):
+        def _build_graph(self):
+            self.add_agent_node("child", self.child)
+
+    with pytest.raises(TypeError, match="input_fn.*output_fn"):
+        InvalidParentNodeAgent(
+            TinyCountingModel(),
+            child=ChildNodeAgent(
+                TinyCountingModel(),
+                workspace=tmp_path,
+                enable_metrics=False,
+            ),
+            workspace=tmp_path,
+            enable_metrics=False,
+        )
+
+
+def test_child_tool_change_invalidates_parent_compiled_graph(tmp_path):
+    class ToolChildNodeAgent(AgentWithTools, ChildNodeAgent):
+        pass
+
+    child = ToolChildNodeAgent(
+        TinyCountingModel(), workspace=tmp_path, enable_metrics=False
+    )
+    parent = ParentNodeAgent(
+        TinyCountingModel(),
+        child=child,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+    first_graph = parent.compiled_graph
+
+    @tool
+    def added_later() -> str:
+        """Return a value."""
+        return "value"
+
+    child.add_tool(added_later)
+
+    assert "compiled_graph" not in parent.__dict__
+    assert parent.compiled_graph is not first_graph
+    parent.close()
+
+
+def test_composite_detects_async_only_tools_on_a_child(tmp_path):
+    child = ChildNodeAgent(
+        TinyCountingModel(), workspace=tmp_path, enable_metrics=False
+    )
+
+    async def async_tool() -> str:
+        return "ok"
+
+    child.tools = [SimpleNamespace(func=None, coroutine=async_tool)]
+    parent = ParentNodeAgent(
+        TinyCountingModel(),
+        child=child,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+
+    assert parent._has_async_only_tools()
+    parent.close()
+
+
+@pytest.mark.asyncio
+async def test_composite_uses_child_lifecycle_overrides_once(tmp_path):
+    class LifecycleChildNodeAgent(ChildNodeAgent):
+        def __init__(self, *args, **kwargs):
+            self.close_calls = 0
+            self.aclose_calls = 0
+            super().__init__(*args, **kwargs)
+
+        def close(self):
+            self.close_calls += 1
+            super().close()
+
+        async def aclose(self):
+            self.aclose_calls += 1
+            await super().aclose()
+
+    child = LifecycleChildNodeAgent(
+        TinyCountingModel(), workspace=tmp_path, enable_metrics=False
+    )
+    parent = ParentNodeAgent(
+        TinyCountingModel(),
+        child=child,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+
+    parent.close()
+    await parent.aclose()
+
+    assert child.close_calls == 1
+    assert child.aclose_calls == 1
 
 
 class EventAgent(Agent):
