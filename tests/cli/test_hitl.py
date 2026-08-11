@@ -79,7 +79,8 @@ DOCS_ROOT = Path(__file__).resolve().parents[2]
 DOC_EXAMPLE_CONFIG = DOCS_ROOT / "configs" / "example.yaml"
 
 
-def test_example_config_smoke():
+def test_example_config_smoke(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
     assert DOC_EXAMPLE_CONFIG.is_file()
     ursa_config = resolve_ursa_config(UrsaConfig.from_file(DOC_EXAMPLE_CONFIG))
     hitl = HITL(ursa_config)

@@ -93,8 +93,12 @@ class ModelConfig(BaseModel):
     ] = None
     """Optional named inference provider to inherit shared settings from."""
 
-    ssl_verify: bool = True
-    """Flag for verifying SSL certs. during API access"""
+    ssl_verify: bool | None = None
+    """Flag for verifying SSL certs. during API access.
+
+    ``None`` inherits the inference-provider value, or enables verification
+    when no provider value is configured.
+    """
 
     def _model_provider(self) -> str:
         return self.model.split(":", 1)[0]
@@ -104,6 +108,8 @@ class ModelConfig(BaseModel):
     ) -> Self:
         """Return a copy with provider defaults merged under model-specific overrides."""
         if self.inference_provider is None:
+            if self.ssl_verify is None:
+                return self.model_copy(update={"ssl_verify": True})
             return self
 
         provider_name = self.inference_provider
@@ -112,23 +118,13 @@ class ModelConfig(BaseModel):
             raise ValueError(f"Unknown inference_provider '{provider_name}'")
         assert isinstance(provider_config, InferenceProviderConfig)
 
-        provider_values = provider_config.model_dump(
-            mode="python", exclude_unset=True
-        )
-        self_values = self.model_dump(mode="python", exclude_unset=True)
-        if provider_config.model_extra:
-            provider_values.update(provider_config.model_extra)
-        if self.model_extra:
-            self_values.update(self.model_extra)
-
-        for field_name in ["base_url", "api_key_env", "ssl_verify"]:
-            if getattr(self, field_name) is None and field_name in provider_values:
-                self_values.pop(field_name, None)
-
-        return type(self).model_validate({
-            **provider_values,
-            **self_values,
-        })
+        values = {
+            **provider_config.model_dump(mode="python", exclude_unset=True),
+            **self.model_dump(mode="python", exclude_none=True),
+            "inference_provider": None,
+        }
+        values.setdefault("ssl_verify", True)
+        return type(self).model_validate(values)
 
     @staticmethod
     def _merge_provider_kwargs(
@@ -212,11 +208,7 @@ class ChatModelConfig(ModelConfig):
         self,
         inference_providers: dict[str, InferenceProviderConfig] | None = None,
     ) -> BaseChatModel:
-        resolved = (
-            self.resolve_inference_provider(inference_providers)
-            if inference_providers is not None
-            else self
-        )
+        resolved = self.resolve_inference_provider(inference_providers or {})
         llm = init_chat_model(**resolved.kwargs)
         resolved.check_instantiated_model(llm)
         return llm
@@ -229,11 +221,7 @@ class EmbModelConfig(ModelConfig):
         self,
         inference_providers: dict[str, InferenceProviderConfig] | None = None,
     ) -> Embeddings:
-        resolved = (
-            self.resolve_inference_provider(inference_providers)
-            if inference_providers is not None
-            else self
-        )
+        resolved = self.resolve_inference_provider(inference_providers or {})
         emb = init_embeddings(**resolved.kwargs)
         resolved.check_instantiated_model(emb)
         return emb

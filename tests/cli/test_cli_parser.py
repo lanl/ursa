@@ -5,8 +5,12 @@ import pytest
 import yaml
 from openai import OpenAIError
 
-from ursa.cli import _xdg_config_search_paths, build_parser, main, resolve_config
-from ursa.cli.print_config import parse_print_config_spec
+from ursa.cli import (
+    _xdg_config_search_paths,
+    build_parser,
+    main,
+    resolve_config,
+)
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -14,6 +18,13 @@ from ursa.cli.config import (
     UrsaConfig,
     resolve_ursa_config,
 )
+from ursa.cli.print_config import parse_print_config_spec
+
+
+@pytest.fixture(autouse=True)
+def _isolate_xdg_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-home"))
+    monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs"))
 
 
 def _stub_mcp_server(monkeypatch):
@@ -212,9 +223,7 @@ def test_cli_parses_typed_flags(tmp_path):
     assert config.llm_model.max_completion_tokens == 2048
 
 
-def test_print_config_flag_defaults_to_resolved_string(
-    monkeypatch, tmp_path
-):
+def test_print_config_flag_defaults_to_resolved_string(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-missing"))
     monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs-missing"))
     monkeypatch.chdir(tmp_path)
@@ -650,6 +659,20 @@ def test_chat_model_config_initializes_chat_model(monkeypatch):
     assert captured_kwargs["use_responses_api"] is True
 
 
+def test_chat_model_config_requires_referenced_provider_mapping(monkeypatch):
+    monkeypatch.setattr(
+        "ursa.cli.config.init_chat_model",
+        lambda **kwargs: "chat-model",
+    )
+    cfg = ChatModelConfig(
+        model="openai:gpt-5",
+        inference_provider="shared",
+    )
+
+    with pytest.raises(ValueError, match="Unknown inference_provider 'shared'"):
+        cfg.init_chat_model()
+
+
 def test_emb_model_config_initializes_embedding_model(monkeypatch):
     captured_kwargs = {}
 
@@ -762,6 +785,7 @@ def test_inference_provider_applies_to_llm_model():
 
     assert config.llm_model.inference_provider == "local-openai"
     assert config.llm_model.base_url is None
+    assert resolved.inference_provider is None
     assert resolved.base_url == "https://models.example.org/v1"
     assert resolved.ssl_verify is False
     assert resolved.api_key_env == "PROVIDER_API_KEY"
@@ -789,6 +813,7 @@ def test_inference_provider_applies_to_embedding_model():
     )
     assert config.emb_model.inference_provider == "local-embeddings"
     assert config.emb_model.base_url is None
+    assert resolved.inference_provider is None
     assert resolved.base_url == "https://embeddings.example.org/v1"
     assert resolved.ssl_verify is False
     assert resolved.model_extra["cache_dir"] == "/tmp/provider-cache"
@@ -849,12 +874,13 @@ def test_inference_provider_is_not_forwarded_to_langchain_kwargs():
     assert "inference_provider" not in kwargs
 
 
-def test_model_config_resolve_provider_returns_self_when_unset():
+def test_model_config_resolve_provider_materializes_ssl_default():
     cfg = ChatModelConfig(model="openai:gpt-5")
 
     resolved = cfg.resolve_inference_provider({})
 
-    assert resolved is cfg
+    assert cfg.ssl_verify is None
+    assert resolved.ssl_verify is True
 
 
 def test_resolve_config_resolves_inference_provider_at_final_stage(tmp_path):
@@ -875,11 +901,30 @@ def test_resolve_config_resolves_inference_provider_at_final_stage(tmp_path):
     args = parser.parse_args(["--config", str(cfg_path)])
     config = resolve_config(args)
 
-    assert config.llm_model.inference_provider == "openai_public"
+    assert config.llm_model.inference_provider is None
     assert config.llm_model.base_url == "https://api.openai.com/v1"
     assert config.inference_providers["openai_public"].base_url == (
         "https://api.openai.com/v1"
     )
+
+
+def test_resolve_config_inherits_provider_ssl_verify(tmp_path):
+    cfg_path = tmp_path / "ursa.yml"
+    cfg_path.write_text(
+        "\n".join([
+            "inference_providers:",
+            "  shared:",
+            "    ssl_verify: false",
+            "llm_model:",
+            "  model: openai:gpt-5.4",
+            "  inference_provider: shared",
+        ])
+    )
+
+    parser = build_parser()
+    config = resolve_config(parser.parse_args(["--config", str(cfg_path)]))
+
+    assert config.llm_model.ssl_verify is False
 
 
 def test_resolve_ursa_config_promotes_use_web_to_agent_config():
@@ -920,7 +965,9 @@ def test_resolve_ursa_config_creates_tmp_workspace():
     assert resolved._temp_workspace.name == str(resolved.workspace)
 
 
-def test_resolve_ursa_config_enforces_group_base_url_policy(tmp_path, monkeypatch):
+def test_resolve_ursa_config_enforces_group_base_url_policy(
+    tmp_path, monkeypatch
+):
     from ursa import security
     from ursa.security import GroupBaseURLPolicyError
 
