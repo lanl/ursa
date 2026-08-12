@@ -98,7 +98,7 @@ def test_parent_checkpointer_owns_isolated_child_agent_namespaces(
 
 
 @pytest.mark.asyncio
-async def test_composite_ainvoke_persists_the_same_native_namespaces(tmp_path):
+async def test_composite_ainvoke_persists_child_agent_namespaces(tmp_path):
     checkpointer = await Checkpointer.async_from_workspace(tmp_path)
     agent = PlanningExecutionAgent(
         llm=CompositeFakeModel(),
@@ -124,6 +124,7 @@ async def test_composite_ainvoke_persists_the_same_native_namespaces(tmp_path):
         "planner",
         "executor",
     }
+    await agent.aclose()
     await checkpointer.conn.close()
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 
@@ -114,6 +115,41 @@ def test_think_plan_execute_uses_ursa_hypothesizer_before_and_after_plan(
         UPDATED_HYPOTHESIS_SPACE.strip()
     )
     agent.close()
+
+
+@pytest.mark.asyncio
+async def test_think_plan_execute_supports_async_nested_persistence(tmp_path):
+    checkpointer = await Checkpointer.async_from_workspace(tmp_path)
+    agent = ThinkPlanningExecutionAgent(
+        llm=think_model(),
+        workspace=tmp_path,
+        checkpointer=checkpointer,
+        max_reflection_steps=0,
+        enable_metrics=False,
+    )
+
+    state = await agent.ainvoke(
+        "Investigate asynchronously",
+        config={"configurable": {"thread_id": "async-think-thread"}},
+    )
+
+    assert agent.format_result(state) == UPDATED_HYPOTHESIS_SPACE.strip()
+    assert state["step_results"] == [
+        "step-1-summary",
+        "step-2-summary",
+    ]
+    cursor = await checkpointer.conn.execute(
+        "SELECT DISTINCT checkpoint_ns FROM checkpoints WHERE thread_id = ?",
+        ("async-think-thread",),
+    )
+    assert {row[0] for row in await cursor.fetchall()} == {
+        "",
+        "hypothesizer",
+        "planner",
+        "executor",
+    }
+    await agent.aclose()
+    await checkpointer.conn.close()
 
 
 def test_follow_up_updates_existing_space_then_replans_and_updates_again(
