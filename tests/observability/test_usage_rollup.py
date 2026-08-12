@@ -7,7 +7,6 @@ exact non-double-counting semantics. The guard tests pin the paths that
 already work today.
 """
 
-import tempfile
 import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -174,18 +173,19 @@ class _ToolReadyFakeChatModel(GenericFakeChatModel):
         return self
 
 
-def test_end_to_end_chart_surface_nonzero():
+def test_end_to_end_chart_surface_nonzero(tmp_path):
     # The exact aggregation surface from the issue's screenshot must see
-    # the counts once extraction captures them.
-    with tempfile.TemporaryDirectory() as tmp:
-        agent = ChatAgent(
-            llm=_ToolReadyFakeChatModel(messages=_standardized_stream()),
-            workspace=tmp,
-        )
-        agent.invoke({"messages": [], "query": "hello"})
-        payload = agent.telemetry.to_json(
-            include_raw_snapshot=False, include_raw_records=False
-        )
+    # the counts once extraction captures them. The workspace is a
+    # tmp_path because the agent's sqlite checkpointer keeps its file
+    # open past the test, and Windows cannot delete open files.
+    agent = ChatAgent(
+        llm=_ToolReadyFakeChatModel(messages=_standardized_stream()),
+        workspace=tmp_path,
+    )
+    agent.invoke({"messages": [], "query": "hello"})
+    payload = agent.telemetry.to_json(
+        include_raw_snapshot=False, include_raw_records=False
+    )
 
     totals, _samples = extract_llm_token_stats(payload)
     assert totals.get("reasoning_tokens") == 30
