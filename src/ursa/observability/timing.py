@@ -498,6 +498,13 @@ def _to_int(x, default=0):
     return default
 
 
+def _detail_dict(v) -> dict:
+    """Read a detail container defensively: raw side-channel dicts are not
+    schema-validated, and a malformed container must read as empty rather
+    than poison the whole event's usage parse."""
+    return v if isinstance(v, dict) else {}
+
+
 def _reasoning_from(d: dict) -> int:
     """Strongest reasoning count among all known carriers in one dict.
 
@@ -508,11 +515,13 @@ def _reasoning_from(d: dict) -> int:
     """
     candidates = [
         d.get("reasoning_tokens"),
-        (d.get("completion_tokens_details") or {}).get("reasoning_tokens"),
-        (d.get("output_tokens_details") or {}).get("reasoning_tokens"),
-        (d.get("output_tokens_details") or {}).get("thinking_tokens"),
+        _detail_dict(d.get("completion_tokens_details")).get(
+            "reasoning_tokens"
+        ),
+        _detail_dict(d.get("output_tokens_details")).get("reasoning_tokens"),
+        _detail_dict(d.get("output_tokens_details")).get("thinking_tokens"),
     ]
-    details = d.get("output_token_details") or {}
+    details = _detail_dict(d.get("output_token_details"))
     for key, value in details.items():
         if key == "reasoning" or key.endswith("_reasoning"):
             candidates.append(value)
@@ -529,12 +538,12 @@ def _cached_from(d: dict) -> int:
     candidates = [
         d.get("cached_tokens"),
         d.get("cached_input_tokens"),
-        (d.get("prompt_tokens_details") or {}).get("cached_tokens"),
+        _detail_dict(d.get("prompt_tokens_details")).get("cached_tokens"),
         d.get("prompt_cache_hits"),
         d.get("cache_read_input_tokens"),
-        (d.get("input_tokens_details") or {}).get("cached_tokens"),
+        _detail_dict(d.get("input_tokens_details")).get("cached_tokens"),
     ]
-    details = d.get("input_token_details") or {}
+    details = _detail_dict(d.get("input_token_details"))
     for key, value in details.items():
         if key == "cache_read" or key.endswith("_cache_read"):
             candidates.append(value)

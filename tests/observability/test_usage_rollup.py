@@ -279,3 +279,29 @@ def test_dual_names_single_dict_no_double():
     )
 
     assert roll.get("reasoning_tokens") == 30
+
+
+def test_malformed_detail_containers_survive():
+    # Guard: a malformed (non-dict) detail container in a raw side-channel
+    # must not poison the event; headline counts survive and extras stay
+    # zero.
+    roll = _roll(
+        message=AIMessage("x"),
+        llm_output={
+            "token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 80,
+                "total_tokens": 180,
+                "completion_tokens_details": True,
+                "output_tokens_details": "oops",
+                "output_token_details": ["reasoning", 30],
+                "input_tokens_details": 7,
+                "input_token_details": "cache_read",
+            }
+        },
+    )
+
+    assert roll.get("input_tokens") == 100
+    assert roll.get("output_tokens") == 80
+    assert roll.get("reasoning_tokens") == 0
+    assert roll.get("cached_tokens") == 0
