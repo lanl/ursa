@@ -9,7 +9,7 @@ from textual.widgets import Collapsible, Input, Markdown, Static, Tab, TabPane
 
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
-from ursa.cli.tips import TIPS
+from ursa.cli.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.widgets import (
     AgentsScreen,
     HotlistScreen,
@@ -359,21 +359,32 @@ async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
         assert "lab-assistant" in app._status_markdown()
 
 
-async def test_welcome_chooses_one_tip_from_the_catalog(tmp_path, monkeypatch):
-    calls = []
-
-    def choose(candidates):
-        calls.append(candidates)
-        return candidates[-1]
-
-    monkeypatch.setattr("ursa.cli.tips.random.choice", choose)
+async def test_welcome_tips_vary_and_keymaps_resolve(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(80, 24)):
-        banner = app.query_one(WelcomeBanner)
-        assert calls == [TIPS]
-        assert banner.tip == TIPS[-1]
-        assert TIPS[-1] in str(app.query_one("#welcome-tip", Static).content)
+        owners = (type(app), PromptArea, HotlistScreen)
+        keymap = runtime_keymap(app, owners)
+        assert all(tip.format_map(keymap) for tip in TIPS)
+        assert len({random_tip(app, owners) for _ in range(100)}) > 1
+
+
+async def test_welcome_tip_border_uses_visible_theme_border(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        tip = app.query_one("#welcome-tip", Static)
+        for theme_name in ("ursa-dark", "ursa-light"):
+            app.theme = theme_name
+            await pilot.pause()
+
+            theme_colors = (
+                app.get_theme(theme_name).to_color_system().generate()
+            )
+            border_style, border_color = tip.styles.border.top
+            assert border_style == "round"
+            assert border_color.hex == theme_colors["border"]
+            assert border_color != app.screen.styles.background
 
 
 async def test_welcome_version_and_workspace_align_at_narrow_width(tmp_path):
