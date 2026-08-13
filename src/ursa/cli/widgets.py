@@ -458,7 +458,7 @@ class WelcomeBanner(Vertical):
         except ValueError:
             self.workspace_text = str(workspace)
         self.version_text = f"v{URSA_VERSION}"
-        self.tip = random_tip()
+        self.tip = ""
 
     @staticmethod
     def _fit_middle(text: str, width: int) -> str:
@@ -491,6 +491,11 @@ class WelcomeBanner(Vertical):
         workspace.update(self._fit_middle(self.workspace_text, workspace_width))
 
     def on_mount(self) -> None:
+        self.tip = random_tip(
+            self.app,
+            (type(self.app), PromptArea, HotlistScreen),
+        )
+        self.query_one("#welcome-tip", Static).update(f"Tip: {self.tip}")
         self._fit_metadata()
 
     def on_resize(self) -> None:
