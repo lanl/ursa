@@ -262,6 +262,26 @@ class HotlistScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ThemeScreen(HotlistScreen):
+    """Theme picker that previews highlighted themes over the current app."""
+
+    def __init__(
+        self,
+        candidates: Sequence[str],
+        initial_theme: str,
+    ) -> None:
+        super().__init__("Themes", candidates)
+        self.initial_theme = initial_theme
+
+    @on(OptionList.OptionHighlighted)
+    def preview_theme(self, event: OptionList.OptionHighlighted) -> None:
+        self.app.theme = str(event.option.prompt)
+
+    def action_cancel(self) -> None:
+        self.app.theme = self.initial_theme
+        self.dismiss(None)
+
+
 class InformationScreen(ModalScreen[None]):
     """Scrollable command output displayed without leaving the application."""
 

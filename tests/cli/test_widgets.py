@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 from textual import events
 from textual.binding import Binding
-from textual.widgets import Collapsible, Markdown, Static, Tab, TabPane
+from textual.theme import BUILTIN_THEMES
+from textual.widgets import Collapsible, Input, Markdown, Static, Tab, TabPane
 
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
@@ -14,6 +15,7 @@ from ursa.cli.widgets import (
     HotlistScreen,
     InformationScreen,
     PromptArea,
+    ThemeScreen,
     WelcomeBanner,
 )
 
@@ -465,7 +467,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         )
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "status", "keymap"]
+        ] == ["agents", "status", "keymap", "theme"]
 
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()
@@ -490,6 +492,65 @@ async def test_command_picker_prioritizes_command_name_over_description(
         assert app.screen.matches[0].startswith("keymap —")
         assert any(match.startswith("status —") for match in app.screen.matches)
         assert app.screen.query_one("#hotlist-options").highlighted == 0
+
+
+async def test_theme_command_selects_theme_and_escape_preserves_it(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        status = app.query_one("#status", Static)
+        dark_background = status.styles.background
+        assert app.theme == "ursa-dark"
+        assert app.get_theme("ursa-dark").dark
+        assert not app.get_theme("ursa-light").dark
+
+        await pilot.press("/")
+        await pilot.pause()
+        await pilot.press("t", "h", "e", "m", "e", "enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ThemeScreen)
+        assert app.screen.styles.background.a == 0
+        assert app.screen.picker_title == "Themes"
+        assert app.screen.candidates[:2] == ["ursa-dark", "ursa-light"]
+        assert set(BUILTIN_THEMES) <= set(app.screen.candidates)
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert app.theme == "ursa-light"
+        assert status.styles.background != dark_background
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.theme == "ursa-dark"
+        assert status.styles.background == dark_background
+
+        await pilot.press("down", "enter")
+        await pilot.pause()
+
+        assert app.theme == "ursa-light"
+        assert status.styles.background != dark_background
+        assert "| Theme | `ursa-light` |" in app._status_markdown()
+
+        await app._show_command("theme")
+        await pilot.pause()
+        assert app.screen.candidates[:2] == ["ursa-light", "ursa-dark"]
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.theme == "ursa-dark"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.theme == "ursa-light"
+        assert app.query_one(PromptArea).has_focus
+
+        await app._show_command("theme")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "nord"
+        await pilot.pause()
+        assert app.theme == "nord"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.theme == "ursa-light"
 
 
 async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):

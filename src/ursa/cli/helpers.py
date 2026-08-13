@@ -40,6 +40,7 @@ COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",
+    "theme": "Choose the application color theme",
 }
 
 

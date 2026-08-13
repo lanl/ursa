@@ -35,6 +35,7 @@ from ursa.cli.helpers import (
     _route_prompt,
 )
 from ursa.cli.runtime import HITL
+from ursa.cli.themes import AVAILABLE_THEMES
 from ursa.cli.turn import Turn
 from ursa.cli.widgets import (
     AgentsScreen,
@@ -42,6 +43,7 @@ from ursa.cli.widgets import (
     InformationScreen,
     MessageCard,
     PromptArea,
+    ThemeScreen,
     WelcomeBanner,
 )
 
@@ -92,6 +94,9 @@ class UrsaTextualApp(App[None]):
 
     def __init__(self, hitl: HITL) -> None:
         super().__init__()
+        for theme in AVAILABLE_THEMES:
+            self.register_theme(theme)
+        self.theme = AVAILABLE_THEMES[0].name
         self.hitl = hitl
         self.total_tokens = 0
         self.input_tokens = 0
@@ -375,6 +380,20 @@ class UrsaTextualApp(App[None]):
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
+        if command == "theme":
+            choices = [
+                self.theme,
+                *(
+                    theme.name
+                    for theme in AVAILABLE_THEMES
+                    if theme.name != self.theme
+                ),
+            ]
+            self.push_screen(
+                ThemeScreen(choices, initial_theme=self.theme),
+                callback=self._select_theme,
+            )
+            return
         content = {
             "status": self._status_markdown,
             "keymap": self._keymap_markdown,
@@ -387,6 +406,11 @@ class UrsaTextualApp(App[None]):
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
 
+    def _select_theme(self, theme: str | None) -> None:
+        if theme is not None:
+            self.theme = theme
+        self.query_one(PromptArea).focus()
+
     def _status_markdown(self) -> str:
         embedding = getattr(self.hitl, "embedding", None)
         rows = [
@@ -394,6 +418,7 @@ class UrsaTextualApp(App[None]):
             ("Output tokens", f"{self.output_tokens:,}"),
             ("Cached tokens", f"{self.cached_tokens:,}"),
             ("Total tokens", f"{self.total_tokens:,}"),
+            ("Theme", self.theme),
             ("Workspace", str(Path(self.hitl.workspace).resolve())),
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
             ("LLM model", _model_name(self.hitl)),
