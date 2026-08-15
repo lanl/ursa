@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
@@ -8,10 +9,58 @@ import ursa.cli.event_handler as event_handler_module
 import ursa.cli.turn as turn_module
 from tests.cli._app_fakes import FakeHITL, emit_event
 from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import FileActivityCard, RunCommandCard
+from ursa.cli.event_cards import EditCard, FileActivityCard, RunCommandCard
 from ursa.cli.event_handler import TextualEventHandler
 from ursa.cli.turn import Turn
+from ursa.cli.widgets import ActivityIndicator, MessageCard
 from ursa.util.events import DEFAULT_EVENT_NAME
+
+
+async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        conversation = app.query_one("#conversation", VerticalScroll)
+
+        thinking = Turn("think about it", tmp_path)
+        await conversation.mount(thinking)
+        await pilot.pause()
+        thinking_user = thinking.query_one(MessageCard)
+        activity = thinking.query_one(ActivityIndicator)
+        assert activity.region.y - thinking_user.region.bottom == 1
+
+        no_tools = Turn("answer directly", tmp_path)
+        await conversation.mount(no_tools)
+        await no_tools.add_response("Direct answer")
+        no_tools.finish_activity()
+
+        with_tool = Turn("run a command", tmp_path)
+        await conversation.mount(with_tool)
+        await with_tool.event({
+            "tool": "run_command",
+            "phase": "start",
+            "query": "pwd",
+            "_command_id": "pwd",
+        })
+        await with_tool.event({
+            "tool": "run_command",
+            "phase": "end",
+            "query": "pwd",
+            "_command_id": "pwd",
+            "result": str(tmp_path),
+            "returncode": 0,
+        })
+        await with_tool.add_response("Command answer")
+        with_tool.finish_activity()
+        await pilot.pause()
+
+        direct_messages = list(no_tools.query(MessageCard))
+        assert direct_messages[1].region.y - direct_messages[0].region.bottom == 1
+
+        tool_messages = list(with_tool.query(MessageCard))
+        command = with_tool.query_one(RunCommandCard)
+        assert command.region.y - tool_messages[0].region.bottom == 1
+        assert tool_messages[1].region.y - command.region.bottom == 1
 
 
 async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
@@ -57,8 +106,8 @@ async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
         await app.workers.wait_for_complete()
         await pilot.pause()
         file_groups = list(app.query(FileActivityCard))
-        assert len(file_groups) == 2
-        reading, editing = file_groups
+        assert len(file_groups) == 1
+        reading = file_groups[0]
         assert reading.files == {
             "Reading": {
                 str(Path("src/read.py")): (None, None),
@@ -66,25 +115,20 @@ async def test_files_are_grouped_by_read_write_and_edit_operations(tmp_path):
             },
             "Editing": {},
         }
-        assert editing.files == {
-            "Reading": {},
-            "Editing": {
-                str(Path("src/new.py")): (1, 0),
-                str(Path("src/edit.py")): (2, 1),
-            },
-        }
         reading_summary = reading.query_one(".file-summary", Static).content
-        editing_summary = editing.query_one(".file-summary", Static).content
         assert all(
             path in reading_summary.plain
             for path in (str(Path("src/read.py")), str(Path("src/other.py")))
         )
-        assert all(
-            path in editing_summary.plain
-            for path in (str(Path("src/new.py")), str(Path("src/edit.py")))
-        )
-        assert "+1 -0" in editing_summary.plain
-        assert "+2 -1" in editing_summary.plain
+        writes = list(app.query(EditCard))
+        assert [edit.path for edit in writes] == [
+            str(Path("src/new.py")),
+            str(Path("src/edit.py")),
+        ]
+        assert [(edit.additions, edit.deletions) for edit in writes] == [
+            (1, 0),
+            (2, 1),
+        ]
 
 
 async def test_event_summary_groups_follow_activity_order(tmp_path):
@@ -551,3 +595,57 @@ async def test_unchanged_file_result_is_retained_on_activity_card(tmp_path):
             "unchanged",
             "No changes made: content already matches",
         )
+
+
+@pytest.mark.parametrize("outcome", ["failed", "unchanged"])
+async def test_rich_edit_outcome_updates_existing_diff_row(tmp_path, outcome):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("edit it", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "edit_code"},
+            "",
+            run_id="rich-edit",
+            inputs={
+                "filename": "same.txt",
+                "old_code": "before",
+                "new_code": "after",
+            },
+        )
+        if outcome == "failed":
+            await handler.on_tool_error(
+                RuntimeError("edit failed"), run_id="rich-edit"
+            )
+            expected = ("failed", "edit failed")
+        else:
+            message = "No changes made: content already matches"
+            await handler.on_tool_end(message, run_id="rich-edit")
+            expected = ("unchanged", message)
+        await pilot.pause()
+
+        cards = list(turn.query(EditCard))
+        assert len(cards) == 1
+        assert expected[1] in str(
+            cards[0].query_one(".edit-outcome", Static).content
+        )
+
+
+async def test_event_arrival_keeps_cards_hidden_in_transcript_mode(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("show transcript", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        turn.set_transcript(True)
+        await turn.event({
+            "tool": "read_file",
+            "path": "README.md",
+            "message": "Reading",
+        })
+        await pilot.pause()
+
+        assert turn.query_one(".events").has_class("hidden")
+        assert not turn.query_one(".transcript").has_class("hidden")

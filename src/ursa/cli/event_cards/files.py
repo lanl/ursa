@@ -2,9 +2,13 @@
 
 """File access and editing event cards."""
 
+from pathlib import Path
+
+from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.widgets import Markdown, Static
+from textual.containers import Horizontal
+from textual.widgets import Static
 
 from ursa.cli.event_cards.base import EventCard
 
@@ -90,12 +94,31 @@ class FileActivityCard(EventCard):
 
 
 class EditCard(EventCard):
-    def __init__(self, path: str, old: str, new: str) -> None:
+    def __init__(
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        show_heading: bool = True,
+    ) -> None:
         super().__init__(f"edit:{path}", f"✎ {path}")
-        self.old = old
-        self.new = new
+        self.path = path
+        self.show_heading = show_heading
         self.additions, self.deletions, self.diff = self._diff(old, new)
-        self.expanded = True
+        self.expanded = False
+
+    def compose(self) -> ComposeResult:
+        if self.show_heading:
+            yield Static("✍️ Editing", classes="edit-group-title")
+        with Horizontal(classes="edit-header"):
+            yield Static(f"- {Path(self.path).name}", classes="edit-title")
+            counts = Text(f"+{self.additions}", style="green")
+            counts.append(f" -{self.deletions}", style="red")
+            yield Static(counts, classes="edit-counts")
+            yield Static("Click to expand", classes="edit-hint")
+        yield Static("", classes="edit-outcome hidden")
+        yield Static("", classes="event-summary edit-diff hidden")
 
     @staticmethod
     def _diff(old: str, new: str) -> tuple[int, int, str]:
@@ -123,17 +146,29 @@ class EditCard(EventCard):
     def refresh_content(self) -> None:
         if not self.is_mounted:
             return
-        diff_lines = self.diff.splitlines()
-        visible = diff_lines if self.expanded else diff_lines[:8]
-        visible_diff = "\n".join(visible)
-        suffix = (
-            ""
-            if self.expanded or len(diff_lines) <= 8
-            else "\n… diff collapsed (Ctrl+O expands)"
+        diff = self.query_one(".edit-diff", Static)
+        if not self.expanded:
+            diff.add_class("hidden")
+            return
+        diff.remove_class("hidden")
+        diff.update(
+            Syntax(
+                self.diff,
+                "diff",
+                word_wrap=True,
+                background_color=diff.styles.background.hex,
+            )
         )
-        body = (
-            f"**{self.label}**  \n"
-            f"`+{self.additions} -{self.deletions}`\n\n"
-            f"```diff\n{visible_diff}\n```{suffix}"
-        )
-        self.query_one(Markdown).update(body)
+
+    def set_outcome(self, state: str, detail: str) -> None:
+        outcome = self.query_one(".edit-outcome", Static)
+        icon = "✖" if state == "failed" else "⚠"
+        style = "red" if state == "failed" else "yellow"
+        outcome.update(Text(f"{icon} {detail}", style=style))
+        outcome.remove_class("hidden")
+
+    def _update_expand_hint(self) -> None:
+        if self.is_mounted:
+            self.query_one(".edit-hint", Static).update(
+                "Click to collapse" if self.expanded else "Click to expand"
+            )

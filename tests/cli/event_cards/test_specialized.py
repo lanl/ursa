@@ -3,10 +3,51 @@ from textual.widgets import RichLog, Static
 
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import AgentEventCard, ArtifactCard, SearchEventCard
+from ursa.cli.event_cards import (
+    AgentEventCard,
+    ArtifactCard,
+    EditCard,
+    SearchEventCard,
+)
 from ursa.cli.turn import Turn
 
 
+async def test_multiple_edit_rows_expand_independently_under_one_heading(
+    tmp_path,
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 60)) as pilot:
+        turn = Turn("edit two files", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        for event in (
+            {
+                "tool": "edit_code",
+                "path": "one.py",
+                "old_code": "value = 1",
+                "new_code": "value = 2",
+            },
+            {
+                "tool": "write_code",
+                "path": "two.py",
+                "code": "value = 2",
+            },
+        ):
+            await turn.event(event)
+        await pilot.pause()
+
+        first, second = turn.query(EditCard)
+        assert len(turn.query(".edit-group-title")) == 1
+        assert "one.py" in str(first.query_one(".edit-title", Static).content)
+        assert "two.py" in str(second.query_one(".edit-title", Static).content)
+        first.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(first.query_one(".edit-header"))
+        assert not first.query_one(".edit-diff").has_class("hidden")
+        assert second.query_one(".edit-diff").has_class("hidden")
+        expanded = first.query_one(".edit-diff", Static).content.code
+        assert "-value = 1" in expanded
+        assert "+value = 2" in expanded
 async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
