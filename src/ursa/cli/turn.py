@@ -44,7 +44,9 @@ class Turn(Static):
         self.token_usage = 0
         self._command_count = 0
         self._commands: list[RunCommandCard] = []
+        self._commands_by_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
+        self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
         self._summary_cards: dict[str, EventCard] = {}
         self._summary_deadlines: dict[str, float] = {}
@@ -59,9 +61,11 @@ class Turn(Static):
 
     def compose(self) -> ComposeResult:
         yield MessageCard("user", self.prompt)
-        yield Vertical(classes="events")
+        yield Vertical(classes="events hidden")
         yield RichLog(classes="transcript hidden", highlight=True, wrap=True)
-        yield ActivityIndicator()
+        activity = ActivityIndicator()
+        activity.add_class("activity-after-user")
+        yield activity
         yield Static("", classes="turn-end-marker")
 
     async def event(
@@ -127,25 +131,64 @@ class Turn(Static):
         edit_card = None
         additions = payload.get("additions")
         deletions = payload.get("deletions")
-        if tool in {"write_code", "write_code_with_repo"} and not isinstance(
-            additions, int
+        outcome = self._file_outcome(payload)
+        edit_id = str(payload.get("_run_id") or "")
+        if tool in {"edit_code", "write_code", "write_code_with_repo"} and (
+            outcome is not None
         ):
-            code = payload.get("code")
-            if isinstance(code, str):
-                additions = len(code.splitlines())
-                deletions = 0
-        if (
-            tool == "edit_code"
-            and path
-            and (old is not None or new is not None)
+            existing_edit = self._edits_by_id.get(edit_id)
+            if existing_edit is None:
+                matching_edits = [
+                    candidate
+                    for candidate in self.cards.values()
+                    if isinstance(candidate, EditCard)
+                    and candidate.path == path
+                ]
+                if len(matching_edits) == 1:
+                    existing_edit = matching_edits[0]
+            if existing_edit is not None:
+                existing_edit.set_outcome(*outcome)
+                return
+        code = payload.get("code")
+        change: tuple[str, str] | None = None
+        if path:
+            if tool in {"write_code", "write_code_with_repo"} and isinstance(
+                code, str
+            ):
+                change = ("", code)
+            elif tool == "edit_code" and (old is not None or new is not None):
+                change = (str(old or ""), str(new or ""))
+        if change is not None:
+            has_edit_heading = any(
+                isinstance(candidate, EditCard)
+                or (
+                    isinstance(candidate, FileActivityCard)
+                    and bool(candidate.files["Editing"])
+                )
+                for candidate in self.cards.values()
+            )
+            edit_card = EditCard(
+                path,
+                *change,
+                show_heading=not has_edit_heading,
+            )
+        if edit_card is not None:
+            edit_key = self._next_summary_key("edit")
+            await self._replace_or_mount(edit_key, edit_card)
+            if edit_id:
+                self._edits_by_id[edit_id] = edit_card
+            return
+
+        if tool in {"edit_code", "write_code", "write_code_with_repo"} and any(
+            isinstance(candidate, EditCard) and candidate.path == path
+            for candidate in self.cards.values()
         ):
-            edit_card = EditCard(path, str(old or ""), str(new or ""))
-            additions = edit_card.additions
-            deletions = edit_card.deletions
+            # A follow-up callback without diff content belongs to the rich
+            # edit row already mounted for this file.
+            return
 
         if tool in FILE_TOOLS and path:
             operation = FILE_TOOLS[tool]
-            outcome = self._file_outcome(payload)
             if outcome is not None:
                 card = self._latest_file_card(operation, path)
                 if card is None:
@@ -178,13 +221,6 @@ class Turn(Static):
                 additions=additions if isinstance(additions, int) else None,
                 deletions=deletions if isinstance(deletions, int) else None,
             )
-            if edit_card is not None:
-                edit_key = self._next_summary_key("edit")
-                await self._replace_or_mount(edit_key, edit_card)
-                self.set_timer(
-                    3,
-                    lambda: edit_card.set_expanded(self.card_details_expanded),
-                )
             return
 
         label = str(payload.get("message") or stage or tool or "Event")
@@ -335,16 +371,21 @@ class Turn(Static):
         command = str(payload.get("query") or "").strip()
         command_id = str(payload.get("_command_id") or "")
         key = f"command:{command_id}" if command_id else ""
-        card = self.cards.get(key) if key else None
-        if card is None and not command_id:
-            for candidate in reversed(list(self.cards.values())):
-                if (
-                    isinstance(candidate, RunCommandCard)
-                    and candidate.command == command
-                    and not candidate.completed
-                ):
-                    card = candidate
-                    break
+        card = self._commands_by_id.get(command_id) if command_id else None
+        if card is None and str(payload.get("phase") or "") != "start":
+            matching = [
+                candidate
+                for candidate in self._commands
+                if candidate.command == command and not candidate.completed
+            ]
+            if len(matching) == 1:
+                # Some callback providers assign custom tool events a child
+                # run ID instead of the ID used by on_tool_start. A unique
+                # active command match is safe to correlate and avoids a
+                # duplicate card stuck in its initial state.
+                card = matching[0]
+                if command_id:
+                    self._commands_by_id[command_id] = card
         if card is None:
             if self._commands_overlapped and not any(
                 command.completed is False for command in self._commands
@@ -360,6 +401,8 @@ class Turn(Static):
             card = RunCommandCard(key, command or "(command unavailable)")
             await self._replace_or_mount(key, card)
             self._commands.append(card)
+            if command_id:
+                self._commands_by_id[command_id] = card
         assert isinstance(card, RunCommandCard)
         card.update_event(payload)
         self._update_command_layout()
@@ -375,13 +418,6 @@ class Turn(Static):
             detailed = set()
         elif len(active) == 1:
             detailed.add(active[0])
-            completed = [
-                command for command in self._commands if command.completed
-            ]
-            if completed:
-                detailed.add(completed[-1])
-        elif self._commands:
-            detailed.add(self._commands[-1])
 
         for command_card in self._commands:
             command_card.set_multi_command(
@@ -409,7 +445,12 @@ class Turn(Static):
         if previous is not None:
             await previous.remove()
         self.cards[key] = card
-        await self.query_one(".events", Vertical).mount(card)
+        events = self.query_one(".events", Vertical)
+        events.add_class("has-events")
+        if not self._transcript_enabled():
+            events.remove_class("hidden")
+        self.query_one(ActivityIndicator).remove_class("activity-after-user")
+        await events.mount(card)
         if self.card_details_expanded:
             card.set_expanded(True)
 
@@ -425,7 +466,10 @@ class Turn(Static):
 
     def set_transcript(self, enabled: bool) -> None:
         self.query_one(".transcript").set_class(not enabled, "hidden")
-        self.query_one(".events").set_class(enabled, "hidden")
+        events = self.query_one(".events")
+        events.set_class(
+            enabled or not events.has_class("has-events"), "hidden"
+        )
         for message in self.query(MessageCard):
             if message.role == "assistant":
                 message.set_class(enabled, "hidden")

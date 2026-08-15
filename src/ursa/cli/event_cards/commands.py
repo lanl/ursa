@@ -41,6 +41,15 @@ class CommandSafetyIndicator(ActivityIndicator):
             reason or "Safety check failed"
         )
 
+    def unavailable(self) -> None:
+        self.status = "unavailable"
+        if self._timer is not None:
+            self._timer.pause()
+        self.query_one(".activity-spinner", Static).update("✗")
+        self.query_one(".activity-text", Static).update(
+            "Safety check did not complete"
+        )
+
 
 class RunCommandCard(EventCard):
     """Progressively disclose one command, its safety check, and output."""
@@ -134,7 +143,9 @@ class RunCommandCard(EventCard):
             command = self._collapsed_command()
         else:
             command = self._preview_command("\n".join(lines))
-        return Syntax(command, "bash", word_wrap=True)
+        return Syntax(
+            command, "bash", word_wrap=True, background_color="default"
+        )
 
     def _render_command(self) -> None:
         if not self.is_mounted:
@@ -175,10 +186,20 @@ class RunCommandCard(EventCard):
                 if contents:
                     output = "\n".join(contents)
         if output is not None or phase == "error":
-            self.complete(output)
+            self.complete(
+                output,
+                execution_confirmed=phase == "end"
+                and not self.execution_failed,
+            )
 
-    def complete(self, output: Any) -> None:
+    def complete(self, output: Any, *, execution_confirmed: bool) -> None:
         self.completed = True
+        safety = self.query_one(CommandSafetyIndicator)
+        if safety.status == "pending" and not self.safety_failed:
+            if execution_confirmed:
+                safety.passed()
+            else:
+                safety.unavailable()
         if self._compact_timer is not None:
             self._compact_timer.pause()
         self.query_one(".command-compact-state", Static).update(
@@ -194,7 +215,9 @@ class RunCommandCard(EventCard):
     def _completion_icon(self) -> str:
         if self.safety_failed:
             return "⚔️"
-        if self.execution_failed or self.returncode != 0:
+        if self.execution_failed or (
+            self.returncode is not None and self.returncode != 0
+        ):
             return "✗"
         return "✓"
 
@@ -211,6 +234,7 @@ class RunCommandCard(EventCard):
     def set_output_expanded(self, expanded: bool) -> None:
         self.expanded = expanded
         self.output_expanded = expanded
+        self.set_class(expanded, "command-expanded")
         self._render_command()
         self._render_output()
         self._update_visibility()
@@ -226,7 +250,9 @@ class RunCommandCard(EventCard):
         )
         output = output or "(no output)"
         self.query_one(".command-output", Static).update(
-            Syntax(output, "text", word_wrap=True)
+            Syntax(
+                output, "text", word_wrap=True, background_color="default"
+            )
         )
 
     def _update_visibility(self) -> None:

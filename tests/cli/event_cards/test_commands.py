@@ -81,6 +81,7 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
                 run_id=run_id,
                 inputs={"query": "echo same"},
             )
+        await handler.on_tool_error(RuntimeError("first failed"), run_id="one")
         await handler.on_custom_event(
             DEFAULT_EVENT_NAME,
             {
@@ -89,22 +90,43 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
                 "query": "echo same",
                 "safe": True,
             },
-            run_id="two",
+            run_id="child-event-run",
         )
-        await handler.on_tool_error(RuntimeError("first failed"), run_id="one")
         await handler.on_tool_end("second output", run_id="two")
         await pilot.pause()
 
         first, second = turn.query(RunCommandCard)
-        assert first.execution_failed
+        assert first.query_one(CommandSafetyIndicator).status == "unavailable"
         assert first.query_one(".command-compact-state", Static).content == "✗"
-        assert not second.execution_failed
         assert second.query_one(CommandSafetyIndicator).status == "passed"
-        assert second.query_one(".command-compact-state", Static).content == "✗"
+        assert second.query_one(".command-compact-state", Static).content == "✓"
         assert (
             second.query_one(".command-output", Static).content.code
             == "second output"
         )
+async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        turn = Turn("run it", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        await turn.event({
+            "tool": "run_command",
+            "phase": "start",
+            "query": "uptime",
+            "_command_id": "uptime",
+        })
+        await turn.event({
+            "tool": "run_command",
+            "phase": "end",
+            "query": "uptime",
+            "_command_id": "uptime",
+            "result": "up 10 days",
+        })
+        await pilot.pause()
+
+        safety = turn.query_one(CommandSafetyIndicator)
+        assert safety.status == "passed"
 
 
 async def test_solitary_command_after_overlap_returns_to_detailed_layout(
@@ -225,18 +247,16 @@ async def test_run_command_card_tracks_safety_and_collapses_on_result(tmp_path):
         cards = list(app.query(RunCommandCard))
         assert len(cards) == 2
         assert [item.command for item in cards] == [command, "echo second"]
-        assert not output.has_class("hidden")
-        assert card.query_one(".command-compact").has_class("hidden")
+        assert output.has_class("hidden")
+        assert not card.query_one(".command-compact").has_class("hidden")
 
         return_second.set()
         await pilot.pause()
-        assert output.has_class("hidden")
-        assert not card.query_one(".command-compact").has_class("hidden")
-        assert card.completed
         assert card.returncode is None
+        assert card.query_one(".command-compact-state", Static).content == "✓"
         newest = cards[-1]
-        assert newest.query_one(".command-compact").has_class("hidden")
-        assert not newest.query_one(".command-output").has_class("hidden")
+        assert not newest.query_one(".command-compact").has_class("hidden")
+        assert newest.query_one(".command-output").has_class("hidden")
 
         await pilot.press("ctrl+o")
         assert not output.has_class("hidden")
