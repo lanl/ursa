@@ -5,7 +5,11 @@
 #     "fastmcp",
 # ]
 # ///
+import sys
+
 from fastmcp import FastMCP
+
+print("dummy MCP diagnostic", file=sys.stderr)
 
 mcp = FastMCP()
 

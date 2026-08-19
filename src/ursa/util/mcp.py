@@ -1,7 +1,9 @@
 import asyncio
+import os
+import sys
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -13,6 +15,28 @@ from mcp.client.session_group import (
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
+
+
+class UrsaMCPClient(MultiServerMCPClient):
+    """MCP client with tool provenance and quiet stdio subprocesses."""
+
+    def __init__(self, connections: dict[str, Any]) -> None:
+        wrapped: dict[str, Any] = {}
+        for name, connection in connections.items():
+            connection = dict(connection)
+            if connection.get("transport") == "stdio":
+                command = str(connection["command"])
+                args = list(connection.get("args") or [])
+                connection["command"] = sys.executable
+                connection["args"] = [
+                    "-m",
+                    "ursa.util.mcp_stdio_proxy",
+                    os.devnull,
+                    command,
+                    *args,
+                ]
+            wrapped[name] = connection
+        super().__init__(wrapped)
 
 
 async def load_mcp_tools_with_sources(
@@ -92,7 +116,7 @@ def transport(sp: ServerParameters) -> str:
 
 def start_mcp_client(
     server_configs: dict[str, ServerParameters | dict],
-) -> MultiServerMCPClient:
+) -> UrsaMCPClient:
     client_config = {}
     for server, config in server_configs.items():
         if not isinstance(config, BaseModel):
@@ -104,7 +128,7 @@ def start_mcp_client(
         if isinstance(config, (SseServerParameters, StreamableHttpParameters)):
             connection["httpx_client_factory"] = build_mcp_httpx_async_client
         client_config[server] = connection
-    return MultiServerMCPClient(client_config)
+    return UrsaMCPClient(client_config)
 
 
 def _serialize_server_config(config: ServerParameters):
