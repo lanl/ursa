@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import threading
+import traceback
 from collections.abc import Iterable, Mapping
 from math import ceil
 from pathlib import Path
@@ -178,6 +179,9 @@ class UrsaTextualApp(App[None]):
             )
         except Exception as exc:
             succeeded = False
+            await turn.add_exception(
+                exc, "".join(traceback.format_exception(exc))
+            )
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
         turn.finish_activity(succeeded=succeeded)
         await turn.add_response(response)

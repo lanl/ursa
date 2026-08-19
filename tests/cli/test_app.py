@@ -9,7 +9,7 @@ from textual.widgets import Markdown, RichLog, Static
 import ursa.cli.app as app_module
 from tests.cli._app_fakes import FakeHITL, emit_event
 from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import EventCard, RunCommandCard
+from ursa.cli.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.turn import Turn
 from ursa.cli.widgets import ActivityIndicator, MessageCard, PromptArea
 
@@ -87,6 +87,44 @@ async def test_prompt_submission_events_history_and_transcript(tmp_path):
 
         await pilot.press("ctrl+t")
         assert not messages[-1].has_class("hidden")
+
+
+async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
+    hitl = FakeHITL(tmp_path)
+
+    async def run_agent(_name, _prompt, callbacks=None):
+        raise RuntimeError("provider disconnected")
+
+    hitl.run_agent = run_agent
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("h", "e", "l", "l", "o", "enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        card = app.query_one(ExceptionCard)
+        assert card.lines == ["RuntimeError: provider disconnected"]
+        assert len(card.details) == 1
+        assert "Traceback (most recent call last):" in card.details[0]
+        assert "in run_agent" in card.details[0]
+        assert 'raise RuntimeError("provider disconnected")' in card.details[0]
+        assert card.details[0].endswith("RuntimeError: provider disconnected\n")
+        assert not card.expanded
+
+        class Click:
+            def stop(self):
+                pass
+
+        card.on_click(Click())
+        await pilot.pause()
+        assert card.expanded
+        rich_traceback = card.query_one(".exception-traceback", Static)
+        assert not rich_traceback.has_class("hidden")
+        assert type(rich_traceback.content).__name__ == "Traceback"
+        assert rich_traceback.content.trace.stacks[-1].exc_value == (
+            "provider disconnected"
+        )
 
 
 async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
