@@ -373,6 +373,9 @@ class UrsaTextualApp(App[None]):
         return sorted(candidates)
 
     async def _show_command(self, command: str) -> None:
+        if command == "exit":
+            self.action_quit()
+            return
         if command == "agents":
             details = await load_agent_details(self.hitl)
             self.push_screen(
