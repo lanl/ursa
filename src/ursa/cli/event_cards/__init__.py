@@ -3,6 +3,7 @@
 from ursa.cli.event_cards.agents import AgentEventCard as AgentEventCard
 from ursa.cli.event_cards.artifacts import ArtifactCard as ArtifactCard
 from ursa.cli.event_cards.base import EventCard as EventCard
+from ursa.cli.event_cards.base import ExceptionCard as ExceptionCard
 from ursa.cli.event_cards.commands import (
     CommandSafetyIndicator as CommandSafetyIndicator,
 )

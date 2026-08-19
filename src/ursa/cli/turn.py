@@ -18,6 +18,7 @@ from ursa.cli.event_cards import (
     ArtifactCard,
     EditCard,
     EventCard,
+    ExceptionCard,
     FileActivityCard,
     PlanCard,
     RunCommandCard,
@@ -460,6 +461,15 @@ class Turn(Static):
         message = MessageCard("assistant", response)
         await self.mount(message, before=self.query_one(".turn-end-marker"))
         message.set_class(self._transcript_enabled(), "hidden")
+
+    async def add_exception(
+        self, error: BaseException, traceback: str
+    ) -> ExceptionCard:
+        """Add an expandable failure card without discarding traceback data."""
+        key = self._next_summary_key("exception")
+        card = ExceptionCard(key, error, traceback)
+        await self._replace_or_mount(key, card)
+        return card
 
     def _transcript_enabled(self) -> bool:
         return not self.query_one(".transcript").has_class("hidden")

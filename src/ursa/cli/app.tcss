@@ -284,6 +284,13 @@ InformationScreen {
     display: block;
 }
 
+.exception-traceback {
+    height: auto;
+    margin: 0 1;
+    border: round $border;
+    background: $surface;
+}
+
 .event-expand-hint {
     dock: right;
     width: 18;
