@@ -15,10 +15,10 @@ from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
-from ursa.agents.base import AgentWithTools
+from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import EmbModelConfig, UrsaConfig
-from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl
+from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl, ursa_banner
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.rendering import event_artifact
@@ -92,6 +92,93 @@ def test_has_all_agent_do_methods(ursa_config):
     repl = UrsaRepl(hitl)
     for name in hitl.agents:
         assert hasattr(repl, f"do_{name}")
+
+
+def test_banner_shows_version():
+    # Issue 298: the running version rides next to the ascii logo.
+    assert f"v{URSA_VERSION}" in ursa_banner
+
+
+def test_banner_panel_shows_workspace(ursa_config):
+    hitl = HITL(ursa_config)
+    repl = UrsaRepl(hitl, stdout=io.StringIO())
+
+    console = RealConsole(file=io.StringIO(), width=200)
+    console.print(repl.llm_model_panel)
+
+    assert (
+        str(Path(ursa_config.workspace).absolute()) in console.file.getvalue()
+    )
+
+
+def _repl_with_stub_agent(ursa_config, monkeypatch, reply="agent says hi"):
+    hitl = HITL(ursa_config)
+
+    async def fake_run(name, prompt, callbacks=None):
+        return reply
+
+    monkeypatch.setattr(hitl, "run_agent", fake_run)
+    return UrsaRepl(hitl, stdout=io.StringIO())
+
+
+def test_agent_invocation_uses_bear_inline_prompt(ursa_config, monkeypatch):
+    # Issue 264: the user's turn is marked inline in the prompt, not echoed.
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.run_agent("chat", "what does this bug mean?")
+
+    out = repl.stdout.getvalue()
+    assert "agent says hi" in out
+    assert "what does this bug mean?" not in out
+    assert "chat>" not in out
+
+
+def test_user_turn_is_not_echoed_as_markup(ursa_config, monkeypatch):
+    # User text is no longer echoed, so rich markup must not appear either.
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.run_agent("chat", "explain [red]this[/red] tag")
+
+    out = repl.stdout.getvalue()
+    assert "[red]this[/red]" not in out
+
+
+def test_bare_text_default_route_does_not_echo_user_turn(ursa_config, monkeypatch):
+    # Bare text goes to the chat agent through default(); the request is not echoed.
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.default("hello there")
+
+    out = repl.stdout.getvalue()
+    assert "agent says hi" in out
+    assert "hello there" not in out
+    assert "chat>" not in out
+
+
+def test_onecmd_dispatch_route_does_not_echo_user_turn(ursa_config, monkeypatch):
+    # The do_<agent> dispatch through onecmd also avoids echoing the request.
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.onecmd("chat summarize the log")
+
+    out = repl.stdout.getvalue()
+    assert "agent says hi" in out
+    assert "summarize the log" not in out
+    assert "chat>" not in out
+
+
+def test_turns_end_with_a_dim_rule(ursa_config, monkeypatch):
+    # The blank turn separator became a full-width dim rule, chunking
+    # scrollback into visual blocks (issue 264).
+    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
+
+    repl.run_prompt("chat hello there")
+
+    out = repl.stdout.getvalue()
+    assert "────" in out, "no rule separating turns"
+    assert out.index("agent says hi") < out.index("────"), (
+        "the rule must close the turn after the agent output"
+    )
 
 
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):
