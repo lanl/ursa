@@ -478,7 +478,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         )
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "status", "keymap", "theme"]
+        ] == ["agents", "exit", "status", "keymap", "theme"]
 
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()
@@ -488,6 +488,16 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert "MCP servers" in app.screen.content
         assert "ursa-mcp" in app.screen.content
         assert "https://example.test/mcp" in app.screen.content
+
+
+async def test_exit_command_quits_the_app(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("/", "e", "x", "i", "t", "enter")
+        await pilot.pause()
+
+    assert app._exit
 
 
 async def test_command_picker_prioritizes_command_name_over_description(
