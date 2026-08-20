@@ -300,6 +300,64 @@ InformationScreen {
     text-style: italic;
 }
 
+.tool-call-title {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+.tool-call-summary {
+    height: 1;
+    padding: 0 1;
+}
+
+.tool-call-state {
+    width: 4;
+    color: $primary;
+}
+
+.tool-call-preview {
+    width: 1fr;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.tool-call-details {
+    height: auto;
+    padding: 0 1;
+}
+
+.tool-json-pane {
+    width: 1fr;
+    height: auto;
+    margin: 0 1 0 0;
+    border: round $border;
+}
+
+.tool-output-pane {
+    margin: 0 0 0 1;
+}
+
+.tool-json-title {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.tool-json {
+    height: auto;
+    padding: 0 1;
+    background: $surface;
+}
+
+.tool-output-markdown {
+    height: auto;
+    padding: 0 1;
+    background: transparent;
+}
+
 .edit-group-title {
     height: 1;
     padding: 0 1;

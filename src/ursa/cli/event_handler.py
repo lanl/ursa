@@ -143,6 +143,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         if isinstance(output, ToolMessage):
             data["result"] = output.content
             data["status"] = output.status
+            data["tool_message"] = output
         else:
             data["result"] = output
         if data.get("tool") in FILE_TOOLS and Turn._file_outcome(data) is None:

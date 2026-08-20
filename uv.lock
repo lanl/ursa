@@ -2969,16 +2969,16 @@ wheels = [
 
 [[package]]
 name = "langchain-mcp-adapters"
-version = "0.1.12"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain-core" },
     { name = "mcp" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/c7/2f6fdebb39d20e97866f8dce67b2f910e814cb618cded9e29e5c9674bd7c/langchain_mcp_adapters-0.1.12.tar.gz", hash = "sha256:0c7baa974278e44148b36fe6cb04173e9bf3c540619017a8f1bb602f90a24c1f", size = 29353, upload-time = "2025-10-30T21:19:39.893Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/66/1cc7039e2daaddcdea9d8887851fe6eb67401925999b2aa394aa855c7132/langchain_mcp_adapters-0.2.2.tar.gz", hash = "sha256:12d39e91ae4389c54b61b221094e53850b6e152934d8bc10c80665d600e76530", size = 37942, upload-time = "2026-03-16T17:13:30.35Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/5e/285001f98420304b2a03d38b341a9c0ec9ebb2a47d06fc0338d5f757d145/langchain_mcp_adapters-0.1.12-py3-none-any.whl", hash = "sha256:ea9894ed8baf83dce485cf4fb64d7afb74c34b95e2e627fde6bf307eaa49ea1c", size = 20429, upload-time = "2025-10-30T21:19:38.85Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/2f/15d5e6c1765d8404a9cce38d8c81d7b33fb3392f9db5b992c000dddbd2a3/langchain_mcp_adapters-0.2.2-py3-none-any.whl", hash = "sha256:d08e64954e86281002653071b7430e0377c9a577cb4ac3143abfeb3e24ef8797", size = 23288, upload-time = "2026-03-16T17:13:29.073Z" },
 ]
 
 [[package]]
@@ -7746,7 +7746,7 @@ requires-dist = [
     { name = "langchain-chroma", specifier = ">=1.0.0" },
     { name = "langchain-community", specifier = ">=0.4.1" },
     { name = "langchain-google-genai", specifier = ">=4.2" },
-    { name = "langchain-mcp-adapters", specifier = ">=0.1.12,<0.2" },
+    { name = "langchain-mcp-adapters", specifier = "~=0.2.2" },
     { name = "langchain-ollama", specifier = ">=1.0.0" },
     { name = "langchain-openai", specifier = ">=1.0.1" },
     { name = "langchain-text-splitters", specifier = ">=1.0.0" },
