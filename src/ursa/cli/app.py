@@ -10,7 +10,7 @@ import re
 import sys
 import threading
 import traceback
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from math import ceil
 from pathlib import Path
 from typing import Any, ClassVar
@@ -48,6 +48,23 @@ from ursa.cli.widgets import (
     WelcomeBanner,
 )
 from ursa.util import crossplatform
+
+
+class ConversationScroll(VerticalScroll):
+    """Conversation viewport that reports user-initiated anchor releases."""
+
+    def __init__(
+        self,
+        *children: Widget,
+        on_release: Callable[[], None],
+        **kwargs: Any,
+    ) -> None:
+        self._on_release = on_release
+        super().__init__(*children, **kwargs)
+
+    def release_anchor(self) -> None:
+        super().release_anchor()
+        self._on_release()
 
 
 class UrsaTextualApp(App[None]):
@@ -116,16 +133,22 @@ class UrsaTextualApp(App[None]):
         self._ui_thread_id: int | None = None
         self._turn_navigation_marker: Widget | None = None
         self._quit_after_turn = False
+        self._conversation_anchor_started = False
+        self._conversation_anchor_transition = False
+        self._conversation_anchor_generation = 0
 
     def compose(self) -> ComposeResult:
-        yield VerticalScroll(WelcomeBanner(self.hitl), id="conversation")
+        yield ConversationScroll(
+            WelcomeBanner(self.hitl),
+            id="conversation",
+            on_release=self._cancel_conversation_anchor_transition,
+        )
         yield PromptArea()
         yield Static(id="status")
 
     def on_mount(self) -> None:
         self._ui_thread_id = threading.get_ident()
         self._update_status("ready")
-        self.query_one("#conversation", VerticalScroll).anchor()
         self.query_one(PromptArea).focus()
 
     def copy_to_clipboard(self, text: str) -> None:
@@ -136,6 +159,7 @@ class UrsaTextualApp(App[None]):
 
     def on_resize(self) -> None:
         self.call_after_refresh(self._resize_prompt, self.query_one(PromptArea))
+        self.call_after_refresh(self._anchor_conversation_if_overflowing)
 
     async def on_unmount(self) -> None:
         """Release runtime resources on every graceful Textual shutdown."""
@@ -170,19 +194,61 @@ class UrsaTextualApp(App[None]):
     ) -> None:
         """Add an event without disturbing a user who has scrolled up."""
         await turn.event(data)
+        self.call_after_refresh(self._anchor_conversation_if_overflowing)
+
+    def _anchor_conversation_if_overflowing(self) -> None:
+        """Smoothly reach the bottom, then follow subsequent content."""
+        conversation = self.query_one("#conversation", VerticalScroll)
+        if (
+            not self._conversation_anchor_started
+            and conversation.max_scroll_y > 0
+        ):
+            self._conversation_anchor_started = True
+            self._conversation_anchor_transition = True
+            self._conversation_anchor_generation += 1
+            generation = self._conversation_anchor_generation
+            conversation.scroll_end(
+                animate=True,
+                duration=0.15,
+                on_complete=lambda: self._finish_conversation_anchor(
+                    generation
+                ),
+            )
+
+    def _cancel_conversation_anchor_transition(self) -> None:
+        """Invalidate a pending anchor when scrolling interrupts it."""
+        if self._conversation_anchor_transition:
+            self._conversation_anchor_transition = False
+            self._conversation_anchor_generation += 1
+
+    def _finish_conversation_anchor(self, generation: int) -> None:
+        """Anchor only if the initiating transition is still current."""
+        if generation != self._conversation_anchor_generation:
+            return
+        self._conversation_anchor_transition = False
+        self.query_one("#conversation", VerticalScroll).anchor()
+
+    def _reset_conversation_auto_follow(
+        self, conversation: VerticalScroll
+    ) -> None:
+        """Invalidate pending work and allow a fresh anchor transition."""
+        self._conversation_anchor_generation += 1
+        self._conversation_anchor_transition = False
+        self._conversation_anchor_started = False
+        conversation.anchor(False)
 
     @on(PromptArea.Submitted)
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.load_text("")
         turn = Turn(event.text, self.hitl.workspace)
-        await self.query_one("#conversation", VerticalScroll).mount(turn)
+        conversation = self.query_one("#conversation", VerticalScroll)
+        self._reset_conversation_auto_follow(conversation)
+        await conversation.mount(turn)
+        self.call_after_refresh(self._anchor_conversation_if_overflowing)
         turn.set_card_details_expanded(self.card_details_expanded)
         self.current_turn = turn
         self._turn_navigation_marker = turn.query_one(".events")
-        self.query_one("#conversation", VerticalScroll).scroll_end(
-            animate=False
-        )
         self._update_status("working")
         prompt_widget.disabled = True
         self.run_worker(
@@ -205,10 +271,8 @@ class UrsaTextualApp(App[None]):
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
         turn.finish_activity(succeeded=succeeded)
         await turn.add_response(response)
+        self.call_after_refresh(self._anchor_conversation_if_overflowing)
         self._turn_navigation_marker = list(turn.query(MessageCard))[-1]
-        self.query_one("#conversation", VerticalScroll).scroll_end(
-            animate=False
-        )
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.disabled = False
         prompt_widget.focus()
@@ -595,10 +659,11 @@ class UrsaTextualApp(App[None]):
                 severity="warning",
             )
             return
-        await self.query_one("#conversation", VerticalScroll).remove_children()
-        await self.query_one("#conversation", VerticalScroll).mount(
-            WelcomeBanner(self.hitl)
-        )
+        conversation = self.query_one("#conversation", VerticalScroll)
+        self._reset_conversation_auto_follow(conversation)
+        await conversation.remove_children()
+        await conversation.mount(WelcomeBanner(self.hitl))
+        conversation.scroll_home(animate=False)
         self._turn_navigation_marker = None
 
 

@@ -13,7 +13,12 @@ from tests.cli._app_fakes import FakeHITL, emit_event
 from ursa.cli.app import UrsaTextualApp
 from ursa.cli.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.turn import Turn
-from ursa.cli.widgets import ActivityIndicator, MessageCard, PromptArea
+from ursa.cli.widgets import (
+    ActivityIndicator,
+    MessageCard,
+    PromptArea,
+    WelcomeBanner,
+)
 
 
 def test_copy_binding_uses_platform_shortcut():
@@ -24,6 +29,24 @@ def test_copy_binding_uses_platform_shortcut():
     }
 
     assert bindings[expected_key].action == "screen.copy_text"
+
+
+async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        conversation = app.query_one("#conversation", VerticalScroll)
+        banner = app.query_one(WelcomeBanner)
+
+        assert banner.region.y == conversation.content_region.y
+
+        turn = Turn("short conversation", tmp_path)
+        await conversation.mount(turn)
+        await turn.add_response("Short response")
+        await pilot.pause()
+
+        assert banner.region.y == conversation.content_region.y
 
 
 async def test_prompt_submission_events_and_history(tmp_path):
@@ -409,6 +432,7 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
         await pilot.pause()
         assert app._turn_navigation_marker is app._turn_markers()[-1]
         assert conversation.scroll_y == conversation.max_scroll_y
+        assert conversation.is_anchored
 
         # Several markers from the latest turns may already be visible at the
         # maximum scroll offset. Cross into an earlier turn before asserting
@@ -457,6 +481,54 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
         await pilot.pause()
 
         assert conversation.scroll_y == scrolled_position
+
+
+async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        conversation = app.query_one("#conversation", VerticalScroll)
+        turn = Turn("test", tmp_path)
+        await conversation.mount(turn)
+
+        for index in range(12):
+            await app.add_turn_event(
+                turn,
+                {
+                    "type": "custom",
+                    "tool": f"tool-{index}",
+                    "phase": "start",
+                },
+            )
+            await pilot.pause(0.01)
+            if app._conversation_anchor_transition:
+                break
+
+        assert app._conversation_anchor_transition
+        conversation.scroll_home(animate=False, immediate=True)
+        await pilot.pause(0.2)
+
+        assert not conversation.is_anchored
+        scrolled_position = conversation.scroll_y
+        await app.add_turn_event(
+            turn,
+            {
+                "type": "custom",
+                "tool": "after-interruption",
+                "phase": "start",
+            },
+        )
+        await pilot.pause()
+
+        assert conversation.scroll_y == scrolled_position
+        assert conversation.scroll_y < conversation.max_scroll_y
+
+        await app.submit_prompt(PromptArea.Submitted("next prompt"))
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.2)
+
+        assert conversation.is_anchored
+        assert conversation.scroll_y == conversation.max_scroll_y
 
 
 @pytest.mark.parametrize(
