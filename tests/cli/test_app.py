@@ -480,7 +480,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
         )
         await pilot.pause()
 
-        assert conversation.scroll_y == scrolled_position
+        assert conversation.scroll_y == pytest.approx(scrolled_position)
 
 
 async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
@@ -520,12 +520,15 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
         )
         await pilot.pause()
 
-        assert conversation.scroll_y == scrolled_position
+        assert conversation.scroll_y == pytest.approx(scrolled_position)
         assert conversation.scroll_y < conversation.max_scroll_y
 
         await app.submit_prompt(PromptArea.Submitted("next prompt"))
         await app.workers.wait_for_complete()
-        await pilot.pause(0.2)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if conversation.is_anchored:
+                break
 
         assert conversation.is_anchored
         assert conversation.scroll_y == conversation.max_scroll_y

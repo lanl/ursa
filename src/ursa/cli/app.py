@@ -631,6 +631,9 @@ class UrsaTextualApp(App[None]):
         target = markers[target_index]
         self._turn_navigation_marker = target
         conversation = self.query_one("#conversation", VerticalScroll)
+        if target_index == len(markers) - 1:
+            conversation.anchor()
+            return
         target_y = target.virtual_region.y
         ancestor = target.parent
         while ancestor is not None and ancestor is not conversation:
