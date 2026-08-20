@@ -284,7 +284,7 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         assert notifications[0][1]["severity"] == "warning"
 
         release.set()
-        await pilot.pause()
+        await app.workers.wait_for_complete()
         assert not prompt.disabled
 
 

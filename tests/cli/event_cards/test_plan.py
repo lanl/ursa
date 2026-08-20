@@ -190,12 +190,12 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
         await pilot.pause()
 
         plan = app.query_one(PlanCard)
-        source = str(plan.query_one(Markdown).source)
         assert plan.state == "complete"
+        frame = plan._frame
 
         await asyncio.sleep(0.7)
         await pilot.pause()
-        assert str(plan.query_one(Markdown).source) == source
+        assert plan._frame == frame
 
 
 async def test_failed_agent_stops_drafting_plan_spinner(tmp_path):
