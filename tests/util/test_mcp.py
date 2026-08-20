@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import ToolMessage
 from mcp import StdioServerParameters
 from mcp.client.session_group import (
     SseServerParameters,
@@ -109,3 +110,23 @@ def test_stdio_proxy_launches_windows_command_shim(tmp_path, extension):
     )
 
     assert stderr_path.read_text().strip() == "shim diagnostic"
+
+
+async def test_upstream_adapter_puts_structured_content_in_tool_artifact():
+    client = mcp_mod.start_mcp_client({
+        "demo": StdioServerParameters(
+            command=sys.executable,
+            args=[str(DUMMY_SERVER)],
+        )
+    })
+    tools = await client.get_tools(server_name="demo")
+    add = next(tool for tool in tools if tool.name == "add")
+    result = await add.ainvoke({
+        "type": "tool_call",
+        "name": "add",
+        "args": {"a": 2, "b": 3},
+        "id": "add-call",
+    })
+
+    assert isinstance(result, ToolMessage)
+    assert result.artifact == {"structured_content": {"result": 5}}

@@ -23,6 +23,7 @@ from ursa.cli.event_cards import (
     PlanCard,
     RunCommandCard,
     SearchEventCard,
+    ToolCallCard,
 )
 from ursa.cli.helpers import (
     AGENT_LABELS,
@@ -47,6 +48,7 @@ class Turn(Static):
         self._commands: list[RunCommandCard] = []
         self._commands_by_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
+        self._tool_calls_by_id: dict[str, ToolCallCard] = {}
         self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
         self._summary_cards: dict[str, EventCard] = {}
@@ -224,6 +226,10 @@ class Turn(Static):
             )
             return
 
+        if tool and tool not in SEARCH_TOOLS and agent not in AGENT_LABELS:
+            await self._default_tool_event(payload)
+            return
+
         label = str(payload.get("message") or stage or tool or "Event")
         source = str(agent or tool or "agent")
         summary_kind = f"progress:{source}"
@@ -286,6 +292,34 @@ class Turn(Static):
                 bool(payload.get("approved")),
                 str(payload.get("reason") or ""),
             )
+
+    async def _default_tool_event(self, payload: Mapping[str, Any]) -> None:
+        run_id = str(payload.get("_run_id") or "")
+        card = self._tool_calls_by_id.get(run_id) if run_id else None
+        phase = str(payload.get("phase") or "")
+        if card is None:
+            ignored = {
+                "tool",
+                "phase",
+                "result",
+                "error",
+                "status",
+                "tool_message",
+                "_run_id",
+                "_received_at",
+            }
+            tool_input = {
+                key: value
+                for key, value in payload.items()
+                if key not in ignored
+            }
+            key = self._next_summary_key("tool")
+            card = ToolCallCard(key, str(payload.get("tool")), tool_input)
+            await self._replace_or_mount(key, card)
+            if run_id:
+                self._tool_calls_by_id[run_id] = card
+        if phase in {"end", "error"}:
+            card.update_event(payload)
 
     def record_transcript(self, payload: Mapping[str, Any]) -> None:
         """Append one raw callback record to the full transcript."""
