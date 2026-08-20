@@ -125,6 +125,7 @@ class UrsaTextualApp(App[None]):
     def on_mount(self) -> None:
         self._ui_thread_id = threading.get_ident()
         self._update_status("ready")
+        self.query_one("#conversation", VerticalScroll).anchor()
         self.query_one(PromptArea).focus()
 
     def copy_to_clipboard(self, text: str) -> None:
@@ -168,11 +169,7 @@ class UrsaTextualApp(App[None]):
         data: Mapping[str, Any],
     ) -> None:
         """Add an event without disturbing a user who has scrolled up."""
-        conversation = self.query_one("#conversation", VerticalScroll)
-        was_at_bottom = conversation.scroll_y >= conversation.max_scroll_y
         await turn.event(data)
-        if was_at_bottom:
-            self.call_after_refresh(conversation.scroll_end, animate=True)
 
     @on(PromptArea.Submitted)
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
