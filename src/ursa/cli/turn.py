@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Mapping
 from pathlib import Path
 from time import monotonic
@@ -11,7 +10,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import RichLog, Static
+from textual.widgets import Static
 
 from ursa.cli.event_cards import (
     AgentEventCard,
@@ -41,7 +40,6 @@ class Turn(Static):
         self.prompt = prompt
         self.workspace = Path(workspace).resolve()
         self.cards: dict[str, EventCard] = {}
-        self.transcript: list[str] = []
         self.started_at = monotonic()
         self.token_usage = 0
         self._command_count = 0
@@ -65,21 +63,16 @@ class Turn(Static):
     def compose(self) -> ComposeResult:
         yield MessageCard("user", self.prompt)
         yield Vertical(classes="events hidden")
-        yield RichLog(classes="transcript hidden", highlight=True, wrap=True)
         activity = ActivityIndicator()
         activity.add_class("activity-after-user")
         yield activity
         yield Static("", classes="turn-end-marker")
 
-    async def event(
-        self, payload: dict[str, Any], record_transcript: bool = True
-    ) -> None:
+    async def event(self, payload: dict[str, Any]) -> None:
         async with self._event_lock:
-            await self._event(payload, record_transcript=record_transcript)
+            await self._event(payload)
 
-    async def _event(
-        self, payload: dict[str, Any], *, record_transcript: bool
-    ) -> None:
+    async def _event(self, payload: dict[str, Any]) -> None:
         received_at = payload.get("_received_at")
         self._current_event_at = (
             float(received_at)
@@ -96,9 +89,6 @@ class Turn(Static):
         )
         if activity:
             self.update_activity(str(activity))
-        if record_transcript:
-            self.record_transcript(payload)
-
         tool = str(payload.get("tool") or "")
         agent = str(payload.get("agent") or "")
         stage = str(payload.get("stage") or "")
@@ -321,12 +311,6 @@ class Turn(Static):
         if phase in {"end", "error"}:
             card.update_event(payload)
 
-    def record_transcript(self, payload: Mapping[str, Any]) -> None:
-        """Append one raw callback record to the full transcript."""
-        line = json.dumps(payload, default=str, sort_keys=True)
-        self.transcript.append(line)
-        self.query_one(".transcript", RichLog).write(line)
-
     def _latest_file_card(
         self, operation: str, path: str
     ) -> FileActivityCard | None:
@@ -482,19 +466,15 @@ class Turn(Static):
         self.cards[key] = card
         events = self.query_one(".events", Vertical)
         events.add_class("has-events")
-        if not self._transcript_enabled():
-            events.remove_class("hidden")
+        events.remove_class("hidden")
         self.query_one(ActivityIndicator).remove_class("activity-after-user")
         await events.mount(card)
         if self.card_details_expanded:
             card.set_expanded(True)
 
     async def add_response(self, response: str) -> None:
-        self.transcript.append(response)
-        self.query_one(".transcript", RichLog).write(response)
         message = MessageCard("assistant", response)
         await self.mount(message, before=self.query_one(".turn-end-marker"))
-        message.set_class(self._transcript_enabled(), "hidden")
 
     async def add_exception(
         self, error: BaseException, traceback: str
@@ -504,19 +484,6 @@ class Turn(Static):
         card = ExceptionCard(key, error, traceback)
         await self._replace_or_mount(key, card)
         return card
-
-    def _transcript_enabled(self) -> bool:
-        return not self.query_one(".transcript").has_class("hidden")
-
-    def set_transcript(self, enabled: bool) -> None:
-        self.query_one(".transcript").set_class(not enabled, "hidden")
-        events = self.query_one(".events")
-        events.set_class(
-            enabled or not events.has_class("has-events"), "hidden"
-        )
-        for message in self.query(MessageCard):
-            if message.role == "assistant":
-                message.set_class(enabled, "hidden")
 
     def set_card_details_expanded(self, expanded: bool) -> None:
         self.card_details_expanded = expanded

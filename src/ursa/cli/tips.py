@@ -18,7 +18,6 @@ TIPS = (
     "{cancel} closes a picker without changing your prompt.",
     "{insert_newline} adds a newline; {submit_prompt} submits the prompt.",
     "{clear_prompt} clears the prompt; {history_up} restores it from history.",
-    "{toggle_transcript} toggles the complete event transcript.",
     "Tool and agent output is truncated by default; {toggle_card_details} shows or hides the full output.",
     "{previous_turn_marker} and {next_turn_marker} move between turn markers.",
     "{agent_macro}agent routes the next prompt without changing the default agent.",

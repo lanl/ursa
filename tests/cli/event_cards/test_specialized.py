@@ -1,5 +1,5 @@
 from textual.containers import VerticalScroll
-from textual.widgets import RichLog, Static
+from textual.widgets import Static
 
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
@@ -48,6 +48,8 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
         expanded = first.query_one(".edit-diff", Static).content.code
         assert "-value = 1" in expanded
         assert "+value = 2" in expanded
+
+
 async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
@@ -99,7 +101,6 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
 
         click = Click()
         artifact.on_click(click)
-        turn.set_transcript(True)
         assert click.stopped
         assert artifact.done
         assert artifact.expanded
@@ -107,7 +108,6 @@ async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
             str(artifact.query_one(".event-expand-hint", Static).content)
             == "Click to collapse"
         )
-        assert not turn.query_one(RichLog).has_class("hidden")
 
 
 async def test_search_and_lammps_events_render_specialized_details(tmp_path):

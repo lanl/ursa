@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -31,36 +30,23 @@ class TextualEventHandler(AsyncCallbackHandler):
         self.turn = turn
         self.tools: dict[Any, dict[str, Any]] = {}
 
-    async def _emit(
-        self, data: dict[str, Any], *, record_transcript: bool = True
-    ) -> None:
+    async def _emit(self, data: dict[str, Any]) -> None:
         """Apply callback data on Textual's event-loop thread."""
         data.setdefault("_received_at", monotonic())
         if self.app.is_ui_thread:
-            await self.app.add_turn_event(self.turn, data, record_transcript)
+            await self.app.add_turn_event(self.turn, data)
         else:
             self.app.call_from_thread(
                 self.app.add_turn_event,
                 self.turn,
                 data,
-                record_transcript,
             )
 
-    async def _record(self, data: Mapping[str, Any]) -> None:
-        if self.app.is_ui_thread:
-            self.turn.record_transcript(data)
-        else:
-            self.app.call_from_thread(self.turn.record_transcript, data)
-
-    async def _update_activity(
-        self, message: str, *, record_transcript: bool = False
-    ) -> None:
+    async def _update_activity(self, message: str) -> None:
         if self.app.is_ui_thread:
             self.turn.update_activity(message)
         else:
             self.app.call_from_thread(self.turn.update_activity, message)
-        if record_transcript:
-            await self._record({"type": "activity", "message": message})
 
     async def on_custom_event(
         self,
@@ -91,22 +77,19 @@ class TextualEventHandler(AsyncCallbackHandler):
                         "no changes made",
                     )):
                         await self._emit(data)
-                    else:
-                        await self._record(dict(data))
                     return
                 if any(
                     pending.get("tool") == tool
                     for pending in self.tools.values()
                 ):
-                    await self._record(data)
                     return
             await self._emit(data)
 
     async def on_llm_start(self, *_: Any, **__: Any) -> None:
-        await self._update_activity("Thinking…", record_transcript=True)
+        await self._update_activity("Thinking…")
 
     async def on_chat_model_start(self, *_: Any, **__: Any) -> None:
-        await self._update_activity("Thinking…", record_transcript=True)
+        await self._update_activity("Thinking…")
 
     async def on_llm_new_token(
         self, token: str, *, chunk: Any = None, **_: Any
@@ -115,7 +98,7 @@ class TextualEventHandler(AsyncCallbackHandler):
         # publish reasoning summaries place them in explicit reasoning or
         # thinking fields on the chunk.
         if trace := _reasoning_trace(chunk):
-            await self._update_activity(trace, record_transcript=True)
+            await self._update_activity(trace)
 
     async def on_tool_start(
         self,
@@ -152,7 +135,6 @@ class TextualEventHandler(AsyncCallbackHandler):
         else:
             data["result"] = output
         if data.get("tool") in FILE_TOOLS and Turn._file_outcome(data) is None:
-            await self._record(data)
             return
         await self._emit(data)
 
@@ -177,7 +159,6 @@ class TextualEventHandler(AsyncCallbackHandler):
 
     async def on_llm_end(self, response: Any, **_: Any) -> None:
         usage = _token_usage_breakdown(response)
-        await self._record({"type": "llm_end", **usage.__dict__})
         if self.app.is_ui_thread:
             self._record_tokens(usage)
         else:
