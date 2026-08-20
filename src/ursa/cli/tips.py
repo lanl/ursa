@@ -14,27 +14,29 @@ if TYPE_CHECKING:
 TIPS = (
     "{agent_macro} opens the fuzzy agent picker and routes the prompt.",
     "{file_macro} finds workspace files and directories without leaving the app.",
-    "{command_macro} opens commands for agents, status, and the complete keymap.",
+    "{command_macro} opens commands for managing agents, viewing status, and displaying the complete keymap.",
     "{cancel} closes a picker without changing your prompt.",
     "{insert_newline} adds a newline; {submit_prompt} submits the prompt.",
     "{clear_prompt} clears the prompt; {history_up} restores it from history.",
-    "Tool and agent output is truncated by default; {toggle_card_details} shows or hides the full output.",
-    "{previous_turn_marker} and {next_turn_marker} move between turn markers.",
-    "{agent_macro}agent routes the next prompt without changing the default agent.",
-    "Named agents preserve state between sessions. Start URSA with `--name` to load one.",
-    "MCP tools are attached only to agents that support tool use.",
+    "Tool and agent outputs are truncated by default; {toggle_card_details} toggles the full output.",
+    "{previous_turn_marker} and {next_turn_marker} jump to the previous or next turn marker.",
+    "{agent_macro}agent routes your next prompt to that agent without changing the default.",
+    "Named agents preserve state between sessions. Start URSA with `--name` to resume one.",
+    "MCP tools are attached only to agents that support tools.",
     "{quit} waits for the active turn before quitting; {hard_quit} quits immediately.",
     "Use {command_macro}agents to explore available agents and their tools.",
     "Use {command_macro}keymap to see all available keyboard shortcuts.",
     "Use {command_macro}theme to change the color theme.",
-    "Something broken? Let us know: https://github.com/lanl/ursa/issues",
+    "Found a problem? Let us know: https://github.com/lanl/ursa/issues",
     "Unsure about something? Check out our docs: https://lanl.github.io/ursa",
 )
 
 BEAR_FACTS = (
-    "Despite their name Black bears can be black, cinnamon, brown, blond and even white",  # https://www.nps.gov/subjects/bears/black-bears.htm
+    "Despite their name, black bears can be black, cinnamon, brown, blond, and even white.",  # https://www.nps.gov/subjects/bears/black-bears.htm
     "Polar bears can smell a carcass from nearly 20 miles away.",  # https://www.nps.gov/subjects/bears/polar-bears.htm
-    "A Kodiak brown bear can be up to 10 feet tall when standing upright",  # https://www.fws.gov/species/kodiak-brown-bear-ursus-arctos-middendorffi
+    "A Kodiak brown bear can be up to 10 feet tall when standing upright.",  # https://www.fws.gov/species/kodiak-brown-bear-ursus-arctos-middendorffi
+    "A black bear can run as fast as 35 miles per hour.",  # https://www.nps.gov/glac/learn/nature/bears.htm
+    "The Andean bear, also known as the spectacled bear, is the only bear native to South America.",  # https://nationalzoo.si.edu/animals/andean-bear
 )
 
 
@@ -62,6 +64,6 @@ def runtime_keymap(
 
 def random_tip(app: App[object], owners: Iterable[type[object]]) -> str:
     """Choose one welcome hint for the current application session."""
-    if random.random() <= 0.1:
+    if random.random() <= (1 / (len(TIPS) + 1)):
         return random.choice(BEAR_FACTS)
     return random.choice(TIPS).format_map(runtime_keymap(app, owners))
