@@ -467,6 +467,47 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
         assert conversation.scroll_y < bottom
 
 
+async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        conversation = app.query_one("#conversation", VerticalScroll)
+        turn = Turn("test", tmp_path)
+        await conversation.mount(turn)
+
+        for index in range(12):
+            await app.add_turn_event(
+                turn,
+                {
+                    "type": "custom",
+                    "tool": f"tool-{index}",
+                    "phase": "start",
+                },
+            )
+            await pilot.pause()
+
+        assert conversation.scroll_y == conversation.max_scroll_y
+
+        conversation.scroll_to(
+            y=max(0, conversation.scroll_y - 3), animate=False
+        )
+        await pilot.pause()
+        scrolled_position = conversation.scroll_y
+        assert scrolled_position < conversation.max_scroll_y
+
+        await app.add_turn_event(
+            turn,
+            {
+                "type": "custom",
+                "tool": "one-more-tool",
+                "phase": "start",
+            },
+        )
+        await pilot.pause()
+
+        assert conversation.scroll_y == scrolled_position
+
+
 @pytest.mark.parametrize(
     ("prompt", "expected"),
     [

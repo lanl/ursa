@@ -37,9 +37,14 @@ class TextualEventHandler(AsyncCallbackHandler):
         """Apply callback data on Textual's event-loop thread."""
         data.setdefault("_received_at", monotonic())
         if self.app.is_ui_thread:
-            await self.turn.event(data, record_transcript)
+            await self.app.add_turn_event(self.turn, data, record_transcript)
         else:
-            self.app.call_from_thread(self.turn.event, data, record_transcript)
+            self.app.call_from_thread(
+                self.app.add_turn_event,
+                self.turn,
+                data,
+                record_transcript,
+            )
 
     async def _record(self, data: Mapping[str, Any]) -> None:
         if self.app.is_ui_thread:

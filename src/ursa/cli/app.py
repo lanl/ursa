@@ -151,6 +151,19 @@ class UrsaTextualApp(App[None]):
         self.cached_tokens += usage.cached_tokens
         self._update_status("working")
 
+    async def add_turn_event(
+        self,
+        turn: Turn,
+        data: Mapping[str, Any],
+        record_transcript: bool = True,
+    ) -> None:
+        """Add an event without disturbing a user who has scrolled up."""
+        conversation = self.query_one("#conversation", VerticalScroll)
+        was_at_bottom = conversation.scroll_y >= conversation.max_scroll_y
+        await turn.event(data, record_transcript)
+        if was_at_bottom:
+            self.call_after_refresh(conversation.scroll_end, animate=True)
+
     @on(PromptArea.Submitted)
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
         prompt_widget = self.query_one(PromptArea)
