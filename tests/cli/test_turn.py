@@ -55,7 +55,9 @@ async def test_turn_spacing_is_one_row_with_or_without_events(tmp_path):
         await pilot.pause()
 
         direct_messages = list(no_tools.query(MessageCard))
-        assert direct_messages[1].region.y - direct_messages[0].region.bottom == 1
+        assert (
+            direct_messages[1].region.y - direct_messages[0].region.bottom == 1
+        )
 
         tool_messages = list(with_tool.query(MessageCard))
         command = with_tool.query_one(RunCommandCard)
@@ -631,21 +633,3 @@ async def test_rich_edit_outcome_updates_existing_diff_row(tmp_path, outcome):
         assert expected[1] in str(
             cards[0].query_one(".edit-outcome", Static).content
         )
-
-
-async def test_event_arrival_keeps_cards_hidden_in_transcript_mode(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        turn = Turn("show transcript", tmp_path)
-        await app.query_one("#conversation", VerticalScroll).mount(turn)
-        turn.set_transcript(True)
-        await turn.event({
-            "tool": "read_file",
-            "path": "README.md",
-            "message": "Reading",
-        })
-        await pilot.pause()
-
-        assert turn.query_one(".events").has_class("hidden")
-        assert not turn.query_one(".transcript").has_class("hidden")

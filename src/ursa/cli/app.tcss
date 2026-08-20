@@ -265,8 +265,7 @@ InformationScreen {
     color: $text;
 }
 
-.event-summary,
-.transcript {
+.event-summary {
     height: auto;
     background: transparent;
 }
@@ -436,13 +435,6 @@ RunCommandCard.command-expanded > .event-expand-hint {
     dock: bottom;
     width: 100%;
     padding-right: 1;
-}
-
-.transcript {
-    margin: 0;
-    padding: 1;
-    border-left: thick $warning-muted;
-    background: $background;
 }
 
 .hidden {

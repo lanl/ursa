@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Markdown, RichLog, Static
+from textual.widgets import Markdown, Static
 
 import ursa.cli.app as app_module
 import ursa.util.crossplatform as crossplatform
@@ -26,7 +26,7 @@ def test_copy_binding_uses_platform_shortcut():
     assert bindings[expected_key].action == "screen.copy_text"
 
 
-async def test_prompt_submission_events_history_and_transcript(tmp_path):
+async def test_prompt_submission_events_and_history(tmp_path):
     hitl = FakeHITL(tmp_path)
 
     async def run_agent(name, prompt, callbacks=None):
@@ -64,6 +64,7 @@ async def test_prompt_submission_events_history_and_transcript(tmp_path):
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
         assert messages[0].styles.background != messages[1].styles.background
+        assert messages[1].content == "**Finished**"
         assert len(app.query(EventCard)) == 1
         assert app.total_tokens == 37
         assert app.input_tokens == 30
@@ -89,16 +90,6 @@ async def test_prompt_submission_events_history_and_transcript(tmp_path):
         prompt = app.query_one(PromptArea)
         await pilot.press("up")
         assert prompt.text == "hello"
-
-        await pilot.press("ctrl+t")
-        assert not turn.query_one(".transcript").has_class("hidden")
-        assert turn.query_one(".events").has_class("hidden")
-        assert messages[-1].has_class("hidden")
-        assert turn.transcript[-1] == "**Finished**"
-        assert turn.query_one(RichLog).lines[-1].text == "**Finished**"
-
-        await pilot.press("ctrl+t")
-        assert not messages[-1].has_class("hidden")
 
 
 async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
@@ -359,58 +350,6 @@ def test_ctrl_d_uses_abrupt_process_exit(tmp_path, monkeypatch):
     app.action_hard_quit()
 
     assert exit_codes == [130]
-
-
-async def test_transcript_retains_reasoning_and_filtered_file_completions(
-    tmp_path,
-):
-    hitl = FakeHITL(tmp_path)
-
-    async def run_agent(_name, _prompt, callbacks=None):
-        handler = callbacks[0]
-        await handler.on_chat_model_start()
-        await handler.on_llm_new_token(
-            "",
-            chunk=SimpleNamespace(
-                message=SimpleNamespace(
-                    additional_kwargs={
-                        "reasoning_content": "Checking the requested file"
-                    }
-                )
-            ),
-        )
-        await handler.on_tool_start(
-            {"name": "read_file"},
-            "",
-            run_id="read-complete",
-            inputs={"path": "notes.md"},
-        )
-        await emit_event(
-            handler,
-            {
-                "tool": "read_file",
-                "phase": "end",
-                "path": "notes.md",
-                "message": "File read",
-            },
-        )
-        await handler.on_tool_end("contents", run_id="read-complete")
-        return "Finished"
-
-    hitl.run_agent = run_agent
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press("r", "e", "a", "d", "enter")
-        await pilot.pause()
-        turn = app.query_one(Turn)
-        transcript = "\n".join(turn.transcript)
-        assert "Checking the requested file" in transcript
-        assert '"phase": "end"' in transcript
-        assert '"result": "contents"' in transcript
-
-        await pilot.press("ctrl+t")
-        assert not turn.query_one(".transcript").has_class("hidden")
 
 
 async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):

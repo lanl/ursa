@@ -75,7 +75,6 @@ class UrsaTextualApp(App[None]):
             show=False,
             priority=True,
         ),
-        Binding("ctrl+t", "toggle_transcript", "Toggle transcript", show=True),
         Binding(
             "ctrl+o", "toggle_card_details", "Toggle card details", show=True
         ),
@@ -110,7 +109,6 @@ class UrsaTextualApp(App[None]):
         self.input_tokens = 0
         self.output_tokens = 0
         self.cached_tokens = 0
-        self.transcript_mode = False
         self.card_details_expanded = False
         self.current_turn: Turn | None = None
         self._hotlist_open = False
@@ -168,12 +166,11 @@ class UrsaTextualApp(App[None]):
         self,
         turn: Turn,
         data: Mapping[str, Any],
-        record_transcript: bool = True,
     ) -> None:
         """Add an event without disturbing a user who has scrolled up."""
         conversation = self.query_one("#conversation", VerticalScroll)
         was_at_bottom = conversation.scroll_y >= conversation.max_scroll_y
-        await turn.event(data, record_transcript)
+        await turn.event(data)
         if was_at_bottom:
             self.call_after_refresh(conversation.scroll_end, animate=True)
 
@@ -212,7 +209,6 @@ class UrsaTextualApp(App[None]):
         turn.finish_activity(succeeded=succeeded)
         await turn.add_response(response)
         self._turn_navigation_marker = list(turn.query(MessageCard))[-1]
-        turn.set_transcript(self.transcript_mode)
         self.query_one("#conversation", VerticalScroll).scroll_end(
             animate=False
         )
@@ -544,12 +540,6 @@ class UrsaTextualApp(App[None]):
             ])
         return "\n".join(output).rstrip()
 
-    def action_toggle_transcript(self) -> None:
-        self.transcript_mode = not self.transcript_mode
-        for turn in self.query(Turn):
-            turn.set_transcript(self.transcript_mode)
-        self._update_status("transcript" if self.transcript_mode else "ready")
-
     def action_toggle_card_details(self) -> None:
         self.card_details_expanded = not self.card_details_expanded
         for turn in self.query(Turn):
@@ -561,9 +551,7 @@ class UrsaTextualApp(App[None]):
             messages = list(turn.query(MessageCard))
             if not messages:
                 continue
-            activity = turn.query_one(
-                ".transcript" if self.transcript_mode else ".events"
-            )
+            activity = turn.query_one(".events")
             markers.extend((messages[0], activity))
             if len(messages) > 1:
                 markers.append(messages[-1])
