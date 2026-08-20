@@ -2,6 +2,7 @@
 
 """Reusable widgets and modal screens for the Textual CLI."""
 
+import sys
 from collections.abc import Sequence
 from math import ceil
 from pathlib import Path
@@ -53,6 +54,13 @@ class PromptArea(TextArea):
         ),
         Binding(
             "ctrl+c", "clear_prompt", "Clear prompt", show=False, priority=True
+        ),
+        Binding(
+            "ctrl+shift+c" if sys.platform == "win32" else "super+c",
+            "copy_selection",
+            "Copy selected text",
+            show=False,
+            priority=True,
         ),
         Binding(
             "up",
@@ -151,6 +159,13 @@ class PromptArea(TextArea):
         self._remember(self.text)
         self._history_index = len(self.prompt_history)
         self.load_text("")
+
+    def action_copy_selection(self) -> None:
+        """Copy a prompt selection, or fall back to the screen selection."""
+        if self.selected_text:
+            self.action_copy()
+        else:
+            self.screen.action_copy_text()
 
     def action_history_up(self) -> None:
         if self.prompt_history and (

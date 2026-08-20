@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -250,6 +251,42 @@ async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(tmp_path):
         assert prompt.text == ""
         await pilot.press("ctrl+y")
         assert prompt.text == "# heading\nbody"
+
+
+async def test_prompt_copy_shortcut_preserves_selected_text(
+    tmp_path, monkeypatch
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    copied = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one(PromptArea)
+        prompt.load_text("selected text")
+        prompt.action_select_all()
+
+        shortcut = "ctrl+shift+c" if sys.platform == "win32" else "super+c"
+        await pilot.press(shortcut)
+
+        assert copied == ["selected text"]
+        assert prompt.text == "selected text"
+
+
+async def test_prompt_copy_shortcut_delegates_to_screen_selection(
+    tmp_path, monkeypatch
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    delegated = []
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(
+            app.screen, "action_copy_text", lambda: delegated.append(True)
+        )
+
+        shortcut = "ctrl+shift+c" if sys.platform == "win32" else "super+c"
+        await pilot.press(shortcut)
+
+        assert delegated == [True]
 
 
 async def test_prompt_supports_option_arrow_word_navigation(tmp_path):

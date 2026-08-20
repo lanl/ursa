@@ -47,6 +47,7 @@ from ursa.cli.widgets import (
     ThemeScreen,
     WelcomeBanner,
 )
+from ursa.util import crossplatform
 
 
 class UrsaTextualApp(App[None]):
@@ -60,6 +61,12 @@ class UrsaTextualApp(App[None]):
             "cancel_agent",
             "Explain active-turn cancellation",
             show=False,
+        ),
+        Binding(
+            "ctrl+shift+c" if sys.platform == "win32" else "super+c",
+            "screen.copy_text",
+            "Copy selected text",
+            show=True,
         ),
         Binding(
             "ctrl+d",
@@ -121,6 +128,12 @@ class UrsaTextualApp(App[None]):
         self._ui_thread_id = threading.get_ident()
         self._update_status("ready")
         self.query_one(PromptArea).focus()
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy text using a platform clipboard tool, falling back to OSC52."""
+        self._clipboard = text
+        if not crossplatform.copy_to_clipboard(text):
+            super().copy_to_clipboard(text)
 
     def on_resize(self) -> None:
         self.call_after_refresh(self._resize_prompt, self.query_one(PromptArea))

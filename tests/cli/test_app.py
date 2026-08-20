@@ -1,5 +1,6 @@
 import asyncio
 import io
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -7,11 +8,22 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, RichLog, Static
 
 import ursa.cli.app as app_module
+import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL, emit_event
 from ursa.cli.app import UrsaTextualApp
 from ursa.cli.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.turn import Turn
 from ursa.cli.widgets import ActivityIndicator, MessageCard, PromptArea
+
+
+def test_copy_binding_uses_platform_shortcut():
+    expected_key = "ctrl+shift+c" if sys.platform == "win32" else "super+c"
+    bindings = {
+        binding.key: binding
+        for binding in UrsaTextualApp._effective_bindings(UrsaTextualApp)
+    }
+
+    assert bindings[expected_key].action == "screen.copy_text"
 
 
 async def test_prompt_submission_events_history_and_transcript(tmp_path):
@@ -523,6 +535,42 @@ def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     assert app._route_prompt(prompt) == expected
+
+
+def test_copy_to_clipboard_prefers_platform_tool_when_available(
+    tmp_path, monkeypatch
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    fallback = []
+    monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: True)
+    monkeypatch.setattr(
+        app_module.App,
+        "copy_to_clipboard",
+        lambda self, text: fallback.append(text),
+    )
+
+    app.copy_to_clipboard("hello")
+
+    assert fallback == []
+    assert app.clipboard == "hello"
+
+
+def test_copy_to_clipboard_uses_osc52_when_platform_copy_unavailable(
+    tmp_path, monkeypatch
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    fallback = []
+    monkeypatch.setattr(crossplatform, "copy_to_clipboard", lambda text: False)
+    monkeypatch.setattr(
+        app_module.App,
+        "copy_to_clipboard",
+        lambda self, text: fallback.append(text),
+    )
+
+    app.copy_to_clipboard("hello")
+
+    assert fallback == ["hello"]
+    assert app.clipboard == "hello"
 
 
 def test_one_shot_routes_hash_agent_and_writes_response(tmp_path):
