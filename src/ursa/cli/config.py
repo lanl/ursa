@@ -298,7 +298,6 @@ class UrsaConfig(BaseModel):
     inference_providers: dict[str, InferenceProviderConfig] = Field(
         default_factory=lambda: {
             "openai": InferenceProviderConfig(
-                base_url="https://api.openai.com/v1",
                 api_key=APIKeyConfig(env="OPENAI_API_KEY")
             )
         }
@@ -327,13 +326,7 @@ class UrsaConfig(BaseModel):
     def _include_default_inference_provider(cls, value):
         """Keep the provider used by the default LLM in every catalog."""
         providers = dict(value or {})
-        providers.setdefault(
-            "openai",
-            {
-                "base_url": "https://api.openai.com/v1",
-                "api_key": {"env": "OPENAI_API_KEY"},
-            },
-        )
+        providers.setdefault("openai", {"api_key": {"env": "OPENAI_API_KEY"}})
         return providers
 
     @field_validator("rag_tools", mode="before")
