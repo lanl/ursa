@@ -10,6 +10,7 @@ from ursa.cli.config import (
     ChatModelConfig,
     UrsaConfig,
     merge_ursa_config,
+    resolve_ursa_config,
 )
 from ursa.cli.print_config import parse_print_config_spec
 from ursa.util import crossplatform
@@ -137,9 +138,16 @@ def test_default_openai_provider_is_explicit():
     config = UrsaConfig()
 
     assert config.llm_model.inference_provider == "openai"
+    assert (
+        config.inference_providers["openai"].base_url
+        == "https://api.openai.com/v1"
+    )
     assert config.inference_providers["openai"].api_key == APIKeyConfig(
         env="OPENAI_API_KEY"
     )
+
+    resolved = resolve_ursa_config(config)
+    assert resolved.llm_model.base_url == "https://api.openai.com/v1"
 
 
 def test_print_config_level_gets_default_stage():
