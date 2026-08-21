@@ -30,6 +30,7 @@ from ursa.cli.print_config import (
     parse_print_config_spec,
     print_config,
 )
+from ursa.util.crossplatform import system_config_path, user_config_paths
 
 
 @pytest.fixture(autouse=True)
@@ -679,10 +680,8 @@ def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     )
 
     assert xdg_config_search_paths() == [
-        Path("/Library/Application Support/ursa/config.yaml"),
-        home / "Library/Application Support/ursa/config.yaml",
-        home / ".config/ursa/config.yaml",
-        xdg_home / "ursa" / "config.yaml",
+        system_config_path(),
+        *user_config_paths(),
     ]
 
 
