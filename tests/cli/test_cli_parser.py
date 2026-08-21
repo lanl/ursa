@@ -7,7 +7,7 @@ import pytest
 import yaml
 from jsonargparse import Namespace
 from openai import OpenAIError
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from ursa.cli import (
     build_parser,
@@ -15,6 +15,7 @@ from ursa.cli import (
     resolve_config,
 )
 from ursa.cli.config import (
+    APIKeyConfig,
     ChatModelConfig,
     EmbModelConfig,
     ModelConfig,
@@ -33,6 +34,7 @@ from ursa.cli.print_config import (
 
 @pytest.fixture(autouse=True)
 def _isolate_xdg_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-home"))
     monkeypatch.setenv("XDG_CONFIG_DIRS", str(tmp_path / "xdg-dirs"))
 
@@ -663,11 +665,13 @@ def test_agent_config_null_is_normalized_with_deprecation_warning(caplog):
 
 
 def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
+    home = tmp_path / "home"
     xdg_home = tmp_path / "xdg-home"
     xdg_dir_1 = tmp_path / "xdg-dir-1"
     xdg_dir_2 = tmp_path / "xdg-dir-2"
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
+    monkeypatch.setattr(Path, "home", lambda: home)
     path_list_separator = ";" if tmp_path.drive else ":"
     monkeypatch.setenv(
         "XDG_CONFIG_DIRS",
@@ -675,13 +679,16 @@ def test_xdg_config_search_paths_honor_env_overrides(tmp_path, monkeypatch):
     )
 
     assert xdg_config_search_paths() == [
-        xdg_dir_2 / "ursa" / "config.yaml",
-        xdg_dir_1 / "ursa" / "config.yaml",
+        Path("/Library/Application Support/ursa/config.yaml"),
+        home / "Library/Application Support/ursa/config.yaml",
+        home / ".config/ursa/config.yaml",
         xdg_home / "ursa" / "config.yaml",
     ]
 
 
-def test_first_xdg_config_dir_has_higher_precedence(tmp_path, monkeypatch):
+def test_xdg_config_dirs_do_not_replace_native_system_config(
+    tmp_path, monkeypatch
+):
     high = tmp_path / "high" / "ursa" / "config.yaml"
     low = tmp_path / "low" / "ursa" / "config.yaml"
     high.parent.mkdir(parents=True)
@@ -691,11 +698,10 @@ def test_first_xdg_config_dir_has_higher_precedence(tmp_path, monkeypatch):
     path_list_separator = ";" if tmp_path.drive else ":"
     monkeypatch.setenv(
         "XDG_CONFIG_DIRS",
-        path_list_separator.join(
-            (str(high.parents[1]), str(low.parents[1]))
-        ),
+        path_list_separator.join((str(high.parents[1]), str(low.parents[1]))),
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "missing"))
+    monkeypatch.setattr("ursa.cli.config.system_config_path", lambda: high)
 
     config = merge_ursa_config(Namespace(), overrides={})
 
@@ -846,19 +852,20 @@ def test_model_config_ollama_uses_client_kwargs():
 def test_api_key_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TEST_ENV_API_KEY", "super-secret-key")
     parser = build_parser()
-    config = _resolve_args(
-        parser,
-        [
-            "--workspace",
-            str(tmp_path),
-            "--llm_model.api_key_env",
-            "TEST_ENV_API_KEY",
-        ],
-    )
+    with pytest.warns(DeprecationWarning, match="api_key_env is deprecated"):
+        config = _resolve_args(
+            parser,
+            [
+                "--workspace",
+                str(tmp_path),
+                "--llm_model.api_key_env",
+                "TEST_ENV_API_KEY",
+            ],
+        )
 
-    assert config.llm_model.api_key_env == "TEST_ENV_API_KEY"
+    assert isinstance(config.llm_model.api_key, SecretStr)
     assert config.llm_model.kwargs["api_key"] == "super-secret-key"
-    assert "api_key_env" not in config.llm_model.kwargs.keys()
+    assert "api_key_env" not in config.llm_model.model_dump()
 
 
 def test_model_config_omits_unset_or_blank_base_url_for_provider_default():
@@ -889,9 +896,8 @@ def test_model_config_omits_blank_api_key_env(monkeypatch):
 
     kwargs = cfg.kwargs
 
-    assert cfg.api_key_env is None
     assert "api_key" not in kwargs
-    assert "api_key_env" not in kwargs
+    assert "api_key_env" not in cfg.model_dump()
 
 
 def test_inference_provider_applies_to_llm_model():
@@ -919,7 +925,7 @@ def test_inference_provider_applies_to_llm_model():
     assert resolved.inference_provider is None
     assert resolved.base_url == "https://models.example.org/v1"
     assert resolved.ssl_verify is False
-    assert resolved.api_key_env == "PROVIDER_API_KEY"
+    assert resolved.api_key == APIKeyConfig(env="PROVIDER_API_KEY")
     assert resolved.model_extra["timeout"] == 45
 
 
@@ -977,14 +983,14 @@ def test_model_config_explicit_values_override_inference_provider():
 
     assert resolved.base_url == "https://model.example.org/v1"
     assert resolved.ssl_verify is True
-    assert resolved.api_key_env == "MODEL_API_KEY"
+    assert resolved.api_key == APIKeyConfig(env="MODEL_API_KEY")
     assert resolved.model_extra["timeout"] == 60
     assert resolved.model_extra["seed"] == 111
 
 
 def test_unknown_inference_provider_is_validation_error():
     with pytest.raises(
-        ValueError, match="Unknown inference_provider 'missing'"
+        ValueError, match="unknown inference_provider 'missing'"
     ):
         UrsaConfig(
             llm_model={
@@ -1119,12 +1125,14 @@ def test_print_config_includes_defaults_and_nulls(
     assert output["agent_config"] == {}
     for key, value in expected_model.items():
         assert output["llm_model"][key] == value
-    assert output["inference_providers"] == {
-        "shared": {
-            "base_url": "https://provider.example/v1",
-            "api_key_env": None,
-            "ssl_verify": False,
-        }
+    assert output["inference_providers"]["shared"] == {
+        "base_url": "https://provider.example/v1",
+        "api_key": None,
+        "ssl_verify": False,
+    }
+    assert output["inference_providers"]["openai"]["api_key"] == {
+        "env": "OPENAI_API_KEY",
+        "keyring": None,
     }
     assert output["mcp_servers"] == {
         "example": {

@@ -1,10 +1,9 @@
 import json
 import logging
 import re
-import sys
 from copy import deepcopy
 from dataclasses import dataclass
-from os import environ, getenv
+from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal, Self
@@ -19,18 +18,21 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
-    ValidationInfo,
+    SecretStr,
     field_serializer,
     field_validator,
+    model_validator,
 )
 
 from ursa.security import enforce_group_base_url_policy
+from ursa.util.crossplatform import system_config_path, user_config_paths
 from ursa.util.http import (
     build_httpx_async_client,
     build_httpx_client,
     httpx_verify_value,
 )
 from ursa.util.mcp import ServerParameters, _serialize_server_config
+from ursa.util.secrets import SecretReference
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,28 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
     return value or None
 
 
+APIKeyConfig = SecretReference
+APIKey = SecretReference | SecretStr
+
+
+def _migrate_api_key_env(data: Any) -> Any:
+    """Translate the removed ``api_key_env`` field for legacy configs."""
+    if not isinstance(data, dict) or "api_key_env" not in data:
+        return data
+    from warnings import warn
+
+    migrated = dict(data)
+    env_name = _strip_blank_optional_strings(migrated.pop("api_key_env"))
+    if env_name is not None:
+        warn(
+            "api_key_env is deprecated; use api_key: {env: VAR_NAME} instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        migrated.setdefault("api_key", {"env": env_name})
+    return migrated
+
+
 class InferenceProviderConfig(BaseModel):
     """Reusable provider-level inference settings for model configs."""
 
@@ -61,12 +85,14 @@ class InferenceProviderConfig(BaseModel):
     ] = None
     """Base URL for model API access"""
 
-    api_key_env: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
-    """Environmental variable containing the API key for this session"""
+    api_key: APIKey | None = None
 
     ssl_verify: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_api_key_env(cls, data):
+        return _migrate_api_key_env(data)
 
 
 class ModelConfig(BaseModel):
@@ -83,10 +109,7 @@ class ModelConfig(BaseModel):
     ] = None
     """Base URL for model API access"""
 
-    api_key_env: Annotated[
-        str | None, AfterValidator(_strip_blank_optional_strings)
-    ] = None
-    """Environmental variable containing the API key for this session"""
+    api_key: APIKey | None = None
 
     inference_provider: Annotated[
         str | None, AfterValidator(_strip_blank_optional_strings)
@@ -96,8 +119,20 @@ class ModelConfig(BaseModel):
     ssl_verify: bool = True
     """Flag for verifying SSL certs. during API access."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_api_key_env(cls, data):
+        return _migrate_api_key_env(data)
+
     def _model_provider(self) -> str:
         return self.model.split(":", 1)[0]
+
+    @property
+    def api_key_env(self) -> str | None:
+        """Compatibility view of an environment-backed API key reference."""
+        if isinstance(self.api_key, SecretReference):
+            return self.api_key.env
+        return None
 
     def resolve_inference_provider(
         self, providers: dict[str, InferenceProviderConfig]
@@ -158,15 +193,26 @@ class ModelConfig(BaseModel):
                 "client_kwargs",
                 {"verify": httpx_verify_value(verify=ssl_verify)},
             )
-        if api_key_env := kwargs.pop("api_key_env", None):
-            try:
-                kwargs["api_key"] = environ[api_key_env]
-            except KeyError:
-                logger.error(
-                    f"Env variable '{api_key_env}' for {self.model}'s API key was not set"
-                )
-                sys.exit(1)
+        if isinstance(api_key := kwargs.get("api_key"), SecretStr):
+            kwargs["api_key"] = api_key.get_secret_value()
+        elif isinstance(api_key, dict):
+            resolved = self.resolve_api_key()
+            if isinstance(resolved.api_key, SecretStr):
+                kwargs["api_key"] = resolved.api_key.get_secret_value()
+            else:
+                kwargs.pop("api_key", None)
         return kwargs
+
+    def resolve_api_key(self, provider_name: str | None = None) -> Self:
+        """Resolve environment/keyring references to an in-memory SecretStr."""
+        value = self.api_key
+        if value is None or isinstance(value, SecretStr):
+            return self
+
+        secret = value.resolve(provider_name)
+        if secret is None:
+            return self
+        return self.model_copy(update={"api_key": secret})
 
     @staticmethod
     def _get_model_base_url(model) -> str | None:
@@ -249,11 +295,17 @@ class UrsaConfig(BaseModel):
     """Enable web-search tools for ChatAgent and ExecutionAgent."""
 
     inference_providers: dict[str, InferenceProviderConfig] = Field(
-        default_factory=dict
+        default_factory=lambda: {
+            "openai": InferenceProviderConfig(
+                api_key=APIKeyConfig(env="OPENAI_API_KEY")
+            )
+        }
     )
     """Named reusable inference provider configurations."""
 
-    llm_model: ChatModelConfig = Field(default_factory=ChatModelConfig)
+    llm_model: ChatModelConfig = Field(
+        default_factory=lambda: ChatModelConfig(inference_provider="openai")
+    )
     """Default LLM"""
 
     emb_model: EmbModelConfig | None = None
@@ -267,6 +319,14 @@ class UrsaConfig(BaseModel):
 
     mcp_servers: dict[str, ServerParameters] = Field(default_factory=dict)
     """MCP Servers to connect to Ursa."""
+
+    @field_validator("inference_providers", mode="before")
+    @classmethod
+    def _include_default_inference_provider(cls, value):
+        """Keep the provider used by the default LLM in every catalog."""
+        providers = dict(value or {})
+        providers.setdefault("openai", {"api_key": {"env": "OPENAI_API_KEY"}})
+        return providers
 
     @field_validator("rag_tools", mode="before")
     @classmethod
@@ -285,29 +345,19 @@ class UrsaConfig(BaseModel):
             return {}
         return value
 
-    @field_validator("llm_model", "emb_model", mode="after")
-    @classmethod
-    def _check_inference_provider(
-        cls, mc: ModelConfig | None, info: ValidationInfo
-    ) -> ModelConfig | None:
-        """Validate that any referenced inference provider exists.
-
-        This field validator relies on ``inference_providers`` being declared
-        earlier on ``UrsaConfig``, making it available via ``info.data`` when
-        validating ``llm_model`` and ``emb_model``.
-        """
-        if mc is None or mc.inference_provider is None:
-            return mc
-        providers = info.data.get("inference_providers")
-        if providers is None:
-            # Let the provider catalog's validation error remain the primary
-            # error when that earlier field could not be resolved.
-            return mc
-        if mc.inference_provider not in providers:
-            raise ValueError(
-                f"Unknown inference_provider '{mc.inference_provider}'"
-            )
-        return mc
+    @model_validator(mode="after")
+    def _check_inference_providers(self):
+        """Ensure every model references a defined, validated provider."""
+        for field_name in ("llm_model", "emb_model"):
+            model = getattr(self, field_name)
+            if model is None or model.inference_provider is None:
+                continue
+            if model.inference_provider not in self.inference_providers:
+                raise ValueError(
+                    f"{field_name} references unknown inference_provider "
+                    f"'{model.inference_provider}'"
+                )
+        return self
 
     @classmethod
     def from_file(cls, path: Path):
@@ -351,7 +401,11 @@ def load_config_file(path: Path) -> dict[str, Any]:
 
 def config_path_from_namespace(cfg: Namespace) -> Path | None:
     """Return a root or subcommand-local explicit config path."""
-    config_path = getattr(cfg, "config", None)
+    config_path = (
+        cfg.get("config")
+        if isinstance(cfg, dict)
+        else getattr(cfg, "config", None)
+    )
     subcommand = cfg.get("subcommand", None)
     if subcommand is not None:
         cmd_cfg = cfg.get(subcommand, None)
@@ -362,65 +416,65 @@ def config_path_from_namespace(cfg: Namespace) -> Path | None:
     return config_path
 
 
-def xdg_config_search_paths() -> list[Path]:
-    """Return candidate XDG config paths in increasing precedence order."""
-    candidates: list[Path] = []
-    # XDG_CONFIG_DIRS lists its most-preferred directory first, whereas config
-    # merging consumes sources from lowest to highest precedence.
-    path_list_separator = ";" if Path.cwd().drive else ":"
-    config_dirs = getenv("XDG_CONFIG_DIRS", "/etc/xdg").split(
-        path_list_separator
-    )
-    for config_dir in reversed(config_dirs):
-        if config_dir:
-            candidates.append(
-                Path(config_dir).expanduser() / "ursa" / "config.yaml"
-            )
+def system_config_paths() -> list[Path]:
+    """Return system config paths from lowest to highest precedence."""
+    return [system_config_path()]
 
-    config_home = getenv("XDG_CONFIG_HOME")
-    candidates.append(
-        Path(config_home).expanduser() / "ursa" / "config.yaml"
-        if config_home
-        else Path.home() / ".config" / "ursa" / "config.yaml"
-    )
-    return candidates
+
+def xdg_config_search_paths() -> list[Path]:
+    """Return all implicit config locations in merge order."""
+    return [*system_config_paths(), *user_config_paths()]
 
 
 def config_search_paths(cfg: Namespace, level: str = "final") -> list[Path]:
     """Return isolated or cumulative config paths for a precedence level."""
     cumulative = level.endswith("+")
     level = level.removesuffix("+")
-    if level not in {"user", "file", "final"}:
+    if level not in {"system", "user", "file", "final"}:
         raise ValueError(f"Unknown config level '{level}'")
     explicit_path = config_path_from_namespace(cfg)
 
-    seen: set[Path] = set()
-    user_paths: list[Path] = []
-    for candidate in xdg_config_search_paths():
-        candidate = candidate.expanduser()
-        if candidate == explicit_path or candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate.is_file():
-            user_paths.append(candidate)
+    def existing(paths: list[Path]) -> list[Path]:
+        return [
+            path.expanduser()
+            for path in paths
+            if path.expanduser() != explicit_path
+            and path.expanduser().is_file()
+        ]
+
+    system_paths = existing(system_config_paths())
+    user_paths = existing(user_config_paths())
 
     file_paths = [explicit_path] if explicit_path is not None else []
 
+    if level == "system":
+        return system_paths
     if level == "user":
         return user_paths
     if level == "file" and not cumulative:
         return file_paths
-    return [*user_paths, *file_paths]
+    return [*system_paths, *user_paths, *file_paths]
 
 
 def merge_ursa_config(
     cfg: Namespace,
     level: str = "final",
     overrides: Namespace | dict[str, Any] | None = None,
+    cli_overrides: Namespace | dict[str, Any] | None = None,
 ) -> UrsaConfig:
     """Merge sparse configuration sources, then validate the result once."""
     merged: dict[str, Any] = {}
-    for config_path in config_search_paths(cfg, level):
+    paths = config_search_paths(cfg, level)
+    explicit_path = (
+        config_path_from_namespace(cli_overrides)
+        if cli_overrides is not None
+        else None
+    )
+    if level.removesuffix("+") == "final" and explicit_path is not None:
+        lower_paths = [path for path in paths if path != explicit_path]
+    else:
+        lower_paths = paths
+    for config_path in lower_paths:
         merged = deep_merge_dicts(merged, load_config_file(config_path))
 
     if level.removesuffix("+") == "final":
@@ -439,6 +493,22 @@ def merge_ursa_config(
                 if key in UrsaConfig.model_fields
             },
         )
+        if explicit_path is not None and explicit_path in paths:
+            merged = deep_merge_dicts(merged, load_config_file(explicit_path))
+        if cli_overrides is not None:
+            cli_values = (
+                cli_overrides.as_dict()
+                if isinstance(cli_overrides, Namespace)
+                else cli_overrides
+            )
+            merged = deep_merge_dicts(
+                merged,
+                {
+                    key: value
+                    for key, value in cli_values.items()
+                    if key in UrsaConfig.model_fields
+                },
+            )
 
     return UrsaConfig.model_validate(merged)
 
@@ -519,16 +589,20 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
     )
 
     if resolved.llm_model is not None:
+        provider_name = resolved.llm_model.inference_provider
         resolved.llm_model = resolved.llm_model.resolve_inference_provider(
             resolved.inference_providers
         )
+        resolved.llm_model = resolved.llm_model.resolve_api_key(provider_name)
         enforce_group_base_url_policy(
             resolved.llm_model.base_url, resolved.group
         )
     if resolved.emb_model is not None:
+        provider_name = resolved.emb_model.inference_provider
         resolved.emb_model = resolved.emb_model.resolve_inference_provider(
             resolved.inference_providers
         )
+        resolved.emb_model = resolved.emb_model.resolve_api_key(provider_name)
         enforce_group_base_url_policy(
             resolved.emb_model.base_url, resolved.group
         )
