@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import enforce_group_base_url_policy
 
 from .credentials import assert_no_raw_api_key
@@ -166,7 +166,12 @@ class GlobalSettings(BaseModel):
     ui: UISettings = Field(default_factory=UISettings)
 
 
-def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
+def dashboard_llm_patch_from_ursa_config(
+    path: str | Path,
+    *,
+    group: str,
+    current: GlobalSettings | None = None,
+) -> dict[str, Any]:
     """Return a dashboard settings patch from a CLI-style URSA config.
 
     The dashboard intentionally stores only non-secret LLM settings.
@@ -178,12 +183,51 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
 
     cfg = UrsaConfig.from_file(Path(path))
     llm_cfg = cfg.llm_model
+    if isinstance(llm_cfg.api_key, SecretStr):
+        raise ValueError(
+            "Dashboard config does not store raw llm_model.api_key; "
+            "use an environment or dashboard credential instead."
+        )
+    if (
+        current is not None
+        and llm_cfg.inference_provider is None
+        and "base_url" not in llm_cfg.model_fields_set
+    ):
+        llm_cfg = llm_cfg.model_copy(update={"base_url": current.llm.base_url})
+    emb_cfg = cfg.emb_model
+    if emb_cfg is not None and isinstance(emb_cfg.api_key, SecretStr):
+        raise ValueError(
+            "Dashboard config does not store raw emb_model.api_key; "
+            "use an environment or dashboard credential instead."
+        )
+    if (
+        current is not None
+        and emb_cfg is not None
+        and emb_cfg.inference_provider is None
+        and "base_url" not in emb_cfg.model_fields_set
+    ):
+        emb_cfg = emb_cfg.model_copy(
+            update={"base_url": current.embedding.base_url}
+        )
+    cfg = cfg.model_copy(
+        update={"group": group, "llm_model": llm_cfg, "emb_model": emb_cfg}
+    )
+    llm_api_key_env = llm_cfg.resolve_inference_provider(
+        cfg.inference_providers
+    ).api_key_env
+    emb_api_key_env = (
+        emb_cfg.resolve_inference_provider(cfg.inference_providers).api_key_env
+        if emb_cfg is not None
+        else None
+    )
+    cfg = resolve_ursa_config(cfg)
+    llm_cfg = cfg.llm_model
 
     patch: dict[str, Any] = {"model": llm_cfg.model}
     if llm_cfg.base_url is not None:
         patch["base_url"] = llm_cfg.base_url
-    if llm_cfg.api_key_env is not None:
-        patch["api_key_env"] = llm_cfg.api_key_env
+    if llm_api_key_env is not None:
+        patch["api_key_env"] = llm_api_key_env
         patch["credential_source"] = "environment"
     if llm_cfg.max_completion_tokens is not None:
         patch["max_tokens"] = llm_cfg.max_completion_tokens
@@ -224,8 +268,8 @@ def dashboard_llm_patch_from_ursa_config(path: str | Path) -> dict[str, Any]:
         emb_patch: dict[str, Any] = {"model": emb_cfg.model}
         if emb_cfg.base_url is not None:
             emb_patch["base_url"] = emb_cfg.base_url
-        if emb_cfg.api_key_env is not None:
-            emb_patch["api_key_env"] = emb_cfg.api_key_env
+        if emb_api_key_env is not None:
+            emb_patch["api_key_env"] = emb_api_key_env
             emb_patch["credential_source"] = "environment"
 
         emb_model_kwargs: dict[str, Any] = {}
@@ -299,8 +343,11 @@ def apply_dashboard_config(
     dashboard app.
     """
 
-    patch = dashboard_llm_patch_from_ursa_config(path)
-    settings = merge_global_settings_patch(settings_store.load(), patch)
+    current = settings_store.load()
+    patch = dashboard_llm_patch_from_ursa_config(
+        path, group=group, current=current
+    )
+    settings = merge_global_settings_patch(current, patch)
     enforce_group_base_url_policy(settings.llm.base_url, group)
     if settings.embedding.model:
         enforce_group_base_url_policy(settings.embedding.base_url, group)

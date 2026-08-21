@@ -1,17 +1,40 @@
 # Configuration files, CLI flags, and environment variables
 
-URSA supports three configuration mechanisms. Prefer YAML files for project settings, CLI flags for temporary overrides, and environment variables for secrets or automation.
+URSA configs can be layered. Use YAML files for reusable settings, environment
+variables for secrets or automation, and CLI flags for temporary overrides.
+
+## Configuration precedence
+
+URSA loads configuration in this order, with later sources overriding earlier ones:
+
+1. Built-in defaults
+2. The native platform system config
+3. User configs: native platform location, `~/.config/ursa/config.yaml`, then
+   `$XDG_CONFIG_HOME/ursa/config.yaml`
+4. Environment variables
+5. The file passed to `--config`
+6. CLI flags
+
+Higher-precedence sources only override settings they specify. Set a nullable
+setting to `null` to clear it.
+
+`XDG_CONFIG_HOME` is supported on every platform and only affects the user
+configuration layer.
 
 ## YAML files: preferred
 
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
-
+  api_key:
+    env: OPENAI_API_KEY
 workspace: ./ursa-workspace
 group: default
 use_web: false
+agent_config:
+  execute:
+    safe_codes:
+      - python
 ```
 
 Run:
@@ -38,7 +61,7 @@ Common flags include:
 --name
 --llm_model.model
 --llm_model.base_url
---llm_model.api_key_env
+--llm_model.api_key.env
 --llm_model.ssl_verify
 --llm_model.max_completion_tokens
 --emb_model
@@ -63,7 +86,8 @@ Then in YAML:
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
 ```
 
 You can also set URSA configuration options directly:
@@ -90,6 +114,26 @@ mcp_servers:
 
 ## Inspect the active configuration
 
+`--print-config` prints the full active configuration, including defaults and
+null values:
+
 ```bash
 ursa --print-config
+ursa --print-config=resolved
 ```
+
+To inspect values before provider settings and other derived values are applied:
+
+```bash
+ursa --print-config=merged
+```
+
+You can also inspect a particular file layer:
+
+```bash
+ursa --config ./.ursa/config.yaml --print-config=file,resolved
+```
+
+The complete form is `--print-config=LEVEL[+],STAGE`. Levels are `system`,
+`user`, `file`, and `final`; stages are `merged` and `resolved`. Add `+` to include
+lower-precedence sources.
