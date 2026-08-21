@@ -147,13 +147,21 @@ name: multi_model_symposium
 group: default
 revision_rounds: 1
 
+inference_providers:
+  openai:
+    api_key:
+      keyring: true
+  anthropic:
+    api_key:
+      keyring: true
+
 organizer:
   name: organizer
   role: Synthesizes consensus, disagreement, and evidence quality
   agent: ChatAgent
   model:
     model: openai:gpt-4o-mini
-    api_key_env: OPENAI_API_KEY
+    inference_provider: openai
 
 members:
   - name: coding_model
@@ -161,7 +169,7 @@ members:
     agent: ExecutionAgent
     model:
       model: openai:gpt-4o-mini
-      api_key_env: OPENAI_API_KEY
+      inference_provider: openai
 
   - name: local_critic
     role: Reviews assumptions from an independent local-model perspective
@@ -175,7 +183,16 @@ members:
     agent: ChatAgent
     model:
       model: anthropic:claude-3-5-sonnet-latest
-      api_key_env: ANTHROPIC_API_KEY
+      inference_provider: anthropic
+```
+
+With `keyring: true`, the inference-provider name is the keyring username.
+Store these credentials under URSA's fixed `ursa` service before loading the
+symposium:
+
+```bash
+keyring set ursa openai
+keyring set ursa anthropic
 ```
 
 The environment-level `llm` is still required when you construct the symposium.
