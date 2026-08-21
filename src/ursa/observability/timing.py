@@ -498,6 +498,58 @@ def _to_int(x, default=0):
     return default
 
 
+def _detail_dict(v) -> dict:
+    """Read a detail container defensively: raw side-channel dicts are not
+    schema-validated, and a malformed container must read as empty rather
+    than poison the whole event's usage parse."""
+    return v if isinstance(v, dict) else {}
+
+
+def _reasoning_from(d: dict) -> int:
+    """Strongest reasoning count among all known carriers in one dict.
+
+    Covers the raw provider namings (completion_tokens_details for Chat
+    Completions, output_tokens_details for the Responses API and for
+    Anthropic thinking counts) and langchain's standardized
+    output_token_details, including service-tier-prefixed keys.
+    """
+    candidates = [
+        d.get("reasoning_tokens"),
+        _detail_dict(d.get("completion_tokens_details")).get(
+            "reasoning_tokens"
+        ),
+        _detail_dict(d.get("output_tokens_details")).get("reasoning_tokens"),
+        _detail_dict(d.get("output_tokens_details")).get("thinking_tokens"),
+    ]
+    details = _detail_dict(d.get("output_token_details"))
+    for key, value in details.items():
+        if key == "reasoning" or key.endswith("_reasoning"):
+            candidates.append(value)
+    return max((_to_int(v) for v in candidates), default=0)
+
+
+def _cached_from(d: dict) -> int:
+    """Strongest cache-read count among all known carriers in one dict.
+
+    Cache-creation counts are intentionally excluded: pricing treats
+    cached_tokens as the cache-read discount, and cache writes bill
+    differently.
+    """
+    candidates = [
+        d.get("cached_tokens"),
+        d.get("cached_input_tokens"),
+        _detail_dict(d.get("prompt_tokens_details")).get("cached_tokens"),
+        d.get("prompt_cache_hits"),
+        d.get("cache_read_input_tokens"),
+        _detail_dict(d.get("input_tokens_details")).get("cached_tokens"),
+    ]
+    details = _detail_dict(d.get("input_token_details"))
+    for key, value in details.items():
+        if key == "cache_read" or key.endswith("_cache_read"):
+            candidates.append(value)
+    return max((_to_int(v) for v in candidates), default=0)
+
+
 def _acc_from(d: dict, roll: dict):
     # Map whatever keys exist into our canonical fields
     it = _to_int(d.get("input_tokens", d.get("prompt_tokens")))
@@ -513,19 +565,8 @@ def _acc_from(d: dict, roll: dict):
     roll["completion_tokens"] += _to_int(d.get("completion_tokens", ot))
 
     # extras / synonyms
-    # reasoning
-    roll["reasoning_tokens"] += _to_int(
-        d.get("reasoning_tokens")
-        or (d.get("completion_tokens_details") or {}).get("reasoning_tokens")
-    )
-    # cached
-    cached = (
-        d.get("cached_tokens")
-        or d.get("cached_input_tokens")
-        or (d.get("prompt_tokens_details") or {}).get("cached_tokens")
-        or d.get("prompt_cache_hits")
-    )
-    roll["cached_tokens"] += _to_int(cached)
+    roll["reasoning_tokens"] += _reasoning_from(d)
+    roll["cached_tokens"] += _cached_from(d)
 
     # costs if exposed (keep as floats)
     for k in ("input_cost", "output_cost", "total_cost"):
@@ -535,24 +576,6 @@ def _acc_from(d: dict, roll: dict):
                 roll[k] += float(v)
             except Exception:
                 pass
-
-
-def _maybe_add_extras(d: dict, roll: dict):
-    if not isinstance(d, dict):
-        return
-    # reasoning
-    rt = d.get("reasoning_tokens") or (
-        d.get("completion_tokens_details") or {}
-    ).get("reasoning_tokens")
-    roll["reasoning_tokens"] += _to_int(rt)
-    # cached
-    cached = (
-        d.get("cached_tokens")
-        or d.get("cached_input_tokens")
-        or (d.get("prompt_tokens_details") or {}).get("cached_tokens")
-        or d.get("prompt_cache_hits")
-    )
-    roll["cached_tokens"] += _to_int(cached)
 
 
 class PerLLMTimer(BaseCallbackHandler):
@@ -683,29 +706,9 @@ class PerLLMTimer(BaseCallbackHandler):
             def _extract_extras(d: dict) -> dict:
                 if not isinstance(d, dict):
                     return {"reasoning_tokens": 0, "cached_tokens": 0}
-                # reasoning
-                rt = d.get("reasoning_tokens") or (
-                    d.get("completion_tokens_details") or {}
-                ).get("reasoning_tokens")
-                # cached
-                cached = (
-                    d.get("cached_tokens")
-                    or d.get("cached_input_tokens")
-                    or (d.get("prompt_tokens_details") or {}).get(
-                        "cached_tokens"
-                    )
-                    or d.get("prompt_cache_hits")
-                )
-
-                def _to_int(x):
-                    try:
-                        return int(float(x))
-                    except Exception:
-                        return 0
-
                 return {
-                    "reasoning_tokens": _to_int(rt),
-                    "cached_tokens": _to_int(cached),
+                    "reasoning_tokens": _reasoning_from(d),
+                    "cached_tokens": _cached_from(d),
                 }
 
             # Enrich from non-selected sources only (avoid double-counting the same info)
@@ -720,12 +723,16 @@ class PerLLMTimer(BaseCallbackHandler):
                     extras_candidates.append(_extract_extras(d or {}))
 
             if extras_candidates:
-                # choose the strongest signal present rather than summing duplicates
-                roll["reasoning_tokens"] += max(
-                    e["reasoning_tokens"] for e in extras_candidates
+                # The selected source can now carry these counts too, so
+                # take the strongest signal overall instead of adding the
+                # side-channel copy on top of it.
+                roll["reasoning_tokens"] = max(
+                    roll["reasoning_tokens"],
+                    max(e["reasoning_tokens"] for e in extras_candidates),
                 )
-                roll["cached_tokens"] += max(
-                    e["cached_tokens"] for e in extras_candidates
+                roll["cached_tokens"] = max(
+                    roll["cached_tokens"],
+                    max(e["cached_tokens"] for e in extras_candidates),
                 )
 
             # Final consistency guards
