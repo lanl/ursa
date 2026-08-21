@@ -901,3 +901,19 @@ async def test_mcp_smoke(mcp_server: Client):
 async def test_mcp_agents(mcp_server: Client, agent: str, query: str):
     response = await mcp_server.call_tool(agent, {"prompt": query})
     assert isinstance(response.structured_content["result"], str)
+
+
+def test_metrics_command_renders_session_summary(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path / "workspace"))
+
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        "ursa.cli.hitl.render_session_summary",
+        lambda thread_id: rendered.append(thread_id),
+    )
+
+    repl = UrsaRepl(hitl)
+    repl.do_metrics("")
+
+    assert rendered == [hitl.thread_id]
