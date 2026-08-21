@@ -29,7 +29,32 @@ mcp_servers:
     transport: streamable-http
     url: http://localhost:8000/mcp
     timeout: 60
+    headers:
+      Authorization:
+        keyring: true
+        template: "Bearer %s"
 ```
+
+Secret header values can use either `env: VARIABLE_NAME` or `keyring`. When
+`keyring` is `true`, URSA uses the MCP server name (`remote-tools` above) as
+the username; a string selects a different username. Keyring secrets are
+always read from the `ursa` service. The template defaults to `%s`.
+
+```bash
+keyring set ursa remote-tools
+```
+
+For an environment-backed header, use the same shape with `env`:
+
+```yaml
+headers:
+  Authorization:
+    env: REMOTE_TOOLS_TOKEN
+    template: "Bearer %s"
+```
+
+URSA resolves the reference when the MCP client starts and reports an error if
+the configured secret is unavailable.
 
 ## Use the config
 
