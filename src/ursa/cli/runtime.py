@@ -17,9 +17,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import (
-    enforce_group_base_url_policy,
     enforce_model_group_policy,
 )
 from ursa.util.has_optional_dep_group import has_optional_dep_group
@@ -103,26 +102,19 @@ def get_base_url(model: BaseChatModel) -> str | None:
 
 class HITL:
     def __init__(self, config: UrsaConfig):
-        self.config = config
-        self.thread_id = config.thread_id or "ursa"
+        self.config = resolve_ursa_config(config)
+        self.thread_id = self.config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
-        agent_overrides = dict(config.agent_config or {})
+        agent_overrides = dict(self.config.agent_config or {})
 
         self.agent_name = self.config.agent_name
         self.group = self.config.group
 
-        enforce_group_base_url_policy(
-            self.config.llm_model.base_url, self.group
-        )
         self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
-        if self.config.emb_model:
-            enforce_group_base_url_policy(
-                self.config.emb_model.base_url, self.group
-            )
         self.embedding = (
             self.config.emb_model.init_embedding()
             if self.config.emb_model

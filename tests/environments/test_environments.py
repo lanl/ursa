@@ -555,6 +555,38 @@ def test_environment_config_defaults_use_group_cache(monkeypatch, tmp_path):
     assert saved_symposium.exists()
 
 
+def test_team_config_resolves_inference_provider_keyring(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        "keyring.get_password",
+        lambda service, username: calls.append((service, username)) or "secret",
+    )
+    path = tmp_path / "team.yaml"
+    path.write_text(
+        """
+name: keyring_team
+inference_providers:
+  openai:
+    api_key:
+      keyring: true
+members:
+  - name: researcher
+    model:
+      model: openai:gpt-test
+      inference_provider: openai
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_team_config(path)
+
+    assert loaded.members[0].model is not None
+    assert loaded.members[0].model.kwargs["api_key"] == "secret"
+    assert calls == [("ursa", "openai")]
+    saved = save_team_config(loaded, tmp_path / "saved.yaml")
+    assert load_team_config(saved).members[0].model is not None
+
+
 def test_result_to_text_extracts_common_result_shapes():
     assert result_to_text({"final": "done"}) == "done"
     assert (

@@ -15,6 +15,7 @@ from mcp.client.session_group import (
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
+from ursa.util.secrets import SecretTemplate
 
 
 class UrsaMCPClient(MultiServerMCPClient):
@@ -125,15 +126,45 @@ def start_mcp_client(
             **config.model_dump(),
             "transport": transport(config),
         }
+        if headers := connection.get("headers"):
+            connection["headers"] = {
+                name: _resolve_header(value, server)
+                for name, value in headers.items()
+            }
         if isinstance(config, (SseServerParameters, StreamableHttpParameters)):
             connection["httpx_client_factory"] = build_mcp_httpx_async_client
         client_config[server] = connection
     return UrsaMCPClient(client_config)
 
 
-def _serialize_server_config(config: ServerParameters):
+def _resolve_header(value, server_name: str):
+    """Resolve a typed secret template in an MCP HTTP header."""
+    if isinstance(value, dict):
+        rendered = SecretTemplate.model_validate(value).get_secret_value(
+            server_name
+        )
+        if rendered is None:
+            raise ValueError(
+                f"Secret for MCP server '{server_name}' is not set"
+            )
+        return rendered
+    return value
+
+
+def _serialize_server_config(
+    config: ServerParameters,
+    *,
+    exclude_defaults: bool = True,
+    exclude_none: bool = True,
+):
     """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
-    config = {"transport": transport(config), **config.model_dump()}
+    config = {
+        "transport": transport(config),
+        **config.model_dump(
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        ),
+    }
     for k, v in config.items():
         if isinstance(v, timedelta):
             config[k] = v.total_seconds()

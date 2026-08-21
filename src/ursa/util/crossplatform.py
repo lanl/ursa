@@ -3,6 +3,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 SSH_ENV_VARS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
 KITTY_KEYBOARD_ENV_VARS = (
@@ -20,6 +21,37 @@ KITTY_KEYBOARD_TERM_PROGRAMS = frozenset({
     "wezterm",
 })
 KITTY_KEYBOARD_TERM_PREFIXES = ("foot", "xterm-ghostty", "xterm-kitty")
+
+
+def system_config_path() -> Path:
+    """Return the platform-specific system-wide URSA configuration path."""
+    if sys.platform == "win32":
+        root = Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
+        return root / "ursa" / "config.yaml"
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/ursa/config.yaml")
+    return Path("/etc/ursa/config.yaml")
+
+
+def platform_user_config_path() -> Path:
+    """Return the native platform-specific per-user configuration path."""
+    if sys.platform == "win32":
+        root = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+        return root / "ursa" / "config.yaml"
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/ursa/config.yaml"
+    return Path.home() / ".config/ursa/config.yaml"
+
+
+def user_config_paths() -> list[Path]:
+    """Return user config paths from lowest to highest precedence."""
+    candidates = [
+        platform_user_config_path(),
+        Path.home() / ".config/ursa/config.yaml",
+    ]
+    if xdg_home := os.environ.get("XDG_CONFIG_HOME"):
+        candidates.append(Path(xdg_home).expanduser() / "ursa" / "config.yaml")
+    return list(dict.fromkeys(candidates))
 
 
 def expects_kitty_keyboard() -> bool:

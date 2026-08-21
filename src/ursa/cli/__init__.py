@@ -1,9 +1,10 @@
 import logging
 import sys
+from argparse import SUPPRESS
+from os import getenv
 from pathlib import Path
-from warnings import filterwarnings
+from warnings import filterwarnings, warn
 
-import yaml
 from jsonargparse import ArgumentParser, set_parsing_settings
 
 from ursa import __version__
@@ -21,6 +22,8 @@ from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
+    merge_ursa_config,
+    resolve_ursa_config,
 )
 from ursa.cli.groups import (
     add_group_subcommands,
@@ -30,8 +33,10 @@ from ursa.cli.groups import (
     show_group,
     update_group,
 )
+from ursa.cli.print_config import add_print_config_argument, print_config
 from ursa.cli.rag_management import (
     RAG_COMMANDS,
+    RAG_METADATA_COMMANDS,
     add_rag_subcommands,
     handle_rag_command,
 )
@@ -58,18 +63,23 @@ def build_parser() -> ArgumentParser:
         "--config",
         default=None,
         type=Path,
-        help="Path to a YAML/JSON file with additional configuration. CLI Opts have priority",
+        help=(
+            "Path to a YAML/JSON file with additional configuration. "
+            "Higher-precedence configuration layers override lower-precedence ones."
+        ),
     )
     parser.add_argument("--log-level", default="error", type=LoggingLevel)
-    parser.add_argument(
-        "--print-config",
-        action="store_true",
-        help="Print the Ursa configuration and exit",
-    )
+    add_print_config_argument(parser)
     parser.add_class_arguments(
         UrsaConfig,
         help="URSA configuration",
         skip={"agent_name", "rag_tools"},
+    )
+    parser.add_argument(
+        "--llm_model.api_key_env", default=SUPPRESS, help=SUPPRESS
+    )
+    parser.add_argument(
+        "--emb_model.api_key_env", default=SUPPRESS, help=SUPPRESS
     )
     parser.add_argument(
         "--rag-tools",
@@ -86,6 +96,7 @@ def build_parser() -> ArgumentParser:
     )
     parser.add_argument(
         "--name",
+        dest="agent_name",
         type=str,
         default=None,
         help="Name of the agent for persistence",
@@ -100,7 +111,8 @@ def build_parser() -> ArgumentParser:
         help=(
             "Path to a YAML/JSON file with additional configuration "
             "(LLM model, endpoint, embedding model, MCP servers, etc.) "
-            "for the URSA instance hosted by the MCP server. CLI opts have priority."
+            "for the URSA instance hosted by the MCP server. "
+            "Higher-precedence configuration layers override lower-precedence ones."
         ),
     )
     mcp_parser.add_class_arguments(MCPServerConfig, help="MCP server options")
@@ -131,50 +143,32 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def _config_path_from_namespace(cfg) -> Path | None:
-    """Return a root or subcommand-local config path from parsed CLI args."""
-    config_path = getattr(cfg, "config", None)
-    subcommand = cfg.get("subcommand", None)
-    if subcommand is not None:
-        cmd_cfg = cfg.get(subcommand, None)
-        cmd_config_path = (
-            getattr(cmd_cfg, "config", None) if cmd_cfg is not None else None
-        )
-        config_path = cmd_config_path or config_path
-    return config_path
+def resolve_config(
+    cfg, overrides, cli_overrides=None, *, group: str | None = None
+) -> UrsaConfig:
+    """Produce the fully resolved UrsaConfig from the parsed arguments.
 
-
-def resolve_config(cfg) -> UrsaConfig:
-    """Produce the effective UrsaConfig from the parsed arguments."""
-    cfg_dict = cfg.as_dict()
-    # Change `name` to `agent_name` for consistency with agent
-    #    arguments.
-    # TODO: Longer term, we should make our agents use `name`
-    #    as the argument for the class, but this is a problem
-    #    with the current class property `name` that is used by
-    #    the CLI
-    if cfg_dict.get("name") is not None:
-        cfg_dict["agent_name"] = cfg_dict.pop("name")
-    else:
-        cfg_dict.pop("name", None)
-
-    cli_config = UrsaConfig.model_validate(cfg_dict, extra="ignore")
-    config_path = _config_path_from_namespace(cfg)
-    config = UrsaConfig()
-    if config_path:
-        config.update(UrsaConfig.from_file(config_path))
-    return config.update(cli_config)
+    This function merges configuration layers in precedence order and then
+    applies derived resolution semantics such as temporary workspace
+    materialization, top-level ``use_web`` promotion into ``agent_config``, and
+    group-based endpoint policy enforcement. Consumers with a more specific
+    effective group supply it before resolution.
+    """
+    merged = merge_ursa_config(
+        cfg, overrides=overrides, cli_overrides=cli_overrides
+    )
+    if group is not None:
+        merged = merged.model_copy(update={"group": group})
+    return resolve_ursa_config(merged)
 
 
 def _initialize_hitl(config: UrsaConfig):
-    """Create the CLI controller and report missing OpenAI credentials cleanly."""
-    from openai import OpenAIError
-
+    """Create the CLI controller and report provider initialization errors cleanly."""
     from ursa.cli.runtime import HITL
 
     try:
         return HITL(config)
-    except OpenAIError as exc:
+    except Exception as exc:
         print(  # noqa: T201
             "Error: unable to initialize the language model. " + str(exc),
             file=sys.stderr,
@@ -182,13 +176,32 @@ def _initialize_hitl(config: UrsaConfig):
         raise SystemExit(2) from None
 
 
+def _apply_legacy_name_env(cfg, overrides) -> None:
+    """Apply deprecated ``URSA_NAME`` when no modern name override is set."""
+    legacy_name = getenv("URSA_NAME")
+    if legacy_name is None:
+        return
+
+    warn(
+        "URSA_NAME is deprecated; use URSA_AGENT_NAME or --name instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
+    if overrides.get("agent_name", None) is None:
+        cfg["agent_name"] = legacy_name
+        overrides["agent_name"] = legacy_name
+
+
 def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
+    overrides = parser.parse_args(args=[], defaults=False)
+    cli_overrides = parser.parse_args(args=args, defaults=False, env=False)
 
     subcommand = cfg.get("subcommand", None)
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
+    _apply_legacy_name_env(cfg, overrides)
 
     match subcommand:
         case "list-groups":
@@ -248,17 +261,23 @@ def main(args=None):
             )
             return
 
+    if subcommand in RAG_METADATA_COMMANDS:
+        if handle_rag_command(cfg):
+            return
+
     if subcommand in RAG_COMMANDS:
-        ursa_config = resolve_config(cfg)
+        cmd_config = cfg.get(subcommand, None)
+        ursa_config = resolve_config(
+            cfg, overrides, cli_overrides, group=cmd_config.group
+        )
         if handle_rag_command(cfg, ursa_config):
             return
 
-    ursa_config = resolve_config(cfg)
-    cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
+    if print_config(cfg, overrides, cli_overrides):
+        exit(0)
 
-    if cfg["print_config"]:
-        print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))  # noqa: T201
-        return
+    ursa_config = resolve_config(cfg, overrides, cli_overrides)
+    cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
     legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"
     if ursa_config.agent_name is None and legacy_checkpoint.is_file():
@@ -279,19 +298,23 @@ def main(args=None):
             hitl = _initialize_hitl(ursa_config)
             run_textual(hitl)
 
+        case "mcp-server":
+            hitl = _initialize_hitl(ursa_config)
+            mcp = hitl.as_mcp_server()
+
+            run_kwargs = {
+                "transport": cmd_config.transport,
+                "log_level": cmd_config.log_level.upper(),
+            }
+            if cmd_config.transport != "stdio":
+                run_kwargs["host"] = cmd_config.host
+                run_kwargs["port"] = cmd_config.port
+            mcp.run(**run_kwargs)
         case "exec":
             from ursa.cli.app import run_textual_once
 
             hitl = _initialize_hitl(ursa_config)
             run_textual_once(hitl, cmd_config.prompt)
-
-        case "mcp-server":
-            hitl = _initialize_hitl(ursa_config)
-            mcp = hitl.as_mcp_server()
-            run_kwargs = {
-                "transport": cmd_config.transport,
-                "log_level": cmd_config.log_level.upper(),
-            }
-            if cmd_config.transport == "streamable-http":
-                run_kwargs.update(host=cmd_config.host, port=cmd_config.port)
-            mcp.run(**run_kwargs)
+        case _:
+            logging.error(f"Unknown subcommand {subcommand}")
+            raise NotImplementedError

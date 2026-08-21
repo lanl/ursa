@@ -13,15 +13,18 @@ This guide walks through starting URSA from the terminal, configuring a model, c
 
 ## 1. Create a configuration file
 
-YAML configuration files are the recommended way to configure URSA because they are reusable and easy to edit.
+YAML configuration files are reusable and easy to edit. URSA configs can be
+layered; see
+[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
+for the precedence order.
 
 Create `config.yaml`:
 
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
-
+  api_key:
+    env: OPENAI_API_KEY
 workspace: .
 ```
 
@@ -100,7 +103,8 @@ ursa --config config.yaml --name my-agent
 ursa --config config.yaml --use-web
 ```
 
-Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA to make network requests through its web-search tools.
+Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA
+to make network requests through its web-search tools.
 
 ## Where next?
 
