@@ -1,5 +1,6 @@
 import logging
 import sys
+from argparse import SUPPRESS
 from os import getenv
 from pathlib import Path
 from warnings import filterwarnings, warn
@@ -75,6 +76,12 @@ def build_parser() -> ArgumentParser:
         skip={"agent_name", "rag_tools"},
     )
     parser.add_argument(
+        "--llm_model.api_key_env", default=SUPPRESS, help=SUPPRESS
+    )
+    parser.add_argument(
+        "--emb_model.api_key_env", default=SUPPRESS, help=SUPPRESS
+    )
+    parser.add_argument(
         "--rag-tools",
         dest="rag_tools",
         default=None,
@@ -136,7 +143,9 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def resolve_config(cfg, overrides, *, group: str | None = None) -> UrsaConfig:
+def resolve_config(
+    cfg, overrides, cli_overrides=None, *, group: str | None = None
+) -> UrsaConfig:
     """Produce the fully resolved UrsaConfig from the parsed arguments.
 
     This function merges configuration layers in precedence order and then
@@ -145,21 +154,21 @@ def resolve_config(cfg, overrides, *, group: str | None = None) -> UrsaConfig:
     group-based endpoint policy enforcement. Consumers with a more specific
     effective group supply it before resolution.
     """
-    merged = merge_ursa_config(cfg, overrides=overrides)
+    merged = merge_ursa_config(
+        cfg, overrides=overrides, cli_overrides=cli_overrides
+    )
     if group is not None:
         merged = merged.model_copy(update={"group": group})
     return resolve_ursa_config(merged)
 
 
 def _initialize_hitl(config: UrsaConfig):
-    """Create the CLI controller and report missing OpenAI credentials cleanly."""
-    from openai import OpenAIError
-
+    """Create the CLI controller and report provider initialization errors cleanly."""
     from ursa.cli.hitl import HITL
 
     try:
         return HITL(config)
-    except OpenAIError as exc:
+    except Exception as exc:
         print(  # noqa: T201
             "Error: unable to initialize the language model. " + str(exc),
             file=sys.stderr,
@@ -187,7 +196,8 @@ def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
-    overrides = parser.parse_args(args=args, defaults=False)
+    overrides = parser.parse_args(args=[], defaults=False)
+    cli_overrides = parser.parse_args(args=args, defaults=False, env=False)
 
     subcommand = cfg.get("subcommand", None)
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
@@ -257,14 +267,16 @@ def main(args=None):
 
     if subcommand in RAG_COMMANDS:
         cmd_config = cfg.get(subcommand, None)
-        ursa_config = resolve_config(cfg, overrides, group=cmd_config.group)
+        ursa_config = resolve_config(
+            cfg, overrides, cli_overrides, group=cmd_config.group
+        )
         if handle_rag_command(cfg, ursa_config):
             return
 
-    if print_config(cfg, overrides):
+    if print_config(cfg, overrides, cli_overrides):
         exit(0)
 
-    ursa_config = resolve_config(cfg, overrides)
+    ursa_config = resolve_config(cfg, overrides, cli_overrides)
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
     legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"

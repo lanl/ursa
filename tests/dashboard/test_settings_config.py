@@ -12,7 +12,10 @@ from ursa_dashboard.settings import (
 )
 
 
-def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
+def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SAFE_API_KEY", "secret")
     cfg_path = tmp_path / "endpoint.yaml"
     cfg_path.write_text(
         "\n".join([
@@ -47,7 +50,10 @@ def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
     }
 
 
-def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(tmp_path):
+def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SAFE_EMBEDDING_KEY", "secret")
     cfg_path = tmp_path / "endpoint.yaml"
     cfg_path.write_text(
         "\n".join([

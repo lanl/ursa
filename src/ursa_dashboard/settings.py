@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import enforce_group_base_url_policy
@@ -183,6 +183,11 @@ def dashboard_llm_patch_from_ursa_config(
 
     cfg = UrsaConfig.from_file(Path(path))
     llm_cfg = cfg.llm_model
+    if isinstance(llm_cfg.api_key, SecretStr):
+        raise ValueError(
+            "Dashboard config does not store raw llm_model.api_key; "
+            "use an environment or dashboard credential instead."
+        )
     if (
         current is not None
         and llm_cfg.inference_provider is None
@@ -190,6 +195,11 @@ def dashboard_llm_patch_from_ursa_config(
     ):
         llm_cfg = llm_cfg.model_copy(update={"base_url": current.llm.base_url})
     emb_cfg = cfg.emb_model
+    if emb_cfg is not None and isinstance(emb_cfg.api_key, SecretStr):
+        raise ValueError(
+            "Dashboard config does not store raw emb_model.api_key; "
+            "use an environment or dashboard credential instead."
+        )
     if (
         current is not None
         and emb_cfg is not None
@@ -202,14 +212,22 @@ def dashboard_llm_patch_from_ursa_config(
     cfg = cfg.model_copy(
         update={"group": group, "llm_model": llm_cfg, "emb_model": emb_cfg}
     )
+    llm_api_key_env = llm_cfg.resolve_inference_provider(
+        cfg.inference_providers
+    ).api_key_env
+    emb_api_key_env = (
+        emb_cfg.resolve_inference_provider(cfg.inference_providers).api_key_env
+        if emb_cfg is not None
+        else None
+    )
     cfg = resolve_ursa_config(cfg)
     llm_cfg = cfg.llm_model
 
     patch: dict[str, Any] = {"model": llm_cfg.model}
     if llm_cfg.base_url is not None:
         patch["base_url"] = llm_cfg.base_url
-    if llm_cfg.api_key_env is not None:
-        patch["api_key_env"] = llm_cfg.api_key_env
+    if llm_api_key_env is not None:
+        patch["api_key_env"] = llm_api_key_env
         patch["credential_source"] = "environment"
     if llm_cfg.max_completion_tokens is not None:
         patch["max_tokens"] = llm_cfg.max_completion_tokens
@@ -250,8 +268,8 @@ def dashboard_llm_patch_from_ursa_config(
         emb_patch: dict[str, Any] = {"model": emb_cfg.model}
         if emb_cfg.base_url is not None:
             emb_patch["base_url"] = emb_cfg.base_url
-        if emb_cfg.api_key_env is not None:
-            emb_patch["api_key_env"] = emb_cfg.api_key_env
+        if emb_api_key_env is not None:
+            emb_patch["api_key_env"] = emb_api_key_env
             emb_patch["credential_source"] = "environment"
 
         emb_model_kwargs: dict[str, Any] = {}
