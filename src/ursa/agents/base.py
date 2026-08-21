@@ -84,6 +84,7 @@ from ursa.util.checkpoint_retention import (
     prune_sqlite_checkpoints,
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
+from ursa.util.mcp import load_mcp_tools_with_sources
 
 logger = logging.getLogger(__name__)
 
@@ -1638,20 +1639,31 @@ class AgentWithTools:
         self,
         client: MultiServerMCPClient,
         tool_name: None | str | list[str] = None,
-    ) -> None:
+    ) -> dict[str, str]:
         """Add tools from an MCP client to the agent
 
         Args:
            client: the MCP client to add tools from
            tool_name: if provided, only add named tools
+
+        Returns:
+            MCP server names keyed by the attached tool name. Clients that do
+            not expose named connections return an empty mapping.
         """
-        tools = await client.get_tools()
+        tools, tool_sources = await load_mcp_tools_with_sources(client)
         if tool_name is not None:
             tool_name = (
                 tool_name if isinstance(tool_name, list) else [tool_name]
             )
             tools = [tool for tool in tools if tool.name in tool_name]
+            attached_names = {tool.name for tool in tools}
+            tool_sources = {
+                name: server
+                for name, server in tool_sources.items()
+                if name in attached_names
+            }
         self.add_tool(tools)
+        return tool_sources
 
     def remove_tool(self, tool_names: str | list[str]) -> None:
         names = tool_names if isinstance(tool_names, list) else [tool_names]

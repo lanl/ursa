@@ -3,22 +3,22 @@
 import asyncio
 import io
 import logging
-import re
 from pathlib import Path
 from random import random
 from sys import executable
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastmcp.client import Client
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from mcp import StdioServerParameters
 from pydantic import ValidationError
 from rich.console import Console as RealConsole
 
-from ursa.agents.base import URSA_VERSION, AgentWithTools
+from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
 from ursa.cli.config import EmbModelConfig, UrsaConfig
-from ursa.cli.hitl import HITL, AgentHITL, UrsaRepl, ursa_banner
+from ursa.cli.runtime import HITL, AgentHITL
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.rendering import event_artifact
@@ -76,109 +76,6 @@ async def test_default_config_smoke(ursa_config):
 
 DOCS_ROOT = Path(__file__).resolve().parents[2]
 DOC_EXAMPLE_CONFIG = DOCS_ROOT / "configs" / "example.yaml"
-
-
-def test_example_config_smoke():
-    assert DOC_EXAMPLE_CONFIG.is_file()
-    ursa_config = UrsaConfig.from_file(DOC_EXAMPLE_CONFIG)
-    hitl = HITL(ursa_config)
-    repl = UrsaRepl(hitl)
-    for name in hitl.agents:
-        assert hasattr(repl, f"do_{name}")
-
-
-def test_has_all_agent_do_methods(ursa_config):
-    hitl = HITL(ursa_config)
-    repl = UrsaRepl(hitl)
-    for name in hitl.agents:
-        assert hasattr(repl, f"do_{name}")
-
-
-def test_banner_shows_version():
-    # Issue 298: the running version rides next to the ascii logo.
-    assert f"v{URSA_VERSION}" in ursa_banner
-
-
-def test_banner_panel_shows_workspace(ursa_config):
-    hitl = HITL(ursa_config)
-    repl = UrsaRepl(hitl, stdout=io.StringIO())
-
-    console = RealConsole(file=io.StringIO(), width=200)
-    console.print(repl.llm_model_panel)
-
-    assert (
-        str(Path(ursa_config.workspace).absolute()) in console.file.getvalue()
-    )
-
-
-def _repl_with_stub_agent(ursa_config, monkeypatch, reply="agent says hi"):
-    hitl = HITL(ursa_config)
-
-    async def fake_run(name, prompt, callbacks=None):
-        return reply
-
-    monkeypatch.setattr(hitl, "run_agent", fake_run)
-    return UrsaRepl(hitl, stdout=io.StringIO())
-
-
-def test_agent_invocation_uses_bear_inline_prompt(ursa_config, monkeypatch):
-    # Issue 264: the user's turn is marked inline in the prompt, not echoed.
-    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
-
-    repl.run_agent("chat", "what does this bug mean?")
-
-    out = repl.stdout.getvalue()
-    assert "agent says hi" in out
-    assert "what does this bug mean?" not in out
-    assert "chat>" not in out
-
-
-def test_user_turn_is_not_echoed_as_markup(ursa_config, monkeypatch):
-    # User text is no longer echoed, so rich markup must not appear either.
-    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
-
-    repl.run_agent("chat", "explain [red]this[/red] tag")
-
-    out = repl.stdout.getvalue()
-    assert "[red]this[/red]" not in out
-
-
-def test_bare_text_default_route_does_not_echo_user_turn(ursa_config, monkeypatch):
-    # Bare text goes to the chat agent through default(); the request is not echoed.
-    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
-
-    repl.default("hello there")
-
-    out = repl.stdout.getvalue()
-    assert "agent says hi" in out
-    assert "hello there" not in out
-    assert "chat>" not in out
-
-
-def test_onecmd_dispatch_route_does_not_echo_user_turn(ursa_config, monkeypatch):
-    # The do_<agent> dispatch through onecmd also avoids echoing the request.
-    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
-
-    repl.onecmd("chat summarize the log")
-
-    out = repl.stdout.getvalue()
-    assert "agent says hi" in out
-    assert "summarize the log" not in out
-    assert "chat>" not in out
-
-
-def test_turns_end_with_a_dim_rule(ursa_config, monkeypatch):
-    # The blank turn separator became a full-width dim rule, chunking
-    # scrollback into visual blocks (issue 264).
-    repl = _repl_with_stub_agent(ursa_config, monkeypatch)
-
-    repl.run_prompt("chat hello there")
-
-    out = repl.stdout.getvalue()
-    assert "────" in out, "no rule separating turns"
-    assert out.index("agent says hi") < out.index("────"), (
-        "the rule must close the turn after the agent output"
-    )
 
 
 async def test_agents_use_configured_workspace(ursa_config, tmp_path):
@@ -241,6 +138,46 @@ async def test_named_cli_agent_still_gets_async_checkpointer(
     assert agent._agent.checkpointer is expected_checkpointer
 
 
+@pytest.mark.asyncio
+async def test_named_cli_agent_resources_close_once(tmp_path, monkeypatch):
+    _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(
+        UrsaConfig(
+            workspace=tmp_path / "workspace",
+            agent_name="persistent-agent",
+        )
+    )
+    persistent_den = tmp_path / "persistent-agent-den"
+
+    class DummyPersistentAgent:
+        def __init__(self, **_kwargs):
+            self.den = persistent_den
+            self.checkpointer = None
+            self.async_close_count = 0
+            self.close_count = 0
+
+        async def aclose(self):
+            self.async_close_count += 1
+
+        def close(self):
+            self.close_count += 1
+
+    hitl.agents["chat"] = AgentHITL(agent_class=DummyPersistentAgent)
+    wrapper = await hitl.get_agent("chat")
+    assert wrapper._agent is not None
+    checkpointer = wrapper._agent.checkpointer
+    assert isinstance(checkpointer, AsyncSqliteSaver)
+    assert checkpointer.conn.is_alive()
+
+    await hitl.close()
+    await hitl.aclose()
+
+    assert wrapper._agent.async_close_count == 1
+    assert wrapper._agent.close_count == 1
+    assert checkpointer.conn._connection is None
+    assert not checkpointer.conn.is_alive()
+
+
 def _stub_hitl_dependencies(monkeypatch):
     fake_llm = MagicMock(name="llm")
     fake_embedding = MagicMock(name="embedding")
@@ -248,7 +185,9 @@ def _stub_hitl_dependencies(monkeypatch):
     monkeypatch.setattr(
         "ursa.cli.config.init_embeddings", lambda **_: fake_embedding
     )
-    monkeypatch.setattr("ursa.cli.hitl.start_mcp_client", lambda servers: None)
+    monkeypatch.setattr(
+        "ursa.cli.runtime.start_mcp_client", lambda servers: None
+    )
     return fake_llm, fake_embedding
 
 
@@ -704,36 +643,6 @@ def test_hitl_log_event_handler_renders_named_agent_tool_artifacts(tmp_path):
     assert "10" in rendered
 
 
-def test_repl_run_agent_registers_progress_handler(tmp_path, monkeypatch):
-    _stub_hitl_dependencies(monkeypatch)
-    config = UrsaConfig(
-        workspace=tmp_path / "global-workspace",
-        emb_model=EmbModelConfig(model="fake-embedding"),
-    )
-    hitl = HITL(config)
-    shell = UrsaRepl(hitl, stdout=io.StringIO())
-    captured = {}
-
-    async def fake_run_agent(name: str, prompt: str, callbacks=None) -> str:
-        captured["name"] = name
-        captured["prompt"] = prompt
-        captured["callbacks"] = callbacks
-        return "done"
-
-    monkeypatch.setattr(hitl, "run_agent", fake_run_agent)
-    monkeypatch.setattr(
-        shell.ursa_loop, "submit", lambda coro: asyncio.run(coro)
-    )
-    monkeypatch.setattr(shell, "show", lambda *args, **kwargs: None)
-
-    shell.run_agent("chat", "hello")
-
-    assert captured["name"] == "chat"
-    assert captured["prompt"] == "hello"
-    assert len(captured["callbacks"]) == 1
-    assert isinstance(captured["callbacks"][0], HITLLogEventHandler)
-
-
 def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
@@ -773,71 +682,6 @@ async def test_agent_config_unknown_option_raises(tmp_path, monkeypatch):
         await hitl.get_agent("chat")
 
 
-def check_script(
-    ursa_config: UrsaConfig,
-    input_expected: list[tuple[str, str | int | re.Pattern | None]],
-):
-    stdout = io.StringIO()
-    stdout_pos = 0
-
-    def console_factory(*args, **kwargs):
-        kwargs["record"] = True
-        kwargs["force_terminal"] = False
-        kwargs["force_interactive"] = False
-        return RealConsole(*args, **kwargs)
-
-    # Patch the Console constructor so we can snoop
-    with patch("ursa.cli.hitl.Console", new=console_factory):
-        shell = UrsaRepl(HITL(ursa_config), stdout=stdout)
-
-    # Feed the REPL with the script and check the output matches
-    # expectations
-    trace = []
-    for input, ref in input_expected:
-        LOGGER.info("input: %s", input)
-        shell.onecmd(input)
-        console_output = shell.console.export_text()
-        stdout_value = stdout.getvalue()
-        stdout_delta = stdout_value[stdout_pos:]
-        stdout_pos = len(stdout_value)
-        output = stdout_delta or console_output
-        LOGGER.info("output: %s", output)
-        match ref:
-            case str():
-                assert output == ref
-            case int():
-                assert len(output.strip()) >= ref
-            case re.Pattern():
-                assert ref.search(output) is not None
-            case None:
-                pass
-            case _:
-                assert False, f"Unknown reference type: {ref}"
-
-        trace.append({"input": input, "output": output})
-
-    return trace
-
-
-def test_repl_smoke(ursa_config):
-    def docstr_header(cls) -> str:
-        docs = cls.__doc__
-        assert isinstance(docs, str)
-        return docs.split("\n", maxsplit=1)[0]
-
-    trace = check_script(
-        ursa_config,
-        [
-            ("What is your name?", None),
-            ("help", re.compile(r".*Documented commands")),
-            ("?", re.compile(r".*Documented commands")),
-            ("agents", re.compile(r".*chat:")),
-            ("exit", re.compile(r".*Exiting ursa")),
-        ],
-    )
-    print(trace)
-
-
 async def test_chat(ursa_config):
     hitl = HITL(ursa_config)
     out = await hitl.run_agent(
@@ -846,23 +690,6 @@ async def test_chat(ursa_config):
     )
     print(out)
     assert out is not None
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    "agent",
-    ["chat", "execute", "hypothesize", "plan", "web"],
-)
-def test_agent_repl_smoke(ursa_config: UrsaConfig, agent: str):
-    if agent == "plan":
-        # Planning eats tokens
-        ursa_config.llm_model.max_completion_tokens = 128000
-
-    trace = check_script(
-        ursa_config,
-        [(f"{agent} What is your purpose?", None)],
-    )
-    print(trace)
 
 
 DUMMY_MCP_SERVER_PATH = Path(__file__).parent.parent.joinpath(
@@ -880,6 +707,7 @@ async def test_mcp_tools(ursa_config: UrsaConfig):
     assert agent._agent is not None
     assert isinstance(agent._agent, AgentWithTools)
     assert "add" in agent._agent.tools
+    assert agent.tool_sources["add"] == "demo"
 
 
 @pytest.fixture

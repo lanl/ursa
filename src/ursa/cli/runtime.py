@@ -2,10 +2,6 @@
 
 import asyncio
 import logging
-import os
-import sys
-import threading
-from cmd import Cmd
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,17 +11,12 @@ import aiosqlite
 from fastmcp import FastMCP
 from langchain.chat_models import BaseChatModel
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.text import Text
-from rich.theme import Theme
 
 from ursa import agents
 from ursa.agents import BaseAgent
-from ursa.agents.base import URSA_VERSION, AgentWithTools
-from ursa.cli.callbacks import HITLLogEventHandler
+from ursa.agents.base import AgentWithTools
 from ursa.cli.config import UrsaConfig
 from ursa.security import (
     enforce_group_base_url_policy,
@@ -33,13 +24,6 @@ from ursa.security import (
 )
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.mcp import start_mcp_client
-
-ursa_banner = rf"""
-  __  ________________ _
- / / / / ___/ ___/ __ `/
-/ /_/ / /  (__  ) /_/ /
-\__,_/_/  /____/\__,_/ v{URSA_VERSION}
-"""
 
 
 @dataclass
@@ -49,6 +33,7 @@ class AgentHITL:
     agent_class: Any
     config: dict = field(default_factory=dict)
     state: Any | None = None
+    tool_sources: dict[str, str] = field(default_factory=dict, init=False)
     _agent: BaseAgent | None = field(default=None, init=False)
 
     async def instantiate(
@@ -67,7 +52,7 @@ class AgentHITL:
 
         # Attach tools from MCP client
         if mcp_client and isinstance(self._agent, AgentWithTools):
-            await self._agent.add_mcp_tools(mcp_client)
+            self.tool_sources = await self._agent.add_mcp_tools(mcp_client)
 
     @property
     def description(self):
@@ -213,6 +198,8 @@ class HITL:
 
         self.last_agent_result = None
         self.last_agent = None
+        self._runtime_checkpointers: list[AsyncSqliteSaver] = []
+        self._closed = False
 
     async def _get_checkpointer(
         self, checkpoint_path: Path
@@ -223,6 +210,9 @@ class HITL:
         return AsyncSqliteSaver(conn)
 
     async def get_agent(self, name: str):
+        if self._closed:
+            raise RuntimeError("HITL runtime is closed")
+
         agent = self.agents[name]
 
         # Lazily instantiate the agents
@@ -240,10 +230,14 @@ class HITL:
             # ephemeral and intentionally run without a checkpointer so they do
             # not leave checkpoint files in the workspace.
             if self.agent_name is not None:
+                sync_checkpointer = agent._agent.checkpointer
                 async_checkpointer = await self._get_checkpointer(
                     agent._agent.den
                 )
                 agent._agent.checkpointer = async_checkpointer
+                self._runtime_checkpointers.append(async_checkpointer)
+                if isinstance(sync_checkpointer, SqliteSaver):
+                    sync_checkpointer.conn.close()
 
         assert agent._agent is not None
         return agent
@@ -266,6 +260,37 @@ class HITL:
         self.last_agent_result = msg
         self.last_agent = agent._agent
         return msg
+
+    async def aclose(self) -> None:
+        """Close instantiated agents and runtime-owned persistence resources."""
+        if self._closed:
+            return
+        self._closed = True
+
+        for wrapper in self.agents.values():
+            agent = wrapper._agent
+            if agent is None:
+                continue
+            try:
+                await agent.aclose()
+            except Exception:
+                logging.exception("Failed to close async agent resources")
+            try:
+                agent.close()
+            except Exception:
+                logging.exception("Failed to close sync agent resources")
+
+        for checkpointer in self._runtime_checkpointers:
+            try:
+                await checkpointer.conn.close()
+                await asyncio.to_thread(checkpointer.conn.join)
+            except Exception:
+                logging.exception("Failed to close agent checkpointer")
+        self._runtime_checkpointers.clear()
+
+    async def close(self) -> None:
+        """Compatibility alias for :meth:`aclose`."""
+        await self.aclose()
 
     def as_mcp_server(self, **kwargs):
         from ursa import __version__ as ursa_version
@@ -293,237 +318,3 @@ class HITL:
             return await self.run_agent(agent_name, prompt)
 
         return call_agent
-
-
-class AsyncLoopThread:
-    def __init__(self):
-        self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
-
-    def _run(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-
-    def submit(self, coro):
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
-
-def safe_prompt() -> str:
-    base_prompt = "ursa 🐻> "
-    fallback_prompt = "ursa> "
-    
-    try:
-        base_prompt.encode(sys.stdout.encoding or "utf-8")
-        return base_prompt
-    except (UnicodeEncodeError, TypeError):
-        return fallback_prompt
-
-class UrsaRepl(Cmd):
-    exit_message: str = "[dim]Exiting ursa..."
-    prompt: str = safe_prompt()
-
-    def __init__(self, hitl: HITL, **kwargs):
-        super().__init__(**kwargs)
-        self.hitl = hitl
-        self.ursa_loop = AsyncLoopThread()
-        self.console = Console(
-            file=self.stdout,
-            theme=Theme({
-                "success": "green",
-                "error": "bold red",
-                "dim": "grey50",
-                "warn": "yellow",
-                "emph": "bold cyan",
-            }),
-        )
-
-        base_url = get_base_url(self.hitl.model)
-        if not base_url:
-            base_url = "Default"
-
-        try:
-            model_name = self.hitl.model.model_name
-        except Exception:
-            model_name = self.hitl.model.model
-        self.llm_model_panel = Panel.fit(
-            Text.from_markup(
-                f"[bold]Workspace[/]: {Path(self.hitl.workspace).absolute()}\n"
-                f"[bold]LLM endpoint[/]: {base_url}\n"
-                f"[bold]LLM model[/]: {model_name}"
-            ),
-            border_style="cyan",
-        )
-        self.emb_model_panel = None
-        if self.hitl.embedding:
-            base_url = get_base_url(self.hitl.embedding)
-            if not base_url:
-                base_url = "Default"
-            try:
-                model_name = self.hitl.embedding.model_name
-            except Exception:
-                model_name = self.hitl.embedding.model
-            self.emb_model_panel = Panel.fit(
-                Text.from_markup(
-                    f"[bold]Embedding endpoint[/]: {base_url}\n"
-                    f"[bold]Embedding model[/]: {model_name}"
-                ),
-                border_style="cyan",
-            )
-
-    def __getattribute__(self, name: str) -> Any:
-        # Dynamically add do_agent methods
-        if name.startswith("do_"):
-            agent_name = name.removeprefix("do_")
-            if agent_name in self.hitl.agents.keys():
-
-                def run_agent(prompt):
-                    return self.run_agent(agent_name, prompt)
-
-                run_agent.__doc__ = self.hitl.agents[agent_name].description
-                return run_agent
-
-        return super().__getattribute__(name)
-
-    @staticmethod
-    def help_message():
-        if os.name == "nt":
-            exit_shortcut = "Crtl+Z"
-        elif os.name == "posix":
-            exit_shortcut = "Crtl+D"
-        else:
-            exit_shortcut = None
-
-        msg = "[dim]For help, type: ? or help."
-        if exit_shortcut is None:
-            msg += " Exit by typing 'exit'."
-        else:
-            msg += f" Exit with {exit_shortcut} or by typing exit."
-        return msg
-
-    def get_names(self) -> list[str]:
-        names = super().get_names()
-        for name in self.hitl.agents.keys():
-            names.append(f"do_{name}")
-        return names
-
-    def run_agent(self, name: str, prompt: str | None = None):
-        if not prompt:
-            prompt = input(f"{name}: ")
-        handler = HITLLogEventHandler(
-            console=self.console,
-            workspace=self.hitl.workspace,
-        )
-        result = self.hitl.run_agent(name, prompt, callbacks=[handler])
-        result = self.ursa_loop.submit(result)
-
-        assert isinstance(result, str)
-        if handler.emitted_any:
-            self.console.print()
-        self.show(result)
-
-    def run_prompt(self, prompt: str):
-        """Respond to a single prompt"""
-        prompt = self.precmd(prompt)
-        stop = self.onecmd(prompt)
-        return self.postcmd(stop, prompt)
-
-    def show(self, msg: str, markdown: bool = True, **kwargs):
-        self.console.print(Markdown(msg) if markdown else msg, **kwargs)
-
-    def default(self, prompt: str):
-        self.run_agent("chat", prompt)
-
-    def postcmd(self, stop: bool, line: str):
-        # A dim rule chunks scrollback into per-turn blocks (issue 264).
-        self.console.print()
-        self.console.rule(style="dim")
-        return stop
-
-    def do_exit(self, _: str):
-        """Exit shell."""
-        self.show(self.exit_message, markdown=False)
-        return True
-
-    def do_EOF(self, _: str):
-        """Exit on Ctrl+D."""
-        self.show("\n" + self.exit_message, markdown=False)
-        return True
-
-    def do_clear(self, _: str):
-        """Clear the screen. Same as pressing Ctrl+L."""
-        os.system("cls" if os.name == "nt" else "clear")
-
-    def emptyline(self):
-        """Do nothing when an empty line is entered"""
-        pass
-
-    def run(self):
-        """Handle Ctrl+C to avoid quitting the program"""
-        # Print intro only once.
-        self.show(f"[magenta]{ursa_banner}", markdown=False, highlight=False)
-        self.show(self.llm_model_panel, markdown=False, highlight=False)
-        if self.emb_model_panel:
-            self.show(self.emb_model_panel, markdown=False, highlight=False)
-        self.show(self.help_message(), markdown=False)
-
-        while True:
-            try:
-                self.cmdloop()
-                break  # Allows breaking out of loop if EOF is triggered.
-            except KeyboardInterrupt:
-                print(  # noqa: T201
-                    "\n(Interrupted) Press Ctrl+D to exit or continue typing."
-                )
-
-    def do_models(self, _: str):
-        """List models and base urls"""
-        llm_provider, llm_name = get_provider_and_model(
-            self.hitl.config.llm_model.model
-        )
-        self.show(
-            f"[dim]*[/] LLM: [emph]{llm_name} "
-            f"[dim]{self.hitl.config.llm_model.base_url or llm_provider}",
-            markdown=False,
-        )
-
-        emb_provider, emb_name = (
-            get_provider_and_model(self.hitl.config.emb_model.model)
-            if self.hitl.config.emb_model
-            else ("None", "None")
-        )
-        if not emb_provider:
-            emb_provider = self.hitl.config.emb_model.base_url
-        self.show(
-            f"[dim]*[/] Embedding Model: [emph]{emb_name} [dim]{emb_provider}",
-            markdown=False,
-        )
-
-    def do_agents(self, _: str):
-        """Display configured Agents and their configurations"""
-        for name, agent in self.hitl.agents.items():
-            if agent.config:
-                self.console.print(f"{name}:")
-                for k, v in agent.config.items():
-                    self.console.print(f" {k}: {v}")
-            else:
-                self.console.print(name + ": {}")
-
-
-def get_provider_and_model(model_str: str | None):
-    if model_str is None:
-        return "none", "none"
-
-    if ":" in model_str:
-        provider, model = model_str.split(":", 1)
-    else:
-        provider = "openai"
-        model = model_str
-
-    return provider, model
-
-
-# TODO:
-# * Add option to swap models in REPL
-# * Add option for seed setting via flags
-# * Name change: --llm-model-name -> llm
-# * Name change: --emb-model-name -> emb

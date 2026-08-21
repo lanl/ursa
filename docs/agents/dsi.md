@@ -45,27 +45,15 @@ When initializing `DSIAgent`, you can customize its behavior with these paramete
 
 ### From the URSA CLI
 ```bash
-ursa % ursa
+ursa
 
-  __  ________________ _
- / / / / ___/ ___/ __ `/
-/ /_/ / /  (__  ) /_/ /
-\__,_/_/  /____/\__,_/
-
-╭───────────────────────╮
-│ LLM endpoint: Default │
-│ LLM model: gpt-5.2    │
-╰───────────────────────╯
-For help, type: ? or help. Exit with Ctrl+d.
-ursa> dsi
-dsi: can you load the dsi dataset at examples/single_agent_examples/dsi_agent/data/oceans_11/ocean_11_datasets.db 
+#dsi can you load the dsi dataset at examples/single_agent_examples/dsi_agent/data/oceans_11/ocean_11_datasets.db
 No DSI database provided. Please load one
 Loaded the DSI dataset successfully.                                                                                                                      
 
  • Active DSI database: /Users/pascalgrosset/projects/ursa/examples/single_agent_examples/dsi_agent/data/oceans_11/ocean_11_datasets.db                   
 
-ursa> dsi
-dsi: what are the datasets available
+#dsi what are the datasets available
 Datasets available in ocean_11_datasets.db:                                                                                                               
 
   1 3D FLASH Computation of National Ignition Facility Shot (Theme: fusion) — nif.db                                                                      
@@ -78,14 +66,12 @@ Datasets available in ocean_11_datasets.db:
   8 Poisson's Equations for Electrostatics (Theme: Physics) — poisson.db                                                                                  
   9 The High Explosives & Affected Targets (HEAT) Dataset (Theme: eulerian)                                                                               
 
-ursa> dsi
-dsi: do you have any ignition datasets
+#dsi do you have any ignition datasets
 Yes—there is 1 ignition-related dataset in this DB:                                                                                                       
 
  • 3D FLASH Computation of National Ignition Facility Shot (Theme: fusion) — linked DSI DB: nif.db                                                        
 
-ursa> dsi
-dsi: tell me more about it
+#dsi tell me more about it
 Here’s more about “3D FLASH Computation of National Ignition Facility Shot”:                                                                              
 
  • Theme: fusion                                                                                                                                          
