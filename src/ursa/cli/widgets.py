@@ -2,7 +2,6 @@
 
 """Reusable widgets and modal screens for the Textual CLI."""
 
-import sys
 from collections.abc import Sequence
 from math import ceil
 from pathlib import Path
@@ -53,14 +52,14 @@ class PromptArea(TextArea):
             priority=True,
         ),
         Binding(
-            "ctrl+c", "clear_prompt", "Clear prompt", show=False, priority=True
-        ),
-        Binding(
-            "ctrl+shift+c" if sys.platform == "win32" else "super+c",
-            "copy_selection",
-            "Copy selected text",
+            "ctrl+j",
+            "insert_newline",
+            "Insert newline",
             show=False,
             priority=True,
+        ),
+        Binding(
+            "ctrl+c", "clear_prompt", "Clear prompt", show=False, priority=True
         ),
         Binding(
             "up",
@@ -125,11 +124,19 @@ class PromptArea(TextArea):
             language="markdown",
             soft_wrap=True,
             tab_behavior="indent",
-            placeholder="Ask URSA…  (@ files, # agents, Shift+Enter newline)",
+            placeholder="Ask URSA…  (@ files, # agents)",
             id="prompt",
         )
         self.prompt_history: list[str] = []
         self._history_index: int | None = None
+
+    def on_mount(self) -> None:
+        key = (
+            "Shift+Enter"
+            if self.app.preferred_newline_key == "shift+enter"
+            else "Ctrl+J"
+        )
+        self.placeholder = f"Ask URSA…  (@ files, # agents, {key} newline)"
 
     def _remember(self, text: str) -> None:
         if text and (
@@ -159,13 +166,6 @@ class PromptArea(TextArea):
         self._remember(self.text)
         self._history_index = len(self.prompt_history)
         self.load_text("")
-
-    def action_copy_selection(self) -> None:
-        """Copy a prompt selection, or fall back to the screen selection."""
-        if self.selected_text:
-            self.action_copy()
-        else:
-            self.screen.action_copy_text()
 
     def action_history_up(self) -> None:
         if self.prompt_history and (

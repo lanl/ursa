@@ -50,6 +50,41 @@ def user_config_paths() -> list[Path]:
             paths.append(candidate)
     return paths
 SSH_ENV_VARS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
+KITTY_KEYBOARD_ENV_VARS = (
+    "ALACRITTY_WINDOW_ID",
+    "KITTY_WINDOW_ID",
+    "WEZTERM_PANE",
+    "WT_SESSION",
+)
+KITTY_KEYBOARD_TERM_PROGRAMS = frozenset({
+    "alacritty",
+    "ghostty",
+    "iterm.app",
+    "rio",
+    "warpterminal",
+    "wezterm",
+})
+KITTY_KEYBOARD_TERM_PREFIXES = ("foot", "xterm-ghostty", "xterm-kitty")
+
+
+def expects_kitty_keyboard() -> bool:
+    """Infer expected Kitty keyboard support without touching the terminal.
+
+    Terminfo has no standardized capability for the Kitty keyboard protocol,
+    so this uses identifiers exported by terminal implementations known to
+    support it. Unknown terminals and terminal multiplexers fail closed.
+
+    Implementations: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+    """
+    if os.environ.get("TMUX") or os.environ.get("ZELLIJ"):
+        return False
+    if any(os.environ.get(name) for name in KITTY_KEYBOARD_ENV_VARS):
+        return True
+    term_program = os.environ.get("TERM_PROGRAM", "").casefold()
+    if term_program in KITTY_KEYBOARD_TERM_PROGRAMS:
+        return True
+    term = os.environ.get("TERM", "").casefold()
+    return term.startswith(KITTY_KEYBOARD_TERM_PREFIXES)
 
 
 def platform_clipboard() -> list[str] | None:

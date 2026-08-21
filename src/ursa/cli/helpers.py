@@ -67,6 +67,8 @@ def _truncate_middle(text: str, width: int) -> str:
         if width == 1:
             return "…"
         return f"{chop_cells(text, width - 1)[0]}…"
+    if available == 0:
+        return f"_{marker.strip()}_"
     left = (available + 1) // 2
     right = available // 2
     prefix = chop_cells(text, left)[0]

@@ -1,5 +1,4 @@
 import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +7,7 @@ from textual.binding import Binding
 from textual.theme import BUILTIN_THEMES
 from textual.widgets import Collapsible, Input, Markdown, Static, Tab, TabPane
 
+import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
 from ursa.cli.tips import TIPS, random_tip, runtime_keymap
@@ -236,6 +236,30 @@ async def test_shift_enter_adds_a_prompt_newline(tmp_path):
         assert app.query_one(PromptArea).text == "a\nb"
 
 
+async def test_ctrl_j_adds_a_prompt_newline(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test() as pilot:
+        await pilot.press("a", "ctrl+j", "b")
+        assert app.query_one(PromptArea).text == "a\nb"
+
+
+def test_newline_key_prefers_shift_enter_when_protocol_is_detected(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: True)
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    assert app.preferred_newline_key == "shift+enter"
+
+
+def test_newline_key_falls_back_to_ctrl_j(tmp_path, monkeypatch):
+    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: False)
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    assert app.preferred_newline_key == "ctrl+j"
+
+
 async def test_prompt_has_markdown_highlighting_paste_undo_and_redo(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
@@ -265,8 +289,7 @@ async def test_prompt_copy_shortcut_preserves_selected_text(
         prompt.load_text("selected text")
         prompt.action_select_all()
 
-        shortcut = "ctrl+shift+c" if sys.platform == "win32" else "super+c"
-        await pilot.press(shortcut)
+        await pilot.press("super+c")
 
         assert copied == ["selected text"]
         assert prompt.text == "selected text"
@@ -283,8 +306,7 @@ async def test_prompt_copy_shortcut_delegates_to_screen_selection(
             app.screen, "action_copy_text", lambda: delegated.append(True)
         )
 
-        shortcut = "ctrl+shift+c" if sys.platform == "win32" else "super+c"
-        await pilot.press(shortcut)
+        await pilot.press("ctrl+shift+c")
 
         assert delegated == [True]
 
@@ -656,6 +678,7 @@ async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
 def test_command_details_and_keymap_come_from_live_bindings(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: False)
     app = UrsaTextualApp(FakeHITL(tmp_path))
     app.total_tokens = 1234
     app.input_tokens = 1000
@@ -678,6 +701,11 @@ def test_command_details_and_keymap_come_from_live_bindings(
     assert "234" in status
     assert "456" in status
     assert "test-model" in status
+    assert "Kitty keyboard support" in keymap
+    assert "not identified" in keymap
+    assert "shift+⏎ / ^j" in keymap
+    assert "^c" in keymap
+    assert "Clear prompt" in keymap
     for expected in (
         "## Application",
         "## Prompt editor",
@@ -690,3 +718,15 @@ def test_command_details_and_keymap_come_from_live_bindings(
         "Open diagnostics",
     ):
         assert expected in keymap
+
+
+def test_keymap_omits_compatibility_warning_when_kitty_is_expected(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(crossplatform, "expects_kitty_keyboard", lambda: True)
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    keymap = app._keymap_markdown()
+
+    assert "Kitty keyboard support expected" in keymap
+    assert "may not work" not in keymap

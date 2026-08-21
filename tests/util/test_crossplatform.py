@@ -1,6 +1,53 @@
 import ursa.util.crossplatform as crossplatform
 
 
+def test_kitty_keyboard_support_uses_terminal_identity(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("ZELLIJ", raising=False)
+    monkeypatch.setenv("TERM_PROGRAM", "ghostty")
+
+    assert crossplatform.expects_kitty_keyboard()
+
+
+def test_kitty_keyboard_support_fails_closed_for_multiplexers(monkeypatch):
+    monkeypatch.setenv("TERM_PROGRAM", "ghostty")
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,1,0")
+
+    assert not crossplatform.expects_kitty_keyboard()
+
+
+def test_kitty_keyboard_support_falls_back_to_terminfo_name(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("ZELLIJ", raising=False)
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    for name in crossplatform.KITTY_KEYBOARD_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TERM", "xterm-kitty")
+
+    assert crossplatform.expects_kitty_keyboard()
+
+
+def test_kitty_keyboard_support_uses_vendor_session_identity(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("ZELLIJ", raising=False)
+    monkeypatch.setenv("ALACRITTY_WINDOW_ID", "42")
+
+    assert crossplatform.expects_kitty_keyboard()
+
+
+def test_kitty_keyboard_support_fails_closed_for_unknown_terminal(monkeypatch):
+    for name in (
+        *crossplatform.KITTY_KEYBOARD_ENV_VARS,
+        "TMUX",
+        "ZELLIJ",
+        "TERM_PROGRAM",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+
+    assert not crossplatform.expects_kitty_keyboard()
+
+
 def test_copy_to_clipboard_runs_platform_tool(monkeypatch):
     calls = []
     monkeypatch.setattr(

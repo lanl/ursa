@@ -1,6 +1,5 @@
 import asyncio
 import io
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -21,14 +20,16 @@ from ursa.cli.widgets import (
 )
 
 
-def test_copy_binding_uses_platform_shortcut():
-    expected_key = "ctrl+shift+c" if sys.platform == "win32" else "super+c"
+def test_copy_bindings_are_uniform_and_global():
     bindings = {
         binding.key: binding
         for binding in UrsaTextualApp._effective_bindings(UrsaTextualApp)
     }
 
-    assert bindings[expected_key].action == "screen.copy_text"
+    assert bindings["ctrl+c"].action != "copy_text"
+    for key in ("ctrl+shift+c", "super+c"):
+        assert bindings[key].action == "copy_text"
+        assert bindings[key].priority
 
 
 async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):

@@ -80,10 +80,11 @@ class UrsaTextualApp(App[None]):
             show=False,
         ),
         Binding(
-            "ctrl+shift+c" if sys.platform == "win32" else "super+c",
-            "screen.copy_text",
+            "super+c,ctrl+shift+c",
+            "copy_text",
             "Copy selected text",
             show=True,
+            priority=True,
         ),
         Binding(
             "ctrl+d",
@@ -118,6 +119,7 @@ class UrsaTextualApp(App[None]):
 
     def __init__(self, hitl: HITL) -> None:
         super().__init__()
+        self.kitty_keyboard_expected = crossplatform.expects_kitty_keyboard()
         for theme in AVAILABLE_THEMES:
             self.register_theme(theme)
         self.theme = AVAILABLE_THEMES[0].name
@@ -157,6 +159,14 @@ class UrsaTextualApp(App[None]):
         if not crossplatform.copy_to_clipboard(text):
             super().copy_to_clipboard(text)
 
+    def action_copy_text(self) -> None:
+        """Copy from the focused editor or the current screen selection."""
+        focused = self.focused
+        if isinstance(focused, TextArea) and focused.selected_text:
+            focused.action_copy()
+        else:
+            self.screen.action_copy_text()
+
     def on_resize(self) -> None:
         self.call_after_refresh(self._resize_prompt, self.query_one(PromptArea))
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
@@ -168,6 +178,11 @@ class UrsaTextualApp(App[None]):
     @property
     def is_ui_thread(self) -> bool:
         return threading.get_ident() == self._ui_thread_id
+
+    @property
+    def preferred_newline_key(self) -> str:
+        """Return the newline chord most likely to work in this terminal."""
+        return "shift+enter" if self.kitty_keyboard_expected else "ctrl+j"
 
     def _update_status(self, state: str) -> None:
         agent = (
@@ -576,7 +591,17 @@ class UrsaTextualApp(App[None]):
             for binding in self._effective_bindings(type(self))
             if binding.priority
         }
-        output: list[str] = []
+        compatibility = (
+            "> **Terminal support:** Kitty keyboard support expected for "
+            "this terminal."
+            if self.kitty_keyboard_expected is True
+            else "> **Terminal support:** Kitty keyboard support not "
+            "identified; some modified keys may not work."
+        )
+        output = [
+            compatibility,
+            "",
+        ]
         for title, owner in sections:
             actions: dict[tuple[str, str], list[str]] = {}
             for binding in self._effective_bindings(owner):

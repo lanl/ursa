@@ -54,8 +54,14 @@ def runtime_keymap(
 ) -> dict[str, str]:
     """Map binding actions to their current, terminal-friendly key labels."""
     keymap: dict[str, list[str]] = {}
+    newline_key = getattr(app, "preferred_newline_key", "ctrl+j")
     for owner in owners:
         for binding in _effective_bindings(owner):
+            if (
+                binding.action == "insert_newline"
+                and binding.key != newline_key
+            ):
+                continue
             keymap.setdefault(binding.action, []).append(
                 app.get_key_display(binding)
             )
