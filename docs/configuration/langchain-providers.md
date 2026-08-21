@@ -13,7 +13,8 @@ The following provider integrations are installed with URSA's core dependencies 
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
 ```
 
 ## Anthropic
@@ -21,7 +22,8 @@ llm_model:
 ```yaml
 llm_model:
   model: anthropic:claude-sonnet-4-5
-  api_key_env: ANTHROPIC_API_KEY
+  api_key:
+    env: ANTHROPIC_API_KEY
 ```
 
 ## Google GenAI
@@ -29,7 +31,8 @@ llm_model:
 ```yaml
 llm_model:
   model: google_genai:gemini-2.5-pro
-  api_key_env: GOOGLE_API_KEY
+  api_key:
+    env: GOOGLE_API_KEY
 ```
 
 ## Ollama
@@ -46,7 +49,8 @@ llm_model:
 llm_model:
   model: azure_openai:deployment-name
   base_url: https://your-resource.openai.azure.com/
-  api_key_env: AZURE_OPENAI_API_KEY
+  api_key:
+    env: AZURE_OPENAI_API_KEY
 ```
 
 Azure deployments often need provider-specific settings. LangChain accepts additional provider keyword arguments, and URSA allows extra model fields in the YAML model configuration.

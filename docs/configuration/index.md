@@ -12,7 +12,8 @@ Create `config.yaml`:
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
 workspace: ./ursa-workspace
 ```
 
@@ -31,7 +32,8 @@ thread_id: null
 use_web: false
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
   max_completion_tokens: 10000
 emb_model: null
 rag_tools: []
@@ -78,14 +80,15 @@ llm_model:
   base_url: http://localhost:11434
 ```
 
-## Prefer `api_key_env` for secrets
+## Prefer `api_key` environment references for secrets
 
 Avoid hard-coding API keys in YAML files. Prefer:
 
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
 ```
 
 Then set the key in your shell or secret manager.
@@ -99,7 +102,8 @@ models:
 inference_providers:
   openai_public:
     base_url: https://api.openai.com/v1
-    api_key_env: OPENAI_API_KEY
+    api_key:
+      env: OPENAI_API_KEY
 llm_model:
   model: openai:gpt-5.4
   inference_provider: openai_public
