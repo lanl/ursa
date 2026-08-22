@@ -146,6 +146,7 @@ markers = [
 [dependency-groups]
 dev = [
     "fastmcp>=2.13.3",
+    "hypothesis>=6.130",
     "notebook>=7.3.3",
     "numpydoc>=1.10.0",
     "pre-commit>=4.3.0",
