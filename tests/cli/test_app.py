@@ -605,3 +605,33 @@ def test_one_shot_routes_hash_agent_and_writes_response(tmp_path):
     assert hitl.calls == [("plan", "inspect this")]
     assert hitl.closed
     assert "One-shot result" in output.getvalue()
+
+
+async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
+    # The anchor transition must start its animation synchronously with
+    # its flag; a user scroll in the gap before a deferred start could
+    # not stop an animation that had not begun, and the late start then
+    # drove the viewport away from the user's position.
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        conversation = app.query_one("#conversation", VerticalScroll)
+        turn = Turn("test", tmp_path)
+        await conversation.mount(turn)
+
+        for index in range(12):
+            await app.add_turn_event(
+                turn,
+                {"type": "custom", "tool": f"tool-{index}", "phase": "start"},
+            )
+            await pilot.pause(0.01)
+            if app._conversation_anchor_transition:
+                break
+
+        assert app._conversation_anchor_transition
+        assert app.animator.is_being_animated(conversation, "scroll_y")
+
+        conversation.scroll_home(animate=False, immediate=True)
+        for _ in range(8):
+            await asyncio.sleep(0.03)
+            assert conversation.scroll_y == 0
