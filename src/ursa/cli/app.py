@@ -222,9 +222,14 @@ class UrsaTextualApp(App[None]):
             self._conversation_anchor_transition = True
             self._conversation_anchor_generation += 1
             generation = self._conversation_anchor_generation
+            # Start the animation now rather than after the next refresh:
+            # a user scroll landing in that gap could not stop an animation
+            # that had not begun, and the late-starting animation then
+            # overrode the user's position.
             conversation.scroll_end(
                 animate=True,
                 duration=0.15,
+                immediate=True,
                 on_complete=lambda: self._finish_conversation_anchor(
                     generation
                 ),
