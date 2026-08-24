@@ -18,6 +18,7 @@ from ursa.cli.agent_management import (
     share_agent,
     show_agent,
 )
+from ursa.cli.auth import add_auth_subcommands
 from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
@@ -132,6 +133,9 @@ def build_parser() -> ArgumentParser:
     # Persistent RAG management commands
     add_rag_subcommands(subparsers)
 
+    # Credential management commands
+    add_auth_subcommands(subparsers)
+
     exec_parser = ArgumentParser()
     exec_parser.add_argument("prompt", type=str)
     subparsers.add_subcommand(
@@ -204,6 +208,13 @@ def main(args=None):
     _apply_legacy_name_env(cfg, overrides)
 
     match subcommand:
+        case "auth":
+            auth_config = cfg.auth
+            command_config = auth_config[auth_config.subcommand]
+            command_values = command_config.as_dict()
+            handler = command_values.pop("handler")
+            handler(**command_values)
+            return
         case "list-groups":
             list_groups()
             return
