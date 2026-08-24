@@ -465,7 +465,9 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
         assert conversation.scroll_y == conversation.max_scroll_y
 
         conversation.scroll_to(
-            y=max(0, conversation.scroll_y - 3), animate=False
+            y=max(0, conversation.scroll_y - 3),
+            animate=False,
+            immediate=True,
         )
         await pilot.pause()
         scrolled_position = conversation.scroll_y
