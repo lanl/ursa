@@ -14,6 +14,8 @@ ursa --llm_model.model openai:gpt-5.2
 
 This starts the full-screen terminal app. Type `/` to browse commands,
 `#` to choose an agent behavior, or `@` to insert a workspace path.
+See [Getting Started - CLI](getting-started/cli.md#full-screen-interface-controls)
+for prompt editing, multiline input, clipboard, and exit behavior.
 
 You can chat with an LLM by simply typing into the terminal.
 
@@ -28,16 +30,9 @@ Use the required `#` macro to route a prompt to another agent behavior:
 #plan Write a python script to do linear regression using only numpy.
 ```
 
-If you run subsequent agents, the last output will be appended to the prompt for the next agent.
-
-So, to run the Planning Agent followed by the Execution Agent:
-```
-#plan Write a python script to do linear regression using only numpy.
-
-...
-
-#execute Execute the plan.
-```
+Agent macros route only the prompt in which they appear. Output from a previous
+agent is not automatically appended to the next prompt; quote or reference any
+needed result explicitly when switching behaviors.
 
 You can get a list of available command line options via
 ```
