@@ -152,7 +152,9 @@ def test_api_key_keyring_reference(monkeypatch, setting, username):
 
 def test_legacy_api_key_env_is_migrated_with_warning(monkeypatch):
     monkeypatch.setenv("OLD_TOKEN", "secret")
-    with pytest.warns(DeprecationWarning, match="api_key_env is deprecated"):
+    with pytest.warns(
+        DeprecationWarning, match="api_key_env is deprecated in config files"
+    ):
         config = ChatModelConfig(
             model="provider:model", api_key_env="OLD_TOKEN"
         )

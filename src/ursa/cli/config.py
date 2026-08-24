@@ -58,7 +58,7 @@ APIKey = SecretReference | SecretStr
 
 
 def _migrate_api_key_env(data: Any) -> Any:
-    """Translate the removed ``api_key_env`` field for legacy configs."""
+    """Translate deprecated config-file ``api_key_env`` values."""
     if not isinstance(data, dict) or "api_key_env" not in data:
         return data
     from warnings import warn
@@ -67,7 +67,8 @@ def _migrate_api_key_env(data: Any) -> Any:
     env_name = _strip_blank_optional_strings(migrated.pop("api_key_env"))
     if env_name is not None:
         warn(
-            "api_key_env is deprecated; use api_key: {env: VAR_NAME} instead.",
+            "api_key_env is deprecated in config files; "
+            "use api_key: {env: VAR_NAME} instead.",
             DeprecationWarning,
             stacklevel=3,
         )
@@ -298,7 +299,7 @@ class UrsaConfig(BaseModel):
         default_factory=lambda: {
             "openai": InferenceProviderConfig(
                 base_url="https://api.openai.com/v1",
-                api_key=APIKeyConfig(env="OPENAI_API_KEY")
+                api_key=APIKeyConfig(env="OPENAI_API_KEY"),
             )
         }
     )

@@ -76,11 +76,17 @@ def build_parser() -> ArgumentParser:
         help="URSA configuration",
         skip={"agent_name", "rag_tools"},
     )
-    parser.add_argument(
-        "--llm_model.api_key_env", default=SUPPRESS, help=SUPPRESS
+    parser._option_string_actions["--llm_model"].container.add_argument(
+        "--llm_model.api_key_env",
+        dest="llm_model.api_key.env",
+        default=SUPPRESS,
+        help="Environment variable containing the chat model API key",
     )
-    parser.add_argument(
-        "--emb_model.api_key_env", default=SUPPRESS, help=SUPPRESS
+    parser._option_string_actions["--emb_model"].container.add_argument(
+        "--emb_model.api_key_env",
+        dest="emb_model.api_key.env",
+        default=SUPPRESS,
+        help="Environment variable containing the embedding model API key",
     )
     parser.add_argument(
         "--rag-tools",

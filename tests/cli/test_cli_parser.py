@@ -2,6 +2,7 @@ import gc
 import importlib
 from pathlib import Path
 from unittest.mock import MagicMock
+from warnings import catch_warnings, simplefilter
 
 import pytest
 import yaml
@@ -848,10 +849,11 @@ def test_model_config_ollama_uses_client_kwargs():
     assert kwargs["client_kwargs"]["verify"] is not False
 
 
-def test_api_key_env(monkeypatch, tmp_path):
+def test_api_key_env_cli_option(monkeypatch, tmp_path):
     monkeypatch.setenv("TEST_ENV_API_KEY", "super-secret-key")
     parser = build_parser()
-    with pytest.warns(DeprecationWarning, match="api_key_env is deprecated"):
+    with catch_warnings(record=True) as warnings:
+        simplefilter("always")
         config = _resolve_args(
             parser,
             [
@@ -862,9 +864,26 @@ def test_api_key_env(monkeypatch, tmp_path):
             ],
         )
 
+    assert not any("api_key_env" in str(item.message) for item in warnings)
     assert isinstance(config.llm_model.api_key, SecretStr)
     assert config.llm_model.kwargs["api_key"] == "super-secret-key"
     assert "api_key_env" not in config.llm_model.model_dump()
+
+
+def test_api_key_env_cli_options_are_visible_in_help():
+    parser = build_parser()
+    help_text = parser.format_help()
+
+    assert "--llm_model.api_key_env" in help_text
+    assert "--emb_model.api_key_env" in help_text
+    assert (
+        parser._option_string_actions["--llm_model.api_key_env"].container
+        is parser._option_string_actions["--llm_model"].container
+    )
+    assert (
+        parser._option_string_actions["--emb_model.api_key_env"].container
+        is parser._option_string_actions["--emb_model"].container
+    )
 
 
 def test_model_config_omits_unset_or_blank_base_url_for_provider_default():
