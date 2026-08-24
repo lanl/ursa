@@ -1,13 +1,14 @@
 """References to secrets stored outside configuration files."""
 
 from os import environ
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
     SecretStr,
+    ValidationError,
     model_validator,
 )
 
@@ -28,6 +29,14 @@ class SecretReference(BaseModel):
 
     env: Annotated[str | None, AfterValidator(_non_blank)] = None
     keyring: bool | Annotated[str, AfterValidator(_non_blank)] | None = None
+
+    @classmethod
+    def maybe_validate(cls, value: Any, **kwargs) -> Any:
+        """Type a secret mapping while leaving unrelated values unchanged."""
+        try:
+            return cls.model_validate(value, **kwargs)
+        except ValidationError:
+            return value
 
     @model_validator(mode="after")
     def _validate_source(self):

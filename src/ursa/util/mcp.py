@@ -18,6 +18,11 @@ def validate_server_parameters(config: dict):
         return config
     transport_hint = config.get("transport")
     payload = {k: v for k, v in config.items() if k != "transport"}
+    if isinstance(headers := payload.get("headers"), dict):
+        payload["headers"] = {
+            name: SecretTemplate.maybe_validate(value)
+            for name, value in headers.items()
+        }
     if transport_hint == "stdio":
         return StdioServerParameters(**payload)
     elif transport_hint == "sse":
@@ -87,10 +92,13 @@ def start_mcp_client(
 
 def _resolve_header(value, server_name: str):
     """Resolve a typed secret template in an MCP HTTP header."""
-    if isinstance(value, dict):
-        rendered = SecretTemplate.model_validate(value).get_secret_value(
-            server_name
-        )
+    reference = (
+        SecretTemplate.model_validate(value)
+        if isinstance(value, dict)
+        else value
+    )
+    if isinstance(reference, SecretTemplate):
+        rendered = reference.get_secret_value(server_name)
         if rendered is None:
             raise ValueError(
                 f"Secret for MCP server '{server_name}' is not set"

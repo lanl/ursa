@@ -72,6 +72,15 @@ def test_secret_reference_requires_exactly_one_source():
         SecretReference(env="TOKEN", keyring="account")
 
 
+def test_secret_reference_maybe_validate():
+    reference = SecretReference.maybe_validate({"env": "TOKEN"})
+
+    assert reference == SecretReference(env="TOKEN")
+    assert SecretReference.maybe_validate({"unrelated": True}) == {
+        "unrelated": True
+    }
+
+
 def test_secret_reference_get_secret_value(monkeypatch):
     monkeypatch.setenv("MODEL_TOKEN", "secret")
 
@@ -81,6 +90,26 @@ def test_secret_reference_get_secret_value(monkeypatch):
             env="MODEL_TOKEN", template="Bearer %s"
         ).get_secret_value()
         == "Bearer secret"
+    )
+
+
+def test_loaded_config_exposes_typed_secret_references():
+    config = UrsaConfig.model_validate({
+        "inference_providers": {"hosted": {"api_key": {"keyring": True}}},
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {"Authorization": {"env": "MCP_TOKEN"}},
+            }
+        },
+    })
+
+    assert isinstance(
+        config.inference_providers["hosted"].api_key, SecretReference
+    )
+    assert isinstance(
+        config.mcp_servers["tools"].headers["Authorization"], SecretTemplate
     )
 
 

@@ -5,6 +5,7 @@ from mcp.client.session_group import (
 )
 
 from ursa.util import mcp as mcp_mod
+from ursa.util.secrets import SecretTemplate
 
 
 def test_start_mcp_client_adds_httpx_factory_for_sse(monkeypatch):
@@ -73,6 +74,21 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
     assert captured["connections"]["demo"]["headers"] == {
         "Authorization": "Bearer token"
     }
+
+
+def test_mcp_config_loading_types_secret_headers():
+    config = mcp_mod.validate_server_parameters({
+        "transport": "streamable-http",
+        "url": "https://example.com/mcp",
+        "headers": {
+            "Authorization": {
+                "env": "MCP_TOKEN",
+                "template": "Bearer %s",
+            }
+        },
+    })
+
+    assert isinstance(config.headers["Authorization"], SecretTemplate)
 
 
 def test_mcp_header_reports_missing_environment_secret(monkeypatch):
