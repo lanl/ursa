@@ -48,8 +48,8 @@ dependencies = [
     "fastmcp~=3.0",
     "pyyaml>=6.0.3",
     "justext>=3.0.2",
-    "keyring>=25.0.0,<26.0.0",
     "textual>=8.2.8,<9.0",
+    "keyring>=25.0.0,<26.0.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",

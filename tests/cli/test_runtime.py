@@ -196,15 +196,12 @@ def _stub_hitl_dependencies(monkeypatch):
     [
         "chat",
         "arxiv",
-        "dsi",
         "execute",
         "hypothesize",
         "plan",
         "web",
     ]
-    + ["dsi"]
-    if has_optional_dep_group("dsi")
-    else [],
+    + (["dsi"] if has_optional_dep_group("dsi") else []),
 )
 async def test_agents_apply_agent_config_overrides(
     agent_name, tmp_path, monkeypatch

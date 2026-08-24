@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-import sys
 from copy import deepcopy
 from dataclasses import dataclass
 from os import environ

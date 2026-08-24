@@ -1,5 +1,3 @@
-"""Cross-platform locations used by URSA."""
-
 import os
 import shlex
 import shutil
@@ -49,6 +47,8 @@ def user_config_paths() -> list[Path]:
         if candidate not in paths:
             paths.append(candidate)
     return paths
+
+
 SSH_ENV_VARS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
 KITTY_KEYBOARD_ENV_VARS = (
     "ALACRITTY_WINDOW_ID",

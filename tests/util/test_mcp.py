@@ -60,7 +60,7 @@ def test_mcp_header_resolves_keyring_secret_template(monkeypatch):
         def __init__(self, connections):
             captured["connections"] = connections
 
-    monkeypatch.setattr(mcp_mod, "MultiServerMCPClient", DummyClient)
+    monkeypatch.setattr(mcp_mod, "UrsaMCPClient", DummyClient)
     monkeypatch.setattr(
         "keyring.get_password",
         lambda service, username: (
