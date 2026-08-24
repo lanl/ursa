@@ -191,8 +191,7 @@ Store these credentials under URSA's fixed `ursa` service before loading the
 symposium:
 
 ```bash
-keyring set ursa openai
-keyring set ursa anthropic
+ursa auth login --config symposium.yaml
 ```
 
 The environment-level `llm` is still required when you construct the symposium.

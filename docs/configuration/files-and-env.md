@@ -21,6 +21,18 @@ setting to `null` to clear it.
 `XDG_CONFIG_HOME` is supported on every platform and only affects the user
 configuration layer.
 
+### Default configuration paths
+
+| Platform | System config | Native user config |
+| --- | --- | --- |
+| Linux and other Unix | `/etc/ursa/config.yaml` | `~/.config/ursa/config.yaml` |
+| macOS | `/Library/Application Support/ursa/config.yaml` | `~/Library/Application Support/ursa/config.yaml` |
+| Windows | `%PROGRAMDATA%\ursa\config.yaml` | `%APPDATA%\ursa\config.yaml` |
+
+On every platform, URSA then checks `~/.config/ursa/config.yaml` and, when
+`XDG_CONFIG_HOME` is set, `$XDG_CONFIG_HOME/ursa/config.yaml`. These user files
+are loaded in that order, with duplicates skipped. A missing file is ignored.
+
 ## YAML files: preferred
 
 ```yaml
@@ -136,4 +148,5 @@ ursa --config ./.ursa/config.yaml --print-config=file,resolved
 
 The complete form is `--print-config=LEVEL[+],STAGE`. Levels are `system`,
 `user`, `file`, and `final`; stages are `merged` and `resolved`. Add `+` to include
-lower-precedence sources.
+lower-precedence sources. If you provide only a level, URSA uses the `resolved`
+stage; for example, `--print-config=user` shows resolved user configuration.

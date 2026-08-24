@@ -41,7 +41,7 @@ the username; a string selects a different username. Keyring secrets are
 always read from the `ursa` service. The template defaults to `%s`.
 
 ```bash
-keyring set ursa remote-tools
+ursa auth login remote-tools
 ```
 
 For an environment-backed header, use the same shape with `env`:

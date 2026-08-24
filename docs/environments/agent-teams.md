@@ -208,7 +208,7 @@ Here `keyring: true` uses `openai`, the inference-provider name, as the
 username under the fixed `ursa` keyring service:
 
 ```bash
-keyring set ursa openai
+ursa auth login openai
 ```
 
 This is optional for teams, but it can be a good way to match model cost,

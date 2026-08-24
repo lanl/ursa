@@ -7,6 +7,8 @@ from pathlib import Path
 
 def system_config_path() -> Path:
     """Return the platform-specific system-wide URSA configuration path."""
+    if sys_config := os.environ.get("URSA_SYSTEM_CONFIG"):
+        return Path(sys_config)
     if sys.platform == "win32":
         root = Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
         return root / "ursa" / "config.yaml"
