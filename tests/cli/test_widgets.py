@@ -1,7 +1,8 @@
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
+from mcp import StdioServerParameters
+from mcp.client.session_group import StreamableHttpParameters
 from textual import events
 from textual.binding import Binding
 from textual.theme import BUILTIN_THEMES
@@ -18,7 +19,11 @@ from textual.widgets import (
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
-from ursa.cli.config import InferenceProviderConfig
+from ursa.cli.config import (
+    ChatModelConfig,
+    EmbModelConfig,
+    InferenceProviderConfig,
+)
 from ursa.cli.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.widgets import (
     AgentsScreen,
@@ -393,12 +398,18 @@ async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
 
 async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
     hitl = FakeHITL(tmp_path)
-    hitl.model = SimpleNamespace(
-        model_name="test-model", base_url="https://llm.test/v1"
-    )
-    hitl.embedding = SimpleNamespace(
-        model="embed-model", base_url="https://embed.test/v1"
-    )
+    hitl.config.inference_providers.update({
+        "hosted-chat": InferenceProviderConfig(base_url="https://llm.test/v1"),
+        "hosted-embedding": InferenceProviderConfig(
+            base_url="https://embed.test/v1"
+        ),
+    })
+    hitl.config.llm_model = ChatModelConfig(
+        model="test-model", inference_provider="hosted-chat"
+    ).resolve_inference_provider(hitl.config.inference_providers)
+    hitl.config.emb_model = EmbModelConfig(
+        model="embed-model", inference_provider="hosted-embedding"
+    ).resolve_inference_provider(hitl.config.inference_providers)
     hitl.inference_provider = "hosted-chat"
     hitl.embedding_inference_provider = "hosted-embedding"
     hitl.group = "research"
@@ -412,8 +423,10 @@ async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
         )
         workspace = banner.query_one("#welcome-workspace", Static)
         assert str(workspace.content).endswith(tmp_path.name[-12:])
-        assert "test-model (hosted-chat)" in snapshot
-        assert "embed-model (hosted-embedding)" in snapshot
+        assert "test-model (hosted-chat - https://llm.test/v1)" in snapshot
+        assert (
+            "embed-model (hosted-embedding - https://embed.test/v1)" in snapshot
+        )
         assert "research" in snapshot
         assert "test-model (hosted-chat)" in str(
             app.query_one("#status", Static).content
@@ -424,6 +437,7 @@ async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
 async def test_named_agent_appears_in_statusline_and_status_command(tmp_path):
     hitl = FakeHITL(tmp_path)
     hitl.agent_name = "lab-assistant"
+    hitl.config.agent_name = "lab-assistant"
     app = UrsaTextualApp(hitl)
 
     async with app.run_test(size=(100, 36)):
@@ -524,15 +538,11 @@ async def test_picker_header_shares_the_top_row_with_exit_hint(tmp_path):
 async def test_slash_picker_opens_status_inside_textual(tmp_path):
     hitl = FakeHITL(tmp_path)
     hitl.agent_name = "lab-assistant"
-    hitl.config = SimpleNamespace(
-        mcp_servers={
-            "local": {"transport": "stdio", "command": "ursa-mcp"},
-            "remote": {
-                "transport": "streamable-http",
-                "url": "https://example.test/mcp",
-            },
-        }
-    )
+    hitl.config.agent_name = "lab-assistant"
+    hitl.config.mcp_servers = {
+        "local": StdioServerParameters(command="ursa-mcp", args=[]),
+        "remote": StreamableHttpParameters(url="https://example.test/mcp"),
+    }
     app = UrsaTextualApp(hitl)
 
     async with app.run_test(size=(80, 24)) as pilot:
@@ -553,7 +563,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()
         assert isinstance(app.screen, InformationScreen)
-        assert "LLM provider" in app.screen.content
+        assert "LLM Endpoint" in app.screen.content
         assert "lab-assistant" in app.screen.content
         assert "MCP servers" in app.screen.content
         assert "ursa-mcp" in app.screen.content
@@ -602,11 +612,19 @@ async def test_model_command_switches_provider_and_model(tmp_path):
 
         messages = list(app.query(ToolMessage))
         assert [message.content for message in messages[-2:]] == [
-            "Changed the chat model to openai:gpt-5.4 from openai "
-            "(https://api.openai.com/v1)",
-            "Changed the embedding model to openai:text-embedding-3-large "
-            "from openai (https://api.openai.com/v1)",
+            "Changed the chat model to gpt-5.4 "
+            "(openai - https://api.openai.com/v1)",
+            "Changed the embedding model to text-embedding-3-large "
+            "(openai - https://api.openai.com/v1)",
         ]
+        welcome = str(app.query_one("#welcome-config-values", Static).content)
+        assert (
+            "LLM        gpt-5.4 (openai - https://api.openai.com/v1)" in welcome
+        )
+        assert (
+            "Embedding  text-embedding-3-large "
+            "(openai - https://api.openai.com/v1)" in welcome
+        )
 
     assert hitl.model_changes == [
         (

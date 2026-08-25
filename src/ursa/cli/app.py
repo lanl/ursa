@@ -30,9 +30,6 @@ from ursa.cli.event_handler import TextualEventHandler
 from ursa.cli.helpers import (
     COMMAND_CHOICES,
     TokenUsage,
-    _embedding_name,
-    _inference_provider,
-    _model_name,
     _route_prompt,
 )
 from ursa.cli.runtime import HITL
@@ -51,6 +48,7 @@ from ursa.cli.widgets import (
     WelcomeBanner,
 )
 from ursa.util import crossplatform
+from ursa.util import mcp as ursa_mcp
 
 
 class ConversationScroll(VerticalScroll):
@@ -188,16 +186,14 @@ class UrsaTextualApp(App[None]):
         return "shift+enter" if self.kitty_keyboard_expected else "ctrl+j"
 
     def _update_status(self, state: str) -> None:
-        agent = (
-            f"  •  agent {agent_name}"
-            if (agent_name := getattr(self.hitl, "agent_name", None))
-            else ""
-        )
-        self.query_one("#status", Static).update(
-            f"{_model_name(self.hitl)} "
-            f"({_inference_provider(self.hitl.inference_provider)})  •  "
-            f"{self.total_tokens:,} tokens{agent}  •  {state}"
-        )
+        items = [
+            self.hitl.config.llm_model.pretty_repr(short=True),
+            f"{self.total_tokens} tokens",
+        ]
+        if agent_name := self.hitl.config.agent_name:
+            items.append(f"agent {agent_name}")
+        items.append(state)
+        self.query_one("#status", Static).update("  •  ".join(items))
 
     def add_tokens(self, usage: TokenUsage) -> None:
         self.total_tokens += usage.total_tokens
@@ -505,22 +501,18 @@ class UrsaTextualApp(App[None]):
                 configured = getattr(model_config, "inference_provider", None)
                 return configured if configured in providers else None
 
-            def qualified_model(
-                model_config: object | None, fallback: str
-            ) -> str:
-                if model_config is None:
-                    return fallback
-                model = str(getattr(model_config, "model", fallback))
+            def qualified_model(model_config: object) -> str:
+                model = str(getattr(model_config, "model"))
                 provider = getattr(model_config, "model_provider", None)
                 return f"{provider}:{model}" if provider else model
 
             self.push_screen(
                 ModelScreen(
                     providers,
-                    qualified_model(llm_config, _model_name(self.hitl)),
+                    qualified_model(llm_config),
                     inference_provider(llm_config),
                     (
-                        qualified_model(emb_config, "")
+                        qualified_model(emb_config)
                         if emb_config is not None
                         else None
                     ),
@@ -603,42 +595,18 @@ class UrsaTextualApp(App[None]):
                     str(exc), title="Model not changed", severity="error"
                 )
             else:
+                for banner in self.query(WelcomeBanner):
+                    banner.refresh_config()
                 conversation = self.query_one("#conversation", VerticalScroll)
-                providers = self.hitl.config.inference_providers
-
-                def provider_description(
-                    name: str | None, model_config: object
-                ) -> tuple[str, str]:
-                    provider_config = providers.get(name) if name else None
-                    base_url = (
-                        getattr(provider_config, "base_url", None)
-                        or getattr(model_config, "base_url", None)
-                        or "default"
-                    )
-                    return name or "model settings", str(base_url)
-
-                chat_provider, chat_base_url = provider_description(
-                    selection.chat.inference_provider,
-                    self.hitl.config.llm_model,
-                )
                 await conversation.mount(
                     ToolMessage(
-                        f"Changed the chat model to {chat_model} from "
-                        f"{chat_provider} ({chat_base_url})"
+                        f"Changed the chat model to {self.hitl.config.llm_model.pretty_repr()}"
                     )
                 )
                 if embedding_model is not None:
-                    embedding_provider, embedding_base_url = (
-                        provider_description(
-                            selection.embedding.inference_provider,
-                            self.hitl.config.emb_model,
-                        )
-                    )
                     await conversation.mount(
                         ToolMessage(
-                            f"Changed the embedding model to "
-                            f"{embedding_model} from {embedding_provider} "
-                            f"({embedding_base_url})"
+                            f"Changed the embedding model to {self.hitl.config.emb_model.pretty_repr()}"
                         )
                     )
                 self.call_after_refresh(
@@ -652,6 +620,7 @@ class UrsaTextualApp(App[None]):
         self.run_worker(apply(), group="model", exclusive=True)
 
     def _status_markdown(self) -> str:
+        emb_model_cfg = self.hitl.config.emb_model
         rows = [
             ("Input tokens", f"{self.input_tokens:,}"),
             ("Output tokens", f"{self.output_tokens:,}"),
@@ -660,15 +629,15 @@ class UrsaTextualApp(App[None]):
             ("Theme", self.theme),
             ("Workspace", str(Path(self.hitl.workspace).resolve())),
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
-            ("LLM model", _model_name(self.hitl)),
+            ("LLM model", self.hitl.config.llm_model.model),
+            ("LLM Endpoint", self.hitl.config.llm_model.endpoint_repr()),
             (
-                "LLM provider",
-                _inference_provider(self.hitl.inference_provider),
+                "Embedding model",
+                emb_model_cfg.model if emb_model_cfg else "None",
             ),
-            ("Embedding model", _embedding_name(self.hitl)),
             (
-                "Embedding provider",
-                _inference_provider(self.hitl.embedding_inference_provider),
+                "Embedding Endpoint",
+                emb_model_cfg.endpoint_repr() if emb_model_cfg else "None",
             ),
         ]
         if agent_name := getattr(self.hitl, "agent_name", None):
@@ -678,24 +647,19 @@ class UrsaTextualApp(App[None]):
             "|---|---|",
             *(f"| {key} | `{value}` |" for key, value in rows),
         ])
-        servers = getattr(getattr(self.hitl, "config", None), "mcp_servers", {})
+        servers = self.hitl.config.mcp_servers
         if not servers:
             return model_table + "\n\n## MCP servers\n\nNone configured."
         server_rows = []
         for name, server in servers.items():
-            if isinstance(server, Mapping):
-                transport = str(server.get("transport") or "stdio")
-                location = (
-                    server.get("url") or server.get("command") or "configured"
-                )
-            else:
-                transport = str(getattr(server, "transport", "stdio"))
-                location = (
-                    getattr(server, "url", None)
-                    or getattr(server, "command", None)
-                    or "configured"
-                )
-            server_rows.append(f"| `{name}` | {transport} | `{location}` |")
+            location = (
+                server.command
+                if isinstance(server, ursa_mcp.StdioServerParameters)
+                else server.url
+            )
+            server_rows.append(
+                f"| `{name}` | {ursa_mcp.transport(server)} | `{location}` |"
+            )
         return (
             model_table
             + "\n\n## MCP servers\n\n"

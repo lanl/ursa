@@ -261,15 +261,6 @@ def _token_usage(value: Any) -> int:
     return _token_usage_breakdown(value).total_tokens
 
 
-def _model_name(hitl: HITL) -> str:
-    model = hitl.model
-    for attribute in ("model_name", "model"):
-        value = getattr(model, attribute, None)
-        if value:
-            return str(value)
-    return type(model).__name__
-
-
 def _reasoning_trace(chunk: Any) -> str | None:
     """Extract provider-published reasoning summaries from an LLM chunk."""
 

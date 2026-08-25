@@ -30,12 +30,7 @@ from textual.widgets.option_list import Option
 
 from ursa.agents.base import URSA_VERSION
 from ursa.cli.agent_info import AgentDetails, ToolDetails
-from ursa.cli.helpers import (
-    _embedding_name,
-    _fuzzy_score,
-    _inference_provider,
-    _model_name,
-)
+from ursa.cli.helpers import _fuzzy_score
 from ursa.cli.runtime import HITL
 from ursa.cli.tips import random_tip
 
@@ -655,20 +650,21 @@ class WelcomeBanner(Vertical):
     def on_resize(self) -> None:
         self._fit_metadata()
 
-    def compose(self) -> ComposeResult:
-        embedding = getattr(self.hitl, "embedding", None)
-        embedding_text = "none"
-        if embedding is not None:
-            embedding_text = (
-                f"{_embedding_name(self.hitl)} "
-                f"({_inference_provider(self.hitl.embedding_inference_provider)})"
-            )
-        snapshot = "\n".join([
-            f"LLM        {_model_name(self.hitl)} "
-            f"({_inference_provider(self.hitl.inference_provider)})",
-            f"Embedding  {embedding_text}",
+    def _config_snapshot(self) -> str:
+        embedding = self.hitl.config.emb_model
+        return "\n".join([
+            f"LLM        {self.hitl.config.llm_model.pretty_repr()}",
+            f"Embedding  {embedding.pretty_repr() if embedding else 'none'}",
             f"Group      {getattr(self.hitl, 'group', None) or 'default'}",
         ])
+
+    def refresh_config(self) -> None:
+        """Refresh the displayed runtime configuration snapshot."""
+        self.query_one("#welcome-config-values", Static).update(
+            self._config_snapshot()
+        )
+
+    def compose(self) -> ComposeResult:
         with Horizontal(id="welcome-top"):
             with Vertical(id="welcome-logo"):
                 with Vertical(id="welcome-logo-stack"):
@@ -681,7 +677,9 @@ class WelcomeBanner(Vertical):
                         self.workspace_text,
                         id="welcome-workspace",
                     )
-                yield Static(snapshot, id="welcome-config-values")
+                yield Static(
+                    self._config_snapshot(), id="welcome-config-values"
+                )
         yield Static(
             f"Tip: {self.tip}",
             id="welcome-tip",

@@ -1,7 +1,11 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from ursa.cli.config import InferenceProviderConfig
+from ursa.cli.config import (
+    ChatModelConfig,
+    EmbModelConfig,
+    InferenceProviderConfig,
+)
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
@@ -19,22 +23,22 @@ class FakeHITL:
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
+        inference_providers = {
+            "openai": InferenceProviderConfig(
+                base_url="https://api.openai.com/v1",
+                api_key={"env": "OPENAI_API_KEY"},
+            )
+        }
         self.config = SimpleNamespace(
             mcp_servers={},
-            inference_providers={
-                "openai": InferenceProviderConfig(
-                    base_url="https://api.openai.com/v1",
-                    api_key={"env": "OPENAI_API_KEY"},
-                )
-            },
-            llm_model=SimpleNamespace(
-                model="openai:test-model",
-                base_url="https://api.openai.com/v1",
-            ),
-            emb_model=SimpleNamespace(
-                model="openai:test-embedding",
-                base_url="https://api.openai.com/v1",
-            ),
+            inference_providers=inference_providers,
+            llm_model=ChatModelConfig(
+                model="openai:test-model", inference_provider="openai"
+            ).resolve_inference_provider(inference_providers),
+            emb_model=EmbModelConfig(
+                model="openai:test-embedding", inference_provider="openai"
+            ).resolve_inference_provider(inference_providers),
+            agent_name=None,
         )
         self.calls = []
         self.model_changes = []
@@ -67,17 +71,19 @@ class FakeHITL:
             embedding_model,
             embedding_inference_provider,
         ))
-        self.config.llm_model.model = chat_model
-        self.config.emb_model = (
-            SimpleNamespace(
+        self.config.llm_model = ChatModelConfig(
+            model=chat_model,
+            inference_provider=chat_inference_provider,
+        ).resolve_inference_provider(self.config.inference_providers)
+        self.model = SimpleNamespace(model_name=self.config.llm_model.model)
+        self.config.emb_model = None
+        self.embedding = None
+        if embedding_model is not None:
+            self.config.emb_model = EmbModelConfig(
                 model=embedding_model,
-                base_url=self.config.inference_providers[
-                    embedding_inference_provider
-                ].base_url,
-            )
-            if embedding_model is not None
-            else None
-        )
+                inference_provider=embedding_inference_provider,
+            ).resolve_inference_provider(self.config.inference_providers)
+            self.embedding = SimpleNamespace(model=self.config.emb_model.model)
         self.inference_provider = chat_inference_provider
         self.embedding_inference_provider = embedding_inference_provider
 
