@@ -50,6 +50,44 @@ InformationScreen {
     background: $background 50%;
 }
 
+ModelScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
+.settings-dialog {
+    width: 70;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+ModelScreen .settings-dialog {
+    height: 25;
+}
+
+.settings-title {
+    height: 2;
+    text-style: bold;
+    color: $accent;
+}
+
+.settings-actions {
+    height: 1;
+    align-horizontal: right;
+    padding-top: 0;
+}
+
+.settings-actions Button {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+    margin-left: 1;
+}
+
 #information {
     width: 90%;
     height: 85%;
@@ -460,6 +498,21 @@ RunCommandCard.command-expanded > .event-expand-hint {
     border-left: thick $warning-muted;
     background: $panel;
     color: $text-muted;
+}
+
+.tool-message {
+    height: 1;
+    margin: 1 2 0 2;
+    color: $text-muted;
+}
+
+.tool-message-mark {
+    width: 3;
+    color: $primary;
+}
+
+.tool-message-body {
+    width: 1fr;
 }
 
 .activity.activity-after-user {

@@ -43,8 +43,11 @@ from ursa.cli.widgets import (
     HotlistScreen,
     InformationScreen,
     MessageCard,
+    ModelScreen,
+    ModelSelection,
     PromptArea,
     ThemeScreen,
+    ToolMessage,
     WelcomeBanner,
 )
 from ursa.util import crossplatform
@@ -490,6 +493,55 @@ class UrsaTextualApp(App[None]):
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
+        if command == "models":
+            providers = getattr(self.hitl.config, "inference_providers", {})
+            llm_config = getattr(self.hitl.config, "llm_model", None)
+            emb_config = getattr(self.hitl.config, "emb_model", None)
+
+            def matching_provider(
+                model_config: object | None, preferred: str | None
+            ) -> str | None:
+                if model_config is None:
+                    return None
+                base_url = getattr(model_config, "base_url", None)
+                if base_url is None:
+                    return preferred if preferred in providers else None
+                if preferred in providers and (
+                    getattr(providers[preferred], "base_url", None) == base_url
+                ):
+                    return preferred
+                return next(
+                    (
+                        name
+                        for name, provider in providers.items()
+                        if getattr(provider, "base_url", None) == base_url
+                    ),
+                    None,
+                )
+
+            self.push_screen(
+                ModelScreen(
+                    providers,
+                    str(getattr(llm_config, "model", _model_name(self.hitl))),
+                    matching_provider(
+                        llm_config,
+                        getattr(self.hitl, "inference_provider", None),
+                    ),
+                    (
+                        str(getattr(emb_config, "model", ""))
+                        if emb_config is not None
+                        else None
+                    ),
+                    matching_provider(
+                        emb_config,
+                        getattr(
+                            self.hitl, "embedding_inference_provider", None
+                        ),
+                    ),
+                ),
+                callback=self._select_model,
+            )
+            return
         if command == "theme":
             choices = [
                 self.theme,
@@ -520,6 +572,97 @@ class UrsaTextualApp(App[None]):
         if theme is not None:
             self.theme = theme
         self.query_one(PromptArea).focus()
+
+    def _select_model(self, selection: ModelSelection | None) -> None:
+        if selection is None:
+            self.query_one(PromptArea).focus()
+            return
+
+        async def apply() -> None:
+            chat_model = ":".join(
+                part
+                for part in (
+                    selection.chat.model_provider,
+                    selection.chat.model_name,
+                )
+                if part
+            )
+            embedding_model = None
+            if selection.embedding is not None:
+                embedding_model = ":".join(
+                    part
+                    for part in (
+                        selection.embedding.model_provider,
+                        selection.embedding.model_name,
+                    )
+                    if part
+                )
+            prompt = self.query_one(PromptArea)
+            prompt.disabled = True
+            self._update_status("switching model")
+            try:
+                await self.hitl.reconfigure_models(
+                    chat_model,
+                    selection.chat.inference_provider,
+                    embedding_model,
+                    (
+                        selection.embedding.inference_provider
+                        if selection.embedding is not None
+                        else None
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.notify(
+                    str(exc), title="Model not changed", severity="error"
+                )
+            else:
+                conversation = self.query_one("#conversation", VerticalScroll)
+                providers = self.hitl.config.inference_providers
+
+                def provider_description(
+                    name: str | None, model_config: object
+                ) -> tuple[str, str]:
+                    provider_config = providers.get(name) if name else None
+                    base_url = (
+                        getattr(provider_config, "base_url", None)
+                        or getattr(model_config, "base_url", None)
+                        or "default"
+                    )
+                    return name or "model settings", str(base_url)
+
+                chat_provider, chat_base_url = provider_description(
+                    selection.chat.inference_provider,
+                    self.hitl.config.llm_model,
+                )
+                await conversation.mount(
+                    ToolMessage(
+                        f"Changed the chat model to {chat_model} from "
+                        f"{chat_provider} ({chat_base_url})"
+                    )
+                )
+                if embedding_model is not None:
+                    embedding_provider, embedding_base_url = (
+                        provider_description(
+                            selection.embedding.inference_provider,
+                            self.hitl.config.emb_model,
+                        )
+                    )
+                    await conversation.mount(
+                        ToolMessage(
+                            f"Changed the embedding model to "
+                            f"{embedding_model} from {embedding_provider} "
+                            f"({embedding_base_url})"
+                        )
+                    )
+                self.call_after_refresh(
+                    self._anchor_conversation_if_overflowing
+                )
+            finally:
+                prompt.disabled = False
+                prompt.focus()
+                self._update_status("ready")
+
+        self.run_worker(apply(), group="model", exclusive=True)
 
     def _status_markdown(self) -> str:
         embedding = getattr(self.hitl, "embedding", None)

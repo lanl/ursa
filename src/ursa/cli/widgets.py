@@ -2,7 +2,8 @@
 
 """Reusable widgets and modal screens for the Textual CLI."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
 
@@ -14,10 +15,12 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import (
+    Button,
     Collapsible,
     Input,
     Markdown,
     OptionList,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -297,6 +300,142 @@ class ThemeScreen(HotlistScreen):
         self.dismiss(None)
 
 
+@dataclass(frozen=True)
+class ModelSettings:
+    model_name: str
+    model_provider: str
+    inference_provider: str | None
+
+
+@dataclass(frozen=True)
+class ModelSelection:
+    chat: ModelSettings
+    embedding: ModelSettings | None
+
+
+class ModelScreen(ModalScreen[ModelSelection | None]):
+    """Configure chat and embedding model providers."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("ctrl+enter", "apply", "Apply", priority=True),
+    ]
+
+    def __init__(
+        self,
+        providers: Mapping[str, object],
+        chat_model: str,
+        chat_inference_provider: str | None,
+        embedding_model: str | None,
+        embedding_inference_provider: str | None,
+    ) -> None:
+        super().__init__()
+        self.providers = dict(providers)
+        self.chat_model_provider, self.chat_model = self._split_model(
+            chat_model
+        )
+        self.embedding_model_provider, self.embedding_model = self._split_model(
+            embedding_model or ""
+        )
+        self.chat_inference_provider = chat_inference_provider
+        self.embedding_inference_provider = embedding_inference_provider
+
+    @staticmethod
+    def _split_model(model: str) -> tuple[str, str]:
+        if ":" in model:
+            return tuple(model.split(":", 1))
+        return "", model
+
+    def _model_fields(
+        self,
+        prefix: str,
+        model: str,
+        model_provider: str,
+        inference_provider: str | None,
+    ) -> ComposeResult:
+        options = [
+            (
+                f"{name} ({getattr(config, 'base_url', None) or 'default'})",
+                name,
+            )
+            for name, config in sorted(self.providers.items())
+        ]
+        selected_provider = inference_provider or next(iter(self.providers), "")
+        yield Static("Model")
+        yield Input(value=model, id=f"{prefix}-model-name")
+        yield Static("Model provider")
+        yield Input(value=model_provider, id=f"{prefix}-model-provider")
+        yield Static("Inference provider")
+        yield Select(
+            options,
+            value=selected_provider,
+            allow_blank=False,
+            id=f"{prefix}-inference-provider",
+        )
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="settings-dialog"):
+            yield Static("Models", classes="settings-title")
+            with TabbedContent():
+                with TabPane("Chat", id="chat-model-tab"):
+                    yield from self._model_fields(
+                        "chat",
+                        self.chat_model,
+                        self.chat_model_provider,
+                        self.chat_inference_provider,
+                    )
+                with TabPane("Embedding", id="embedding-model-tab"):
+                    yield from self._model_fields(
+                        "embedding",
+                        self.embedding_model,
+                        self.embedding_model_provider,
+                        self.embedding_inference_provider,
+                    )
+            with Horizontal(classes="settings-actions"):
+                yield Button("Cancel", id="model-cancel")
+                yield Button("Apply", id="model-apply", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#chat-model-name", Input).focus()
+
+    def _settings(self, prefix: str) -> ModelSettings | None:
+        model_name = self.query_one(
+            f"#{prefix}-model-name", Input
+        ).value.strip()
+        model_provider = self.query_one(
+            f"#{prefix}-model-provider", Input
+        ).value.strip()
+        provider_value = self.query_one(
+            f"#{prefix}-inference-provider", Select
+        ).value
+        inference_provider = (
+            provider_value if isinstance(provider_value, str) else ""
+        )
+        if not model_name:
+            return None
+        return ModelSettings(
+            model_name, model_provider, inference_provider or None
+        )
+
+    @on(Button.Pressed, "#model-apply")
+    def apply(self) -> None:
+        self.action_apply()
+
+    def action_apply(self) -> None:
+        chat = self._settings("chat")
+        if chat is None:
+            self.notify("Chat model is required", severity="error")
+            return
+        self.dismiss(ModelSelection(chat, self._settings("embedding")))
+
+    @on(Button.Pressed, "#model-cancel")
+    def cancel_button(self) -> None:
+        self.action_cancel()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class InformationScreen(ModalScreen[None]):
     """Scrollable command output displayed without leaving the application."""
 
@@ -565,6 +704,18 @@ class MessageCard(Static):
         blocks = list(event.markdown.children)
         if blocks:
             blocks[-1].styles.margin = 0
+
+
+class ToolMessage(Horizontal):
+    """A neutral transcript entry for application-level activity."""
+
+    def __init__(self, content: str) -> None:
+        super().__init__(classes="tool-message")
+        self.content = content
+
+    def compose(self) -> ComposeResult:
+        yield Static("●", classes="tool-message-mark")
+        yield Static(self.content, classes="tool-message-body")
 
 
 class ActivityIndicator(Horizontal):

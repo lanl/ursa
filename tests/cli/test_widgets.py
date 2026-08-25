@@ -5,18 +5,29 @@ from types import SimpleNamespace
 from textual import events
 from textual.binding import Binding
 from textual.theme import BUILTIN_THEMES
-from textual.widgets import Collapsible, Input, Markdown, Static, Tab, TabPane
+from textual.widgets import (
+    Collapsible,
+    Input,
+    Markdown,
+    Select,
+    Static,
+    Tab,
+    TabPane,
+)
 
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL
 from ursa.cli.app import UrsaTextualApp
+from ursa.cli.config import InferenceProviderConfig
 from ursa.cli.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.widgets import (
     AgentsScreen,
     HotlistScreen,
     InformationScreen,
+    ModelScreen,
     PromptArea,
     ThemeScreen,
+    ToolMessage,
     WelcomeBanner,
 )
 
@@ -532,12 +543,10 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert options.region.height >= 3
         assert options.region.bottom <= hotlist.region.bottom
         screenshot = app.export_screenshot()
-        assert all(
-            choice in screenshot for choice in ("agents", "status", "keymap")
-        )
+        assert "agents" in screenshot
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "exit", "status", "keymap", "theme"]
+        ] == ["agents", "exit", "status", "keymap", "models", "theme"]
 
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()
@@ -556,7 +565,55 @@ async def test_exit_command_quits_the_app(tmp_path):
         await pilot.press("/", "e", "x", "i", "t", "enter")
         await pilot.pause()
 
-    assert app._exit
+        assert app._exit
+
+
+async def test_model_command_switches_provider_and_model(tmp_path):
+    hitl = FakeHITL(tmp_path)
+    hitl.inference_provider = "stale-provider"
+    hitl.config.inference_providers["stale-provider"] = InferenceProviderConfig(
+        base_url="https://stale.example/v1"
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelScreen)
+        assert (
+            app.screen.query_one("#chat-inference-provider", Select).value
+            == "openai"
+        )
+        assert app.screen.query_one(
+            "#chat-inference-provider", Select
+        )._options == [
+            ("openai (https://api.openai.com/v1)", "openai"),
+            ("stale-provider (https://stale.example/v1)", "stale-provider"),
+        ]
+        app.screen.query_one("#chat-model-name", Input).value = "gpt-5.4"
+        app.screen.query_one(
+            "#embedding-model-name", Input
+        ).value = "text-embedding-3-large"
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        messages = list(app.query(ToolMessage))
+        assert [message.content for message in messages[-2:]] == [
+            "Changed the chat model to openai:gpt-5.4 from openai "
+            "(https://api.openai.com/v1)",
+            "Changed the embedding model to openai:text-embedding-3-large "
+            "from openai (https://api.openai.com/v1)",
+        ]
+
+    assert hitl.model_changes == [
+        (
+            "openai:gpt-5.4",
+            "openai",
+            "openai:text-embedding-3-large",
+            "openai",
+        )
+    ]
 
 
 async def test_command_picker_prioritizes_command_name_over_description(

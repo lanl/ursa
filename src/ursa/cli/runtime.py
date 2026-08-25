@@ -17,7 +17,12 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import AgentWithTools
-from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.cli.config import (
+    ChatModelConfig,
+    EmbModelConfig,
+    UrsaConfig,
+    resolve_ursa_config,
+)
 from ursa.security import (
     enforce_model_group_policy,
 )
@@ -102,6 +107,12 @@ def get_base_url(model: BaseChatModel) -> str | None:
 
 class HITL:
     def __init__(self, config: UrsaConfig):
+        self.inference_provider = config.llm_model.inference_provider
+        self.embedding_inference_provider = (
+            config.emb_model.inference_provider
+            if config.emb_model is not None
+            else None
+        )
         self.config = resolve_ursa_config(config)
         self.thread_id = self.config.thread_id or "ursa"
         # expose workspace and init common attributes
@@ -227,12 +238,101 @@ class HITL:
         self.last_agent = agent._agent
         return msg
 
-    async def aclose(self) -> None:
-        """Close instantiated agents and runtime-owned persistence resources."""
-        if self._closed:
-            return
-        self._closed = True
+    async def reconfigure_model(
+        self, model_name: str, inference_provider: str | None
+    ) -> None:
+        """Replace the chat model and reset agents bound to the old model."""
+        model_name = model_name.strip()
+        if not model_name:
+            raise ValueError("Model name cannot be empty")
+        if (
+            inference_provider is not None
+            and inference_provider not in self.config.inference_providers
+        ):
+            raise ValueError(
+                f"Unknown inference provider '{inference_provider}'"
+            )
 
+        candidate = ChatModelConfig(
+            model=model_name,
+            inference_provider=inference_provider,
+            max_completion_tokens=self.config.llm_model.max_completion_tokens,
+        )
+        resolved = candidate.resolve_inference_provider(
+            self.config.inference_providers
+        ).resolve_api_key(inference_provider)
+        model = await asyncio.to_thread(resolved.init_chat_model)
+        enforce_model_group_policy(model, self.group)
+
+        await self._close_instantiated_agents()
+        self.model = model
+        self.config.llm_model = resolved
+        self.inference_provider = inference_provider
+        self.last_agent = None
+        self.last_agent_result = None
+
+    async def reconfigure_models(
+        self,
+        chat_model: str,
+        chat_inference_provider: str | None,
+        embedding_model: str | None,
+        embedding_inference_provider: str | None,
+    ) -> None:
+        """Replace chat and embedding models after both validate successfully."""
+        for provider in (
+            chat_inference_provider,
+            embedding_inference_provider,
+        ):
+            if (
+                provider is not None
+                and provider not in self.config.inference_providers
+            ):
+                raise ValueError(f"Unknown inference provider '{provider}'")
+
+        chat_model = chat_model.strip()
+        if not chat_model:
+            raise ValueError("Chat model cannot be empty")
+        chat_config = ChatModelConfig(
+            model=chat_model,
+            inference_provider=chat_inference_provider,
+            max_completion_tokens=self.config.llm_model.max_completion_tokens,
+        )
+        resolved_chat = chat_config.resolve_inference_provider(
+            self.config.inference_providers
+        ).resolve_api_key(chat_inference_provider)
+        new_chat = await asyncio.to_thread(resolved_chat.init_chat_model)
+        enforce_model_group_policy(new_chat, self.group)
+
+        resolved_embedding = None
+        new_embedding = None
+        if embedding_model and embedding_model.strip():
+            embedding_config = EmbModelConfig(
+                model=embedding_model.strip(),
+                inference_provider=embedding_inference_provider,
+            )
+            resolved_embedding = embedding_config.resolve_inference_provider(
+                self.config.inference_providers
+            ).resolve_api_key(embedding_inference_provider)
+            new_embedding = await asyncio.to_thread(
+                resolved_embedding.init_embedding
+            )
+            enforce_model_group_policy(new_embedding, self.group)
+
+        await self._close_instantiated_agents()
+        self.model = new_chat
+        self.embedding = new_embedding
+        self.config.llm_model = resolved_chat
+        self.config.emb_model = resolved_embedding
+        self.inference_provider = chat_inference_provider
+        self.embedding_inference_provider = embedding_inference_provider
+        for wrapper in self.agents.values():
+            if "rag_tool_embedding" in wrapper.config:
+                wrapper.config["rag_tool_embedding"] = new_embedding
+        self.last_agent = None
+        self.last_agent_result = None
+
+    async def _close_instantiated_agents(self) -> None:
+        """Close and reset agents so they bind to the configured model."""
         for wrapper in self.agents.values():
             agent = wrapper._agent
             if agent is None:
@@ -245,6 +345,8 @@ class HITL:
                 agent.close()
             except Exception:
                 logging.exception("Failed to close sync agent resources")
+            wrapper._agent = None
+            wrapper.state = None
 
         for checkpointer in self._runtime_checkpointers:
             try:
@@ -253,6 +355,14 @@ class HITL:
             except Exception:
                 logging.exception("Failed to close agent checkpointer")
         self._runtime_checkpointers.clear()
+
+    async def aclose(self) -> None:
+        """Close instantiated agents and runtime-owned persistence resources."""
+        if self._closed:
+            return
+        self._closed = True
+
+        await self._close_instantiated_agents()
 
     async def close(self) -> None:
         """Compatibility alias for :meth:`aclose`."""

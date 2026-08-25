@@ -41,6 +41,7 @@ COMMAND_CHOICES = {
     "exit": "Quit URSA gracefully",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",
+    "models": "Switch chat or embedding inference providers",
     "theme": "Choose the application color theme",
 }
 

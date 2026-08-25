@@ -165,17 +165,72 @@ async def test_named_cli_agent_resources_close_once(tmp_path, monkeypatch):
     hitl.agents["chat"] = AgentHITL(agent_class=DummyPersistentAgent)
     wrapper = await hitl.get_agent("chat")
     assert wrapper._agent is not None
-    checkpointer = wrapper._agent.checkpointer
+    agent = wrapper._agent
+    checkpointer = agent.checkpointer
     assert isinstance(checkpointer, AsyncSqliteSaver)
     assert checkpointer.conn.is_alive()
 
     await hitl.close()
     await hitl.aclose()
 
-    assert wrapper._agent.async_close_count == 1
-    assert wrapper._agent.close_count == 1
+    assert agent.async_close_count == 1
+    assert agent.close_count == 1
+    assert wrapper._agent is None
     assert checkpointer.conn._connection is None
     assert not checkpointer.conn.is_alive()
+
+
+async def test_reconfigure_models_resets_agents_and_uses_selected_providers(
+    tmp_path, monkeypatch
+):
+    initial_model, _ = _stub_hitl_dependencies(monkeypatch)
+    replacement_model = MagicMock(name="replacement-llm")
+    replacement_embedding = MagicMock(name="replacement-embedding")
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+
+    class DummyAgent:
+        checkpointer = None
+
+        def __init__(self, **_kwargs):
+            self.async_closed = False
+            self.closed = False
+
+        async def aclose(self):
+            self.async_closed = True
+
+        def close(self):
+            self.closed = True
+
+    wrapper = AgentHITL(
+        agent_class=DummyAgent,
+        config={"rag_tool_embedding": None},
+    )
+    hitl.agents["chat"] = wrapper
+    await hitl.get_agent("chat")
+    old_agent = wrapper._agent
+    monkeypatch.setattr(
+        "ursa.cli.config.init_chat_model", lambda **_: replacement_model
+    )
+    monkeypatch.setattr(
+        "ursa.cli.config.init_embeddings", lambda **_: replacement_embedding
+    )
+
+    await hitl.reconfigure_models(
+        "openai:gpt-5.4",
+        "openai",
+        "openai:text-embedding-3-large",
+        "openai",
+    )
+
+    assert hitl.model is replacement_model
+    assert hitl.model is not initial_model
+    assert hitl.config.llm_model.model == "openai:gpt-5.4"
+    assert hitl.embedding is replacement_embedding
+    assert hitl.config.emb_model.model == "openai:text-embedding-3-large"
+    assert wrapper.config["rag_tool_embedding"] is replacement_embedding
+    assert wrapper._agent is None
+    assert old_agent.async_closed
+    assert old_agent.closed
 
 
 def _stub_hitl_dependencies(monkeypatch):
