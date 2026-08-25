@@ -8,6 +8,7 @@ from math import ceil
 from pathlib import Path
 
 from rich.cells import cell_len, chop_cells
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -564,7 +565,10 @@ class AgentsScreen(InformationScreen):
                             )
                             if agent.tool_error:
                                 yield Static(
-                                    "Unable to load tools: " + agent.tool_error,
+                                    Text(
+                                        "Unable to load tools: "
+                                        + agent.tool_error
+                                    ),
                                     classes="agent-tools-error",
                                 )
                             elif not agent.tools:
@@ -627,7 +631,11 @@ class WelcomeBanner(Vertical):
         workspace_row = self.query_one("#welcome-workspace-row")
         workspace = self.query_one("#welcome-workspace", Static)
         version.update(
-            self._fit_middle(self.version_text, version.content_region.width)
+            Text(
+                self._fit_middle(
+                    self.version_text, version.content_region.width
+                )
+            )
         )
         row_width = workspace_row.content_region.width
         inline = (
@@ -637,7 +645,9 @@ class WelcomeBanner(Vertical):
         workspace_row.set_class(inline, "workspace-inline")
         workspace_row.set_class(not inline, "workspace-stacked")
         workspace_width = row_width - 11 if inline else row_width
-        workspace.update(self._fit_middle(self.workspace_text, workspace_width))
+        workspace.update(
+            Text(self._fit_middle(self.workspace_text, workspace_width))
+        )
 
     def on_mount(self) -> None:
         self.tip = random_tip(
@@ -650,13 +660,15 @@ class WelcomeBanner(Vertical):
     def on_resize(self) -> None:
         self._fit_metadata()
 
-    def _config_snapshot(self) -> str:
+    def _config_snapshot(self) -> Text:
         embedding = self.hitl.config.emb_model
-        return "\n".join([
-            f"LLM        {self.hitl.config.llm_model.pretty_repr()}",
-            f"Embedding  {embedding.pretty_repr() if embedding else 'none'}",
-            f"Group      {getattr(self.hitl, 'group', None) or 'default'}",
-        ])
+        return Text(
+            "\n".join([
+                f"LLM        {self.hitl.config.llm_model.pretty_repr()}",
+                f"Embedding  {embedding.pretty_repr() if embedding else 'none'}",
+                f"Group      {getattr(self.hitl, 'group', None) or 'default'}",
+            ])
+        )
 
     def refresh_config(self) -> None:
         """Refresh the displayed runtime configuration snapshot."""
@@ -674,7 +686,7 @@ class WelcomeBanner(Vertical):
                 with Vertical(id="welcome-workspace-row"):
                     yield Static("Workspace", id="welcome-workspace-label")
                     yield Static(
-                        self.workspace_text,
+                        Text(self.workspace_text),
                         id="welcome-workspace",
                     )
                 yield Static(
@@ -715,7 +727,7 @@ class ToolMessage(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static("●", classes="tool-message-mark")
-        yield Static(self.content, classes="tool-message-body")
+        yield Static(Text(self.content), classes="tool-message-body")
 
 
 class ActivityIndicator(Horizontal):
@@ -745,7 +757,9 @@ class ActivityIndicator(Horizontal):
     def update_message(self, message: str) -> None:
         message = " ".join(str(message).split())
         if message:
-            self.query_one(".activity-text", Static).update(message[-500:])
+            self.query_one(".activity-text", Static).update(
+                Text(message[-500:])
+            )
 
     def finish(self, *, elapsed: float, tokens: int) -> None:
         if self._timer is not None:

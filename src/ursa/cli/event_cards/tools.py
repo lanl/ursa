@@ -10,6 +10,7 @@ from typing import Any
 
 from langchain_core.messages import ToolMessage
 from rich.syntax import Syntax
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Markdown, Static
@@ -45,7 +46,7 @@ class ToolCallCard(EventCard):
         self._spinner_timer = None
 
     def compose(self) -> ComposeResult:
-        yield Static(f"🛠️ {self.tool}", classes="tool-call-title")
+        yield Static(Text(f"🛠️ {self.tool}"), classes="tool-call-title")
         with Horizontal(classes="tool-call-summary"):
             yield Static(ActivityIndicator.FRAMES[0], classes="tool-call-state")
             yield Static(
@@ -67,11 +68,11 @@ class ToolCallCard(EventCard):
         self._update_expand_hint()
 
     @staticmethod
-    def _preview(value: Any, limit: int = 120) -> str:
+    def _preview(value: Any, limit: int = 120) -> Text:
         preview = _json(value, compact=True)
         if len(preview) > limit:
-            return preview[: limit - 1] + "…"
-        return preview
+            preview = preview[: limit - 1] + "…"
+        return Text(preview)
 
     @staticmethod
     def _syntax(value: Any) -> Syntax:

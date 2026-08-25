@@ -112,7 +112,9 @@ class EditCard(EventCard):
         if self.show_heading:
             yield Static("✍️ Editing", classes="edit-group-title")
         with Horizontal(classes="edit-header"):
-            yield Static(f"- {Path(self.path).name}", classes="edit-title")
+            yield Static(
+                Text(f"- {Path(self.path).name}"), classes="edit-title"
+            )
             counts = Text(f"+{self.additions}", style="green")
             counts.append(f" -{self.deletions}", style="red")
             yield Static(counts, classes="edit-counts")

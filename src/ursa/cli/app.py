@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
+from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -193,7 +194,7 @@ class UrsaTextualApp(App[None]):
         if agent_name := self.hitl.config.agent_name:
             items.append(f"agent {agent_name}")
         items.append(state)
-        self.query_one("#status", Static).update("  •  ".join(items))
+        self.query_one("#status", Static).update(Text("  •  ".join(items)))
 
     def add_tokens(self, usage: TokenUsage) -> None:
         self.total_tokens += usage.total_tokens

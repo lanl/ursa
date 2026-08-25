@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from rich.syntax import Syntax
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
@@ -38,7 +39,7 @@ class CommandSafetyIndicator(ActivityIndicator):
             self._timer.pause()
         self.query_one(".activity-spinner", Static).update("⚔️")
         self.query_one(".activity-text", Static).update(
-            reason or "Safety check failed"
+            Text(reason or "Safety check failed")
         )
 
     def unavailable(self) -> None:
@@ -250,9 +251,7 @@ class RunCommandCard(EventCard):
         )
         output = output or "(no output)"
         self.query_one(".command-output", Static).update(
-            Syntax(
-                output, "text", word_wrap=True, background_color="default"
-            )
+            Syntax(output, "text", word_wrap=True, background_color="default")
         )
 
     def _update_visibility(self) -> None:

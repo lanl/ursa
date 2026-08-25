@@ -25,8 +25,9 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
         await pilot.pause()
 
         card = turn.query_one(ToolCallCard)
-        assert card.query_one(".tool-call-title", Static).content == (
-            "🛠️ lookup_widget"
+        assert (
+            str(card.query_one(".tool-call-title", Static).content)
+            == "🛠️ lookup_widget"
         )
         assert card.tool_input == {"query": "bear", "limit": 5}
         assert not card.completed
@@ -78,6 +79,25 @@ async def test_default_tool_card_shows_failure_output(tmp_path):
         assert card.failed
         assert card.output == "bad filter"
         assert card.query_one(".tool-call-state", Static).content == "✗"
+
+
+async def test_tool_call_preview_renders_code_brackets_as_plain_text(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    output = "[patch={'old_code': 'ax.set_xticklabels([labels])'}]"
+
+    async with app.run_test(size=(100, 24)) as pilot:
+        turn = Turn("edit it", tmp_path)
+        await app.query_one("#conversation", VerticalScroll).mount(turn)
+        handler = TextualEventHandler(app, turn)
+        await handler.on_tool_start(
+            {"name": "edit_plot"}, "", run_id="code", inputs={}
+        )
+        await handler.on_tool_end(output, run_id="code")
+        await pilot.pause()
+
+        card = turn.query_one(ToolCallCard)
+        assert card.completed
+        assert card.output == output
 
 
 async def test_tool_message_prefers_structured_content_as_json(tmp_path):
