@@ -176,9 +176,21 @@ def test_default_openai_provider_is_explicit():
     assert config.inference_providers["openai"].api_key == APIKeyConfig(
         env="OPENAI_API_KEY"
     )
-
     resolved = resolve_ursa_config(config)
     assert resolved.llm_model.base_url == "https://api.openai.com/v1"
+
+
+def test_ursa_config_resolve_delegates_to_canonical_function(monkeypatch):
+    config = UrsaConfig()
+    resolved = object()
+    calls = []
+    monkeypatch.setattr(
+        "ursa.cli.config.resolve_ursa_config",
+        lambda value: calls.append(value) or resolved,
+    )
+
+    assert config.resolve() is resolved
+    assert calls == [config]
 
 
 def test_print_config_level_gets_default_stage():

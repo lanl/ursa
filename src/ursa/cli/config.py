@@ -100,6 +100,7 @@ class ModelConfig(BaseModel):
     """Configuration manager for LangChain's `init_*` factories."""
 
     model_config = ConfigDict(extra="allow")
+    _inference_provider_resolved: bool = PrivateAttr(default=False)
 
     model: str
     """Model provider and model name.
@@ -153,11 +154,12 @@ class ModelConfig(BaseModel):
         )
         model_values = self.model_dump(mode="python", exclude_unset=True)
 
-        return type(self).model_validate({
+        resolved = type(self).model_validate({
             **provider_values,
             **model_values,
-            "inference_provider": None,
         })
+        resolved._inference_provider_resolved = True
+        return resolved
 
     @staticmethod
     def _merge_provider_kwargs(
@@ -175,12 +177,16 @@ class ModelConfig(BaseModel):
         """Return a dict suitable for init_chat_model/init_embedding_model
         Removes parameters set to `None`
         """
-        if self.inference_provider is not None:
+        if (
+            self.inference_provider is not None
+            and not self._inference_provider_resolved
+        ):
             raise ValueError(
                 f"Model config references unresolved inference provider "
                 f"'{self.inference_provider}'"
             )
         kwargs = {k: v for k, v in self.model_dump().items() if v is not None}
+        kwargs.pop("inference_provider", None)
         ssl_verify = kwargs.pop("ssl_verify", True)
         model_provider = self._model_provider()
         if model_provider in {"openai", "azure_openai"}:
@@ -370,6 +376,10 @@ class UrsaConfig(BaseModel):
     @classmethod
     def from_file(cls, path: Path):
         return cls.model_validate(load_config_file(path))
+
+    def resolve(self) -> Self:
+        """Return this config after applying canonical resolution."""
+        return resolve_ursa_config(self)
 
     @field_serializer("workspace")
     def serialize_workspace(self, workspace: Path, _info):

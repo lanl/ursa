@@ -940,11 +940,12 @@ def test_inference_provider_applies_to_llm_model():
 
     assert config.llm_model.inference_provider == "local-openai"
     assert config.llm_model.base_url is None
-    assert resolved.inference_provider is None
+    assert resolved.inference_provider == "local-openai"
     assert resolved.base_url == "https://models.example.org/v1"
     assert resolved.ssl_verify is False
     assert resolved.api_key == APIKeyConfig(env="PROVIDER_API_KEY")
     assert resolved.model_extra["timeout"] == 45
+    assert "inference_provider" not in resolved.kwargs
 
 
 def test_inference_provider_applies_to_embedding_model():
@@ -968,10 +969,11 @@ def test_inference_provider_applies_to_embedding_model():
     )
     assert config.emb_model.inference_provider == "local-embeddings"
     assert config.emb_model.base_url is None
-    assert resolved.inference_provider is None
+    assert resolved.inference_provider == "local-embeddings"
     assert resolved.base_url == "https://embeddings.example.org/v1"
     assert resolved.ssl_verify is False
     assert resolved.model_extra["cache_dir"] == "/tmp/provider-cache"
+    assert "inference_provider" not in resolved.kwargs
 
 
 def test_model_config_explicit_values_override_inference_provider():
@@ -1079,8 +1081,18 @@ def test_resolve_ursa_config_applies_inference_provider():
 
     resolved = resolve_ursa_config(config)
 
-    assert resolved.llm_model.inference_provider is None
+    assert resolved.llm_model.inference_provider == "openai_public"
     assert resolved.llm_model.base_url == "https://api.openai.com/v1"
+    assert "inference_provider" not in resolved.llm_model.kwargs
+
+
+def test_resolved_config_can_be_dumped_reloaded_and_resolved_again():
+    resolved = UrsaConfig().resolve()
+
+    reloaded = UrsaConfig.model_validate(resolved.model_dump()).resolve()
+
+    assert reloaded.llm_model.inference_provider == "openai"
+    assert "inference_provider" not in reloaded.llm_model.kwargs
 
 
 @pytest.mark.parametrize(
@@ -1091,6 +1103,7 @@ def test_resolve_ursa_config_applies_inference_provider():
             "resolved",
             {
                 "base_url": "https://provider.example/v1",
+                "inference_provider": "shared",
                 "ssl_verify": False,
             },
         ),
@@ -1114,14 +1127,7 @@ def test_print_config_includes_defaults_and_nulls(
             }
         },
     )
-    resolved = UrsaConfig(
-        inference_providers=merged.inference_providers,
-        llm_model={
-            "base_url": "https://provider.example/v1",
-            "ssl_verify": False,
-        },
-        mcp_servers=merged.mcp_servers,
-    )
+    resolved = resolve_ursa_config(merged)
     print_config_module = importlib.import_module("ursa.cli.print_config")
     monkeypatch.setattr(
         print_config_module,
