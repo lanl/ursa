@@ -24,58 +24,40 @@ Use URSA when you want to:
 We recommend installing with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-uv pip install ursa-ai
+uv tool install 'ursa[dashboard]'
 ```
 
-If you prefer `pip`:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install ursa-ai
-```
-
-For the web dashboard, install the dashboard extra:
-
-```bash
-uv pip install "ursa-ai[dashboard]"
-# or
-python -m pip install "ursa-ai[dashboard]"
-```
-
-See the [Installation](installation/index.md) section for platform-specific details.
+See [Getting started][getting-started] for installation alternatives and a
+walkthough of using URSA.
 
 ## Quick first run
 
-Create a reusable configuration file, for example `config.yaml`:
+For OpenAI, set the standard API-key environment variable and run URSA. The
+built-in provider includes the model and base URL, so no config file is needed:
 
-```yaml
-llm_model:
-  model: openai:gpt-5.4
-  api_key:
-    env: OPENAI_API_KEY
-```
+=== "macOS/Linux"
 
-Then run:
+    ```bash
+    export OPENAI_API_KEY="..."
+    ursa
+    ```
 
-```bash
-ursa --config config.yaml
-```
+=== "Windows PowerShell"
+
+    ```powershell
+    $env:OPENAI_API_KEY = "..."
+    ursa
+    ```
 
 Inside the URSA app, type `/` to browse commands or try:
 
-```text
-Summarize what URSA can help me do.
-#execute Write and run a Python script that prints the first 10 prime numbers.
-```
+- `Summarize what URSA can help me do.`
+- `#execute Write and run a Python script that prints the first 10 prime numbers.`
 
 ## Where to go next
 
-- [Install URSA](installation/index.md)
-- [Get started with the CLI][getting-started-cli]
+- [Follow the getting started guide][getting-started]
+- [Try a worked example][examples]
 - [Get started with Python scripts][getting-started-python-scripts]
 - [Configure model endpoints](configuration/index.md)
 - [Use named agents and persistence](persistence/index.md)

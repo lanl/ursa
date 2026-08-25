@@ -2,24 +2,8 @@
 
 The URSA web dashboard provides a browser-based interface for running URSA workflows.
 
-!!! note "Screenshots forthcoming"
-    A complete dashboard walkthrough should include screenshots. This page currently covers installation and launch commands; a fuller visual guide can be added later.
-
-## Install dashboard dependencies
-
-Install URSA with the dashboard extra:
-
-=== "uv"
-
-    ```bash
-    uv pip install "ursa-ai[dashboard]"
-    ```
-
-=== "pip"
-
-    ```bash
-    python -m pip install "ursa-ai[dashboard]"
-    ```
+Install URSA first with `uv tool install 'ursa[dashboard]'` as described in the
+[getting started guide][getting-started].
 
 ## Launch the dashboard
 
@@ -39,7 +23,18 @@ ursa-dashboard \
   --config config.yaml
 ```
 
-The config file initializes the dashboard LLM endpoint settings.
+The optional config file initializes the dashboard LLM endpoint settings. It is
+not needed for the built-in OpenAI provider.
+
+## First session
+
+1. Open **Settings → LLM** and confirm the endpoint and credential source.
+2. Create a session.
+3. Select a folder you are comfortable modifying, or choose **Temporary
+   workspace** for disposable work.
+4. Choose an agent and submit a prompt.
+5. Follow the activity timeline and inspect generated files in the artifacts
+   panel.
 
 ## Configure API credentials
 

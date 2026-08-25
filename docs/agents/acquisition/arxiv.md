@@ -89,9 +89,9 @@ By default, the agent writes artifacts under the agent den:
 - final direct-summarization file: `arxiv_generated_summaries/final_summary.txt`
 - RAG workflow artifacts are managed by the shared RAG path when `rag_embedding` is provided.
 
-## CLI
+## TUI
 
-The interactive CLI registers this agent as:
+The TUI registers this agent as:
 
 ```text
 arxiv

@@ -2,7 +2,7 @@
 
 URSA agents are reusable behaviors that can chat, plan, execute, search, maintain persistent research artifacts, reason over documents, refine prompts, or interact with external tools.
 
-The interactive command-line interface exposes common agents by short names, including:
+The TUI exposes common agents by short names, including:
 
 - `chat`
 - `plan`
@@ -30,7 +30,8 @@ Additional agents may be available depending on optional dependencies and config
 
 ## Web and external information
 
-Web/search tools are opt-in for information-control reasons. For CLI sessions, enable them with:
+Web/search tools are opt-in for information-control reasons. When launching the
+TUI, enable them with this CLI flag:
 
 ```bash
 ursa --use-web
