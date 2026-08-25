@@ -13,7 +13,6 @@ from pydantic import ValidationError
 from ursa.cli import (
     build_parser,
     main,
-    resolve_config,
 )
 from ursa.cli.config import (
     ChatModelConfig,
@@ -69,8 +68,8 @@ def _parse_config_args(parser, args):
 
 
 def _resolve_args(parser, args):
-    cfg, overrides = _parse_config_args(parser, args)
-    return resolve_config(cfg, overrides)
+    cfg, env_overrides = _parse_config_args(parser, args)
+    return merge_ursa_config(cfg, env_overrides=env_overrides).resolve()
 
 
 def test_cli_warns_about_legacy_unnamed_checkpoint(
@@ -185,7 +184,7 @@ def test_rag_metadata_commands_dispatch_before_config_resolution(
     handle = MagicMock(return_value=True)
     monkeypatch.setattr("ursa.cli.handle_rag_command", handle)
     monkeypatch.setattr(
-        "ursa.cli.resolve_config",
+        "ursa.cli.merge_ursa_config",
         MagicMock(side_effect=AssertionError("must not resolve config")),
     )
 
@@ -381,7 +380,7 @@ def test_print_config_parser_rejects_invalid_values(spec):
         build_parser().parse_args([f"--print-config={spec}"])
 
 
-def test_resolve_config_preserves_cli_tmp_workspace_owner():
+def test_cli_config_resolution_preserves_tmp_workspace_owner():
     parser = build_parser()
     config = _resolve_args(parser, ["--workspace", "tmp"])
 
@@ -390,7 +389,7 @@ def test_resolve_config_preserves_cli_tmp_workspace_owner():
     assert config._temp_workspace.name == str(config.workspace)
 
 
-def test_resolve_config_preserves_file_tmp_workspace_owner(tmp_path):
+def test_file_config_resolution_preserves_tmp_workspace_owner(tmp_path):
     cfg_path = tmp_path / "ursa.yml"
     cfg_path.write_text("workspace: tmp\n")
     parser = build_parser()
@@ -629,7 +628,7 @@ def test_merge_ursa_config_applies_sparse_overrides(tmp_path, monkeypatch):
 
     config = merge_ursa_config(
         Namespace(),
-        overrides={
+        env_overrides={
             "group": "default",
             "llm_model": {
                 "model": "openai:gpt-5.4",
@@ -652,7 +651,7 @@ def test_merge_ursa_config_normalizes_empty_yaml(tmp_path, monkeypatch):
         lambda cfg, level="final": [cfg_path],
     )
 
-    config = merge_ursa_config(Namespace(), overrides={})
+    config = merge_ursa_config(Namespace(), env_overrides={})
 
     assert config == UrsaConfig()
     assert load_config_file(cfg_path) == {}
@@ -712,7 +711,7 @@ def test_xdg_config_dirs_do_not_replace_native_system_config(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "missing"))
     monkeypatch.setattr("ursa.cli.config.system_config_path", lambda: high)
 
-    config = merge_ursa_config(Namespace(), overrides={})
+    config = merge_ursa_config(Namespace(), env_overrides={})
 
     assert config.group == "high"
 
@@ -736,6 +735,24 @@ def test_config_search_paths_ignores_project_config(tmp_path, monkeypatch):
         user_cfg,
         explicit_cfg,
     ]
+
+
+def test_config_search_paths_cumulative_levels_include_lower_precedence(
+    tmp_path, monkeypatch
+):
+    system = tmp_path / "system.yaml"
+    user = tmp_path / "user.yaml"
+    explicit = tmp_path / "explicit.yaml"
+    for path in (system, user, explicit):
+        path.write_text("{}\n")
+    monkeypatch.setattr("ursa.cli.config.system_config_paths", lambda: [system])
+    monkeypatch.setattr("ursa.cli.config.user_config_paths", lambda: [user])
+    cfg = Namespace(config=explicit)
+
+    assert config_search_paths(cfg, "user") == [user]
+    assert config_search_paths(cfg, "user+") == [system, user]
+    assert config_search_paths(cfg, "file") == [explicit]
+    assert config_search_paths(cfg, "file+") == [system, user, explicit]
 
 
 def test_merge_ursa_config_validates_provider_after_merging_layers(
@@ -766,7 +783,7 @@ def test_merge_ursa_config_validates_provider_after_merging_layers(
         lambda cfg, level="final": [user_config, project_config],
     )
 
-    config = merge_ursa_config(Namespace(), overrides={})
+    config = merge_ursa_config(Namespace(), env_overrides={})
 
     assert "openai_project" in config.inference_providers
     assert config.llm_model.model == "gpt-5.4-mini"

@@ -218,16 +218,9 @@ def dashboard_llm_patch_from_ursa_config(
     cfg = cfg.model_copy(
         update={"group": group, "llm_model": llm_cfg, "emb_model": emb_cfg}
     )
-    llm_api_key_env = llm_cfg.resolve_inference_provider(
-        cfg.inference_providers
-    ).api_key_env
-    emb_api_key_env = (
-        emb_cfg.resolve_inference_provider(cfg.inference_providers).api_key_env
-        if emb_cfg is not None
-        else None
-    )
     cfg = resolve_ursa_config(cfg)
     llm_cfg = cfg.llm_model
+    llm_api_key_env = llm_cfg.api_key_env
 
     patch: dict[str, Any] = {"model": _qualified_model_name(llm_cfg)}
     if llm_cfg.base_url is not None:
@@ -271,6 +264,7 @@ def dashboard_llm_patch_from_ursa_config(
 
     emb_cfg = cfg.emb_model
     if emb_cfg is not None:
+        emb_api_key_env = emb_cfg.api_key_env
         emb_patch: dict[str, Any] = {"model": _qualified_model_name(emb_cfg)}
         if emb_cfg.base_url is not None:
             emb_patch["base_url"] = emb_cfg.base_url

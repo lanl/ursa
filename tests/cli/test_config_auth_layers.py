@@ -34,14 +34,14 @@ def test_config_precedence_all_six_layers(tmp_path, monkeypatch):
     config_flag = {"config": explicit}
     assert (
         merge_ursa_config(
-            namespace, overrides={}, cli_overrides=config_flag
+            namespace, env_overrides={}, cli_overrides=config_flag
         ).llm_model.model
         == "explicit"
     )
     assert (
         merge_ursa_config(
             namespace,
-            overrides={"llm_model": {"model": "env"}},
+            env_overrides={"llm_model": {"model": "env"}},
             cli_overrides=config_flag,
         ).llm_model.model
         == "explicit"
@@ -49,7 +49,7 @@ def test_config_precedence_all_six_layers(tmp_path, monkeypatch):
     assert (
         merge_ursa_config(
             namespace,
-            overrides={"llm_model": {"model": "env"}},
+            env_overrides={"llm_model": {"model": "env"}},
             cli_overrides={
                 "config": explicit,
                 "llm_model": {"model": "cli"},
@@ -116,7 +116,7 @@ def test_config_merge_base_url_clears_lower_priority_provider(
         lambda cfg, level="final": [user, explicit],
     )
 
-    config = merge_ursa_config(Namespace(), overrides={})
+    config = merge_ursa_config(Namespace(), env_overrides={})
 
     assert config.llm_model.base_url == "https://models.example/v1"
     assert config.llm_model.inference_provider is None
@@ -329,6 +329,6 @@ def test_user_config_precedence_is_platform_then_dot_config_then_xdg(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"group: {group}\n", encoding="utf-8")
 
-    config = merge_ursa_config(Namespace(), overrides={})
+    config = merge_ursa_config(Namespace(), env_overrides={})
 
     assert config.group == "xdg"

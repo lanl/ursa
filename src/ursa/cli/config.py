@@ -259,14 +259,12 @@ class ModelConfig(BaseModel):
                 "client_kwargs",
                 {"verify": httpx_verify_value(verify=ssl_verify)},
             )
-        if isinstance(api_key := self.api_key, SecretReference):
+        if (api_key := self.api_key) is not None:
             value = api_key.get_secret_value()
             if value is None:
                 kwargs.pop("api_key", None)
             else:
                 kwargs["api_key"] = value
-        elif isinstance(api_key, SecretStr):
-            kwargs["api_key"] = api_key.get_secret_value()
         return kwargs
 
     @staticmethod
@@ -537,64 +535,83 @@ def config_search_paths(cfg: Namespace, level: str = "final") -> list[Path]:
 
     file_paths = [explicit_path] if explicit_path is not None else []
 
-    if level == "system":
-        return system_paths
-    if level == "user":
-        return user_paths
-    if level == "file" and not cumulative:
-        return file_paths
-    return [*system_paths, *user_paths, *file_paths]
+    paths_by_level = {
+        "system": system_paths,
+        "user": user_paths,
+        "file": file_paths,
+    }
+    if level == "final":
+        return [*system_paths, *user_paths, *file_paths]
+    if not cumulative:
+        return paths_by_level[level]
+
+    ordered_levels = ("system", "user", "file")
+    level_index = ordered_levels.index(level)
+    return [
+        path
+        for name in ordered_levels[: level_index + 1]
+        for path in paths_by_level[name]
+    ]
+
+
+def _namespace_values(value: Namespace | dict[str, Any]) -> dict[str, Any]:
+    return value.as_dict() if isinstance(value, Namespace) else value
+
+
+def _ursa_config_values(
+    value: Namespace | dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        key: item
+        for key, item in _namespace_values(value).items()
+        if key in UrsaConfig.model_fields
+    }
+
+
+def config_layers(
+    cfg: Namespace,
+    level: str = "final",
+    env_overrides: Namespace | dict[str, Any] | None = None,
+    cli_overrides: Namespace | dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return raw configuration layers in increasing precedence order."""
+    paths = config_search_paths(cfg, level)
+    cli_config_path = (
+        config_path_from_namespace(cli_overrides)
+        if cli_overrides is not None
+        else None
+    )
+    final = level.removesuffix("+") == "final"
+
+    if final and cli_config_path is not None:
+        file_paths = [path for path in paths if path != cli_config_path]
+    else:
+        file_paths = paths
+    layers = [load_config_file(path) for path in file_paths]
+
+    if not final:
+        return layers
+    if env_overrides is None:
+        raise ValueError("Final config layering requires sparse env overrides")
+
+    layers.append(_ursa_config_values(env_overrides))
+    if cli_config_path is not None and cli_config_path in paths:
+        layers.append(load_config_file(cli_config_path))
+    if cli_overrides is not None:
+        layers.append(_ursa_config_values(cli_overrides))
+    return layers
 
 
 def merge_ursa_config(
     cfg: Namespace,
     level: str = "final",
-    overrides: Namespace | dict[str, Any] | None = None,
+    env_overrides: Namespace | dict[str, Any] | None = None,
     cli_overrides: Namespace | dict[str, Any] | None = None,
 ) -> UrsaConfig:
     """Merge sparse configuration sources, then validate the result once."""
-    layers: list[dict[str, Any]] = []
-    paths = config_search_paths(cfg, level)
-    explicit_path = (
-        config_path_from_namespace(cli_overrides)
-        if cli_overrides is not None
-        else None
+    return UrsaConfig().model_merge(
+        *config_layers(cfg, level, env_overrides, cli_overrides)
     )
-    if level.removesuffix("+") == "final" and explicit_path is not None:
-        lower_paths = [path for path in paths if path != explicit_path]
-    else:
-        lower_paths = paths
-    for config_path in lower_paths:
-        layers.append(load_config_file(config_path))
-
-    if level.removesuffix("+") == "final":
-        if overrides is None:
-            raise ValueError("Final config merging requires sparse overrides")
-        override_values = (
-            overrides.as_dict()
-            if isinstance(overrides, Namespace)
-            else overrides
-        )
-        layers.append({
-            key: value
-            for key, value in override_values.items()
-            if key in UrsaConfig.model_fields
-        })
-        if explicit_path is not None and explicit_path in paths:
-            layers.append(load_config_file(explicit_path))
-        if cli_overrides is not None:
-            cli_values = (
-                cli_overrides.as_dict()
-                if isinstance(cli_overrides, Namespace)
-                else cli_overrides
-            )
-            layers.append({
-                key: value
-                for key, value in cli_values.items()
-                if key in UrsaConfig.model_fields
-            })
-
-    return UrsaConfig().model_merge(*layers)
 
 
 @dataclass
@@ -673,20 +690,13 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
     )
     resolved._temp_workspace = config._temp_workspace
 
-    if resolved.llm_model is not None:
-        resolved.llm_model = resolved.llm_model.resolve_inference_provider(
-            resolved.inference_providers
-        )
-        enforce_group_base_url_policy(
-            resolved.llm_model.base_url, resolved.group
-        )
-    if resolved.emb_model is not None:
-        resolved.emb_model = resolved.emb_model.resolve_inference_provider(
-            resolved.inference_providers
-        )
-        enforce_group_base_url_policy(
-            resolved.emb_model.base_url, resolved.group
-        )
+    for field_name in ("llm_model", "emb_model"):
+        model = getattr(resolved, field_name)
+        if model is None:
+            continue
+        model = model.resolve_inference_provider(resolved.inference_providers)
+        enforce_group_base_url_policy(model.base_url, resolved.group)
+        setattr(resolved, field_name, model)
 
     if str(resolved.workspace) == "tmp":
         if resolved._temp_workspace is not None:

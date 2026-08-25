@@ -8,6 +8,7 @@ from ursa.cli.auth import (
     list_credentials,
     login,
 )
+from ursa.cli.config import load_config_file
 
 
 @pytest.fixture
@@ -238,8 +239,10 @@ llm_model:
 """
     )
     monkeypatch.setattr(
-        "ursa.cli.auth.config_search_paths",
-        lambda namespace: [system, user, explicit],
+        "ursa.cli.auth.config_layers",
+        lambda namespace, level: [
+            load_config_file(path) for path in (system, user, explicit)
+        ],
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "present")
     fake_keyring[(KEYRING_SERVICE, "mcp-account")] = "present"
@@ -306,7 +309,8 @@ mcp_servers:
 """
     )
     monkeypatch.setattr(
-        "ursa.cli.auth.config_search_paths", lambda namespace: [config]
+        "ursa.cli.auth.config_layers",
+        lambda namespace, level: [load_config_file(config)],
     )
 
     lines = configured_secret_lines(config)["MCP Servers:"]
@@ -328,7 +332,8 @@ llm_model:
 """
     )
     monkeypatch.setattr(
-        "ursa.cli.auth.config_search_paths", lambda namespace: [config]
+        "ursa.cli.auth.config_layers",
+        lambda namespace, level: [load_config_file(config)],
     )
 
     list_credentials(config)
@@ -347,7 +352,8 @@ llm_model:
 """
     )
     monkeypatch.setattr(
-        "ursa.cli.auth.config_search_paths", lambda namespace: [config]
+        "ursa.cli.auth.config_layers",
+        lambda namespace, level: [load_config_file(config)],
     )
     calls = []
 
@@ -376,7 +382,8 @@ inference_providers:
 """
     )
     monkeypatch.setattr(
-        "ursa.cli.auth.config_search_paths", lambda namespace: [config]
+        "ursa.cli.auth.config_layers",
+        lambda namespace, level: [load_config_file(config)],
     )
     fake_keyring[(KEYRING_SERVICE, "hosted")] = "visible-token"
 
@@ -393,7 +400,8 @@ def test_auth_list_prints_nothing_when_no_secrets_exist(
     config = tmp_path / "config.yaml"
     config.write_text("workspace: .\n")
     monkeypatch.setattr(
-        "ursa.cli.auth.config_search_paths", lambda namespace: [config]
+        "ursa.cli.auth.config_layers",
+        lambda namespace, level: [load_config_file(config)],
     )
 
     list_credentials(config)

@@ -14,7 +14,6 @@ from ursa.cli.config import (
     deep_interp_env,
 )
 from ursa.security import enforce_group_base_url_policy, group_environments_dir
-from ursa.util.secrets import SecretReference
 
 
 @dataclass(frozen=True)
@@ -51,21 +50,9 @@ class EnvironmentMemberConfig:
         model = raw.get("model")
         if isinstance(model, Mapping):
             model_config = ModelConfig.model_validate(model)
-            provider_name = model_config.inference_provider
-            if provider_name is not None:
-                providers = dict(inference_providers or {})
-                model_config = model_config.resolve_inference_provider(
-                    providers
-                )
-                if (
-                    isinstance(model_config.api_key, SecretReference)
-                    and model_config.api_key.keyring is True
-                ):
-                    model_config = model_config.model_copy(
-                        update={
-                            "api_key": SecretReference(keyring=provider_name)
-                        }
-                    )
+            model_config = model_config.resolve_inference_provider(
+                dict(inference_providers or {})
+            )
             enforce_group_base_url_policy(model_config.base_url, group)
             raw["model"] = model_config
         return cls(**raw)

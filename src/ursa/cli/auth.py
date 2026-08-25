@@ -14,7 +14,7 @@ import keyring
 from jsonargparse import ArgumentParser, Namespace
 
 from ursa.cli.config import (
-    config_search_paths,
+    config_layers,
     deep_merge_dicts,
     load_config_file,
 )
@@ -184,8 +184,8 @@ def configured_secret_lines(
     """Build the categorized report for the active config stack."""
     merged = {}
     config_namespace = Namespace(config=config, subcommand=None)
-    for path in config_search_paths(config_namespace):
-        merged = deep_merge_dicts(merged, load_config_file(path))
+    for layer in config_layers(config_namespace, "file+"):
+        merged = deep_merge_dicts(merged, layer)
     return _secret_lines(merged, show_secrets)
 
 

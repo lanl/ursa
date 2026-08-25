@@ -24,7 +24,6 @@ from ursa.cli.config import (
     MCPServerConfig,
     UrsaConfig,
     merge_ursa_config,
-    resolve_ursa_config,
 )
 from ursa.cli.groups import (
     add_group_subcommands,
@@ -153,25 +152,6 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def resolve_config(
-    cfg, overrides, cli_overrides=None, *, group: str | None = None
-) -> UrsaConfig:
-    """Produce the fully resolved UrsaConfig from the parsed arguments.
-
-    This function merges configuration layers in precedence order and then
-    applies derived resolution semantics such as temporary workspace
-    materialization, top-level ``use_web`` promotion into ``agent_config``, and
-    group-based endpoint policy enforcement. Consumers with a more specific
-    effective group supply it before resolution.
-    """
-    merged = merge_ursa_config(
-        cfg, overrides=overrides, cli_overrides=cli_overrides
-    )
-    if group is not None:
-        merged = merged.model_copy(update={"group": group})
-    return resolve_ursa_config(merged)
-
-
 def _initialize_hitl(config: UrsaConfig):
     """Create the CLI controller and report provider initialization errors cleanly."""
     from ursa.cli.hitl import HITL
@@ -206,12 +186,12 @@ def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
-    overrides = parser.parse_args(args=[], defaults=False)
+    env_overrides = parser.parse_args(args=[], defaults=False)
     cli_overrides = parser.parse_args(args=args, defaults=False, env=False)
 
     subcommand = cfg.get("subcommand", None)
     logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
-    _apply_legacy_name_env(cfg, overrides)
+    _apply_legacy_name_env(cfg, env_overrides)
 
     match subcommand:
         case "auth":
@@ -284,16 +264,23 @@ def main(args=None):
 
     if subcommand in RAG_COMMANDS:
         cmd_config = cfg.get(subcommand, None)
-        ursa_config = resolve_config(
-            cfg, overrides, cli_overrides, group=cmd_config.group
+        merged = merge_ursa_config(
+            cfg, env_overrides=env_overrides, cli_overrides=cli_overrides
         )
+        ursa_config = merged.model_copy(
+            update={"group": cmd_config.group}
+        ).resolve()
         if handle_rag_command(cfg, ursa_config):
             return
 
-    if print_config(cfg, overrides, cli_overrides):
+    if print_config(cfg, env_overrides, cli_overrides):
         exit(0)
 
-    ursa_config = resolve_config(cfg, overrides, cli_overrides)
+    ursa_config = merge_ursa_config(
+        cfg,
+        env_overrides=env_overrides,
+        cli_overrides=cli_overrides,
+    ).resolve()
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
     legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"

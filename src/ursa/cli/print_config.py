@@ -67,16 +67,13 @@ def add_print_config_argument(parser: ArgumentParser) -> None:
     )
 
 
-def print_config(cfg, overrides, cli_overrides=None) -> bool:
+def print_config(cfg, env_overrides, cli_overrides=None) -> bool:
     """Print config according to --print-config and return whether it handled output."""
     print_config_spec = parse_print_config_spec(cfg["print_config"])
     if print_config_spec is None:
         return False
     level, stage = print_config_spec
-    if cli_overrides is None:
-        config = merge_ursa_config(cfg, level, overrides)
-    else:
-        config = merge_ursa_config(cfg, level, overrides, cli_overrides)
+    config = merge_ursa_config(cfg, level, env_overrides, cli_overrides)
     if stage == "resolved":
         config = resolve_ursa_config(config)
     print(  # noqa: T201
