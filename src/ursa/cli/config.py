@@ -595,6 +595,7 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
             for name in type(config).model_fields
         }
     )
+    resolved._temp_workspace = config._temp_workspace
 
     if resolved.llm_model is not None:
         provider_name = resolved.llm_model.inference_provider
