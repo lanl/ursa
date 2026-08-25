@@ -7,7 +7,7 @@ from rich import print as rprint
 from rich.panel import Panel
 
 from ursa.agents import ArxivAgent, OSTIAgent, WebSearchAgent
-from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.cli.config import UrsaConfig
 from ursa.util.events import configure_event_logging
 
 QUERY = "graph neural networks for partial differential equations"
@@ -26,9 +26,7 @@ def print_summary(summary: str, title: str) -> None:
 
 async def main() -> None:
     """Run the same research question through all three source types."""
-    config = resolve_ursa_config(
-        UrsaConfig.from_file(Path("config.yaml"))
-    )
+    config = UrsaConfig.from_file(Path("config.yaml")).resolve()
     model = config.llm_model.init_chat_model()
 
     web_agent = WebSearchAgent(
