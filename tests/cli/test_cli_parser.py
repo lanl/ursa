@@ -434,7 +434,9 @@ def test_print_config_yaml_round_trip(tmp_path):
             "openai:gpt-5-nano",
         ],
     )
-    yaml_text = yaml.safe_dump(original_config.model_dump())
+    serialized = original_config.model_dump()
+    serialized["llm_model"]["inference_provider"] = None
+    yaml_text = yaml.safe_dump(serialized)
 
     cfg_path = tmp_path / "round-trip.yml"
     cfg_path.write_text(yaml_text)
@@ -442,7 +444,7 @@ def test_print_config_yaml_round_trip(tmp_path):
     parser = build_parser()
     loaded_config = _resolve_args(parser, ["--config", str(cfg_path)])
 
-    assert loaded_config.model_dump() == original_config.model_dump()
+    assert loaded_config.model_dump() == serialized
 
 
 def test_config_env_cli_precedence(tmp_path, monkeypatch):
@@ -1171,7 +1173,7 @@ def test_print_config_includes_defaults_and_nulls(
     monkeypatch.setattr(
         print_config_module,
         "merge_ursa_config",
-        lambda cfg, level, overrides: merged,
+        lambda cfg, level, env_overrides, cli_overrides: merged,
     )
     monkeypatch.setattr(
         print_config_module,

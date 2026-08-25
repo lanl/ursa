@@ -139,10 +139,17 @@ class ModelConfig(BaseModel):
             updates.setdefault("inference_provider", None)
         elif updates.get("inference_provider") is not None:
             updates.setdefault("base_url", None)
-        return type(self).model_validate({
+        merged = type(self).model_validate({
             **self.model_dump(mode="python"),
             **updates,
         })
+        # Validating the complete merged mapping marks every default as explicit.
+        # Preserve only fields supplied by either layer so provider defaults can
+        # still fill values that merely appeared in the model dump.
+        merged.__pydantic_fields_set__ = (
+            self.model_fields_set | candidate.model_fields_set
+        )
+        return merged
 
     @model_validator(mode="before")
     @classmethod
@@ -430,6 +437,7 @@ class UrsaConfig(BaseModel):
 
     def model_merge(self, *others: Self | dict[str, Any]) -> Self:
         """Merge higher-priority config layers and validate the result once."""
+        fields_set = set(self.model_fields_set)
         merged = {
             name: deepcopy(getattr(self, name))
             for name in type(self).model_fields
@@ -440,6 +448,7 @@ class UrsaConfig(BaseModel):
                 if isinstance(other, UrsaConfig)
                 else deepcopy(other)
             )
+            fields_set.update(updates)
             for key, value in updates.items():
                 current = merged.get(key)
                 model_merge = getattr(current, "model_merge", None)
@@ -449,7 +458,9 @@ class UrsaConfig(BaseModel):
                     merged[key] = deep_merge_dicts(current, value)
                 else:
                     merged[key] = value
-        return type(self).model_validate(merged)
+        result = type(self).model_validate(merged)
+        result.__pydantic_fields_set__ = fields_set
+        return result
 
     @field_serializer("workspace")
     def serialize_workspace(self, workspace: Path, _info):
