@@ -121,6 +121,20 @@ class ModelConfig(BaseModel):
     ssl_verify: bool = True
     """Flag for verifying SSL certs. during API access."""
 
+    def model_merge(self, other: Self | dict[str, Any]) -> Self:
+        """Merge explicit values from a higher-priority model config."""
+        updates = (
+            other.model_dump(mode="python", exclude_unset=True)
+            if isinstance(other, ModelConfig)
+            else deepcopy(other)
+        )
+        if updates.get("base_url") is not None:
+            updates.setdefault("inference_provider", None)
+        return type(self).model_validate({
+            **self.model_dump(mode="python"),
+            **updates,
+        })
+
     @model_validator(mode="before")
     @classmethod
     def _accept_legacy_api_key_env(cls, data):
@@ -381,6 +395,29 @@ class UrsaConfig(BaseModel):
         """Return this config after applying canonical resolution."""
         return resolve_ursa_config(self)
 
+    def model_merge(self, *others: Self | dict[str, Any]) -> Self:
+        """Merge higher-priority config layers and validate the result once."""
+        merged = {
+            name: deepcopy(getattr(self, name))
+            for name in type(self).model_fields
+        }
+        for other in others:
+            updates = (
+                other.model_dump(mode="python", exclude_unset=True)
+                if isinstance(other, UrsaConfig)
+                else deepcopy(other)
+            )
+            for key, value in updates.items():
+                current = merged.get(key)
+                model_merge = getattr(current, "model_merge", None)
+                if callable(model_merge):
+                    merged[key] = model_merge(value)
+                elif isinstance(current, dict) and isinstance(value, dict):
+                    merged[key] = deep_merge_dicts(current, value)
+                else:
+                    merged[key] = value
+        return type(self).model_validate(merged)
+
     @field_serializer("workspace")
     def serialize_workspace(self, workspace: Path, _info):
         return workspace.as_posix()
@@ -481,7 +518,7 @@ def merge_ursa_config(
     cli_overrides: Namespace | dict[str, Any] | None = None,
 ) -> UrsaConfig:
     """Merge sparse configuration sources, then validate the result once."""
-    merged: dict[str, Any] = {}
+    layers: list[dict[str, Any]] = []
     paths = config_search_paths(cfg, level)
     explicit_path = (
         config_path_from_namespace(cli_overrides)
@@ -493,7 +530,7 @@ def merge_ursa_config(
     else:
         lower_paths = paths
     for config_path in lower_paths:
-        merged = deep_merge_dicts(merged, load_config_file(config_path))
+        layers.append(load_config_file(config_path))
 
     if level.removesuffix("+") == "final":
         if overrides is None:
@@ -503,32 +540,26 @@ def merge_ursa_config(
             if isinstance(overrides, Namespace)
             else overrides
         )
-        merged = deep_merge_dicts(
-            merged,
-            {
-                key: value
-                for key, value in override_values.items()
-                if key in UrsaConfig.model_fields
-            },
-        )
+        layers.append({
+            key: value
+            for key, value in override_values.items()
+            if key in UrsaConfig.model_fields
+        })
         if explicit_path is not None and explicit_path in paths:
-            merged = deep_merge_dicts(merged, load_config_file(explicit_path))
+            layers.append(load_config_file(explicit_path))
         if cli_overrides is not None:
             cli_values = (
                 cli_overrides.as_dict()
                 if isinstance(cli_overrides, Namespace)
                 else cli_overrides
             )
-            merged = deep_merge_dicts(
-                merged,
-                {
-                    key: value
-                    for key, value in cli_values.items()
-                    if key in UrsaConfig.model_fields
-                },
-            )
+            layers.append({
+                key: value
+                for key, value in cli_values.items()
+                if key in UrsaConfig.model_fields
+            })
 
-    return UrsaConfig.model_validate(merged)
+    return UrsaConfig().model_merge(*layers)
 
 
 @dataclass

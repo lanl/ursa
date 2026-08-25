@@ -59,6 +59,63 @@ def test_config_precedence_all_six_layers(tmp_path, monkeypatch):
     )
 
 
+def test_model_merge_base_url_clears_inherited_inference_provider():
+    base = ChatModelConfig(
+        model="openai:gpt-5.4",
+        inference_provider="openai",
+    )
+
+    merged = base.model_merge({"base_url": "https://models.example/v1"})
+
+    assert merged.base_url == "https://models.example/v1"
+    assert merged.inference_provider is None
+
+
+def test_model_merge_preserves_explicit_inference_provider_with_base_url():
+    base = ChatModelConfig(
+        model="openai:gpt-5.4",
+        inference_provider="openai",
+    )
+
+    merged = base.model_merge({
+        "base_url": "https://models.example/v1",
+        "inference_provider": "hosted",
+    })
+
+    assert merged.inference_provider == "hosted"
+
+
+def test_model_merge_only_applies_explicit_model_fields():
+    base = ChatModelConfig(
+        model="openai:gpt-5.4",
+        ssl_verify=False,
+        max_completion_tokens=100,
+    )
+
+    merged = base.model_merge(ChatModelConfig(max_completion_tokens=200))
+
+    assert merged.ssl_verify is False
+    assert merged.max_completion_tokens == 200
+
+
+def test_config_merge_base_url_clears_lower_priority_provider(
+    tmp_path, monkeypatch
+):
+    user = tmp_path / "user.yaml"
+    explicit = tmp_path / "explicit.yaml"
+    user.write_text("llm_model:\n  inference_provider: openai\n")
+    explicit.write_text("llm_model:\n  base_url: https://models.example/v1\n")
+    monkeypatch.setattr(
+        "ursa.cli.config.config_search_paths",
+        lambda cfg, level="final": [user, explicit],
+    )
+
+    config = merge_ursa_config(Namespace(), overrides={})
+
+    assert config.llm_model.base_url == "https://models.example/v1"
+    assert config.llm_model.inference_provider is None
+
+
 def test_api_key_direct_value_is_secret():
     config = ChatModelConfig(model="provider:model", api_key="secret")
 
