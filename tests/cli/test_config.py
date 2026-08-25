@@ -1,3 +1,5 @@
+import pytest
+
 import ursa.cli.config as config_mod
 
 
@@ -65,3 +67,17 @@ def test_deep_interp_env_recurses_nested_dictionaries(
     }
     # Confirm original structure is untouched
     assert data["layer1"]["with_env"] == "prefix ${URSA_DEEP_VALUE} suffix"
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        config_mod.ModelConfig,
+        config_mod.ChatModelConfig,
+        config_mod.EmbModelConfig,
+    ],
+)
+def test_model_config_model_parsing(cls):
+    cfg = cls(model="bar:gpt-5.4")
+    assert cfg.model == "gpt-5.4"
+    assert cfg.model_provider == "bar"

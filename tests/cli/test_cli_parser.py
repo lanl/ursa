@@ -267,7 +267,8 @@ def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
 
     # HITL should be constructed with the config loaded from --config.
     (ursa_config,), _ = hitl_class.call_args
-    assert ursa_config.llm_model.model == "ollama:llama3.1"
+    assert ursa_config.llm_model.model == "llama3.1"
+    assert ursa_config.llm_model.model_provider == "ollama"
     assert ursa_config.llm_model.base_url == "http://localhost:11434"
 
 
@@ -298,7 +299,8 @@ def test_mcp_server_config_flag_parses_alongside_transport(
     ])
 
     (ursa_config,), _ = hitl_class.call_args
-    assert ursa_config.llm_model.model == "ollama:llama3.1"
+    assert ursa_config.llm_model.model == "llama3.1"
+    assert ursa_config.llm_model.model_provider == "ollama"
     mcp.run.assert_called_once_with(
         transport="streamable-http",
         log_level="INFO",
@@ -482,7 +484,8 @@ def test_config_env_cli_precedence(tmp_path, monkeypatch):
     )
     assert config_cli.workspace == cli_workspace
     assert config_cli.llm_model.model == "cli-model"
-    assert config_cli.emb_model.model == "openai:text-embedding-3-large"
+    assert config_cli.emb_model.model == "text-embedding-3-large"
+    assert config_cli.emb_model.model_provider == "openai"
 
 
 def test_config_file_env_interpolation(tmp_path, monkeypatch):
@@ -507,8 +510,10 @@ def test_config_file_env_interpolation(tmp_path, monkeypatch):
     config = _resolve_args(parser, ["--config", str(cfg_path)])
 
     assert config.workspace == env_workspace
-    assert config.llm_model.model == "openai:gpt-env"
-    assert config.emb_model.model == "openai:gpt-5"
+    assert config.llm_model.model == "gpt-env"
+    assert config.llm_model.model_provider == "openai"
+    assert config.emb_model.model == "gpt-5"
+    assert config.emb_model.model_provider == "openai"
 
 
 def test_config_file_with_extra_keys(tmp_path):
@@ -528,7 +533,8 @@ def test_config_file_with_extra_keys(tmp_path):
     parser = build_parser()
     config = _resolve_args(parser, ["--config", str(cfg_path)])
 
-    assert config.llm_model.model == "openai:gpt-5-small"
+    assert config.llm_model.model == "gpt-5-small"
+    assert config.llm_model.model_provider == "openai"
     assert config.llm_model.model_extra["seed"] == 123
     assert config.emb_model.model_extra["cache_dir"] == "/tmp/cache"
 
@@ -564,9 +570,11 @@ def test_config_file_and_cli_are_merged(tmp_path):
     )
 
     assert config.workspace == cli_workspace
-    assert config.llm_model.model == "openai:gpt-5-nano"
+    assert config.llm_model.model == "gpt-5-nano"
+    assert config.llm_model.model_provider == "openai"
     assert config.llm_model.model_extra["temperature"] == 0.4
-    assert config.emb_model.model == "openai:text-embedding-3-large"
+    assert config.emb_model.model == "text-embedding-3-large"
+    assert config.emb_model.model_provider == "openai"
     assert config.emb_model.model_extra["cache_dir"] == "/tmp/cache"
 
 
@@ -631,7 +639,8 @@ def test_merge_ursa_config_applies_sparse_overrides(tmp_path, monkeypatch):
     )
 
     assert config.group == "default"
-    assert config.llm_model.model == "openai:gpt-5.4"
+    assert config.llm_model.model == "gpt-5.4"
+    assert config.llm_model.model_provider == "openai"
     assert config.llm_model.ssl_verify is True
 
 
@@ -760,7 +769,8 @@ def test_merge_ursa_config_validates_provider_after_merging_layers(
     config = merge_ursa_config(Namespace(), overrides={})
 
     assert "openai_project" in config.inference_providers
-    assert config.llm_model.model == "openai:gpt-5.4-mini"
+    assert config.llm_model.model == "gpt-5.4-mini"
+    assert config.llm_model.model_provider == "openai"
     assert config.llm_model.inference_provider == "openai_project"
 
 
@@ -772,7 +782,8 @@ def test_model_config_kwargs_includes_extra():
     cfg.model_extra["timeout"] = 30
 
     kwargs = cfg.kwargs
-    assert kwargs["model"] == "openai:gpt-5"
+    assert kwargs["model"] == "gpt-5"
+    assert kwargs["model_provider"] == "openai"
     assert "http_client" in kwargs  # ssl_verify False triggers custom client
     assert "http_async_client" in kwargs
     assert kwargs["timeout"] == 30
@@ -783,7 +794,8 @@ def test_chat_model_config_kwargs_includes_max_completion_tokens():
 
     kwargs = cfg.kwargs
 
-    assert kwargs["model"] == "openai:gpt-5"
+    assert kwargs["model"] == "gpt-5"
+    assert kwargs["model_provider"] == "openai"
     assert kwargs["max_completion_tokens"] == 1024
 
 
@@ -803,7 +815,8 @@ def test_chat_model_config_initializes_chat_model(monkeypatch):
     result = cfg.init_chat_model()
 
     assert result == "chat-model"
-    assert captured_kwargs["model"] == "openai:gpt-5"
+    assert captured_kwargs["model"] == "gpt-5"
+    assert captured_kwargs["model_provider"] == "openai"
     assert captured_kwargs["max_completion_tokens"] == 1024
     assert captured_kwargs["use_responses_api"] is True
 
@@ -824,7 +837,8 @@ def test_emb_model_config_initializes_embedding_model(monkeypatch):
     result = cfg.init_embedding()
 
     assert result == "embedding-model"
-    assert captured_kwargs["model"] == "openai:text-embedding-3-large"
+    assert captured_kwargs["model"] == "text-embedding-3-large"
+    assert captured_kwargs["model_provider"] == "openai"
     assert "use_responses_api" not in captured_kwargs
 
 
@@ -833,7 +847,8 @@ def test_model_config_openai_uses_truststore_client():
 
     kwargs = cfg.kwargs
 
-    assert kwargs["model"] == "openai:text-embedding-3-large"
+    assert kwargs["model"] == "text-embedding-3-large"
+    assert kwargs["model_provider"] == "openai"
     assert "http_client" in kwargs
     assert "http_async_client" in kwargs
 
@@ -843,7 +858,8 @@ def test_model_config_ollama_uses_client_kwargs():
 
     kwargs = cfg.kwargs
 
-    assert kwargs["model"] == "ollama:nomic-embed-text:latest"
+    assert kwargs["model"] == "nomic-embed-text:latest"
+    assert kwargs["model_provider"] == "ollama"
     assert "http_client" not in kwargs
     assert "http_async_client" not in kwargs
     assert kwargs["client_kwargs"]["verify"] is not False

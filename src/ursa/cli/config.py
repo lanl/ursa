@@ -103,9 +103,13 @@ class ModelConfig(BaseModel):
     _inference_provider_resolved: bool = PrivateAttr(default=False)
 
     model: str
-    """Model provider and model name.
-    Use the format <provider>:<model-name>
-    """
+    """Model name."""
+
+    model_provider: Annotated[
+        str | None, AfterValidator(_strip_blank_optional_strings)
+    ] = None
+    """LangChain model provider."""
+
     base_url: Annotated[
         str | None, AfterValidator(_strip_blank_optional_strings)
     ] = None
@@ -137,11 +141,23 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_api_key_env(cls, data):
-        return _migrate_api_key_env(data)
+    def _normalize_input(cls, data):
+        data = _migrate_api_key_env(data)
+        if not isinstance(data, dict):
+            return data
 
-    def _model_provider(self) -> str:
-        return self.model.split(":", 1)[0]
+        data = dict(data)
+        model = data.get("model")
+        if isinstance(model, str) and ":" in model:
+            provider, model_name = model.split(":", 1)
+            explicit_provider = data.get("model_provider")
+            if explicit_provider is not None and explicit_provider != provider:
+                raise ValueError(
+                    f"model provider prefix ({provider}) conflicts with model_provider ({explicit_provider})"
+                )
+            data["model"] = model_name
+            data["model_provider"] = provider
+        return data
 
     @property
     def api_key_env(self) -> str | None:
@@ -202,7 +218,7 @@ class ModelConfig(BaseModel):
         kwargs = {k: v for k, v in self.model_dump().items() if v is not None}
         kwargs.pop("inference_provider", None)
         ssl_verify = kwargs.pop("ssl_verify", True)
-        model_provider = self._model_provider()
+        model_provider = self.model_provider
         if model_provider in {"openai", "azure_openai"}:
             kwargs["http_client"] = build_httpx_client(verify=ssl_verify)
             kwargs["http_async_client"] = build_httpx_async_client(
@@ -259,7 +275,8 @@ class ModelConfig(BaseModel):
 class ChatModelConfig(ModelConfig):
     """Configuration for instantiating a chat model"""
 
-    model: str = "openai:gpt-5.4"
+    model: str = "gpt-5.4"
+    model_provider: str | None = "openai"
 
     max_completion_tokens: int | None = None
     """Maximum tokens for LLM to output"""
@@ -269,7 +286,7 @@ class ChatModelConfig(ModelConfig):
         kwargs = super().kwargs
         if self.max_completion_tokens is not None:
             kwargs["max_completion_tokens"] = self.max_completion_tokens
-        match self._model_provider():
+        match self.model_provider:
             case "openai" | "azure_openai":
                 kwargs.setdefault("use_responses_api", True)
         return kwargs

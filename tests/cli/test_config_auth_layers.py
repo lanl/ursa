@@ -29,7 +29,8 @@ def test_config_precedence_all_six_layers(tmp_path, monkeypatch):
         lambda cfg, level="final": [system, user, explicit],
     )
 
-    assert UrsaConfig().llm_model.model == "openai:gpt-5.4"
+    assert UrsaConfig().llm_model.model == "gpt-5.4"
+    assert UrsaConfig().llm_model.model_provider == "openai"
     namespace = Namespace(config=explicit)
     config_flag = {"config": explicit}
     assert (
