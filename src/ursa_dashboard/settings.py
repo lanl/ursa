@@ -14,6 +14,12 @@ from .credentials import assert_no_raw_api_key
 from .storage import read_json, utc_now, write_json
 
 
+def _qualified_model_name(model_config) -> str:
+    if model_config.model_provider is None:
+        return model_config.model
+    return f"{model_config.model_provider}:{model_config.model}"
+
+
 class LLMSettings(BaseModel):
     model: str = "openai:gpt-5.2"
     base_url: str | None = None
@@ -223,7 +229,7 @@ def dashboard_llm_patch_from_ursa_config(
     cfg = resolve_ursa_config(cfg)
     llm_cfg = cfg.llm_model
 
-    patch: dict[str, Any] = {"model": llm_cfg.model}
+    patch: dict[str, Any] = {"model": _qualified_model_name(llm_cfg)}
     if llm_cfg.base_url is not None:
         patch["base_url"] = llm_cfg.base_url
     if llm_api_key_env is not None:
@@ -265,7 +271,7 @@ def dashboard_llm_patch_from_ursa_config(
 
     emb_cfg = cfg.emb_model
     if emb_cfg is not None:
-        emb_patch: dict[str, Any] = {"model": emb_cfg.model}
+        emb_patch: dict[str, Any] = {"model": _qualified_model_name(emb_cfg)}
         if emb_cfg.base_url is not None:
             emb_patch["base_url"] = emb_cfg.base_url
         if emb_api_key_env is not None:

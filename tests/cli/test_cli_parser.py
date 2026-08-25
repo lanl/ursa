@@ -8,7 +8,7 @@ import pytest
 import yaml
 from jsonargparse import Namespace
 from openai import OpenAIError
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from ursa.cli import (
     build_parser,
@@ -16,7 +16,6 @@ from ursa.cli import (
     resolve_config,
 )
 from ursa.cli.config import (
-    APIKeyConfig,
     ChatModelConfig,
     EmbModelConfig,
     ModelConfig,
@@ -32,6 +31,7 @@ from ursa.cli.print_config import (
     print_config,
 )
 from ursa.util.crossplatform import system_config_path, user_config_paths
+from ursa.util.secrets import SecretReference
 
 
 @pytest.fixture(autouse=True)
@@ -881,7 +881,7 @@ def test_api_key_env_cli_option(monkeypatch, tmp_path):
         )
 
     assert not any("api_key_env" in str(item.message) for item in warnings)
-    assert isinstance(config.llm_model.api_key, SecretStr)
+    assert config.llm_model.api_key == SecretReference(env="TEST_ENV_API_KEY")
     assert config.llm_model.kwargs["api_key"] == "super-secret-key"
     assert "api_key_env" not in config.llm_model.model_dump()
 
@@ -959,7 +959,7 @@ def test_inference_provider_applies_to_llm_model():
     assert resolved.inference_provider == "local-openai"
     assert resolved.base_url == "https://models.example.org/v1"
     assert resolved.ssl_verify is False
-    assert resolved.api_key == APIKeyConfig(env="PROVIDER_API_KEY")
+    assert resolved.api_key == SecretReference(env="PROVIDER_API_KEY")
     assert resolved.model_extra["timeout"] == 45
     assert "inference_provider" not in resolved.kwargs
 
@@ -1006,7 +1006,6 @@ def test_model_config_explicit_values_override_inference_provider():
         llm_model={
             "model": "openai:gpt-5",
             "inference_provider": "shared",
-            "base_url": "https://model.example.org/v1",
             "ssl_verify": True,
             "api_key_env": "MODEL_API_KEY",
             "timeout": 60,
@@ -1017,9 +1016,9 @@ def test_model_config_explicit_values_override_inference_provider():
         config.inference_providers
     )
 
-    assert resolved.base_url == "https://model.example.org/v1"
+    assert resolved.base_url == "https://provider.example.org/v1"
     assert resolved.ssl_verify is True
-    assert resolved.api_key == APIKeyConfig(env="MODEL_API_KEY")
+    assert resolved.api_key == SecretReference(env="MODEL_API_KEY")
     assert resolved.model_extra["timeout"] == 60
     assert resolved.model_extra["seed"] == 111
 
@@ -1102,13 +1101,20 @@ def test_resolve_ursa_config_applies_inference_provider():
     assert "inference_provider" not in resolved.llm_model.kwargs
 
 
-def test_resolved_config_can_be_dumped_reloaded_and_resolved_again():
-    resolved = UrsaConfig().resolve()
+def test_resolved_config_without_inference_provider_can_be_reloaded():
+    resolved = UrsaConfig(
+        llm_model={
+            "model": "openai:gpt-5",
+            "base_url": "https://models.example/v1",
+        }
+    ).resolve()
 
     reloaded = UrsaConfig.model_validate(resolved.model_dump()).resolve()
 
-    assert reloaded.llm_model.inference_provider == "openai"
-    assert "inference_provider" not in reloaded.llm_model.kwargs
+    assert reloaded.llm_model.inference_provider is None
+    assert reloaded.llm_model.base_url == "https://models.example/v1"
+    assert reloaded.llm_model.model == "gpt-5"
+    assert reloaded.llm_model.model_provider == "openai"
 
 
 @pytest.mark.parametrize(

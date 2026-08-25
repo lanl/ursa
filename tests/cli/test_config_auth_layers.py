@@ -6,7 +6,6 @@ from pydantic import SecretStr
 
 from ursa.cli import build_parser
 from ursa.cli.config import (
-    APIKeyConfig,
     ChatModelConfig,
     UrsaConfig,
     merge_ursa_config,
@@ -72,17 +71,23 @@ def test_model_merge_base_url_clears_inherited_inference_provider():
     assert merged.inference_provider is None
 
 
-def test_model_merge_preserves_explicit_inference_provider_with_base_url():
-    base = ChatModelConfig(
-        model="openai:gpt-5.4",
-        inference_provider="openai",
-    )
+def test_model_config_rejects_base_url_with_inference_provider():
+    with pytest.raises(
+        ValueError,
+        match="base_url and inference_provider cannot both be configured",
+    ):
+        ChatModelConfig(
+            base_url="https://models.example/v1",
+            inference_provider="hosted",
+        )
 
-    merged = base.model_merge({
-        "base_url": "https://models.example/v1",
-        "inference_provider": "hosted",
-    })
 
+def test_model_merge_inference_provider_clears_inherited_base_url():
+    base = ChatModelConfig(base_url="https://models.example/v1")
+
+    merged = base.model_merge({"inference_provider": "hosted"})
+
+    assert merged.base_url is None
     assert merged.inference_provider == "hosted"
 
 
@@ -183,10 +188,7 @@ def test_api_key_env_reference_resolves(monkeypatch):
         model="provider:model", api_key={"env": "MODEL_TOKEN"}
     )
 
-    resolved = config.resolve_api_key("provider")
-
-    assert isinstance(resolved.api_key, SecretStr)
-    assert resolved.kwargs["api_key"] == "secret"
+    assert config.kwargs["api_key"] == "secret"
 
 
 @pytest.mark.parametrize(
@@ -198,12 +200,16 @@ def test_api_key_keyring_reference(monkeypatch, setting, username):
         "keyring.get_password",
         lambda system, user: calls.append((system, user)) or "secret",
     )
-    config = ChatModelConfig(
-        model="provider:model", api_key={"keyring": setting}
+    config = UrsaConfig(
+        inference_providers={"acme": {"api_key": {"keyring": setting}}},
+        llm_model={"model": "provider:model", "inference_provider": "acme"},
     )
 
-    resolved = config.resolve_api_key("acme")
+    resolved = config.resolve().llm_model
 
+    assert isinstance(resolved.api_key, SecretReference)
+    assert resolved.api_key.keyring == username
+    assert calls == []
     assert resolved.kwargs["api_key"] == "secret"
     assert calls == [("ursa", username)]
 
@@ -217,9 +223,7 @@ def test_legacy_api_key_env_is_migrated_with_warning(monkeypatch):
             model="provider:model", api_key_env="OLD_TOKEN"
         )
 
-    resolved = config.resolve_api_key("provider")
-
-    assert resolved.kwargs["api_key"] == "secret"
+    assert config.kwargs["api_key"] == "secret"
     assert "api_key_env" not in config.model_dump()
 
 
@@ -231,7 +235,7 @@ def test_default_openai_provider_is_explicit():
         config.inference_providers["openai"].base_url
         == "https://api.openai.com/v1"
     )
-    assert config.inference_providers["openai"].api_key == APIKeyConfig(
+    assert config.inference_providers["openai"].api_key == SecretReference(
         env="OPENAI_API_KEY"
     )
     resolved = resolve_ursa_config(config)

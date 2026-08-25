@@ -53,7 +53,6 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
     return value or None
 
 
-APIKeyConfig = SecretReference
 APIKey = SecretReference | SecretStr
 
 
@@ -127,13 +126,19 @@ class ModelConfig(BaseModel):
 
     def model_merge(self, other: Self | dict[str, Any]) -> Self:
         """Merge explicit values from a higher-priority model config."""
-        updates = (
-            other.model_dump(mode="python", exclude_unset=True)
+        candidate = (
+            other
             if isinstance(other, ModelConfig)
-            else deepcopy(other)
+            else type(self).model_validate({
+                "model": self.model,
+                **deepcopy(other),
+            })
         )
+        updates = candidate.model_dump(mode="python", exclude_unset=True)
         if updates.get("base_url") is not None:
             updates.setdefault("inference_provider", None)
+        elif updates.get("inference_provider") is not None:
+            updates.setdefault("base_url", None)
         return type(self).model_validate({
             **self.model_dump(mode="python"),
             **updates,
@@ -157,6 +162,13 @@ class ModelConfig(BaseModel):
                 )
             data["model"] = model_name
             data["model_provider"] = provider
+        if (
+            data.get("base_url") is not None
+            and data.get("inference_provider") is not None
+        ):
+            raise ValueError(
+                "base_url and inference_provider cannot both be configured"
+            )
         return data
 
     @property
@@ -179,15 +191,32 @@ class ModelConfig(BaseModel):
             raise ValueError(f"Unknown inference_provider '{provider_name}'")
         assert isinstance(provider_config, InferenceProviderConfig)
 
-        provider_values = provider_config.model_dump(
-            mode="python", exclude_unset=True
-        )
-        model_values = self.model_dump(mode="python", exclude_unset=True)
+        provider_values = {
+            name: deepcopy(getattr(provider_config, name))
+            for name in provider_config.model_fields_set
+        }
+        provider_values.update(deepcopy(provider_config.model_extra or {}))
+        model_values = {
+            name: deepcopy(getattr(self, name))
+            for name in self.model_fields_set
+            if name in type(self).model_fields
+        }
+        model_values.update(deepcopy(self.model_extra or {}))
 
-        resolved = type(self).model_validate({
+        values = {
             **provider_values,
             **model_values,
-        })
+        }
+        api_key = values.get("api_key")
+        if isinstance(api_key, SecretReference) and api_key.keyring is True:
+            values["api_key"] = api_key.model_copy(
+                update={"keyring": provider_name}
+            )
+
+        # This is a trusted transition from configured input to a concrete
+        # runtime model. A resolved model intentionally retains the provider
+        # name while also containing the provider-derived base URL.
+        resolved = self.model_copy(update=values)
         resolved._inference_provider_resolved = True
         return resolved
 
@@ -230,26 +259,15 @@ class ModelConfig(BaseModel):
                 "client_kwargs",
                 {"verify": httpx_verify_value(verify=ssl_verify)},
             )
-        if isinstance(api_key := kwargs.get("api_key"), SecretStr):
-            kwargs["api_key"] = api_key.get_secret_value()
-        elif isinstance(api_key, dict):
-            resolved = self.resolve_api_key()
-            if isinstance(resolved.api_key, SecretStr):
-                kwargs["api_key"] = resolved.api_key.get_secret_value()
-            else:
+        if isinstance(api_key := self.api_key, SecretReference):
+            value = api_key.get_secret_value()
+            if value is None:
                 kwargs.pop("api_key", None)
+            else:
+                kwargs["api_key"] = value
+        elif isinstance(api_key, SecretStr):
+            kwargs["api_key"] = api_key.get_secret_value()
         return kwargs
-
-    def resolve_api_key(self, provider_name: str | None = None) -> Self:
-        """Resolve environment/keyring references to an in-memory SecretStr."""
-        value = self.api_key
-        if value is None or isinstance(value, SecretStr):
-            return self
-
-        secret = value.resolve(provider_name)
-        if secret is None:
-            return self
-        return self.model_copy(update={"api_key": secret})
 
     @staticmethod
     def _get_model_base_url(model) -> str | None:
@@ -336,7 +354,7 @@ class UrsaConfig(BaseModel):
         default_factory=lambda: {
             "openai": InferenceProviderConfig(
                 base_url="https://api.openai.com/v1",
-                api_key=APIKeyConfig(env="OPENAI_API_KEY"),
+                api_key=SecretReference(env="OPENAI_API_KEY"),
             )
         }
     )
@@ -656,20 +674,16 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
     resolved._temp_workspace = config._temp_workspace
 
     if resolved.llm_model is not None:
-        provider_name = resolved.llm_model.inference_provider
         resolved.llm_model = resolved.llm_model.resolve_inference_provider(
             resolved.inference_providers
         )
-        resolved.llm_model = resolved.llm_model.resolve_api_key(provider_name)
         enforce_group_base_url_policy(
             resolved.llm_model.base_url, resolved.group
         )
     if resolved.emb_model is not None:
-        provider_name = resolved.emb_model.inference_provider
         resolved.emb_model = resolved.emb_model.resolve_inference_provider(
             resolved.inference_providers
         )
-        resolved.emb_model = resolved.emb_model.resolve_api_key(provider_name)
         enforce_group_base_url_policy(
             resolved.emb_model.base_url, resolved.group
         )
