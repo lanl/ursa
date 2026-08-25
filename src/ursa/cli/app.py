@@ -31,7 +31,7 @@ from ursa.cli.helpers import (
     COMMAND_CHOICES,
     TokenUsage,
     _embedding_name,
-    _endpoint,
+    _inference_provider,
     _model_name,
     _route_prompt,
 )
@@ -194,7 +194,8 @@ class UrsaTextualApp(App[None]):
             else ""
         )
         self.query_one("#status", Static).update(
-            f"{_model_name(self.hitl)} ({_endpoint(self.hitl.model)})  •  "
+            f"{_model_name(self.hitl)} "
+            f"({_inference_provider(self.hitl.inference_provider)})  •  "
             f"{self.total_tokens:,} tokens{agent}  •  {state}"
         )
 
@@ -498,46 +499,32 @@ class UrsaTextualApp(App[None]):
             llm_config = getattr(self.hitl.config, "llm_model", None)
             emb_config = getattr(self.hitl.config, "emb_model", None)
 
-            def matching_provider(
-                model_config: object | None, preferred: str | None
-            ) -> str | None:
+            def inference_provider(model_config: object | None) -> str | None:
                 if model_config is None:
                     return None
-                base_url = getattr(model_config, "base_url", None)
-                if base_url is None:
-                    return preferred if preferred in providers else None
-                if preferred in providers and (
-                    getattr(providers[preferred], "base_url", None) == base_url
-                ):
-                    return preferred
-                return next(
-                    (
-                        name
-                        for name, provider in providers.items()
-                        if getattr(provider, "base_url", None) == base_url
-                    ),
-                    None,
-                )
+                configured = getattr(model_config, "inference_provider", None)
+                return configured if configured in providers else None
+
+            def qualified_model(
+                model_config: object | None, fallback: str
+            ) -> str:
+                if model_config is None:
+                    return fallback
+                model = str(getattr(model_config, "model", fallback))
+                provider = getattr(model_config, "model_provider", None)
+                return f"{provider}:{model}" if provider else model
 
             self.push_screen(
                 ModelScreen(
                     providers,
-                    str(getattr(llm_config, "model", _model_name(self.hitl))),
-                    matching_provider(
-                        llm_config,
-                        getattr(self.hitl, "inference_provider", None),
-                    ),
+                    qualified_model(llm_config, _model_name(self.hitl)),
+                    inference_provider(llm_config),
                     (
-                        str(getattr(emb_config, "model", ""))
+                        qualified_model(emb_config, "")
                         if emb_config is not None
                         else None
                     ),
-                    matching_provider(
-                        emb_config,
-                        getattr(
-                            self.hitl, "embedding_inference_provider", None
-                        ),
-                    ),
+                    inference_provider(emb_config),
                 ),
                 callback=self._select_model,
             )
@@ -665,7 +652,6 @@ class UrsaTextualApp(App[None]):
         self.run_worker(apply(), group="model", exclusive=True)
 
     def _status_markdown(self) -> str:
-        embedding = getattr(self.hitl, "embedding", None)
         rows = [
             ("Input tokens", f"{self.input_tokens:,}"),
             ("Output tokens", f"{self.output_tokens:,}"),
@@ -675,11 +661,14 @@ class UrsaTextualApp(App[None]):
             ("Workspace", str(Path(self.hitl.workspace).resolve())),
             ("Group", str(getattr(self.hitl, "group", None) or "default")),
             ("LLM model", _model_name(self.hitl)),
-            ("LLM endpoint", _endpoint(self.hitl.model)),
+            (
+                "LLM provider",
+                _inference_provider(self.hitl.inference_provider),
+            ),
             ("Embedding model", _embedding_name(self.hitl)),
             (
-                "Embedding endpoint",
-                _endpoint(embedding) if embedding is not None else "none",
+                "Embedding provider",
+                _inference_provider(self.hitl.embedding_inference_provider),
             ),
         ]
         if agent_name := getattr(self.hitl, "agent_name", None):

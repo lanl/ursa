@@ -77,14 +77,9 @@ def _truncate_middle(text: str, width: int) -> str:
     return f"{prefix} _… truncated …_ {suffix}"
 
 
-def _endpoint(value: Any) -> str:
-    """Return a concise endpoint label for a model-like object."""
-    if value is None:
-        return "none"
-    for attribute in ("base_url", "api_base", "openai_api_base"):
-        if endpoint := getattr(value, attribute, None):
-            return str(endpoint)
-    return "default"
+def _inference_provider(value: str | None) -> str:
+    """Return a concise inference-provider label."""
+    return value or "default"
 
 
 def _embedding_name(hitl: HITL) -> str:

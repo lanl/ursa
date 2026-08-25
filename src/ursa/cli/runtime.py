@@ -260,7 +260,7 @@ class HITL:
         )
         resolved = candidate.resolve_inference_provider(
             self.config.inference_providers
-        ).resolve_api_key(inference_provider)
+        )
         model = await asyncio.to_thread(resolved.init_chat_model)
         enforce_model_group_policy(model, self.group)
 
@@ -299,7 +299,7 @@ class HITL:
         )
         resolved_chat = chat_config.resolve_inference_provider(
             self.config.inference_providers
-        ).resolve_api_key(chat_inference_provider)
+        )
         new_chat = await asyncio.to_thread(resolved_chat.init_chat_model)
         enforce_model_group_policy(new_chat, self.group)
 
@@ -312,7 +312,7 @@ class HITL:
             )
             resolved_embedding = embedding_config.resolve_inference_provider(
                 self.config.inference_providers
-            ).resolve_api_key(embedding_inference_provider)
+            )
             new_embedding = await asyncio.to_thread(
                 resolved_embedding.init_embedding
             )

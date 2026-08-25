@@ -391,7 +391,7 @@ async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
         assert prompt.region.height == min(8, prompt.virtual_size.height) + 2
 
 
-async def test_welcome_banner_and_endpoint_status_are_visible(tmp_path):
+async def test_welcome_banner_and_provider_status_are_visible(tmp_path):
     hitl = FakeHITL(tmp_path)
     hitl.model = SimpleNamespace(
         model_name="test-model", base_url="https://llm.test/v1"
@@ -399,6 +399,8 @@ async def test_welcome_banner_and_endpoint_status_are_visible(tmp_path):
     hitl.embedding = SimpleNamespace(
         model="embed-model", base_url="https://embed.test/v1"
     )
+    hitl.inference_provider = "hosted-chat"
+    hitl.embedding_inference_provider = "hosted-embedding"
     hitl.group = "research"
     app = UrsaTextualApp(hitl)
 
@@ -410,10 +412,10 @@ async def test_welcome_banner_and_endpoint_status_are_visible(tmp_path):
         )
         workspace = banner.query_one("#welcome-workspace", Static)
         assert str(workspace.content).endswith(tmp_path.name[-12:])
-        assert "test-model (https://llm.test/v1)" in snapshot
-        assert "embed-model (https://embed.test/v1)" in snapshot
+        assert "test-model (hosted-chat)" in snapshot
+        assert "embed-model (hosted-embedding)" in snapshot
         assert "research" in snapshot
-        assert "test-model (https://llm.test/v1)" in str(
+        assert "test-model (hosted-chat)" in str(
             app.query_one("#status", Static).content
         )
         assert "Ctrl+" not in str(app.query_one("#status", Static).content)
@@ -551,7 +553,7 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()
         assert isinstance(app.screen, InformationScreen)
-        assert "LLM endpoint" in app.screen.content
+        assert "LLM provider" in app.screen.content
         assert "lab-assistant" in app.screen.content
         assert "MCP servers" in app.screen.content
         assert "ursa-mcp" in app.screen.content

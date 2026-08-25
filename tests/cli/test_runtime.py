@@ -224,9 +224,11 @@ async def test_reconfigure_models_resets_agents_and_uses_selected_providers(
 
     assert hitl.model is replacement_model
     assert hitl.model is not initial_model
-    assert hitl.config.llm_model.model == "openai:gpt-5.4"
+    assert hitl.config.llm_model.model == "gpt-5.4"
+    assert hitl.config.llm_model.model_provider == "openai"
     assert hitl.embedding is replacement_embedding
-    assert hitl.config.emb_model.model == "openai:text-embedding-3-large"
+    assert hitl.config.emb_model.model == "text-embedding-3-large"
+    assert hitl.config.emb_model.model_provider == "openai"
     assert wrapper.config["rag_tool_embedding"] is replacement_embedding
     assert wrapper._agent is None
     assert old_agent.async_closed

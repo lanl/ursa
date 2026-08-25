@@ -32,8 +32,8 @@ from ursa.agents.base import URSA_VERSION
 from ursa.cli.agent_info import AgentDetails, ToolDetails
 from ursa.cli.helpers import (
     _embedding_name,
-    _endpoint,
     _fuzzy_score,
+    _inference_provider,
     _model_name,
 )
 from ursa.cli.runtime import HITL
@@ -660,10 +660,12 @@ class WelcomeBanner(Vertical):
         embedding_text = "none"
         if embedding is not None:
             embedding_text = (
-                f"{_embedding_name(self.hitl)} ({_endpoint(embedding)})"
+                f"{_embedding_name(self.hitl)} "
+                f"({_inference_provider(self.hitl.embedding_inference_provider)})"
             )
         snapshot = "\n".join([
-            f"LLM        {_model_name(self.hitl)} ({_endpoint(self.hitl.model)})",
+            f"LLM        {_model_name(self.hitl)} "
+            f"({_inference_provider(self.hitl.inference_provider)})",
             f"Embedding  {embedding_text}",
             f"Group      {getattr(self.hitl, 'group', None) or 'default'}",
         ])

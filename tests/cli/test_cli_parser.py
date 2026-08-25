@@ -125,6 +125,8 @@ def test_exec_uses_textual_one_shot_renderer(monkeypatch):
     main(["exec", "#plan inspect this"])
 
     run_once.assert_called_once_with(hitl, "#plan inspect this")
+
+
 @pytest.mark.parametrize("mode", ["interactive", "exec"])
 def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
     hitl_class = MagicMock()
@@ -148,6 +150,8 @@ def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
         run_once.assert_called_once_with(
             hitl_class.return_value, "#plan inspect this"
         )
+
+
 @pytest.mark.parametrize("args", [[], ["mcp-server"]])
 def test_cli_reports_model_initialization_error_without_traceback(
     monkeypatch, capsys, args
