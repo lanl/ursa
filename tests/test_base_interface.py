@@ -1,5 +1,6 @@
 import importlib
 import inspect
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -215,6 +216,30 @@ async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
 
     assert agent.tools == {"alpha": alpha, "beta": beta}
     client.get_tools.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
+    chat_model, tmp_path, monkeypatch
+):
+    alpha = _make_tool("alpha")
+    client = AsyncMock()
+    client.get_tools.return_value = [alpha]
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    event_loop_thread = threading.get_ident()
+    apply_threads = []
+    original_add_tool = agent.add_tool
+
+    def recording_add_tool(tools):
+        apply_threads.append(threading.get_ident())
+        original_add_tool(tools)
+
+    monkeypatch.setattr(agent, "add_tool", recording_add_tool)
+
+    await agent.add_mcp_tools(client)
+
+    assert apply_threads
+    assert apply_threads[0] != event_loop_thread
 
 
 @pytest.mark.asyncio

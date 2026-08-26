@@ -5,7 +5,8 @@
 import asyncio
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from itertools import islice
 from math import ceil
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     Collapsible,
@@ -40,7 +42,7 @@ from ursa.cli.config import (
     ModelConfig,
 )
 from ursa.cli.runtime import HITL
-from ursa.cli.tui.agent_info import AgentDetails, ToolDetails
+from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
 from ursa.cli.tui.tips import random_tip
 from ursa.util.inference_providers import (
@@ -887,12 +889,50 @@ def _tool_markdown(tool: ToolDetails) -> str:
     )
 
 
+class AgentToolDetails(Collapsible):
+    """A tool card which builds its Markdown only when first expanded."""
+
+    def __init__(self, tool: ToolDetails) -> None:
+        title = (
+            f"{tool.name} (mcp: {tool.mcp_server})"
+            if tool.mcp_server
+            else tool.name
+        )
+        super().__init__(
+            title=title,
+            collapsed=True,
+            classes="agent-tool",
+        )
+        self.tool = tool
+        self._details_mounted = False
+
+    async def on_collapsible_expanded(
+        self, event: Collapsible.Expanded
+    ) -> None:
+        if event.collapsible is not self or self._details_mounted:
+            return
+        self._details_mounted = True
+        try:
+            await self.query_one(Collapsible.Contents).mount(
+                Markdown(_tool_markdown(self.tool))
+            )
+        except BaseException:
+            self._details_mounted = False
+            raise
+
+
 class AgentsScreen(InformationScreen):
     """Tabbed descriptions and configured-tool details for all agents."""
 
-    def __init__(self, agents: tuple[AgentDetails, ...]) -> None:
+    def __init__(self, agents: tuple[AgentDetails, ...], hitl: HITL) -> None:
         super().__init__("Agents", "")
         self.agents = agents
+        self.hitl = hitl
+        self._tool_loads_started: set[str] = set()
+        self._tool_loading_frames: dict[int, int] = {}
+        self._tool_loading_timers: dict[int, Timer] = {}
+        self._tool_panes_pending_render: set[int] = set(range(1, len(agents)))
+        self._tool_activations_started: set[int] = set()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="information"):
@@ -919,30 +959,191 @@ class AgentsScreen(InformationScreen):
                             yield Static(
                                 "Configured tools", classes="agent-tools-title"
                             )
-                            if agent.tool_error:
-                                yield Static(
-                                    Text(
-                                        "Unable to load tools: "
-                                        + agent.tool_error
-                                    ),
-                                    classes="agent-tools-error",
-                                )
-                            elif not agent.tools:
-                                yield Static(
-                                    "No configured tools.",
-                                    classes="agent-tools-empty",
-                                )
-                            for tool in agent.tools:
-                                with Collapsible(
-                                    title=(
-                                        f"{tool.name} (mcp: {tool.mcp_server})"
-                                        if tool.mcp_server
-                                        else tool.name
-                                    ),
-                                    collapsed=True,
-                                    classes="agent-tool",
-                                ):
-                                    yield Markdown(_tool_markdown(tool))
+                            with Vertical(
+                                id=f"agent-tools-{index}",
+                                classes="agent-tools",
+                            ):
+                                if index == 0:
+                                    yield from self._tool_widgets(agent)
+                                else:
+                                    yield Static(
+                                        "Select this tab to display its tools.",
+                                        classes="agent-tools-empty",
+                                    )
+
+    @staticmethod
+    def _tool_widgets(agent: AgentDetails):
+        if not agent.tools_loaded and not agent.tools:
+            yield Static(
+                "Tools have not yet been loaded.",
+                classes="agent-tools-empty",
+            )
+        elif agent.tool_error:
+            yield Static(
+                Text("Unable to load tools: " + agent.tool_error),
+                classes="agent-tools-error",
+            )
+            return
+        elif not agent.tools:
+            yield Static("No configured tools.", classes="agent-tools-empty")
+        for tool in agent.tools:
+            yield AgentToolDetails(tool)
+
+    @on(TabbedContent.TabActivated, "#agents-tabs")
+    def _load_active_agent_tools(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        if event.pane.id is None:
+            return
+        index = int(event.pane.id.rsplit("-", 1)[-1])
+        agent = self.agents[index]
+        if index in self._tool_activations_started or (
+            agent.tools_loaded and index not in self._tool_panes_pending_render
+        ):
+            return
+        self._tool_activations_started.add(index)
+        self.run_worker(
+            self._activate_agent_tools(index),
+            group=f"agent-tools-activation-{index}",
+        )
+
+    async def _activate_agent_tools(self, index: int) -> None:
+        agent = self.agents[index]
+        try:
+            if index in self._tool_panes_pending_render:
+                if not await self._render_agent_tools_safely(index, agent):
+                    return
+                self._tool_panes_pending_render.discard(index)
+                # Rendering may replace this snapshot with a terminal error.
+                agent = self.agents[index]
+            if agent.tools_loaded or agent.name in self._tool_loads_started:
+                return
+            self._tool_loads_started.add(agent.name)
+            container = self.query_one(f"#agent-tools-{index}", Vertical)
+            if not agent.tools:
+                await container.remove_children()
+            loading = Static("Fetching tools.", classes="agent-tools-loading")
+            await container.mount(
+                loading,
+                before=container.children[0] if container.children else None,
+            )
+            self._tool_loading_frames[index] = 1
+            self._tool_loading_timers[index] = self.set_interval(
+                0.3, lambda: self._advance_tool_loading(index)
+            )
+            container.scroll_visible(animate=False, top=True, immediate=True)
+            await self._hydrate_tools(index)
+        finally:
+            self._tool_activations_started.discard(index)
+
+    def _advance_tool_loading(self, index: int) -> None:
+        loading = self.query(f"#agent-tools-{index} .agent-tools-loading")
+        frame = self._tool_loading_frames.get(index)
+        if not loading or frame is None:
+            return
+        loading.first(Static).update(f"Fetching tools{'.' * (frame + 1)}")
+        self._tool_loading_frames[index] = (frame + 1) % 3
+
+    def _stop_tool_loading(self, index: int) -> None:
+        timer = self._tool_loading_timers.pop(index, None)
+        if timer is not None:
+            timer.stop()
+        self._tool_loading_frames.pop(index, None)
+
+    async def _hydrate_tools(self, index: int) -> None:
+        agent = self.agents[index]
+        try:
+            tools = await load_agent_tools(self.hitl, agent.name)
+            updated = replace(
+                agent,
+                tools=tools,
+                tools_loaded=True,
+                tool_error="",
+            )
+        except asyncio.CancelledError:
+            self._tool_loads_started.discard(agent.name)
+            self._stop_tool_loading(index)
+            raise
+        except Exception as exc:  # keep the browser usable on provider failure
+            updated = replace(
+                agent,
+                tools=(),
+                tools_loaded=True,
+                tool_error=f"{type(exc).__name__}: {exc}",
+            )
+        agents = list(self.agents)
+        agents[index] = updated
+        self.agents = tuple(agents)
+        if not self.is_mounted:
+            self._stop_tool_loading(index)
+            return
+        tabs = self.query_one("#agents-tabs", TabbedContent)
+        if tabs.active != f"agent-tab-{index}":
+            # Rendering a large collection of Markdown tool cards is UI-thread
+            # work. Do not freeze whichever tab the user switched to merely to
+            # update an invisible pane.
+            self._tool_panes_pending_render.add(index)
+            self._stop_tool_loading(index)
+            return
+        try:
+            rendered = await self._render_agent_tools_safely(index, updated)
+        finally:
+            self._stop_tool_loading(index)
+        if not rendered:
+            self._tool_panes_pending_render.add(index)
+
+    async def _render_agent_tools(
+        self, index: int, agent: AgentDetails
+    ) -> bool:
+        container = self.query_one(f"#agent-tools-{index}", Vertical)
+        widgets = iter(self._tool_widgets(agent))
+        tab_id = f"agent-tab-{index}"
+        if self.query_one("#agents-tabs", TabbedContent).active != tab_id:
+            return False
+        first_batch = list(islice(widgets, 1))
+        if self.query_one("#agents-tabs", TabbedContent).active != tab_id:
+            return False
+        with self.app.batch_update():
+            await container.remove_children()
+            await container.mount(*first_batch)
+        while True:
+            if self.query_one("#agents-tabs", TabbedContent).active != tab_id:
+                return False
+            batch = list(islice(widgets, 1))
+            if not batch:
+                break
+            with self.app.batch_update():
+                await container.mount(*batch)
+            # Let queued key and tab events preempt a large tool collection.
+            await asyncio.sleep(0)
+        if self.query_one("#agents-tabs", TabbedContent).active != tab_id:
+            return False
+        container.scroll_visible(animate=False, top=True, immediate=True)
+        return True
+
+    async def _render_agent_tools_safely(
+        self, index: int, agent: AgentDetails
+    ) -> bool:
+        try:
+            return await self._render_agent_tools(index, agent)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            failed = replace(
+                agent,
+                tools=(),
+                tools_loaded=True,
+                tool_error=f"{type(exc).__name__}: {exc}",
+            )
+            agents = list(self.agents)
+            agents[index] = failed
+            self.agents = tuple(agents)
+            self._tool_panes_pending_render.add(index)
+            container = self.query_one(f"#agent-tools-{index}", Vertical)
+            await container.remove_children()
+            await container.mount(*self._tool_widgets(failed))
+            self._tool_panes_pending_render.discard(index)
+            return True
 
     def _scroll_view(self) -> VerticalScroll:
         tabs = self.query_one(TabbedContent)

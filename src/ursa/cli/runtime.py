@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,24 +41,90 @@ class AgentHITL:
     state: Any | None = None
     tool_sources: dict[str, str] = field(default_factory=dict, init=False)
     _agent: BaseAgent | None = field(default=None, init=False)
+    _initialization_task: asyncio.Task[None] | None = field(
+        default=None, init=False, repr=False
+    )
 
     async def instantiate(
-        self, mcp_client: MultiServerMCPClient | None = None, **kwargs
+        self,
+        mcp_client: MultiServerMCPClient | None = None,
+        finalizer: Callable[[Any], Awaitable[None]] | None = None,
+        **kwargs,
     ):
-        """Instantiate the underlying agent instance"""
-        assert self._agent is None
-        kwargs |= self.config
-        try:
-            self._agent = self.agent_class(**kwargs)
-        except TypeError as exc:
-            raise TypeError(
-                f"Failed to instantiate {self.agent_class.__name__} with config "
-                f"{self.config}. {exc}"
-            ) from exc
+        """Instantiate once, shared by all concurrent and cancelled waiters."""
+        if self._agent is not None:
+            return
+        task = self._initialization_task
+        if task is None:
+            task = asyncio.create_task(
+                self._instantiate_once(
+                    mcp_client=mcp_client, finalizer=finalizer, **kwargs
+                )
+            )
+            self._initialization_task = task
+            task.add_done_callback(self._initialization_done)
+        # A UI waiter may be cancelled when its modal closes. Initialization
+        # is runtime-owned and must still publish or clean up its result.
+        await asyncio.shield(task)
 
-        # Attach tools from MCP client
-        if mcp_client and isinstance(self._agent, AgentWithTools):
-            self.tool_sources = await self._agent.add_mcp_tools(mcp_client)
+    def _initialization_done(self, task: asyncio.Task[None]) -> None:
+        if self._initialization_task is task:
+            self._initialization_task = None
+        if not task.cancelled():
+            # Retrieve a failure even if the last UI waiter was cancelled;
+            # active waiters still receive the same exception from `await`.
+            task.exception()
+
+    async def _instantiate_once(
+        self,
+        mcp_client: MultiServerMCPClient | None = None,
+        finalizer: Callable[[Any], Awaitable[None]] | None = None,
+        **kwargs,
+    ) -> None:
+        kwargs |= self.config
+
+        def build_agent():
+            try:
+                agent = self.agent_class(**kwargs)
+            except TypeError as exc:
+                raise TypeError(
+                    f"Failed to instantiate {self.agent_class.__name__} with "
+                    f"config {self.config}. {exc}"
+                ) from exc
+            return agent
+
+        agent = await asyncio.to_thread(build_agent)
+        try:
+            tool_sources: dict[str, str] = {}
+            if mcp_client and isinstance(agent, AgentWithTools):
+                tool_sources = await agent.add_mcp_tools(mcp_client)
+            if finalizer is not None:
+                await finalizer(agent)
+        except BaseException:
+            await self._close_agent(agent)
+            raise
+        self._agent = agent
+        self.tool_sources = tool_sources
+
+    @staticmethod
+    async def _close_agent(agent: Any) -> None:
+        async_close = getattr(agent, "aclose", None)
+        if callable(async_close):
+            try:
+                await async_close()
+            except Exception:
+                logging.exception("Failed to close partially initialized agent")
+        close = getattr(agent, "close", None)
+        if callable(close):
+            try:
+                await asyncio.to_thread(close)
+            except Exception:
+                logging.exception("Failed to close partially initialized agent")
+
+    async def wait_until_initialized(self) -> None:
+        """Wait for runtime-owned initialization, if one is in flight."""
+        if self._initialization_task is not None:
+            await asyncio.shield(self._initialization_task)
 
     @property
     def description(self):
@@ -181,48 +248,124 @@ class HITL:
         self.last_agent_result = None
         self.last_agent = None
         self._runtime_checkpointers: list[AsyncSqliteSaver] = []
+        self._transition_lock = asyncio.Lock()
+        self._transition_serial_lock = asyncio.Lock()
+        self._loads_allowed = asyncio.Event()
+        self._loads_allowed.set()
+        self._no_active_operations = asyncio.Event()
+        self._no_active_operations.set()
+        self._active_operations = 0
+        self._close_task: asyncio.Task[None] | None = None
         self._closed = False
 
     async def _get_checkpointer(
         self, checkpoint_path: Path
     ) -> AsyncSqliteSaver:
         checkpoint_path = checkpoint_path / "db" / "checkpointer.db"
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            checkpoint_path.parent.mkdir, parents=True, exist_ok=True
+        )
         conn = await aiosqlite.connect(str(checkpoint_path))
         return AsyncSqliteSaver(conn)
 
-    async def get_agent(self, name: str):
-        if self._closed:
-            raise RuntimeError("HITL runtime is closed")
+    @asynccontextmanager
+    async def _agent_operation(self) -> AsyncIterator[None]:
+        """Lease runtime agent resources against close/reconfiguration."""
+        while True:
+            if self._closed:
+                raise RuntimeError("HITL runtime is closed")
+            await self._loads_allowed.wait()
+            async with self._transition_lock:
+                if self._closed:
+                    raise RuntimeError("HITL runtime is closed")
+                if not self._loads_allowed.is_set():
+                    continue
+                self._active_operations += 1
+                self._no_active_operations.clear()
+                break
+        try:
+            yield
+        finally:
+            async with self._transition_lock:
+                self._active_operations -= 1
+                if self._active_operations == 0:
+                    self._no_active_operations.set()
 
+    async def _begin_transition(self) -> None:
+        await self._transition_serial_lock.acquire()
+        try:
+            async with self._transition_lock:
+                self._loads_allowed.clear()
+            await self._no_active_operations.wait()
+        except BaseException:
+            async with self._transition_lock:
+                self._loads_allowed.set()
+            self._transition_serial_lock.release()
+            raise
+
+    async def _end_transition(self) -> None:
+        async with self._transition_lock:
+            self._loads_allowed.set()
+        self._transition_serial_lock.release()
+
+    @asynccontextmanager
+    async def _agent_transition(self) -> AsyncIterator[None]:
+        await self._begin_transition()
+        try:
+            yield
+        finally:
+            await self._end_transition()
+
+    @staticmethod
+    def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def _run_runtime_task(self, coroutine: Awaitable[Any]) -> Any:
+        task = asyncio.create_task(coroutine)
+        task.add_done_callback(self._consume_task_exception)
+        return await asyncio.shield(task)
+
+    async def _finalize_named_agent(self, built_agent: Any) -> None:
+        sync_checkpointer = built_agent.checkpointer
+        async_checkpointer = await self._get_checkpointer(built_agent.den)
+        try:
+            if isinstance(sync_checkpointer, SqliteSaver):
+                await asyncio.to_thread(sync_checkpointer.conn.close)
+        except BaseException:
+            await async_checkpointer.conn.close()
+            await asyncio.to_thread(async_checkpointer.conn.join)
+            raise
+        built_agent.checkpointer = async_checkpointer
+        self._runtime_checkpointers.append(async_checkpointer)
+
+    async def _get_agent(self, name: str) -> AgentHITL:
         agent = self.agents[name]
-
-        # Lazily instantiate the agents
-        if agent._agent is None:
-            await agent.instantiate(
-                llm=self.model,
-                workspace=self.workspace,
-                agent_name=self.agent_name,
-                group=self.group,
-                mcp_client=self.mcp_client,
-                thread_id=f"{self.thread_id}",
-            )
-            # Named agents are persistent. Replace their sync checkpointer with
-            # an async one for HITL execution. Unnamed CLI sessions are
-            # ephemeral and intentionally run without a checkpointer so they do
-            # not leave checkpoint files in the workspace.
-            if self.agent_name is not None:
-                sync_checkpointer = agent._agent.checkpointer
-                async_checkpointer = await self._get_checkpointer(
-                    agent._agent.den
-                )
-                agent._agent.checkpointer = async_checkpointer
-                self._runtime_checkpointers.append(async_checkpointer)
-                if isinstance(sync_checkpointer, SqliteSaver):
-                    sync_checkpointer.conn.close()
-
+        await agent.instantiate(
+            llm=self.model,
+            workspace=self.workspace,
+            agent_name=self.agent_name,
+            group=self.group,
+            mcp_client=self.mcp_client,
+            finalizer=(
+                self._finalize_named_agent
+                if self.agent_name is not None
+                else None
+            ),
+            thread_id=f"{self.thread_id}",
+        )
         assert agent._agent is not None
         return agent
+
+    async def get_agent(self, name: str):
+        async with self.use_agent(name) as agent:
+            return agent
+
+    @asynccontextmanager
+    async def use_agent(self, name: str) -> AsyncIterator[AgentHITL]:
+        """Keep one agent alive for metadata extraction or execution setup."""
+        async with self._agent_operation():
+            yield await self._get_agent(name)
 
     async def run_agent(
         self,
@@ -231,17 +374,17 @@ class HITL:
         callbacks: Sequence[Any] | None = None,
     ) -> str:
         assert name in self.agents, f"Unknown agent {name}"
-        agent = await self.get_agent(name)
-        msg = await agent(
-            prompt,
-            last_agent_result=self.last_agent_result,
-            last_agent=self.last_agent,
-            callbacks=callbacks,
-        )
-        assert isinstance(msg, str)
-        self.last_agent_result = msg
-        self.last_agent = agent._agent
-        return msg
+        async with self.use_agent(name) as agent:
+            msg = await agent(
+                prompt,
+                last_agent_result=self.last_agent_result,
+                last_agent=self.last_agent,
+                callbacks=callbacks,
+            )
+            assert isinstance(msg, str)
+            self.last_agent_result = msg
+            self.last_agent = agent._agent
+            return msg
 
     async def reconfigure_model(
         self, model_name: str, inference_provider: str | None
@@ -274,12 +417,18 @@ class HITL:
         model = await asyncio.to_thread(resolved.init_chat_model)
         enforce_model_group_policy(model, self.group)
 
-        await self._close_instantiated_agents()
-        self.model = model
-        self.config.llm_model = resolved
-        self.inference_provider = inference_provider
-        self.last_agent = None
-        self.last_agent_result = None
+        async def apply_reconfiguration() -> None:
+            async with self._agent_transition():
+                if self._closed:
+                    raise RuntimeError("HITL runtime is closed")
+                await self._close_instantiated_agents()
+                self.model = model
+                self.config.llm_model = resolved
+                self.inference_provider = inference_provider
+                self.last_agent = None
+                self.last_agent_result = None
+
+        await self._run_runtime_task(apply_reconfiguration())
 
     async def reconfigure_models(
         self,
@@ -324,24 +473,36 @@ class HITL:
             )
             enforce_model_group_policy(new_embedding, self.group)
 
-        await self._close_instantiated_agents()
-        self.model = new_chat
-        self.embedding = new_embedding
-        self.config.llm_model = resolved_chat
-        self.config.emb_model = resolved_embedding
-        self.inference_provider = chat_config.inference_provider
-        self.embedding_inference_provider = (
-            embedding_config.inference_provider if embedding_config else None
-        )
-        for wrapper in self.agents.values():
-            if "rag_tool_embedding" in wrapper.config:
-                wrapper.config["rag_tool_embedding"] = new_embedding
-        self.last_agent = None
-        self.last_agent_result = None
+        async def apply_reconfiguration() -> None:
+            async with self._agent_transition():
+                if self._closed:
+                    raise RuntimeError("HITL runtime is closed")
+                await self._close_instantiated_agents()
+                self.model = new_chat
+                self.embedding = new_embedding
+                self.config.llm_model = resolved_chat
+                self.config.emb_model = resolved_embedding
+                self.inference_provider = chat_config.inference_provider
+                self.embedding_inference_provider = (
+                    embedding_config.inference_provider
+                    if embedding_config
+                    else None
+                )
+                for wrapper in self.agents.values():
+                    if "rag_tool_embedding" in wrapper.config:
+                        wrapper.config["rag_tool_embedding"] = new_embedding
+                self.last_agent = None
+                self.last_agent_result = None
+
+        await self._run_runtime_task(apply_reconfiguration())
 
     async def _close_instantiated_agents(self) -> None:
         """Close and reset agents so they bind to the configured model."""
         for wrapper in self.agents.values():
+            try:
+                await wrapper.wait_until_initialized()
+            except Exception:
+                logging.exception("Agent initialization failed during cleanup")
             agent = wrapper._agent
             if agent is None:
                 continue
@@ -350,7 +511,7 @@ class HITL:
             except Exception:
                 logging.exception("Failed to close async agent resources")
             try:
-                agent.close()
+                await asyncio.to_thread(agent.close)
             except Exception:
                 logging.exception("Failed to close sync agent resources")
             wrapper._agent = None
@@ -366,11 +527,24 @@ class HITL:
 
     async def aclose(self) -> None:
         """Close instantiated agents and runtime-owned persistence resources."""
-        if self._closed:
-            return
-        self._closed = True
+        task = self._close_task
+        if task is None:
+            task = asyncio.create_task(self._aclose_once())
+            self._close_task = task
+            task.add_done_callback(self._close_done)
+        await asyncio.shield(task)
 
-        await self._close_instantiated_agents()
+    async def _aclose_once(self) -> None:
+        async with self._agent_transition():
+            if self._closed:
+                return
+            await self._close_instantiated_agents()
+            self._closed = True
+
+    def _close_done(self, task: asyncio.Task[None]) -> None:
+        if self._close_task is task:
+            self._close_task = None
+        self._consume_task_exception(task)
 
     async def close(self) -> None:
         """Compatibility alias for :meth:`aclose`."""

@@ -1650,20 +1650,31 @@ class AgentWithTools:
             MCP server names keyed by the attached tool name. Clients that do
             not expose named connections return an empty mapping.
         """
-        tools, tool_sources = await load_mcp_tools_with_sources(client)
-        if tool_name is not None:
-            tool_name = (
-                tool_name if isinstance(tool_name, list) else [tool_name]
+
+        def discover_and_apply() -> dict[str, str]:
+            # MCP adapters perform synchronous session/schema setup around
+            # their async I/O, and applying tools rebuilds the graph. Own one
+            # worker boundary for the complete operation so every caller—not
+            # only Textual—keeps its event loop responsive.
+            tools, tool_sources = asyncio.run(
+                load_mcp_tools_with_sources(client)
             )
-            tools = [tool for tool in tools if tool.name in tool_name]
-            attached_names = {tool.name for tool in tools}
-            tool_sources = {
-                name: server
-                for name, server in tool_sources.items()
-                if name in attached_names
-            }
-        self.add_tool(tools)
-        return tool_sources
+            selected = tool_name
+            if selected is not None:
+                selected = (
+                    selected if isinstance(selected, list) else [selected]
+                )
+                tools = [tool for tool in tools if tool.name in selected]
+                attached_names = {tool.name for tool in tools}
+                tool_sources = {
+                    name: server
+                    for name, server in tool_sources.items()
+                    if name in attached_names
+                }
+            self.add_tool(tools)
+            return tool_sources
+
+        return await asyncio.to_thread(discover_and_apply)
 
     def remove_tool(self, tool_names: str | list[str]) -> None:
         names = tool_names if isinstance(tool_names, list) else [tool_names]

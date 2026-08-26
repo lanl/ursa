@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,7 @@ class AgentDetails:
     description: str
     config: tuple[tuple[str, str], ...]
     tools: tuple[ToolDetails, ...]
+    tools_loaded: bool = True
     tool_error: str = ""
 
 
@@ -88,8 +90,14 @@ def _schema_arguments(schema: Any) -> tuple[ToolArgumentDetails, ...]:
     return tuple(arguments)
 
 
-def _tool_details(name: str, tool: Any, mcp_server: str = "") -> ToolDetails:
-    schema = getattr(tool, "args_schema", None)
+def _tool_details(
+    name: str,
+    tool: Any,
+    mcp_server: str = "",
+    *,
+    include_schema: bool = True,
+) -> ToolDetails:
+    schema = getattr(tool, "args_schema", None) if include_schema else None
     return ToolDetails(
         name=str(getattr(tool, "name", None) or name),
         class_name=tool.__class__.__name__,
@@ -98,13 +106,16 @@ def _tool_details(name: str, tool: Any, mcp_server: str = "") -> ToolDetails:
         ).strip(),
         schema_name=_schema_name(schema),
         return_direct=getattr(tool, "return_direct", None),
-        arguments=_schema_arguments(schema),
+        arguments=_schema_arguments(schema) if include_schema else (),
         mcp_server=mcp_server,
     )
 
 
 def _configured_tools(
-    agent: Any, tool_sources: Mapping[str, str]
+    agent: Any,
+    tool_sources: Mapping[str, str],
+    *,
+    include_schema: bool = True,
 ) -> tuple[ToolDetails, ...]:
     tools = getattr(agent, "tools", None)
     if isinstance(tools, Mapping):
@@ -121,15 +132,15 @@ def _configured_tools(
             str(name),
             tool,
             str(tool_sources.get(str(name)) or ""),
+            include_schema=include_schema,
         )
         for name, tool in sorted(items, key=lambda item: str(item[0]))
     )
 
 
-async def load_agent_details(hitl: Any) -> tuple[AgentDetails, ...]:
-    """Load all configured agents, including tools attached during startup."""
+def load_agent_details(hitl: Any) -> tuple[AgentDetails, ...]:
+    """Snapshot configured-agent metadata without instantiating any agents."""
     details = []
-    get_agent = getattr(hitl, "get_agent", None)
     # Dict insertion order is the canonical UI order established in HITL.
     for name, wrapper in hitl.agents.items():
         description = str(
@@ -139,26 +150,63 @@ async def load_agent_details(hitl: Any) -> tuple[AgentDetails, ...]:
             (str(key), str(value))
             for key, value in (getattr(wrapper, "config", None) or {}).items()
         )
-        actual = getattr(wrapper, "_agent", None)
-        tool_error = ""
-        if actual is None and callable(get_agent):
-            try:
-                initialized = await get_agent(name)
-                actual = getattr(initialized, "_agent", None) or initialized
-            except Exception as exc:  # keep other agent tabs usable
-                tool_error = f"{type(exc).__name__}: {exc}"
-        if actual is None:
-            actual = wrapper
+        actual = (
+            getattr(wrapper, "_agent", None)
+            if hasattr(wrapper, "_agent")
+            else wrapper
+        )
         details.append(
             AgentDetails(
                 name=str(name),
                 description=description,
                 config=config,
+                # Expose initialized tools immediately without invoking schema
+                # generation; the selected tab enriches their arguments in its
+                # off-thread hydration worker.
                 tools=_configured_tools(
                     actual,
                     getattr(wrapper, "tool_sources", {}) or {},
-                ),
-                tool_error=tool_error,
+                    include_schema=False,
+                )
+                if actual is not None
+                else (),
+                tools_loaded=False,
             )
         )
     return tuple(details)
+
+
+async def load_agent_tools(hitl: Any, name: str) -> tuple[ToolDetails, ...]:
+    """Instantiate one agent, if needed, and return its display-safe tools."""
+    use_agent = getattr(hitl, "use_agent", None)
+
+    async def extract(wrapper: Any) -> tuple[ToolDetails, ...]:
+        actual = getattr(wrapper, "_agent", None) or wrapper
+        # Schema conversion can invoke provider/Pydantic schema generation for
+        # every tool, so it should not block Textual's event loop either.
+        return await asyncio.to_thread(
+            _configured_tools,
+            actual,
+            getattr(wrapper, "tool_sources", {}) or {},
+        )
+
+    async def snapshot() -> tuple[ToolDetails, ...]:
+        if callable(use_agent):
+            async with use_agent(name) as wrapper:
+                return await extract(wrapper)
+        return await extract(await hitl.get_agent(name))
+
+    # Keep the lease-owning operation alive if Textual dismisses its worker:
+    # the worker can clean up immediately, while this task retains the lease
+    # until non-cancellable thread work has actually finished.
+    operation = asyncio.create_task(snapshot())
+    try:
+        return await asyncio.shield(operation)
+    except asyncio.CancelledError:
+        operation.add_done_callback(_consume_task_exception)
+        raise
+
+
+def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+    if not task.cancelled():
+        task.exception()

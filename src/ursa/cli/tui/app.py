@@ -485,9 +485,9 @@ class UrsaTextualApp(App[None]):
             self.action_quit()
             return
         if command == "agents":
-            details = await load_agent_details(self.hitl)
+            details = load_agent_details(self.hitl)
             self.push_screen(
-                AgentsScreen(details),
+                AgentsScreen(details, self.hitl),
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
