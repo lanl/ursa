@@ -27,6 +27,7 @@ TIPS = (
     "Use {command_macro}agents to explore available agents and their tools.",
     "Use {command_macro}keymap to see all available keyboard shortcuts.",
     "Use {command_macro}theme to change the color theme.",
+    "Switch URSA's chat and embedding models with {command_macro}models",
     "Found a problem? Let us know: https://github.com/lanl/ursa/issues",
     "Unsure about something? Check out our docs: https://lanl.github.io/ursa",
 )
