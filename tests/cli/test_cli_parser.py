@@ -857,8 +857,19 @@ def test_emb_model_config_initializes_embedding_model(monkeypatch):
 
     assert result == "embedding-model"
     assert captured_kwargs["model"] == "text-embedding-3-large"
-    assert captured_kwargs["model_provider"] == "openai"
+    assert captured_kwargs["provider"] == "openai"
+    assert "model_provider" not in captured_kwargs
     assert "use_responses_api" not in captured_kwargs
+
+
+def test_emb_model_kwargs_use_embedding_provider_argument():
+    config = EmbModelConfig(
+        model="text-embedding-3-small",
+        model_provider="openai",
+    )
+
+    assert config.kwargs["provider"] == "openai"
+    assert "model_provider" not in config.kwargs
 
 
 def test_model_config_openai_uses_truststore_client():
@@ -983,6 +994,39 @@ def test_inference_provider_applies_to_llm_model():
     assert "inference_provider" not in resolved.kwargs
 
 
+def test_model_config_model_provider_overrides_inference_provider():
+    config = UrsaConfig(
+        inference_providers={"gateway": {"model_provider": "anthropic"}},
+        llm_model={
+            "model": "gpt-test",
+            "model_provider": "openai",
+            "inference_provider": "gateway",
+        },
+    )
+
+    resolved = config.resolve()
+
+    assert resolved.llm_model.model_provider == "openai"
+    assert resolved.inference_providers["gateway"].model_extra == {
+        "model_provider": "anthropic"
+    }
+
+
+def test_inference_provider_sets_unset_model_provider():
+    config = UrsaConfig(
+        inference_providers={"gateway": {"model_provider": "anthropic"}},
+        llm_model={
+            "model": "gpt-test",
+            "inference_provider": "gateway",
+        },
+    )
+
+    resolved = config.resolve()
+
+    assert "model_provider" not in config.llm_model.model_fields_set
+    assert resolved.llm_model.model_provider == "anthropic"
+
+
 def test_inference_provider_applies_to_embedding_model():
     config = UrsaConfig(
         inference_providers={
@@ -1040,6 +1084,8 @@ def test_model_config_explicit_values_override_inference_provider():
     assert resolved.api_key == SecretReference(env="MODEL_API_KEY")
     assert resolved.model_extra["timeout"] == 60
     assert resolved.model_extra["seed"] == 111
+    assert resolved.model_fields_set == config.llm_model.model_fields_set
+    assert "seed" not in resolved.model_fields_set
 
 
 def test_unknown_inference_provider_is_validation_error():

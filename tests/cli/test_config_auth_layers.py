@@ -214,6 +214,22 @@ def test_api_key_keyring_reference(monkeypatch, setting, username):
     assert calls == [("ursa", username)]
 
 
+def test_resolution_populates_provider_keyring_username():
+    config = UrsaConfig(
+        inference_providers={"acme": {"api_key": {"keyring": True}}},
+        llm_model={"model": "provider:model", "inference_provider": "acme"},
+    )
+
+    resolved = config.resolve()
+
+    assert resolved.inference_providers["acme"].api_key == SecretReference(
+        keyring="acme"
+    )
+    assert config.inference_providers["acme"].api_key == SecretReference(
+        keyring=True
+    )
+
+
 def test_legacy_api_key_env_is_migrated_with_warning(monkeypatch):
     monkeypatch.setenv("OLD_TOKEN", "secret")
     with pytest.warns(

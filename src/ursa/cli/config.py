@@ -94,6 +94,19 @@ class InferenceProviderConfig(BaseModel):
     def _accept_legacy_api_key_env(cls, data):
         return _migrate_api_key_env(data)
 
+    def resolve(self, name: str) -> Self:
+        """Resolve settings whose defaults depend on the provider name."""
+        if (
+            isinstance(self.api_key, SecretReference)
+            and self.api_key.keyring is True
+        ):
+            return self.model_copy(
+                update={
+                    "api_key": self.api_key.model_copy(update={"keyring": name})
+                }
+            )
+        return self.model_copy()
+
 
 class ModelConfig(BaseModel):
     """Configuration manager for LangChain's `init_*` factories."""
@@ -197,6 +210,7 @@ class ModelConfig(BaseModel):
         if provider_config is None:
             raise ValueError(f"Unknown inference_provider '{provider_name}'")
         assert isinstance(provider_config, InferenceProviderConfig)
+        provider_config = provider_config.resolve(provider_name)
 
         provider_values = {
             name: deepcopy(getattr(provider_config, name))
@@ -214,16 +228,11 @@ class ModelConfig(BaseModel):
             **provider_values,
             **model_values,
         }
-        api_key = values.get("api_key")
-        if isinstance(api_key, SecretReference) and api_key.keyring is True:
-            values["api_key"] = api_key.model_copy(
-                update={"keyring": provider_name}
-            )
-
         # This is a trusted transition from configured input to a concrete
         # runtime model. A resolved model intentionally retains the provider
         # name while also containing the provider-derived base URL.
         resolved = self.model_copy(update=values)
+        resolved.__pydantic_fields_set__ = self.model_fields_set.copy()
         resolved._inference_provider_resolved = True
         return resolved
 
@@ -322,6 +331,13 @@ class ChatModelConfig(ModelConfig):
 
 class EmbModelConfig(ModelConfig):
     """Configuration for instantiating an embeddings model"""
+
+    @property
+    def kwargs(self) -> dict:
+        """Return keyword arguments accepted by ``init_embeddings``."""
+        kwargs = super().kwargs
+        kwargs["provider"] = kwargs.pop("model_provider", None)
+        return kwargs
 
     def init_embedding(self) -> Embeddings:
         emb = init_embeddings(**self.kwargs)
@@ -700,6 +716,11 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
         }
     )
     resolved._temp_workspace = config._temp_workspace
+
+    resolved.inference_providers = {
+        name: provider.resolve(name)
+        for name, provider in resolved.inference_providers.items()
+    }
 
     for field_name in ("llm_model", "emb_model"):
         model = getattr(resolved, field_name)
