@@ -317,7 +317,7 @@ class UrsaTextualApp(App[None]):
 
     def action_hard_quit(self) -> None:
         """Abruptly terminate URSA without waiting for active work."""
-        os._exit(130)
+        self.exit(130)
 
     def action_quit(self) -> None:
         """Quit after the active turn, or immediately when idle."""

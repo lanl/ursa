@@ -366,16 +366,6 @@ async def test_quitting_waits_for_active_agent_then_exits(
     assert app._exit
 
 
-def test_ctrl_d_uses_abrupt_process_exit(tmp_path, monkeypatch):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    exit_codes = []
-    monkeypatch.setattr("ursa.cli.app.os._exit", exit_codes.append)
-
-    app.action_hard_quit()
-
-    assert exit_codes == [130]
-
-
 async def test_command_arrows_navigate_turn_markers_and_end_anchor(tmp_path):
     hitl = FakeHITL(tmp_path)
     app = UrsaTextualApp(hitl)
