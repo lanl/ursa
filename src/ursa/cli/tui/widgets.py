@@ -33,16 +33,16 @@ from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.option_list import Option
 
 from ursa.agents.base import URSA_VERSION
-from ursa.cli.agent_info import AgentDetails, ToolDetails
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
     ModelConfig,
 )
-from ursa.cli.helpers import _fuzzy_score
 from ursa.cli.runtime import HITL
-from ursa.cli.tips import random_tip
+from ursa.cli.tui.agent_info import AgentDetails, ToolDetails
+from ursa.cli.tui.helpers import _fuzzy_score
+from ursa.cli.tui.tips import random_tip
 from ursa.util.inference_providers import (
     ProviderModel,
     list_provider_models,

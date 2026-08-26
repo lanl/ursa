@@ -3,10 +3,10 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 from tests.cli._app_fakes import FakeHITL
-from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import ToolCallCard
-from ursa.cli.event_handler import TextualEventHandler
-from ursa.cli.turn import Turn
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.event_cards import ToolCallCard
+from ursa.cli.tui.event_handler import TextualEventHandler
+from ursa.cli.tui.turn import Turn
 
 
 async def test_default_tool_card_switches_from_input_to_output(tmp_path):

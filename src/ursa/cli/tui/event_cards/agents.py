@@ -3,9 +3,9 @@
 from collections.abc import Mapping
 from typing import Any
 
-from ursa.cli.event_cards.base import EventCard
-from ursa.cli.event_cards.files import EditCard
-from ursa.cli.helpers import AGENT_LABELS
+from ursa.cli.tui.event_cards.base import EventCard
+from ursa.cli.tui.event_cards.files import EditCard
+from ursa.cli.tui.helpers import AGENT_LABELS
 
 
 class AgentEventCard(EventCard):

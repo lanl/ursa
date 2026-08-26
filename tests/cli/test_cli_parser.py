@@ -53,7 +53,7 @@ def _stub_textual(monkeypatch):
     hitl_class = MagicMock()
     run_textual = MagicMock()
     monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.app.run_textual", run_textual)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     return hitl_class, run_textual
 
@@ -118,7 +118,7 @@ def test_exec_uses_textual_one_shot_renderer(monkeypatch):
     hitl = MagicMock()
     run_once = MagicMock()
     monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(return_value=hitl))
-    monkeypatch.setattr("ursa.cli.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "#plan inspect this"])
@@ -132,8 +132,8 @@ def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
     run_textual = MagicMock()
     run_once = MagicMock()
     monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.app.run_textual", run_textual)
-    monkeypatch.setattr("ursa.cli.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     args = ["--name", "lab-assistant"]
     if mode == "exec":
@@ -173,7 +173,7 @@ def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
     hitl_class = MagicMock()
     run_once = MagicMock()
     monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "summarize this"])

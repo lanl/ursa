@@ -6,13 +6,13 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-import ursa.cli.app as app_module
+import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL, emit_event
-from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import EventCard, ExceptionCard, RunCommandCard
-from ursa.cli.turn import Turn
-from ursa.cli.widgets import (
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
+from ursa.cli.tui.turn import Turn
+from ursa.cli.tui.widgets import (
     ActivityIndicator,
     MessageCard,
     PromptArea,

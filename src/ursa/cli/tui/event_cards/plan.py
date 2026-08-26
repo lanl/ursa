@@ -8,8 +8,8 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.widgets import Markdown, Static
 
-from ursa.cli.event_cards.base import EventCard
-from ursa.cli.helpers import _plan_step_text, _truncate_middle
+from ursa.cli.tui.event_cards.base import EventCard
+from ursa.cli.tui.helpers import _plan_step_text, _truncate_middle
 
 
 class PlanCard(EventCard):

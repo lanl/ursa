@@ -294,7 +294,7 @@ def main(args=None):
 
     match subcommand:
         case None:
-            from ursa.cli.app import run_textual
+            from ursa.cli.tui.app import run_textual
 
             hitl = _initialize_hitl(ursa_config)
             run_textual(hitl)
@@ -312,7 +312,7 @@ def main(args=None):
                 run_kwargs["port"] = cmd_config.port
             mcp.run(**run_kwargs)
         case "exec":
-            from ursa.cli.app import run_textual_once
+            from ursa.cli.tui.app import run_textual_once
 
             hitl = _initialize_hitl(ursa_config)
             run_textual_once(hitl, cmd_config.prompt)

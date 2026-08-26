@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
-from ursa.cli.event_cards.base import EventCard
+from ursa.cli.tui.event_cards.base import EventCard
 
 
 class FileActivityCard(EventCard):

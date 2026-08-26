@@ -9,17 +9,17 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import ToolMessage
 
-from ursa.cli.helpers import (
+from ursa.cli.tui.helpers import (
     FILE_TOOLS,
     TokenUsage,
     _reasoning_trace,
     _token_usage_breakdown,
 )
-from ursa.cli.turn import Turn
+from ursa.cli.tui.turn import Turn
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 if TYPE_CHECKING:
-    from ursa.cli.app import UrsaTextualApp
+    from ursa.cli.tui.app import UrsaTextualApp
 
 
 class TextualEventHandler(AsyncCallbackHandler):

@@ -5,14 +5,14 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-import ursa.cli.event_handler as event_handler_module
-import ursa.cli.turn as turn_module
+import ursa.cli.tui.event_handler as event_handler_module
+import ursa.cli.tui.turn as turn_module
 from tests.cli._app_fakes import FakeHITL, emit_event
-from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import EditCard, FileActivityCard, RunCommandCard
-from ursa.cli.event_handler import TextualEventHandler
-from ursa.cli.turn import Turn
-from ursa.cli.widgets import ActivityIndicator, MessageCard
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.event_cards import EditCard, FileActivityCard, RunCommandCard
+from ursa.cli.tui.event_handler import TextualEventHandler
+from ursa.cli.tui.turn import Turn
+from ursa.cli.tui.widgets import ActivityIndicator, MessageCard
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 

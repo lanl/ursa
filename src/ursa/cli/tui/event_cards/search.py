@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
-from ursa.cli.event_cards.base import EventCard
+from ursa.cli.tui.event_cards.base import EventCard
 
 
 class SearchEventCard(EventCard):

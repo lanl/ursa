@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ursa.cli.helpers import (
+from ursa.cli.tui.helpers import (
     _fuzzy_match,
     _plan_step_text,
     _token_usage,

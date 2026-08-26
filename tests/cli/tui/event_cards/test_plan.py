@@ -4,9 +4,9 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 from tests.cli._app_fakes import FakeHITL, emit_event
-from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import PlanCard
-from ursa.cli.turn import Turn
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.event_cards import PlanCard
+from ursa.cli.tui.turn import Turn
 
 
 def plan_steps(count=7):

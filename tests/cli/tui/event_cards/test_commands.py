@@ -4,11 +4,11 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from tests.cli._app_fakes import FakeHITL, emit_event
-from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import CommandSafetyIndicator, RunCommandCard
-from ursa.cli.event_handler import TextualEventHandler
-from ursa.cli.turn import Turn
-from ursa.cli.widgets import ActivityIndicator
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.event_cards import CommandSafetyIndicator, RunCommandCard
+from ursa.cli.tui.event_handler import TextualEventHandler
+from ursa.cli.tui.turn import Turn
+from ursa.cli.tui.widgets import ActivityIndicator
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
@@ -104,6 +104,8 @@ async def test_identical_concurrent_commands_are_correlated_by_run_id(tmp_path):
             second.query_one(".command-output", Static).content.code
             == "second output"
         )
+
+
 async def test_command_completion_finishes_pending_safety_indicator(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 

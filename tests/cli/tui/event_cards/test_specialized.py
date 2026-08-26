@@ -2,14 +2,14 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from tests.cli._app_fakes import FakeHITL
-from ursa.cli.app import UrsaTextualApp
-from ursa.cli.event_cards import (
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.event_cards import (
     AgentEventCard,
     ArtifactCard,
     EditCard,
     SearchEventCard,
 )
-from ursa.cli.turn import Turn
+from ursa.cli.tui.turn import Turn
 
 
 async def test_multiple_edit_rows_expand_independently_under_one_heading(

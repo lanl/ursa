@@ -12,7 +12,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from ursa.cli.event_cards import (
+from ursa.cli.tui.event_cards import (
     AgentEventCard,
     ArtifactCard,
     EditCard,
@@ -24,13 +24,13 @@ from ursa.cli.event_cards import (
     SearchEventCard,
     ToolCallCard,
 )
-from ursa.cli.helpers import (
+from ursa.cli.tui.helpers import (
     AGENT_LABELS,
     FILE_TOOLS,
     SEARCH_TOOLS,
     SUMMARY_GROUP_GRACE_SECONDS,
 )
-from ursa.cli.widgets import ActivityIndicator, MessageCard
+from ursa.cli.tui.widgets import ActivityIndicator, MessageCard
 from ursa.util.rendering import event_artifacts
 
 

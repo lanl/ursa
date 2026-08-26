@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from ursa.cli.agent_info import load_agent_details
+from ursa.cli.tui.agent_info import load_agent_details
 
 
 class ToolArgs:

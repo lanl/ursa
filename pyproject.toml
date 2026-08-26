@@ -133,7 +133,7 @@ pycodestyle.max-doc-length = 80
 "examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
-ursa = ["cli/*.tcss", "observability/pricing.json"]
+ursa = ["cli/tui/*.tcss", "observability/pricing.json"]
 ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]

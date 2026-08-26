@@ -19,14 +19,14 @@ from textual.widgets import (
 
 import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL
-from ursa.cli.app import UrsaTextualApp
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
 )
-from ursa.cli.tips import TIPS, random_tip, runtime_keymap
-from ursa.cli.widgets import (
+from ursa.cli.tui.app import UrsaTextualApp
+from ursa.cli.tui.tips import TIPS, random_tip, runtime_keymap
+from ursa.cli.tui.widgets import (
     AgentsScreen,
     FuzzySelectOverlay,
     HotlistScreen,
@@ -608,7 +608,7 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         ]
 
     monkeypatch.setattr(
-        "ursa.cli.widgets.list_provider_models",
+        "ursa.cli.tui.widgets.list_provider_models",
         provider_models,
     )
     app = UrsaTextualApp(hitl)
@@ -817,7 +817,7 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
         check_embedding_ctx_length=False,
     )
     monkeypatch.setattr(
-        "ursa.cli.widgets.list_provider_models", lambda _config: []
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
     app = UrsaTextualApp(hitl)
 
@@ -871,7 +871,7 @@ async def test_model_modal_preserves_only_explicit_overrides_when_switching_prov
         hitl.config.inference_providers
     )
     monkeypatch.setattr(
-        "ursa.cli.widgets.list_provider_models",
+        "ursa.cli.tui.widgets.list_provider_models",
         lambda _config: [ProviderModel("gpt-test", "openai")],
     )
     app = UrsaTextualApp(hitl)
@@ -903,7 +903,7 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
         return [ProviderModel("text-embedding-test", "openai", "embedding")]
 
     monkeypatch.setattr(
-        "ursa.cli.widgets.list_provider_models", provider_models
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
     )
     app = UrsaTextualApp(hitl)
 

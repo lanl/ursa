@@ -25,18 +25,18 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
-from ursa.cli.agent_info import load_agent_details
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.event_handler import TextualEventHandler
-from ursa.cli.helpers import (
+from ursa.cli.runtime import HITL
+from ursa.cli.tui.agent_info import load_agent_details
+from ursa.cli.tui.event_handler import TextualEventHandler
+from ursa.cli.tui.helpers import (
     COMMAND_CHOICES,
     TokenUsage,
     _route_prompt,
 )
-from ursa.cli.runtime import HITL
-from ursa.cli.themes import AVAILABLE_THEMES
-from ursa.cli.turn import Turn
-from ursa.cli.widgets import (
+from ursa.cli.tui.themes import AVAILABLE_THEMES
+from ursa.cli.tui.turn import Turn
+from ursa.cli.tui.widgets import (
     AgentsScreen,
     HotlistScreen,
     InformationScreen,

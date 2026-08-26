@@ -15,8 +15,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Markdown, Static
 
-from ursa.cli.event_cards.base import EventCard
-from ursa.cli.widgets import ActivityIndicator
+from ursa.cli.tui.event_cards.base import EventCard
+from ursa.cli.tui.widgets import ActivityIndicator
 
 
 def _json(value: Any, *, compact: bool) -> str:

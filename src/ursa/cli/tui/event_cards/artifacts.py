@@ -6,7 +6,7 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.widgets import Static
 
-from ursa.cli.event_cards.base import EventCard
+from ursa.cli.tui.event_cards.base import EventCard
 from ursa.util.rendering import render_event_artifacts
 
 
