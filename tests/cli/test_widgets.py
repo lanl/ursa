@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -27,14 +28,17 @@ from ursa.cli.config import (
 from ursa.cli.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.widgets import (
     AgentsScreen,
+    FuzzySelectOverlay,
     HotlistScreen,
     InformationScreen,
     ModelScreen,
+    ModelSelection,
     PromptArea,
     ThemeScreen,
     ToolMessage,
     WelcomeBanner,
 )
+from ursa.util.inference_providers import ProviderModel
 
 
 class FakeToolArgs:
@@ -57,6 +61,13 @@ class FakeConfiguredTool:
     args_schema = FakeToolArgs
     return_direct = False
     metadata = None
+
+
+def test_model_select_type_search_is_fuzzy():
+    overlay = FuzzySelectOverlay()
+    overlay.add_options(["gpt-4", "gpt-5.4", "text-embedding-3-large"])
+
+    assert overlay._find_search_match("g54") == 1
 
 
 class FakeMcpTool(FakeConfiguredTool):
@@ -580,17 +591,32 @@ async def test_exit_command_quits_the_app(tmp_path):
         assert app._exit
 
 
-async def test_model_command_switches_provider_and_model(tmp_path):
+async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
     hitl = FakeHITL(tmp_path)
+    hitl.config.llm_model.max_completion_tokens = 4096
     hitl.inference_provider = "stale-provider"
     hitl.config.inference_providers["stale-provider"] = InferenceProviderConfig(
         base_url="https://stale.example/v1"
+    )
+
+    def provider_models(config):
+        if config.base_url == "https://stale.example/v1":
+            return [ProviderModel("claude-stale", "anthropic")]
+        return [
+            ProviderModel("gpt-5.4", "openai"),
+            ProviderModel("text-embedding-3-large", "openai", type="embedding"),
+        ]
+
+    monkeypatch.setattr(
+        "ursa.cli.widgets.list_provider_models",
+        provider_models,
     )
     app = UrsaTextualApp(hitl)
 
     async with app.run_test(size=(80, 24)) as pilot:
         await app._show_command("models")
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert isinstance(app.screen, ModelScreen)
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value
@@ -599,13 +625,87 @@ async def test_model_command_switches_provider_and_model(tmp_path):
         assert app.screen.query_one(
             "#chat-inference-provider", Select
         )._options == [
+            ("None (direct model config)", ModelScreen.NONE_VALUE),
             ("openai (https://api.openai.com/v1)", "openai"),
             ("stale-provider (https://stale.example/v1)", "stale-provider"),
         ]
-        app.screen.query_one("#chat-model-name", Input).value = "gpt-5.4"
+        assert (
+            app.screen.query_one("#chat-model-label").tooltip
+            == (ModelScreen.FIELD_HELP["model"])
+        )
+        assert (
+            app.screen.query_one("#chat-model-provider-label").tooltip
+            == ModelScreen.FIELD_HELP["model-provider"]
+        )
+        assert (
+            app.screen.query_one("#chat-inference-provider-label").tooltip
+            == ModelScreen.FIELD_HELP["inference-provider"]
+        )
+        assert app.screen.query_one("#chat-model-name", Select)._options == [
+            ("None", ModelScreen.NONE_VALUE),
+            ("gpt-5.4", "gpt-5.4"),
+            ("text-embedding-3-large", "text-embedding-3-large"),
+            ("Other…", ModelScreen.CUSTOM_VALUE),
+        ]
+        model_select = app.screen.query_one("#chat-model-name", Select)
+        model_select.focus()
+        await pilot.press("enter", "g")
+        await asyncio.sleep(0.8)
+        await pilot.press("5", "4")
+        fuzzy_options = model_select.query_one(FuzzySelectOverlay)
+        assert str(model_select.query_one("#label", Static).content) == "g54"
+        assert fuzzy_options.border_title is None
+        assert fuzzy_options.option_count == 1
+        await pilot.press("escape")
+        assert isinstance(app.screen, ModelScreen)
+        assert not model_select.expanded
+        model_select.focus()
+        await pilot.press("enter")
+        assert model_select.expanded
+        await pilot.click("#chat-model-provider")
+        assert not model_select.expanded
+        model_select.focus()
+        await pilot.press("enter", "g", "5", "4")
+        assert fuzzy_options.option_count == 1
+        assert fuzzy_options.highlighted == 0
+        assert fuzzy_options.get_option_at_index(0).id == "1"
+        await pilot.press("enter")
+        assert model_select.value == "gpt-5.4"
         app.screen.query_one(
-            "#embedding-model-name", Input
-        ).value = "text-embedding-3-large"
+            "#chat-inference-provider", Select
+        ).value = "stale-provider"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert app.screen.query_one("#chat-model-name", Select)._options == [
+            ("None", ModelScreen.NONE_VALUE),
+            ("claude-stale", "claude-stale"),
+            ("Other…", ModelScreen.CUSTOM_VALUE),
+        ]
+        app.screen.query_one("#chat-model-name", Select).value = "claude-stale"
+        await pilot.pause()
+        assert (
+            app.screen.query_one("#chat-model-provider", Select).value
+            == "anthropic"
+        )
+        assert app.screen.query_one(
+            "#embedding-model-provider", Select
+        )._options[0] == ("None", ModelScreen.NONE_VALUE)
+        app.screen.query_one(
+            "#chat-inference-provider", Select
+        ).value = "openai"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        app.screen.query_one("#chat-model-name", Select).value = "gpt-5.4"
+        await pilot.pause()
+        app.screen.query_one(
+            "#embedding-model-name", Select
+        ).value = ModelScreen.CUSTOM_VALUE
+        app.screen.query_one(
+            "#embedding-model-name-custom", Input
+        ).value = "private-embedding"
+        app.screen.query_one(
+            "#embedding-model-provider", Select
+        ).value = ModelScreen.NONE_VALUE
         await pilot.press("ctrl+enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -614,7 +714,7 @@ async def test_model_command_switches_provider_and_model(tmp_path):
         assert [message.content for message in messages[-2:]] == [
             "Changed the chat model to gpt-5.4 "
             "(openai - https://api.openai.com/v1)",
-            "Changed the embedding model to text-embedding-3-large "
+            "Changed the embedding model to private-embedding "
             "(openai - https://api.openai.com/v1)",
         ]
         welcome = str(app.query_one("#welcome-config-values", Static).content)
@@ -622,18 +722,237 @@ async def test_model_command_switches_provider_and_model(tmp_path):
             "LLM        gpt-5.4 (openai - https://api.openai.com/v1)" in welcome
         )
         assert (
-            "Embedding  text-embedding-3-large "
+            "Embedding  private-embedding "
             "(openai - https://api.openai.com/v1)" in welcome
         )
 
-    assert hitl.model_changes == [
-        (
-            "openai:gpt-5.4",
-            "openai",
-            "openai:text-embedding-3-large",
-            "openai",
+    assert len(hitl.model_changes) == 1
+    chat_config, embedding_config = hitl.model_changes[0]
+    assert isinstance(chat_config, ChatModelConfig)
+    assert chat_config.model == "gpt-5.4"
+    assert chat_config.model_provider == "openai"
+    assert chat_config.inference_provider == "openai"
+    assert chat_config.max_completion_tokens == 4096
+    assert isinstance(embedding_config, EmbModelConfig)
+    assert embedding_config.model == "private-embedding"
+    assert embedding_config.model_provider is None
+    assert embedding_config.inference_provider == "openai"
+
+
+async def test_invalid_model_selection_notifies_without_closing_modal(
+    tmp_path, monkeypatch
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    notifications = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+
+    def invalid_settings(*_args):
+        raise ValueError("invalid model configuration")
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        notifications.clear()
+        assert isinstance(app.screen, ModelScreen)
+        monkeypatch.setattr(
+            app.screen,
+            "_settings",
+            invalid_settings,
         )
-    ]
+
+        app.screen.action_apply()
+
+        assert isinstance(app.screen, ModelScreen)
+        assert notifications == [
+            (
+                "invalid model configuration",
+                {
+                    "title": "Model not changed",
+                    "severity": "error",
+                    "timeout": 10,
+                    "markup": False,
+                },
+            )
+        ]
+
+
+async def test_model_change_only_reports_changed_embedding(tmp_path):
+    hitl = FakeHITL(tmp_path)
+    app = UrsaTextualApp(hitl)
+    new_embedding = hitl.config.emb_model.model_copy(
+        update={"model": "text-embedding-3-small"}
+    )
+
+    async with app.run_test(size=(80, 24)):
+        app._select_model(
+            ModelSelection(
+                chat=hitl.config.llm_model.model_copy(),
+                embedding=new_embedding,
+            )
+        )
+        await app.workers.wait_for_complete()
+
+        messages = [message.content for message in app.query(ToolMessage)]
+        assert not any(
+            "Changed the chat model" in message for message in messages
+        )
+        assert messages[-1].startswith(
+            "Changed the embedding model to text-embedding-3-small"
+        )
+
+
+async def test_model_modal_preserves_direct_embedding_endpoint(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.emb_model = EmbModelConfig(
+        model="old-embedding",
+        model_provider="openai",
+        base_url="https://embeddings.example/v1",
+        check_embedding_ctx_length=False,
+    )
+    monkeypatch.setattr(
+        "ursa.cli.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        assert (
+            app.screen.query_one("#embedding-inference-provider", Select).value
+            == ModelScreen.NONE_VALUE
+        )
+        app.screen.query_one(
+            "#embedding-model-name", Select
+        ).value = ModelScreen.CUSTOM_VALUE
+        app.screen.query_one(
+            "#embedding-model-name-custom", Input
+        ).value = "new-embedding"
+
+        embedding = app.screen._settings("embedding", app.screen.embedding)
+
+        assert isinstance(embedding, EmbModelConfig)
+        assert embedding.model == "new-embedding"
+        assert embedding.inference_provider is None
+        assert embedding.base_url == "https://embeddings.example/v1"
+        assert embedding.check_embedding_ctx_length is False
+
+
+async def test_model_modal_preserves_only_explicit_overrides_when_switching_provider(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.inference_providers["other"] = InferenceProviderConfig(
+        base_url="https://other.example/v1",
+        ssl_verify=False,
+        timeout=20,
+    )
+    configured = ChatModelConfig(
+        model="gpt-test",
+        inference_provider="openai",
+        ssl_verify=False,
+        temperature=0.2,
+    )
+    openai = hitl.config.inference_providers["openai"]
+    hitl.config.inference_providers["openai"] = InferenceProviderConfig(
+        base_url=openai.base_url,
+        api_key=openai.api_key,
+        timeout=10,
+    )
+    hitl.config.llm_model = configured.resolve_inference_provider(
+        hitl.config.inference_providers
+    )
+    monkeypatch.setattr(
+        "ursa.cli.widgets.list_provider_models",
+        lambda _config: [ProviderModel("gpt-test", "openai")],
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one("#chat-inference-provider", Select).value = "other"
+
+        chat = app.screen._settings("chat", app.screen.chat)
+
+        assert isinstance(chat, ChatModelConfig)
+        assert chat.inference_provider == "other"
+        assert chat.ssl_verify is False
+        assert chat.model_extra == {"temperature": 0.2}
+
+
+async def test_model_modal_uses_default_provider_for_new_embedding(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.emb_model = None
+    discovered_with = []
+
+    def provider_models(config):
+        discovered_with.append(config)
+        return [ProviderModel("text-embedding-test", "openai", "embedding")]
+
+    monkeypatch.setattr(
+        "ursa.cli.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        assert any(
+            config.model_provider == "openai"
+            and config.api_key
+            == hitl.config.inference_providers["openai"].api_key
+            for config in discovered_with
+        )
+        assert (
+            app.screen.query_one("#embedding-inference-provider", Select).value
+            == "openai"
+        )
+        app.screen.query_one(
+            "#embedding-model-name", Select
+        ).value = "text-embedding-test"
+        app.screen.query_one(
+            "#embedding-model-provider", Select
+        ).value = ModelScreen.NONE_VALUE
+
+        embedding = app.screen._settings("embedding", app.screen.embedding)
+
+        assert isinstance(embedding, EmbModelConfig)
+        assert embedding.model_provider == "openai"
+        assert embedding.inference_provider == "openai"
+
+
+def test_model_modal_new_embedding_inherits_direct_chat_settings(tmp_path):
+    hitl = FakeHITL(tmp_path)
+    chat = ChatModelConfig(
+        model="chat-model",
+        model_provider="openai",
+        base_url="https://gateway.example/v1",
+        api_key={"env": "GATEWAY_API_KEY"},
+        ssl_verify=False,
+    )
+
+    screen = ModelScreen(hitl.config.inference_providers, chat, None)
+
+    assert screen.embedding.model_provider == "openai"
+    assert screen.embedding.inference_provider is None
+    assert screen.embedding.base_url == "https://gateway.example/v1"
+    assert screen.embedding.api_key == chat.api_key
+    assert screen.embedding.ssl_verify is False
 
 
 async def test_command_picker_prioritizes_command_name_over_description(

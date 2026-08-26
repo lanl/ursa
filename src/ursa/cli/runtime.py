@@ -27,6 +27,7 @@ from ursa.security import (
     enforce_model_group_policy,
 )
 from ursa.util.has_optional_dep_group import has_optional_dep_group
+from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import start_mcp_client
 
 
@@ -121,6 +122,10 @@ class HITL:
 
         self.agent_name = self.config.agent_name
         self.group = self.config.group
+
+        validate_model_provider(self.config.llm_model, "chat")
+        if self.config.emb_model is not None:
+            validate_model_provider(self.config.emb_model, "embedding")
 
         self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
@@ -241,7 +246,11 @@ class HITL:
     async def reconfigure_model(
         self, model_name: str, inference_provider: str | None
     ) -> None:
-        """Replace the chat model and reset agents bound to the old model."""
+        """Replace the chat model and reset agents bound to the old model.
+
+        This method owns rollback: if replacement fails, callers may assume
+        the existing model configuration remains active.
+        """
         model_name = model_name.strip()
         if not model_name:
             raise ValueError("Model name cannot be empty")
@@ -261,6 +270,7 @@ class HITL:
         resolved = candidate.resolve_inference_provider(
             self.config.inference_providers
         )
+        await asyncio.to_thread(validate_model_provider, resolved, "chat")
         model = await asyncio.to_thread(resolved.init_chat_model)
         enforce_model_group_policy(model, self.group)
 
@@ -273,15 +283,17 @@ class HITL:
 
     async def reconfigure_models(
         self,
-        chat_model: str,
-        chat_inference_provider: str | None,
-        embedding_model: str | None,
-        embedding_inference_provider: str | None,
+        chat_config: ChatModelConfig,
+        embedding_config: EmbModelConfig | None,
     ) -> None:
-        """Replace chat and embedding models after both validate successfully."""
+        """Replace chat and embedding models after both validate successfully.
+
+        This method owns rollback: if replacement fails, callers may assume
+        the existing model configuration remains active.
+        """
         for provider in (
-            chat_inference_provider,
-            embedding_inference_provider,
+            chat_config.inference_provider,
+            embedding_config.inference_provider if embedding_config else None,
         ):
             if (
                 provider is not None
@@ -289,29 +301,23 @@ class HITL:
             ):
                 raise ValueError(f"Unknown inference provider '{provider}'")
 
-        chat_model = chat_model.strip()
-        if not chat_model:
+        if not chat_config.model.strip():
             raise ValueError("Chat model cannot be empty")
-        chat_config = ChatModelConfig(
-            model=chat_model,
-            inference_provider=chat_inference_provider,
-            max_completion_tokens=self.config.llm_model.max_completion_tokens,
-        )
         resolved_chat = chat_config.resolve_inference_provider(
             self.config.inference_providers
         )
+        await asyncio.to_thread(validate_model_provider, resolved_chat, "chat")
         new_chat = await asyncio.to_thread(resolved_chat.init_chat_model)
         enforce_model_group_policy(new_chat, self.group)
 
         resolved_embedding = None
         new_embedding = None
-        if embedding_model and embedding_model.strip():
-            embedding_config = EmbModelConfig(
-                model=embedding_model.strip(),
-                inference_provider=embedding_inference_provider,
-            )
+        if embedding_config is not None:
             resolved_embedding = embedding_config.resolve_inference_provider(
                 self.config.inference_providers
+            )
+            await asyncio.to_thread(
+                validate_model_provider, resolved_embedding, "embedding"
             )
             new_embedding = await asyncio.to_thread(
                 resolved_embedding.init_embedding
@@ -323,8 +329,10 @@ class HITL:
         self.embedding = new_embedding
         self.config.llm_model = resolved_chat
         self.config.emb_model = resolved_embedding
-        self.inference_provider = chat_inference_provider
-        self.embedding_inference_provider = embedding_inference_provider
+        self.inference_provider = chat_config.inference_provider
+        self.embedding_inference_provider = (
+            embedding_config.inference_provider if embedding_config else None
+        )
         for wrapper in self.agents.values():
             if "rag_tool_embedding" in wrapper.config:
                 wrapper.config["rag_tool_embedding"] = new_embedding

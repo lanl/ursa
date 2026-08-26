@@ -82,6 +82,7 @@ class ExceptionCard(EventCard):
 
     def __init__(self, key: str, error: BaseException, traceback: str) -> None:
         super().__init__(key, "✖ Exception")
+        self.add_class("exception-card")
         self.error = error
         self.rich_traceback = Traceback.from_exception(
             type(error),

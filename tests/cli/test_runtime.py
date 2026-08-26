@@ -17,7 +17,7 @@ from rich.console import Console as RealConsole
 
 from ursa.agents.base import AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import EmbModelConfig, UrsaConfig
+from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.cli.runtime import HITL, AgentHITL
 from ursa.util.events import DEFAULT_EVENT_NAME
 from ursa.util.has_optional_dep_group import has_optional_dep_group
@@ -51,6 +51,10 @@ def stub_duckduckgo(monkeypatch):
         "ursa.agents.hypothesizer_agent.DDGS",
         lambda: DummyDDGS(),
         raising=False,
+    )
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider",
+        lambda _config, _model_type: None,
     )
 
 
@@ -216,10 +220,11 @@ async def test_reconfigure_models_resets_agents_and_uses_selected_providers(
     )
 
     await hitl.reconfigure_models(
-        "openai:gpt-5.4",
-        "openai",
-        "openai:text-embedding-3-large",
-        "openai",
+        ChatModelConfig(model="openai:gpt-5.4", inference_provider="openai"),
+        EmbModelConfig(
+            model="openai:text-embedding-3-large",
+            inference_provider="openai",
+        ),
     )
 
     assert hitl.model is replacement_model
@@ -246,6 +251,49 @@ def _stub_hitl_dependencies(monkeypatch):
         "ursa.cli.runtime.start_mcp_client", lambda servers: None
     )
     return fake_llm, fake_embedding
+
+
+def test_hitl_startup_reports_provider_validation_failure(
+    tmp_path, monkeypatch
+):
+    _stub_hitl_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider",
+        MagicMock(side_effect=ValueError("API key is missing")),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="API key is missing",
+    ):
+        HITL(UrsaConfig(workspace=tmp_path))
+
+
+async def test_reconfigure_models_reports_validation_failure_without_change(
+    tmp_path, monkeypatch
+):
+    initial_model, _ = _stub_hitl_dependencies(monkeypatch)
+    hitl = HITL(UrsaConfig(workspace=tmp_path))
+    monkeypatch.setattr(
+        "ursa.cli.runtime.validate_model_provider",
+        MagicMock(side_effect=ValueError("model is unavailable")),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="model is unavailable",
+    ):
+        await hitl.reconfigure_models(
+            ChatModelConfig(
+                model="missing-model",
+                model_provider="openai",
+                inference_provider="openai",
+            ),
+            None,
+        )
+
+    assert hitl.model is initial_model
+    assert hitl.config.llm_model.model == "gpt-5.4"
 
 
 @pytest.mark.parametrize(

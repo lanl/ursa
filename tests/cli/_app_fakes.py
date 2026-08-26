@@ -60,32 +60,25 @@ class FakeHITL:
 
     async def reconfigure_models(
         self,
-        chat_model,
-        chat_inference_provider,
-        embedding_model,
-        embedding_inference_provider,
+        chat_config,
+        embedding_config,
     ):
-        self.model_changes.append((
-            chat_model,
-            chat_inference_provider,
-            embedding_model,
-            embedding_inference_provider,
-        ))
-        self.config.llm_model = ChatModelConfig(
-            model=chat_model,
-            inference_provider=chat_inference_provider,
-        ).resolve_inference_provider(self.config.inference_providers)
+        self.model_changes.append((chat_config, embedding_config))
+        self.config.llm_model = chat_config.resolve_inference_provider(
+            self.config.inference_providers
+        )
         self.model = SimpleNamespace(model_name=self.config.llm_model.model)
         self.config.emb_model = None
         self.embedding = None
-        if embedding_model is not None:
-            self.config.emb_model = EmbModelConfig(
-                model=embedding_model,
-                inference_provider=embedding_inference_provider,
-            ).resolve_inference_provider(self.config.inference_providers)
+        if embedding_config is not None:
+            self.config.emb_model = embedding_config.resolve_inference_provider(
+                self.config.inference_providers
+            )
             self.embedding = SimpleNamespace(model=self.config.emb_model.model)
-        self.inference_provider = chat_inference_provider
-        self.embedding_inference_provider = embedding_inference_provider
+        self.inference_provider = chat_config.inference_provider
+        self.embedding_inference_provider = (
+            embedding_config.inference_provider if embedding_config else None
+        )
 
 
 async def emit_event(handler, payload=None, **details):

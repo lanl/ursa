@@ -153,16 +153,13 @@ def build_parser() -> ArgumentParser:
 
 
 def _initialize_hitl(config: UrsaConfig):
-    """Create the CLI controller and report provider initialization errors cleanly."""
+    """Create the runtime and report its contextual validation error cleanly."""
     from ursa.cli.runtime import HITL
 
     try:
         return HITL(config)
     except Exception as exc:
-        print(  # noqa: T201
-            "Error: unable to initialize the language model. " + str(exc),
-            file=sys.stderr,
-        )
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         raise SystemExit(2) from None
 
 

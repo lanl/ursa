@@ -2,14 +2,16 @@
 
 """Reusable widgets and modal screens for the Textual CLI."""
 
+import asyncio
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
 
 from rich.cells import cell_len, chop_cells
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -27,13 +29,26 @@ from textual.widgets import (
     TabPane,
     TextArea,
 )
+from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.option_list import Option
 
 from ursa.agents.base import URSA_VERSION
 from ursa.cli.agent_info import AgentDetails, ToolDetails
+from ursa.cli.config import (
+    ChatModelConfig,
+    EmbModelConfig,
+    InferenceProviderConfig,
+    ModelConfig,
+)
 from ursa.cli.helpers import _fuzzy_score
 from ursa.cli.runtime import HITL
 from ursa.cli.tips import random_tip
+from ursa.util.inference_providers import (
+    ProviderModel,
+    list_provider_models,
+    sort_provider_models,
+    supported_model_providers,
+)
 
 
 class PromptArea(TextArea):
@@ -276,6 +291,112 @@ class HotlistScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class FuzzySelectOverlay(SelectOverlay):
+    """Select overlay whose type-to-search uses fuzzy matching."""
+
+    def __init__(self, type_to_search: bool = True) -> None:
+        super().__init__(type_to_search)
+        self._source_options: list[Option] = []
+
+    def set_source_options(self, options: Sequence[Option]) -> None:
+        self._source_options = list(options)
+        self.reset_search()
+
+    def reset_search(self) -> None:
+        self._search_query = ""
+        self._show_matches()
+
+    def _show_matches(self) -> None:
+        ranked: list[tuple[int, int, Option]] = []
+        for index, option in enumerate(self._source_options):
+            prompt = option.prompt
+            candidate = (
+                prompt.plain if isinstance(prompt, Text) else str(prompt)
+            )
+            score = _fuzzy_score(self._search_query, candidate)
+            if score is not None:
+                ranked.append((-score, index, option))
+        ranked.sort()
+        self.clear_options()
+        self.add_options(option for _, _, option in ranked)
+        self.highlighted = 0 if self.option_count else None
+        self.border_title = None
+        self.query_ancestor(FuzzySelect).show_search_query(self._search_query)
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "backspace":
+            event.stop()
+            event.prevent_default()
+            self._search_query = self._search_query[:-1]
+            self._show_matches()
+        elif event.character is not None and event.is_printable:
+            event.stop()
+            event.prevent_default()
+            self._search_query += event.character
+            self._show_matches()
+
+    def watch_has_focus(self, value: bool) -> None:
+        if not value:
+            self.reset_search()
+        OptionList.watch_has_focus(self, value)
+
+    def _find_search_match(self, query: str) -> int | None:
+        matches: list[tuple[int, int]] = []
+        for index, option in enumerate(self._options):
+            prompt = option.prompt
+            candidate = (
+                prompt.plain if isinstance(prompt, Text) else str(prompt)
+            )
+            score = _fuzzy_score(query, candidate)
+            if score is not None:
+                matches.append((-score, index))
+        return min(matches)[1] if matches else None
+
+    def action_select(self) -> None:
+        if self.highlighted is None:
+            return
+        option = self.get_option_at_index(self.highlighted)
+        if not option.disabled and option.id is not None:
+            self.post_message(self.UpdateSelection(int(option.id)))
+
+
+class FuzzySelect(Select):
+    """A Select with fuzzy type-to-search behavior."""
+
+    def compose(self) -> ComposeResult:
+        yield SelectCurrent(self.prompt)
+        yield FuzzySelectOverlay(type_to_search=self._type_to_search).data_bind(
+            compact=Select.compact
+        )
+
+    def _setup_options_renderables(self) -> None:
+        options = [
+            Option(prompt, id=str(index))
+            for index, (prompt, _value) in enumerate(self._options)
+        ]
+        self.query_one(FuzzySelectOverlay).set_source_options(options)
+
+    def show_search_query(self, query: str) -> None:
+        current = self.query_one_optional(SelectCurrent)
+        if current is None:
+            return
+        if query:
+            current.update(query)
+            return
+        label = next(
+            (prompt for prompt, value in self._options if value == self.value),
+            self.NULL,
+        )
+        current.update(label)
+
+    def _watch_expanded(self, expanded: bool) -> None:
+        super()._watch_expanded(expanded)
+        if not expanded:
+            overlay = self.query_one_optional(FuzzySelectOverlay)
+            if overlay is not None:
+                overlay.reset_search()
+
+
 class ThemeScreen(HotlistScreen):
     """Theme picker that previews highlighted themes over the current app."""
 
@@ -297,16 +418,24 @@ class ThemeScreen(HotlistScreen):
 
 
 @dataclass(frozen=True)
-class ModelSettings:
-    model_name: str
-    model_provider: str
-    inference_provider: str | None
-
-
-@dataclass(frozen=True)
 class ModelSelection:
-    chat: ModelSettings
-    embedding: ModelSettings | None
+    chat: ChatModelConfig
+    embedding: EmbModelConfig | None
+
+
+class ModelFieldLabel(Horizontal):
+    """Compact field label with an accented help affordance."""
+
+    def __init__(self, label: str, help_text: str, *, id: str) -> None:
+        super().__init__(id=id, classes="model-field-label")
+        self.label = label
+        self.tooltip = help_text
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.label, classes="model-field-label-text")
+        yield Static("[", classes="model-field-help-bracket")
+        yield Static("?", classes="model-field-help-mark")
+        yield Static("]", classes="model-field-help-bracket")
 
 
 class ModelScreen(ModalScreen[ModelSelection | None]):
@@ -316,57 +445,154 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         Binding("escape", "cancel", "Cancel", priority=True),
         Binding("ctrl+enter", "apply", "Apply", priority=True),
     ]
+    CUSTOM_VALUE = "__ursa_custom__"
+    NONE_VALUE = "__ursa_none__"
+
+    FIELD_HELP = {
+        "model": (
+            "The model identifier exposed by the provider, such as gpt-5.4 "
+            "or text-embedding-3-large. Not all models listed are valid chat "
+            "or embedding models."
+        ),
+        "model-provider": (
+            "The LangChain model integration used to create the client, such "
+            "as openai, anthropic, google_genai, or ollama."
+        ),
+        "inference-provider": (
+            "A named URSA inference provider supplying the endpoint, API key, "
+            "and TLS settings for this model. Update your config files to add "
+            "additional providers."
+        ),
+    }
 
     def __init__(
         self,
-        providers: Mapping[str, object],
-        chat_model: str,
-        chat_inference_provider: str | None,
-        embedding_model: str | None,
-        embedding_inference_provider: str | None,
+        providers: Mapping[str, InferenceProviderConfig],
+        chat: ChatModelConfig,
+        embedding: EmbModelConfig | None,
     ) -> None:
         super().__init__()
         self.providers = dict(providers)
-        self.chat_model_provider, self.chat_model = self._split_model(
-            chat_model
-        )
-        self.embedding_model_provider, self.embedding_model = self._split_model(
-            embedding_model or ""
-        )
-        self.chat_inference_provider = chat_inference_provider
-        self.embedding_inference_provider = embedding_inference_provider
+        self.chat = chat
+        self.embedding_was_configured = embedding is not None
+        if embedding is None:
+            direct_settings = (
+                {
+                    "base_url": chat.base_url,
+                    "api_key": deepcopy(chat.api_key),
+                    "ssl_verify": chat.ssl_verify,
+                }
+                if chat.inference_provider is None
+                else {}
+            )
+            embedding = EmbModelConfig(
+                model="",
+                model_provider=chat.model_provider,
+                inference_provider=chat.inference_provider,
+                **direct_settings,
+            )
+            if embedding.inference_provider is not None:
+                embedding = embedding.resolve_inference_provider(self.providers)
+        self.embedding = embedding
+        self.model_catalogs: dict[str, dict[str, ProviderModel]] = {}
 
-    @staticmethod
-    def _split_model(model: str) -> tuple[str, str]:
-        if ":" in model:
-            return tuple(model.split(":", 1))
-        return "", model
+    @classmethod
+    def _choice_options(cls, values: Sequence[str]) -> list[tuple[str, str]]:
+        return [
+            ("None", cls.NONE_VALUE),
+            *((value, value) for value in values),
+            ("Other…", cls.CUSTOM_VALUE),
+        ]
+
+    @classmethod
+    def _editable_choice(
+        cls,
+        prefix: str,
+        field: str,
+        values: Sequence[str],
+        current: str,
+    ) -> tuple[Select, Input]:
+        choices = tuple(dict.fromkeys(value for value in values if value))
+        listed = current in choices
+        selected = current if listed else cls.NONE_VALUE
+        if current and not listed:
+            selected = cls.CUSTOM_VALUE
+        select = FuzzySelect(
+            cls._choice_options(choices),
+            value=selected,
+            allow_blank=False,
+            id=f"{prefix}-{field}",
+            classes="model-editable-choice",
+        )
+        custom = Input(
+            value="" if listed else current,
+            id=f"{prefix}-{field}-custom",
+            classes="model-custom-choice" + (" hidden" if listed else ""),
+        )
+        return select, custom
 
     def _model_fields(
         self,
         prefix: str,
-        model: str,
-        model_provider: str,
-        inference_provider: str | None,
+        config: ModelConfig,
     ) -> ComposeResult:
         options = [
-            (
-                f"{name} ({getattr(config, 'base_url', None) or 'default'})",
-                name,
-            )
-            for name, config in sorted(self.providers.items())
+            ("None (direct model config)", self.NONE_VALUE),
+            *(
+                (
+                    f"{name} ({getattr(provider, 'base_url', None) or 'default'})",
+                    name,
+                )
+                for name, provider in sorted(self.providers.items())
+            ),
         ]
-        selected_provider = inference_provider or next(iter(self.providers), "")
-        yield Static("Model")
-        yield Input(value=model, id=f"{prefix}-model-name")
-        yield Static("Model provider")
-        yield Input(value=model_provider, id=f"{prefix}-model-provider")
-        yield Static("Inference provider")
+        selected_provider = config.inference_provider
+        if (
+            selected_provider is None
+            and prefix == "embedding"
+            and not self.embedding_was_configured
+        ):
+            selected_provider = next(iter(self.providers), None)
+        selected_provider = selected_provider or self.NONE_VALUE
+        yield self._field_label("Model", "model", prefix)
+        model_select, custom_model = self._editable_choice(
+            prefix, "model-name", (config.model,), config.model
+        )
+        yield model_select
+        yield custom_model
+        yield self._field_label("Model provider", "model-provider", prefix)
+        model_providers = supported_model_providers(
+            "embedding" if prefix == "embedding" else "chat"
+        )
+        selected_model_provider = config.model_provider or self.NONE_VALUE
+        yield Select(
+            [
+                ("None", self.NONE_VALUE),
+                *((provider, provider) for provider in model_providers),
+            ],
+            value=selected_model_provider,
+            allow_blank=False,
+            id=f"{prefix}-model-provider",
+        )
+        yield self._field_label(
+            "Inference provider", "inference-provider", prefix
+        )
         yield Select(
             options,
             value=selected_provider,
             allow_blank=False,
             id=f"{prefix}-inference-provider",
+            classes="inference-provider-choice",
+        )
+
+    @classmethod
+    def _field_label(
+        cls, label: str, field: str, prefix: str
+    ) -> ModelFieldLabel:
+        return ModelFieldLabel(
+            label,
+            cls.FIELD_HELP[field],
+            id=f"{prefix}-{field}-label",
         )
 
     def compose(self) -> ComposeResult:
@@ -376,60 +602,190 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                 with TabPane("Chat", id="chat-model-tab"):
                     yield from self._model_fields(
                         "chat",
-                        self.chat_model,
-                        self.chat_model_provider,
-                        self.chat_inference_provider,
+                        self.chat,
                     )
                 with TabPane("Embedding", id="embedding-model-tab"):
                     yield from self._model_fields(
                         "embedding",
-                        self.embedding_model,
-                        self.embedding_model_provider,
-                        self.embedding_inference_provider,
+                        self.embedding,
                     )
             with Horizontal(classes="settings-actions"):
                 yield Button("Cancel", id="model-cancel")
                 yield Button("Apply", id="model-apply", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#chat-model-name", Input).focus()
+        self.query_one("#chat-model-name", Select).focus()
+        self.run_worker(
+            self._load_initial_models(),
+            group="model-discovery",
+            exclusive=True,
+        )
 
-    def _settings(self, prefix: str) -> ModelSettings | None:
-        model_name = self.query_one(
-            f"#{prefix}-model-name", Input
-        ).value.strip()
-        model_provider = self.query_one(
-            f"#{prefix}-model-provider", Input
-        ).value.strip()
+    async def _load_initial_models(self) -> None:
+        await self._load_models("chat", self.chat)
+        await self._load_models("embedding", self.embedding)
+
+    async def _load_models(
+        self,
+        prefix: str,
+        config: ModelConfig | InferenceProviderConfig,
+    ) -> None:
+        try:
+            models = await asyncio.to_thread(list_provider_models, config)
+        except Exception as exc:  # noqa: BLE001
+            self.notify(
+                f"Unable to list models: {exc}",
+                title="Model discovery",
+                severity="warning",
+            )
+            return
+        models = sort_provider_models(
+            models, "embedding" if prefix == "embedding" else "chat"
+        )
+        catalog = {model.name: model for model in models}
+        self.model_catalogs[prefix] = catalog
+        select = self.query_one(f"#{prefix}-model-name", Select)
+        current = self._choice_value(prefix, "model-name")
+        select.set_options(self._choice_options(tuple(catalog)))
+        if not current:
+            select.value = self.NONE_VALUE
+        else:
+            select.value = current if current in catalog else self.CUSTOM_VALUE
+
+    def _choice_value(self, prefix: str, field: str) -> str:
+        select = self.query_one(f"#{prefix}-{field}", Select)
+        if select.value == self.NONE_VALUE:
+            return ""
+        if select.value != self.CUSTOM_VALUE:
+            return str(select.value)
+        return self.query_one(f"#{prefix}-{field}-custom", Input).value.strip()
+
+    @on(Select.Changed, ".model-editable-choice")
+    def show_custom_choice(self, event: Select.Changed) -> None:
+        if event.select.id is None:
+            return
+        custom = self.query_one(f"#{event.select.id}-custom", Input)
+        custom.set_class(event.value != self.CUSTOM_VALUE, "hidden")
+
+        prefix = event.select.id.removesuffix("-model-name")
+        record = self.model_catalogs.get(prefix, {}).get(str(event.value))
+        if record is None or record.model_provider is None:
+            return
+        provider = record.model_provider
+        provider_select = self.query_one(f"#{prefix}-model-provider", Select)
+        model_type = "embedding" if prefix == "embedding" else "chat"
+        if provider in supported_model_providers(model_type):
+            provider_select.value = provider
+
+    @on(Select.Changed, ".inference-provider-choice")
+    def update_models_for_inference_provider(
+        self, event: Select.Changed
+    ) -> None:
+        if event.select.id is None or not isinstance(event.value, str):
+            return
+        config = self.providers.get(event.value)
+        if config is None:
+            return
+        prefix = event.select.id.removesuffix("-inference-provider")
+        self.run_worker(
+            self._load_models(prefix, config),
+            group=f"{prefix}-models",
+            exclusive=True,
+        )
+
+    def _settings(
+        self, prefix: str, original: ModelConfig
+    ) -> ModelConfig | None:
+        model_name = self._choice_value(prefix, "model-name")
+        model_provider_value = self.query_one(
+            f"#{prefix}-model-provider", Select
+        ).value
+        model_provider = (
+            str(model_provider_value)
+            if isinstance(model_provider_value, str)
+            and model_provider_value != self.NONE_VALUE
+            else ""
+        )
+        advertised = self.model_catalogs.get(prefix, {}).get(model_name)
+        if (
+            not model_provider
+            and advertised is not None
+            and advertised.model_provider is not None
+        ):
+            model_provider = advertised.model_provider
         provider_value = self.query_one(
             f"#{prefix}-inference-provider", Select
         ).value
         inference_provider = (
-            provider_value if isinstance(provider_value, str) else ""
+            provider_value
+            if isinstance(provider_value, str)
+            and provider_value != self.NONE_VALUE
+            else ""
         )
         if not model_name:
             return None
-        return ModelSettings(
-            model_name, model_provider, inference_provider or None
-        )
+        dumped = original.model_dump(mode="python")
+        configured = {
+            name: deepcopy(value)
+            for name, value in dumped.items()
+            if name in original.model_fields_set
+        }
+        for field in ("model", "model_provider", "inference_provider"):
+            configured.pop(field, None)
+        updates = {
+            "model": model_name,
+            "inference_provider": inference_provider or None,
+        }
+        if (
+            "model_provider" in original.model_fields_set
+            or model_provider != original.model_provider
+        ):
+            updates["model_provider"] = model_provider or None
+        return type(original).model_validate({**configured, **updates})
 
     @on(Button.Pressed, "#model-apply")
     def apply(self) -> None:
         self.action_apply()
 
     def action_apply(self) -> None:
-        chat = self._settings("chat")
+        try:
+            chat = self._settings("chat", self.chat)
+            embedding = self._settings("embedding", self.embedding)
+        except ValueError as exc:
+            self.notify(
+                str(exc),
+                title="Model not changed",
+                severity="error",
+                timeout=10,
+                markup=False,
+            )
+            return
         if chat is None:
             self.notify("Chat model is required", severity="error")
             return
-        self.dismiss(ModelSelection(chat, self._settings("embedding")))
+        assert isinstance(chat, ChatModelConfig)
+        assert embedding is None or isinstance(embedding, EmbModelConfig)
+        self.dismiss(ModelSelection(chat, embedding))
 
     @on(Button.Pressed, "#model-cancel")
     def cancel_button(self) -> None:
         self.action_cancel()
 
     def action_cancel(self) -> None:
+        expanded = list(self.query("FuzzySelect.-expanded"))
+        if expanded:
+            for select in expanded:
+                select.expanded = False
+            return
         self.dismiss(None)
+
+    def on_click(self, event: events.Click) -> None:
+        if event.widget is None:
+            return
+        ancestors = set(event.widget.ancestors_with_self)
+        for select in self.query("FuzzySelect.-expanded"):
+            if select not in ancestors:
+                select.expanded = False
 
 
 class InformationScreen(ModalScreen[None]):

@@ -7,7 +7,6 @@ from warnings import catch_warnings, simplefilter
 import pytest
 import yaml
 from jsonargparse import Namespace
-from openai import OpenAIError
 from pydantic import ValidationError
 
 from ursa.cli import (
@@ -152,23 +151,21 @@ def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
         )
 
 
-@pytest.mark.parametrize("args", [[], ["mcp-server"]])
-def test_cli_reports_model_initialization_error_without_traceback(
+@pytest.mark.parametrize("args", [[], ["mcp-server"], ["exec", "hello"]])
+def test_cli_reports_runtime_initialization_error_without_traceback(
     monkeypatch, capsys, args
 ):
-    error = OpenAIError(
-        "The api_key client option must be set by setting the "
-        "OPENAI_API_KEY environment variable"
+    monkeypatch.setattr(
+        "ursa.cli.runtime.HITL",
+        MagicMock(side_effect=ValueError("API credentials are invalid")),
     )
-    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(side_effect=error))
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     with pytest.raises(SystemExit, match="2"):
         main(args)
 
     stderr = capsys.readouterr().err
-    assert stderr.startswith("Error: unable to initialize the language model.")
-    assert "OPENAI_API_KEY" in stderr
+    assert stderr == "Error: API credentials are invalid\n"
     assert "Traceback" not in stderr
 
 

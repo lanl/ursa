@@ -64,7 +64,45 @@ ModelScreen {
 }
 
 ModelScreen .settings-dialog {
-    height: 25;
+    height: auto;
+}
+
+ModelScreen TabbedContent,
+ModelScreen TabPane {
+    height: auto;
+}
+
+ModelScreen Input,
+ModelScreen Select,
+ModelScreen SelectCurrent {
+    height: 1;
+    border: none;
+}
+
+ModelScreen Input,
+ModelScreen SelectCurrent {
+    padding: 0 1;
+}
+
+.model-field-label {
+    width: 1fr;
+    height: 2;
+    padding-top: 1;
+}
+
+.model-field-label-text,
+.model-field-help-bracket,
+.model-field-help-mark {
+    width: auto;
+    height: 1;
+}
+
+.model-field-label-text {
+    margin-right: 1;
+}
+
+.model-field-help-mark {
+    color: $accent;
 }
 
 .settings-title {
@@ -74,9 +112,9 @@ ModelScreen .settings-dialog {
 }
 
 .settings-actions {
-    height: 1;
+    height: 2;
     align-horizontal: right;
-    padding-top: 0;
+    padding-top: 1;
 }
 
 .settings-actions Button {
@@ -326,6 +364,12 @@ ModelScreen .settings-dialog {
     margin: 0 1;
     border: round $border;
     background: $surface;
+}
+
+.exception-card > .event-expand-hint {
+    dock: none;
+    width: 100%;
+    content-align: right middle;
 }
 
 .event-expand-hint {

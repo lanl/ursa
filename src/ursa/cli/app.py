@@ -492,32 +492,11 @@ class UrsaTextualApp(App[None]):
             )
             return
         if command == "models":
-            providers = getattr(self.hitl.config, "inference_providers", {})
-            llm_config = getattr(self.hitl.config, "llm_model", None)
-            emb_config = getattr(self.hitl.config, "emb_model", None)
-
-            def inference_provider(model_config: object | None) -> str | None:
-                if model_config is None:
-                    return None
-                configured = getattr(model_config, "inference_provider", None)
-                return configured if configured in providers else None
-
-            def qualified_model(model_config: object) -> str:
-                model = str(getattr(model_config, "model"))
-                provider = getattr(model_config, "model_provider", None)
-                return f"{provider}:{model}" if provider else model
-
             self.push_screen(
                 ModelScreen(
-                    providers,
-                    qualified_model(llm_config),
-                    inference_provider(llm_config),
-                    (
-                        qualified_model(emb_config)
-                        if emb_config is not None
-                        else None
-                    ),
-                    inference_provider(emb_config),
+                    self.hitl.config.inference_providers,
+                    self.hitl.config.llm_model,
+                    self.hitl.config.emb_model,
                 ),
                 callback=self._select_model,
             )
@@ -559,55 +538,42 @@ class UrsaTextualApp(App[None]):
             return
 
         async def apply() -> None:
-            chat_model = ":".join(
-                part
-                for part in (
-                    selection.chat.model_provider,
-                    selection.chat.model_name,
-                )
-                if part
-            )
-            embedding_model = None
-            if selection.embedding is not None:
-                embedding_model = ":".join(
-                    part
-                    for part in (
-                        selection.embedding.model_provider,
-                        selection.embedding.model_name,
-                    )
-                    if part
-                )
             prompt = self.query_one(PromptArea)
+            previous_chat = self.hitl.config.llm_model
+            previous_embedding = self.hitl.config.emb_model
             prompt.disabled = True
             self._update_status("switching model")
             try:
                 await self.hitl.reconfigure_models(
-                    chat_model,
-                    selection.chat.inference_provider,
-                    embedding_model,
-                    (
-                        selection.embedding.inference_provider
-                        if selection.embedding is not None
-                        else None
-                    ),
+                    selection.chat,
+                    selection.embedding,
                 )
             except Exception as exc:  # noqa: BLE001
                 self.notify(
-                    str(exc), title="Model not changed", severity="error"
+                    str(exc),
+                    title="Model not changed",
+                    severity="error",
+                    timeout=10,
+                    markup=False,
                 )
             else:
                 for banner in self.query(WelcomeBanner):
                     banner.refresh_config()
                 conversation = self.query_one("#conversation", VerticalScroll)
-                await conversation.mount(
-                    ToolMessage(
-                        f"Changed the chat model to {self.hitl.config.llm_model.pretty_repr()}"
-                    )
-                )
-                if embedding_model is not None:
+                if previous_chat != self.hitl.config.llm_model:
                     await conversation.mount(
                         ToolMessage(
-                            f"Changed the embedding model to {self.hitl.config.emb_model.pretty_repr()}"
+                            f"Changed the chat model to {self.hitl.config.llm_model.pretty_repr()}"
+                        )
+                    )
+                if previous_embedding != self.hitl.config.emb_model:
+                    embedding = self.hitl.config.emb_model
+                    description = (
+                        embedding.pretty_repr() if embedding else "none"
+                    )
+                    await conversation.mount(
+                        ToolMessage(
+                            f"Changed the embedding model to {description}"
                         )
                     )
                 self.call_after_refresh(
