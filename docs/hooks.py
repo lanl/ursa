@@ -92,10 +92,10 @@ def _published_links(markdown: str, folder: Path) -> str:
             return match.group(0)
 
         source = (folder / unquote(parsed.path)).resolve()
-        if not source.is_file() or not source.is_relative_to(REPOSITORY_ROOT):
+        if not source.exists() or not source.is_relative_to(REPOSITORY_ROOT):
             return match.group(0)
 
-        if source.is_relative_to(DOCS_ROOT):
+        if source.is_file() and source.is_relative_to(DOCS_ROOT):
             docs_path = source.relative_to(DOCS_ROOT).as_posix()
             page_path = PurePosixPath("examples", _example_slug(folder))
             published_url = posixpath.relpath(docs_path, page_path.as_posix())
@@ -112,8 +112,9 @@ def _published_links(markdown: str, folder: Path) -> str:
                 f"{_github_ref()}/{quote(repository_path, safe='/')}"
             )
         else:
+            kind = "blob" if source.is_file() else "tree"
             github_url = (
-                f"https://github.com/lanl/ursa/blob/{_github_ref()}/"
+                f"https://github.com/lanl/ursa/{kind}/{_github_ref()}/"
                 f"{quote(repository_path, safe='/')}"
             )
         if parsed.query:
