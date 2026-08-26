@@ -1,5 +1,5 @@
-title: MIST through Nomad
-summary: Connect URSA to a molecular-property model served as an MCP tool by Nomad.
+title: Querying a SciFM with URSA
+summary: Use URSA to query MIST, a molecular foundation model for property prediction, through Nomad's MCP server.
 tags:
   - mcp
   - guided
