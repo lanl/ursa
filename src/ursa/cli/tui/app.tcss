@@ -65,11 +65,51 @@ ModelScreen {
 
 ModelScreen .settings-dialog {
     height: auto;
+    max-height: 100%;
+    overflow-y: auto;
 }
 
 ModelScreen TabbedContent,
 ModelScreen TabPane {
     height: auto;
+}
+
+ModelScreen .model-advanced {
+    margin-top: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+ModelScreen .model-advanced > CollapsibleTitle {
+    height: 1;
+    padding: 0;
+    color: $text-muted;
+    background: transparent;
+}
+
+ModelScreen .model-yaml-editor {
+    height: 12;
+    margin-top: 1;
+    border: round $border;
+}
+
+ModelScreen .model-yaml-editor.yaml-valid {
+    border: round $success;
+}
+
+ModelScreen .model-yaml-editor.yaml-invalid {
+    border: round $error;
+}
+
+ModelScreen .model-yaml-error {
+    width: 1fr;
+    height: auto;
+    max-height: 6;
+    color: $error;
+    text-wrap: wrap;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 ModelScreen Input,
@@ -142,6 +182,21 @@ ModelScreen SelectCurrent {
 
 #information-body {
     height: 1fr;
+}
+
+#status-tabs, #status-summary-tab, #status-config-tab {
+    height: 1fr;
+}
+
+#status-config-readonly {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+}
+
+#status-config-yaml {
+    height: 1fr;
+    border: round $accent;
 }
 
 #agents-tabs {

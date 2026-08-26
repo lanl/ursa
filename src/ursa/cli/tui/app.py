@@ -11,10 +11,14 @@ import sys
 import threading
 import traceback
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import asdict, is_dataclass
+from enum import Enum
 from math import ceil
 from pathlib import Path
 from typing import Any, ClassVar
 
+import yaml
+from pydantic import BaseModel, SecretStr
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
@@ -50,6 +54,33 @@ from ursa.cli.tui.widgets import (
 )
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
+
+
+def _config_yaml_value(value: Any) -> Any:
+    """Convert resolved config values to safe, YAML-serializable values."""
+    if isinstance(value, SecretStr):
+        return str(value)
+    if isinstance(value, BaseModel):
+        return _config_yaml_value(
+            value.model_dump(mode="python", context={"include_defaults": True})
+        )
+    if is_dataclass(value) and not isinstance(value, type):
+        return _config_yaml_value(asdict(value))
+    if isinstance(value, Mapping):
+        return {str(key): _config_yaml_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_config_yaml_value(item) for item in value]
+    if isinstance(value, (Path, Enum)):
+        return str(value.value if isinstance(value, Enum) else value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "__dict__"):
+        return {
+            key: _config_yaml_value(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return str(value)
 
 
 class ConversationScroll(VerticalScroll):
@@ -523,9 +554,20 @@ class UrsaTextualApp(App[None]):
             self.query_one(PromptArea).focus()
             return
         self.push_screen(
-            InformationScreen(command.capitalize(), content()),
+            InformationScreen(
+                command.capitalize(),
+                content(),
+                config_yaml=(
+                    self._resolved_config_yaml() if command == "status" else None
+                ),
+            ),
             callback=lambda _: self.query_one(PromptArea).focus(),
         )
+
+    def _resolved_config_yaml(self) -> str:
+        """Serialize the active, already-resolved runtime configuration."""
+        values = _config_yaml_value(self.hitl.config)
+        return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
 
     def _select_theme(self, theme: str | None) -> None:
         if theme is not None:

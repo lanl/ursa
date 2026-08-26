@@ -183,6 +183,8 @@ async def test_command_events_from_a_worker_thread_update_the_ui(tmp_path):
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         card = app.query_one(RunCommandCard)
         assert card.command == "pwd"
         assert len(app.query(MessageCard)) == 2

@@ -1,12 +1,16 @@
 import asyncio
 import os
+import random
 import threading
 import time
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
+import yaml
 from mcp import StdioServerParameters
 from mcp.client.session_group import StreamableHttpParameters
+from pydantic import SecretStr
 from textual import events
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
@@ -20,6 +24,7 @@ from textual.widgets import (
     Tab,
     TabbedContent,
     TabPane,
+    TextArea,
 )
 
 import ursa.util.crossplatform as crossplatform
@@ -47,6 +52,12 @@ from ursa.cli.tui.widgets import (
     WelcomeBanner,
 )
 from ursa.util.inference_providers import ProviderModel
+
+
+async def wait_for_yaml_debounce(pilot) -> None:
+    """Let the YAML validation timer fire, then flush resulting messages."""
+    await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY + 0.1)
+    await pilot.pause()
 
 
 class FakeToolArgs:
@@ -558,9 +569,16 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
     hitl = FakeHITL(tmp_path)
     hitl.agent_name = "lab-assistant"
     hitl.config.agent_name = "lab-assistant"
+    hitl.config.llm_model.api_key = SecretStr("actual-secret")
     hitl.config.mcp_servers = {
         "local": StdioServerParameters(command="ursa-mcp", args=[]),
         "remote": StreamableHttpParameters(url="https://example.test/mcp"),
+        **{
+            f"extra-{index}": StdioServerParameters(
+                command=f"ursa-mcp-{index}", args=[]
+            )
+            for index in range(20)
+        },
     }
     app = UrsaTextualApp(hitl)
 
@@ -587,6 +605,41 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert "MCP servers" in app.screen.content
         assert "ursa-mcp" in app.screen.content
         assert "https://example.test/mcp" in app.screen.content
+
+        tabs = {str(tab.label): tab for tab in app.screen.query(Tab)}
+        await pilot.click(f"#{tabs['Config'].id}")
+        await pilot.press("tab")
+        await pilot.pause()
+        editor = app.screen.query_one("#status-config-yaml", TextArea)
+        assert app.focused is editor
+        assert editor.read_only
+        assert editor.language == "yaml"
+        assert type(editor.document).__name__ == "SyntaxAwareDocument"
+        assert editor._highlight_query is not None
+        assert "llm_model:" in editor.text
+        assert "model: test-model" in editor.text
+        assert "env: OPENAI_API_KEY" in editor.text
+        assert "**********" in editor.text
+        assert "actual-secret" not in editor.text
+        assert str(
+            app.screen.query_one("#status-config-readonly", Static).content
+        ).startswith("Read only")
+        await pilot.press("down", "shift+down")
+        assert editor.cursor_location[0] == 2
+        assert not editor.selection.is_empty
+
+        await pilot.click(f"#{tabs['Status'].id}")
+        await pilot.press("tab")
+        body = app.screen.query_one("#information-body", VerticalScroll)
+        assert app.focused is body
+        assert body.scroll_y == 0
+        await pilot.press("end")
+        await pilot.pause()
+        assert body.scroll_y > 0
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, InformationScreen)
 
 
 async def test_exit_command_quits_the_app(tmp_path):
@@ -653,6 +706,7 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
             ("None", ModelScreen.NONE_VALUE),
             ("gpt-5.4", "gpt-5.4"),
             ("text-embedding-3-large", "text-embedding-3-large"),
+            ("Not found: test-model", "test-model"),
             ("Other…", ModelScreen.CUSTOM_VALUE),
         ]
         model_select = app.screen.query_one("#chat-model-name", Select)
@@ -687,8 +741,15 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         assert app.screen.query_one("#chat-model-name", Select)._options == [
             ("None", ModelScreen.NONE_VALUE),
             ("claude-stale", "claude-stale"),
+            ("Not found: gpt-5.4", "gpt-5.4"),
             ("Other…", ModelScreen.CUSTOM_VALUE),
         ]
+        assert (
+            app.screen.query_one("#chat-model-name", Select).value == "gpt-5.4"
+        )
+        assert app.screen.query_one("#chat-model-name-custom", Input).has_class(
+            "hidden"
+        )
         app.screen.query_one("#chat-model-name", Select).value = "claude-stale"
         await pilot.pause()
         assert (
@@ -789,6 +850,831 @@ async def test_invalid_model_selection_notifies_without_closing_modal(
         ]
 
 
+async def test_model_yaml_round_trips_extras_and_updates_controls(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models",
+        lambda _config: [ProviderModel("yaml-model", "openai")],
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        assert type(editor.document).__name__ == "SyntaxAwareDocument"
+        assert editor._highlight_query is not None
+        editor.text = """\
+temperature: 0.25
+model: yaml-model
+model_provider: openai
+inference_provider: openai
+provider_options:
+  reasoning: high
+"""
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await wait_for_yaml_debounce(pilot)
+
+        assert editor.has_class("yaml-valid")
+        assert (
+            app.screen.query_one("#chat-model-name", Select).value
+            == "yaml-model"
+        )
+        assert app.screen.drafts["chat"].model_extra == {
+            "temperature": 0.25,
+            "provider_options": {"reasoning": "high"},
+        }
+
+        app.screen.query_one(
+            "#chat-model-name", Select
+        ).value = ModelScreen.CUSTOM_VALUE
+        app.screen.query_one(
+            "#chat-model-name-custom", Input
+        ).value = "changed-model"
+        await pilot.pause()
+
+        assert "model: changed-model" in editor.text
+        assert "temperature: 0.25" in editor.text
+        assert "reasoning: high" in editor.text
+        assert editor.text.index("temperature:") < editor.text.index("model:")
+
+
+async def test_valid_yaml_is_committed_only_when_apply_is_pressed(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    hitl = FakeHITL(tmp_path)
+    original = hitl.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = """\
+model: applied-model
+model_provider: openai
+inference_provider: openai
+temperature: 0.35
+provider_options:
+  reasoning: high
+"""
+        assert hitl.config.llm_model == original
+
+        app.screen.action_apply()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert hitl.config.llm_model.model == "applied-model"
+        assert hitl.config.llm_model.model_extra == {
+            "temperature": 0.35,
+            "provider_options": {"reasoning": "high"},
+        }
+
+
+async def test_yaml_validation_keeps_unavailable_model_as_not_found(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models",
+        lambda _config: [ProviderModel("available-model", "openai")],
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = """\
+model: unavailable-model
+model_provider: openai
+inference_provider: openai
+"""
+
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await wait_for_yaml_debounce(pilot)
+
+        model_select = app.screen.query_one("#chat-model-name", Select)
+        assert model_select.value == "unavailable-model"
+        assert (
+            "Not found: unavailable-model",
+            "unavailable-model",
+        ) in model_select._options
+        assert app.screen.query_one("#chat-model-name-custom", Input).has_class(
+            "hidden"
+        )
+
+
+async def test_yaml_keeps_unavailable_model_provider_visible(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = """\
+model: custom-model
+model_provider: future_provider
+inference_provider: openai
+"""
+
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await wait_for_yaml_debounce(pilot)
+
+        provider = app.screen.query_one("#chat-model-provider", Select)
+        assert provider.value == "future_provider"
+        assert (
+            "Not found: future_provider",
+            "future_provider",
+        ) in provider._options
+        assert app.screen.drafts["chat"].model_provider == "future_provider"
+
+        editor.text = """\
+model: custom-model
+model_provider: another_future_provider
+inference_provider: openai
+"""
+        await pilot.pause()
+        await wait_for_yaml_debounce(pilot)
+
+        assert provider.value == "another_future_provider"
+        assert (
+            "Not found: another_future_provider",
+            "another_future_provider",
+        ) in provider._options
+        assert (
+            "Not found: future_provider",
+            "future_provider",
+        ) not in provider._options
+
+        editor.text = """\
+model: custom-model
+model_provider: openai
+inference_provider: openai
+"""
+        await pilot.pause()
+        await wait_for_yaml_debounce(pilot)
+
+        assert provider.value == "openai"
+        assert not any(
+            label.startswith("Not found:") for label, _ in provider._options
+        )
+
+
+async def test_whitespace_chat_model_yaml_is_rejected_before_apply(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = "model: '   '\nmodel_provider: openai\n"
+
+        app.screen.action_apply()
+
+        assert isinstance(app.screen, ModelScreen)
+        assert editor.has_class("yaml-invalid")
+        assert "Chat model must not be blank" in str(
+            app.screen.query_one("#chat-yaml-error", Static).content
+        )
+
+
+async def test_whitespace_embedding_model_yaml_is_rejected_before_apply(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    hitl = FakeHITL(tmp_path)
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#embedding-config-yaml", TextArea)
+        editor.text = "model: '   '\nmodel_provider: openai\n"
+
+        app.screen.action_apply()
+
+        assert isinstance(app.screen, ModelScreen)
+        assert editor.has_class("yaml-invalid")
+        assert "Embedding model must not be blank" in str(
+            app.screen.query_one("#embedding-yaml-error", Static).content
+        )
+
+        editor.text = "model: ''\nmodel_provider: openai\n"
+        app.screen.action_apply()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert hitl.config.emb_model is None
+
+
+async def test_structured_chat_none_updates_yaml_and_blocks_apply(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    hitl = FakeHITL(tmp_path)
+    original = hitl.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one(
+            "#chat-model-name", Select
+        ).value = ModelScreen.NONE_VALUE
+        await pilot.pause()
+
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        assert yaml.safe_load(editor.text)["model"] == ""
+        assert app.screen.drafts["chat"].model == ""
+
+        app.screen.action_apply()
+
+        assert isinstance(app.screen, ModelScreen)
+        assert editor.has_class("yaml-invalid")
+        assert hitl.config.llm_model == original
+
+
+async def test_structured_embedding_none_removes_configured_embedding(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    hitl = FakeHITL(tmp_path)
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one(
+            "#embedding-model-name", Select
+        ).value = ModelScreen.NONE_VALUE
+        await pilot.pause()
+
+        editor = app.screen.query_one("#embedding-config-yaml", TextArea)
+        assert yaml.safe_load(editor.text)["model"] == ""
+        assert app.screen.drafts["embedding"].model == ""
+        assert editor.has_class("yaml-valid")
+
+        app.screen.action_apply()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        assert hitl.config.emb_model is None
+
+
+async def test_yaml_validation_names_unknown_inference_provider(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = "model: test-model\ninference_provider: missing\n"
+
+        app.screen.action_apply()
+
+        assert isinstance(app.screen, ModelScreen)
+        assert editor.has_class("yaml-invalid")
+        assert (
+            str(app.screen.query_one("#chat-yaml-error", Static).content)
+            == "Unknown inference_provider 'missing'"
+        )
+
+
+async def test_model_option_refresh_preserves_sync_guard_and_empty_choice(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+
+        app.screen._syncing_controls = True
+        app.screen._set_model_options("embedding", {}, "")
+
+        options = app.screen.query_one("#embedding-model-name", Select)._options
+        assert app.screen._syncing_controls is True
+        assert not any(label.startswith("Not found:") for label, _ in options)
+
+
+async def test_programmatic_control_sync_suppresses_queued_events(
+    tmp_path, monkeypatch
+):
+    discoveries = []
+
+    def provider_models(config):
+        discoveries.append(config)
+        return []
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        discoveries.clear()
+        updated = app.screen.drafts["chat"].model_copy(
+            update={"model": "programmatic-model"}
+        )
+        app.screen.drafts["chat"] = updated
+        app.screen._yaml_values["chat"] = app.screen._configured_values(updated)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = app.screen._yaml_text("chat")
+
+        app.screen._update_controls_from_config("chat", updated)
+        await pilot.pause()
+
+        assert app.screen.drafts["chat"] is updated
+        assert editor.text == app.screen._yaml_text("chat")
+        assert discoveries == []
+
+
+async def test_masked_yaml_api_key_preserves_secret_value(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _: []
+    )
+    hitl = FakeHITL(tmp_path)
+    hitl.config.llm_model = ChatModelConfig(
+        model="secret-model",
+        model_provider="openai",
+        base_url="https://secret.example/v1",
+        api_key=SecretStr("actual-secret"),
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        assert "actual-secret" not in editor.text
+        assert "api_key: '**********'" in editor.text
+
+        validated = app.screen._validate_yaml("chat", update_controls=True)
+
+        assert isinstance(validated, ChatModelConfig)
+        assert isinstance(validated.api_key, SecretStr)
+        assert validated.api_key.get_secret_value() == "actual-secret"
+        assert app.screen._yaml_values["chat"]["api_key"] == "**********"
+
+
+async def test_direct_provider_selection_refreshes_model_catalog(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def provider_models(config):
+        calls.append(config)
+        if isinstance(config, ChatModelConfig):
+            return [ProviderModel("direct-only", "openai")]
+        return [ProviderModel("provider-only", "openai")]
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+
+        app.screen.query_one(
+            "#chat-inference-provider", Select
+        ).value = ModelScreen.NONE_VALUE
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        options = app.screen.query_one("#chat-model-name", Select)._options
+        assert ("direct-only", "direct-only") in options
+        assert ("provider-only", "provider-only") not in options
+        assert any(
+            isinstance(config, ChatModelConfig)
+            and config.inference_provider is None
+            for config in calls
+        )
+
+
+async def test_yaml_provider_change_refreshes_model_catalog(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.inference_providers["fast"] = InferenceProviderConfig(
+        base_url="https://fast.example/v1"
+    )
+
+    def provider_models(config):
+        name = (
+            "fast-only"
+            if config.base_url == "https://fast.example/v1"
+            else "old-only"
+        )
+        return [ProviderModel(name, "openai")]
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = """\
+model: test-model
+model_provider: openai
+inference_provider: fast
+"""
+
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await wait_for_yaml_debounce(pilot)
+        await app.workers.wait_for_complete()
+
+        assert (
+            app.screen.query_one("#chat-inference-provider", Select).value
+            == "fast"
+        )
+        assert "fast-only" in app.screen.model_catalogs["chat"]
+        assert "old-only" not in app.screen.model_catalogs["chat"]
+
+
+async def test_provider_discovery_failure_clears_previous_catalog(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.inference_providers["broken"] = InferenceProviderConfig(
+        base_url="https://broken.example/v1"
+    )
+
+    def provider_models(config):
+        if config.base_url == "https://broken.example/v1":
+            raise RuntimeError("discovery failed")
+        return [ProviderModel("old-only", "openai")]
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        assert "old-only" in app.screen.model_catalogs["chat"]
+
+        app.screen.query_one(
+            "#chat-inference-provider", Select
+        ).value = "broken"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        select = app.screen.query_one("#chat-model-name", Select)
+        assert app.screen.model_catalogs["chat"] == {}
+        assert ("old-only", "old-only") not in select._options
+        assert ("Not found: test-model", "test-model") in select._options
+
+
+async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
+        await pilot.pause()
+
+        dialog = app.screen.query_one(".settings-dialog")
+        assert dialog.region.y >= 0
+        assert dialog.region.bottom <= app.screen.size.height
+        assert dialog.max_scroll_y > 0
+
+        dialog.scroll_end(animate=False)
+        await pilot.pause()
+        actions = app.screen.query_one(".settings-actions")
+        assert actions.region.y >= 0
+        assert actions.region.bottom <= app.screen.size.height
+
+
+async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    hitl = FakeHITL(tmp_path)
+    original = hitl.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(hitl)
+    cases = [
+        ("model: valid\nmodel_provider: openai\n", True),
+        ("model: [broken", False),
+        ("- model\n- list\n", False),
+        ("null\n", False),
+        ("model: valid\ninference_provider: missing\n", False),
+        (
+            "model: valid\nbase_url: https://example.test\n"
+            "inference_provider: openai\n",
+            False,
+        ),
+        ("model: valid\napi_key:\n  env:\n", False),
+        (
+            "advanced_first:\n  nested: [one, two]\n"
+            "model: valid\ntemperature: 0.4\n",
+            True,
+        ),
+        ("model: ''\n", False),
+    ]
+    random.Random(20260826).shuffle(cases)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        advanced = app.screen.query_one("#chat-advanced", Collapsible)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        assert advanced.collapsed
+        assert editor.language == "yaml"
+
+        for document, expected_valid in cases:
+            editor.text = document
+            await pilot.pause()
+            assert not editor.has_class("yaml-valid", "yaml-invalid")
+            app.screen._yaml_timers["chat"].stop()
+
+            result = app.screen._validate_yaml(
+                "chat", update_controls=expected_valid
+            )
+
+            assert (result is not None) is expected_valid
+            assert editor.has_class(
+                "yaml-valid" if expected_valid else "yaml-invalid"
+            )
+            assert hitl.config.llm_model == original
+            if result is not None:
+                expected = yaml.safe_load(document)
+                assert result.model == expected["model"]
+                assert app.screen.drafts["chat"] == result
+                expected_choice = result.model or ModelScreen.NONE_VALUE
+                assert (
+                    app.screen.query_one("#chat-model-name", Select).value
+                    == expected_choice
+                )
+                assert result.model_extra == {
+                    key: value
+                    for key, value in expected.items()
+                    if key
+                    not in {
+                        "model",
+                        "model_provider",
+                        "base_url",
+                        "api_key",
+                        "inference_provider",
+                        "ssl_verify",
+                        "max_completion_tokens",
+                    }
+                }
+            await pilot.pause()
+
+
+async def test_cancel_discards_yaml_with_pending_validation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(ModelScreen, "YAML_VALIDATION_DELAY", 30.0)
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    hitl = FakeHITL(tmp_path)
+    original = hitl.config.llm_model.model_copy(deep=True)
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one(
+            "#chat-config-yaml", TextArea
+        ).text = "model: changed-before-cancel\n"
+        await pilot.pause()
+        # Flush the Changed event after the editor has emitted it to the screen.
+        await pilot.pause()
+        timer = app.screen._yaml_timers["chat"]
+        assert timer._task is not None
+        assert not timer._task.done()
+
+        app.screen.action_cancel()
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ModelScreen)
+        assert hitl.config.llm_model == original
+        assert timer._task is None
+
+
+async def test_yaml_debounce_restarts_from_latest_edit(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = "model: first-edit\n"
+        await pilot.pause()
+        await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY / 2)
+
+        editor.text = "model: second-edit\n"
+        await pilot.pause()
+        await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY / 2 + 0.05)
+        await pilot.pause()
+
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await asyncio.sleep(ModelScreen.YAML_VALIDATION_DELAY / 2 + 0.1)
+        await pilot.pause()
+        assert editor.has_class("yaml-valid")
+        assert app.screen.drafts["chat"].model == "second-edit"
+
+
+async def test_invalid_yaml_blocks_model_accept(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+    notifications = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = "model: [not valid"
+
+        app.screen.action_apply()
+
+        assert isinstance(app.screen, ModelScreen)
+        assert editor.has_class("yaml-invalid")
+        assert notifications[-1][1]["severity"] == "error"
+        assert app.screen.query_one("#chat-yaml-error", Static).content
+
+
+async def test_yaml_validation_error_with_rich_markup_is_plain_text(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = """\
+model: gpt-5.4
+model_provider: openai
+base_url: http://foo
+api_key:
+  env:
+"""
+
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await wait_for_yaml_debounce(pilot)
+
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
+        await pilot.pause()
+        assert editor.has_class("yaml-invalid")
+        error = app.screen.query_one("#chat-yaml-error", Static)
+        assert "validation errors for ChatModelConfig" in str(error.content)
+        assert "api_key:" in str(error.content)
+        assert "errors.pydantic.dev" not in str(error.content)
+        assert error.styles.text_wrap == "wrap"
+        assert error.region.height > 3
+        assert error.virtual_size.width <= error.content_region.width
+
+
+async def test_yaml_validation_lists_all_errors_in_bounded_scroll_area(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
+        editor = app.screen.query_one("#chat-config-yaml", TextArea)
+        editor.text = """\
+model: gpt-5.4
+model_provider: openai
+inference_provider: openai
+max_completion_tokens: nope
+ssl_verify: also-nope
+api_key:
+  env:
+"""
+
+        await pilot.pause()
+        assert not editor.has_class("yaml-valid", "yaml-invalid")
+        await wait_for_yaml_debounce(pilot)
+
+        error = app.screen.query_one("#chat-yaml-error", Static)
+        message = str(error.content)
+        assert "max_completion_tokens:" in message
+        assert "ssl_verify:" in message
+        assert "api_key:" in message
+        assert message.startswith("4 validation errors for ChatModelConfig")
+        assert len(message.splitlines()) == 5
+        assert error.region.height == 6
+        assert error.styles.overflow_y == "auto"
+
+
 async def test_model_change_only_reports_changed_embedding(tmp_path):
     hitl = FakeHITL(tmp_path)
     app = UrsaTextualApp(hitl)
@@ -852,6 +1738,132 @@ async def test_model_modal_preserves_direct_embedding_endpoint(
         assert embedding.inference_provider is None
         assert embedding.base_url == "https://embeddings.example/v1"
         assert embedding.check_embedding_ctx_length is False
+
+
+async def test_switching_direct_endpoint_to_named_provider_stays_in_sync(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.llm_model = ChatModelConfig(
+        model="direct-model",
+        model_provider="openai",
+        base_url="https://direct.example/v1",
+    )
+    discovered_with = []
+
+    def provider_models(config):
+        discovered_with.append(config)
+        return [ProviderModel("provider-model", "openai")]
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+
+        provider = app.screen.query_one("#chat-inference-provider", Select)
+        provider.value = "openai"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        draft = app.screen.drafts["chat"]
+        yaml_values = yaml.safe_load(
+            app.screen.query_one("#chat-config-yaml", TextArea).text
+        )
+        assert provider.value == "openai"
+        assert draft.inference_provider == "openai"
+        assert draft.base_url is None
+        assert yaml_values["inference_provider"] == "openai"
+        assert "base_url" not in yaml_values
+        assert any(
+            config.base_url
+            == hitl.config.inference_providers["openai"].base_url
+            for config in discovered_with
+        )
+        assert any(
+            model.name == "provider-model"
+            for model in app.screen.model_catalogs["chat"].values()
+        )
+
+
+async def test_named_provider_control_removes_direct_url_in_one_sync(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.llm_model = ChatModelConfig(
+        model="direct-model",
+        base_url="https://direct.example/v1",
+    )
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        provider = app.screen.query_one("#chat-inference-provider", Select)
+        initial_yaml = yaml.safe_load(
+            app.screen.query_one("#chat-config-yaml", TextArea).text
+        )
+        assert initial_yaml["base_url"] == "https://direct.example/v1"
+        app.screen._syncing_controls = True
+        try:
+            provider.value = "openai"
+            await pilot.pause()
+        finally:
+            app.screen._syncing_controls = False
+
+        app.screen._structured_controls_changed("chat")
+
+        yaml_values = yaml.safe_load(
+            app.screen.query_one("#chat-config-yaml", TextArea).text
+        )
+        assert app.screen.drafts["chat"].inference_provider == "openai"
+        assert "base_url" not in yaml_values
+
+
+async def test_immediate_apply_clears_direct_url_for_named_provider(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.llm_model = ChatModelConfig(
+        model="direct-model",
+        base_url="https://direct.example/v1",
+        temperature=0.2,
+    )
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+        app.screen.query_one(
+            "#chat-inference-provider", Select
+        ).value = "openai"
+
+        app.screen.action_apply()
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ModelScreen)
+        assert hitl.config.llm_model.inference_provider == "openai"
+        assert (
+            hitl.config.llm_model.base_url
+            == hitl.config.inference_providers["openai"].base_url
+        )
+        assert hitl.config.llm_model.base_url != "https://direct.example/v1"
+        assert hitl.config.llm_model.model_extra == {"temperature": 0.2}
 
 
 async def test_model_modal_preserves_only_explicit_overrides_when_switching_provider(
@@ -942,6 +1954,153 @@ async def test_model_modal_uses_default_provider_for_new_embedding(
         assert isinstance(embedding, EmbModelConfig)
         assert embedding.model_provider == "openai"
         assert embedding.inference_provider == "openai"
+
+
+async def test_stale_model_discovery_cannot_replace_new_provider_catalog(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    hitl.config.inference_providers["fast"] = InferenceProviderConfig(
+        base_url="https://fast.example/v1"
+    )
+    slow_started = Event()
+    release_slow = Event()
+    replacement_requested = Event()
+    publications_after_request = []
+
+    def provider_models(config):
+        if config.base_url == "https://api.openai.com/v1":
+            slow_started.set()
+            assert release_slow.wait(timeout=5)
+            return [ProviderModel("gpt-5.4", "openai")]
+        return [ProviderModel("fast-only", "openai")]
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(hitl)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        assert await asyncio.to_thread(slow_started.wait, 5)
+        assert isinstance(app.screen, ModelScreen)
+        initial_workers = [
+            worker
+            for worker in app.workers
+            if worker.group == "model-discovery"
+        ]
+        original_set_options = app.screen._set_model_options
+
+        def record_options(prefix, catalog, current):
+            if replacement_requested.is_set() and prefix == "chat":
+                publications_after_request.append(set(catalog))
+            original_set_options(prefix, catalog, current)
+
+        monkeypatch.setattr(app.screen, "_set_model_options", record_options)
+        replacement_requested.set()
+        replacement_worker = app.screen._request_model_load(
+            "chat", hitl.config.inference_providers["fast"]
+        )
+        release_slow.set()
+        await replacement_worker.wait()
+        await asyncio.gather(*(worker.wait() for worker in initial_workers))
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#chat-model-name", Select)
+        assert app.screen.model_catalogs["chat"] == {
+            "fast-only": ProviderModel("fast-only", "openai")
+        }
+        assert model_select.value == "test-model"
+        assert ("Not found: test-model", "test-model") in model_select._options
+        assert ("gpt-5.4", "gpt-5.4") not in model_select._options
+        assert all(
+            "gpt-5.4" not in catalog for catalog in publications_after_request
+        )
+        assert app.screen.query_one("#chat-model-name-custom", Input).has_class(
+            "hidden"
+        )
+
+
+async def test_model_modal_seeded_provider_fuzz_preserves_invariants(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    for index in range(3):
+        hitl.config.inference_providers[f"provider-{index}"] = (
+            InferenceProviderConfig(
+                base_url=f"https://provider-{index}.example/v1"
+            )
+        )
+
+    def provider_models(config):
+        host = config.base_url or ""
+        provider_index = next(
+            (index for index in range(3) if f"provider-{index}" in host),
+            9,
+        )
+        return [
+            ProviderModel(f"model-{provider_index}-{model_index}", "openai")
+            for model_index in range(3)
+        ]
+
+    monkeypatch.setattr(
+        "ursa.cli.tui.widgets.list_provider_models", provider_models
+    )
+    app = UrsaTextualApp(hitl)
+    choices = [f"provider-{index}" for index in range(3)]
+    rng = random.Random(20260826)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._show_command("models")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ModelScreen)
+
+        for iteration in range(30):
+            provider_select = app.screen.query_one(
+                "#chat-inference-provider", Select
+            )
+            provider = rng.choice([
+                choice for choice in choices if choice != provider_select.value
+            ])
+            provider_index = int(provider.rsplit("-", 1)[1])
+            model_select = app.screen.query_one("#chat-model-name", Select)
+            custom = app.screen.query_one("#chat-model-name-custom", Input)
+            if rng.random() < 0.25:
+                model_select.value = ModelScreen.CUSTOM_VALUE
+                custom.value = f"custom-{iteration}"
+                await pilot.pause()
+                assert not custom.has_class("hidden")
+            elif rng.random() < 0.5:
+                model_select.value = rng.choice([
+                    value
+                    for _label, value in model_select._options
+                    if isinstance(value, str)
+                    and value
+                    not in {ModelScreen.NONE_VALUE, ModelScreen.CUSTOM_VALUE}
+                ])
+            provider_select.value = provider
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+            selected = str(model_select.value)
+            options = dict(
+                (value, label) for label, value in model_select._options
+            )
+            available = {
+                f"model-{provider_index}-{model_index}"
+                for model_index in range(3)
+            }
+            assert selected in options
+            if selected not in available:
+                assert options[selected] == f"Not found: {selected}"
+            assert custom.has_class("hidden")
+            assert app.screen.drafts["chat"].model == selected
+            assert app.screen.drafts["chat"].inference_provider == provider
+            yaml_values = yaml.safe_load(
+                app.screen.query_one("#chat-config-yaml", TextArea).text
+            )
+            assert yaml_values["inference_provider"] == provider
 
 
 def test_model_modal_new_embedding_inherits_direct_chat_settings(tmp_path):
@@ -1398,6 +2557,8 @@ async def test_agents_display_tool_load_failure(tmp_path):
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
         error = app.screen.query_one(".agent-tools-error", Static)
         assert "MCP server unavailable" in str(error.render())
@@ -1595,6 +2756,7 @@ async def test_agents_lazily_render_execution_agent_tools(tmp_path, chat_model):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
+        await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 

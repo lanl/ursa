@@ -10,6 +10,8 @@ from itertools import islice
 from math import ceil
 from pathlib import Path
 
+import yaml
+from pydantic import SecretStr, ValidationError
 from rich.cells import cell_len, chop_cells
 from rich.text import Text
 from textual import events, on
@@ -449,6 +451,22 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
     ]
     CUSTOM_VALUE = "__ursa_custom__"
     NONE_VALUE = "__ursa_none__"
+    YAML_VALIDATION_DELAY = 0.8
+    STRUCTURED_FIELDS = ("model", "model_provider", "inference_provider")
+
+    @staticmethod
+    def _validation_error_text(error: ValidationError) -> str:
+        """Render every Pydantic error compactly in the bounded error panel."""
+        details = error.errors(include_url=False, include_context=False)
+        lines = [
+            f"{len(details)} validation "
+            f"{'error' if len(details) == 1 else 'errors'} for {error.title}"
+        ]
+        for detail in details:
+            location = detail.get("loc", ())
+            field = str(location[0]) if location else "configuration"
+            lines.append(f"{field}: {detail['msg']}")
+        return "\n".join(lines)
 
     FIELD_HELP = {
         "model": (
@@ -496,7 +514,18 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             if embedding.inference_provider is not None:
                 embedding = embedding.resolve_inference_provider(self.providers)
         self.embedding = embedding
+        self.drafts: dict[str, ModelConfig] = {
+            "chat": self.chat,
+            "embedding": self.embedding,
+        }
+        self._yaml_values = {
+            prefix: self._configured_values(config)
+            for prefix, config in self.drafts.items()
+        }
         self.model_catalogs: dict[str, dict[str, ProviderModel]] = {}
+        self._model_load_generation = {"chat": 0, "embedding": 0}
+        self._yaml_timers: dict[str, Timer] = {}
+        self._syncing_controls = False
 
     @classmethod
     def _choice_options(cls, values: Sequence[str]) -> list[tuple[str, str]]:
@@ -606,53 +635,170 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                         "chat",
                         self.chat,
                     )
+                    yield from self._advanced_editor("chat", self.chat)
                 with TabPane("Embedding", id="embedding-model-tab"):
                     yield from self._model_fields(
                         "embedding",
                         self.embedding,
                     )
+                    yield from self._advanced_editor(
+                        "embedding", self.embedding
+                    )
             with Horizontal(classes="settings-actions"):
                 yield Button("Cancel", id="model-cancel")
                 yield Button("Apply", id="model-apply", variant="primary")
 
+    def _advanced_editor(
+        self, prefix: str, config: ModelConfig
+    ) -> ComposeResult:
+        with Collapsible(
+            title="Advanced",
+            collapsed=True,
+            id=f"{prefix}-advanced",
+            classes="model-advanced",
+        ):
+            yield TextArea(
+                self._dump_yaml(config),
+                language="yaml",
+                show_line_numbers=True,
+                tab_behavior="indent",
+                id=f"{prefix}-config-yaml",
+                classes="model-yaml-editor",
+            )
+            yield Static(
+                "",
+                id=f"{prefix}-yaml-error",
+                classes="model-yaml-error hidden",
+            )
+
+    @staticmethod
+    def _configured_values(config: ModelConfig) -> dict:
+        """Return editable values without materializing inherited defaults."""
+        dumped = config.model_dump(
+            mode="json",
+            exclude_unset=True,
+            context={"include_defaults": False},
+        )
+        dumped.setdefault("model", config.model)
+        return dumped
+
+    @classmethod
+    def _dump_yaml(cls, config: ModelConfig) -> str:
+        return cls._dump_yaml_values(cls._configured_values(config))
+
+    @staticmethod
+    def _dump_yaml_values(values: Mapping) -> str:
+        return yaml.safe_dump(
+            dict(values),
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
+    def _yaml_text(self, prefix: str) -> str:
+        return self._dump_yaml_values(self._yaml_values[prefix])
+
+    def _update_yaml_values(self, prefix: str, config: ModelConfig) -> None:
+        """Patch structured fields without reordering the YAML mapping."""
+        configured = self._configured_values(config)
+        values = self._yaml_values[prefix]
+        if config.inference_provider is not None:
+            values.pop("base_url", None)
+        for field in self.STRUCTURED_FIELDS:
+            if field in configured:
+                values[field] = configured[field]
+            else:
+                values.pop(field, None)
+
     def on_mount(self) -> None:
         self.query_one("#chat-model-name", Select).focus()
+        chat_generation = self._next_model_load_generation("chat")
+        embedding_generation = self._next_model_load_generation("embedding")
         self.run_worker(
-            self._load_initial_models(),
+            self._load_initial_models(chat_generation, embedding_generation),
             group="model-discovery",
             exclusive=True,
         )
 
-    async def _load_initial_models(self) -> None:
-        await self._load_models("chat", self.chat)
-        await self._load_models("embedding", self.embedding)
+    def on_unmount(self) -> None:
+        for timer in self._yaml_timers.values():
+            timer.stop()
+        self._yaml_timers.clear()
+
+    def _next_model_load_generation(self, prefix: str) -> int:
+        self._model_load_generation[prefix] += 1
+        return self._model_load_generation[prefix]
+
+    async def _load_initial_models(
+        self, chat_generation: int, embedding_generation: int
+    ) -> None:
+        await self._load_models("chat", self.chat, chat_generation)
+        await self._load_models(
+            "embedding", self.embedding, embedding_generation
+        )
+
+    def _request_model_load(
+        self,
+        prefix: str,
+        config: ModelConfig | InferenceProviderConfig,
+    ):
+        generation = self._next_model_load_generation(prefix)
+        return self.run_worker(
+            self._load_models(prefix, config, generation),
+            group=f"{prefix}-models",
+            exclusive=True,
+        )
 
     async def _load_models(
         self,
         prefix: str,
         config: ModelConfig | InferenceProviderConfig,
+        generation: int,
     ) -> None:
         try:
             models = await asyncio.to_thread(list_provider_models, config)
         except Exception as exc:  # noqa: BLE001
+            if generation != self._model_load_generation[prefix]:
+                return
+            self.model_catalogs[prefix] = {}
+            current = self._choice_value(prefix, "model-name")
+            self._set_model_options(prefix, {}, current)
             self.notify(
                 f"Unable to list models: {exc}",
                 title="Model discovery",
                 severity="warning",
             )
             return
+        if generation != self._model_load_generation[prefix]:
+            return
         models = sort_provider_models(
             models, "embedding" if prefix == "embedding" else "chat"
         )
         catalog = {model.name: model for model in models}
         self.model_catalogs[prefix] = catalog
-        select = self.query_one(f"#{prefix}-model-name", Select)
         current = self._choice_value(prefix, "model-name")
-        select.set_options(self._choice_options(tuple(catalog)))
-        if not current:
-            select.value = self.NONE_VALUE
-        else:
-            select.value = current if current in catalog else self.CUSTOM_VALUE
+        self._set_model_options(prefix, catalog, current)
+
+    def _set_model_options(
+        self,
+        prefix: str,
+        catalog: Mapping[str, ProviderModel],
+        current: str,
+    ) -> None:
+        """Render a catalog while retaining an unavailable current model."""
+        options = self._choice_options(tuple(catalog))
+        if current and current not in catalog:
+            options.insert(-1, (f"Not found: {current}", current))
+        select = self.query_one(f"#{prefix}-model-name", Select)
+        was_syncing = self._syncing_controls
+        self._syncing_controls = True
+        try:
+            with self.prevent(Select.Changed):
+                select.set_options(options)
+                select.value = current or self.NONE_VALUE
+            custom = self.query_one(f"#{prefix}-model-name-custom", Input)
+            custom.set_class(select.value != self.CUSTOM_VALUE, "hidden")
+        finally:
+            self._syncing_controls = was_syncing
 
     def _choice_value(self, prefix: str, field: str) -> str:
         select = self.query_one(f"#{prefix}-{field}", Select)
@@ -672,12 +818,14 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         prefix = event.select.id.removesuffix("-model-name")
         record = self.model_catalogs.get(prefix, {}).get(str(event.value))
         if record is None or record.model_provider is None:
+            self._structured_controls_changed(prefix)
             return
         provider = record.model_provider
         provider_select = self.query_one(f"#{prefix}-model-provider", Select)
         model_type = "embedding" if prefix == "embedding" else "chat"
         if provider in supported_model_providers(model_type):
             provider_select.value = provider
+        self._structured_controls_changed(prefix)
 
     @on(Select.Changed, ".inference-provider-choice")
     def update_models_for_inference_provider(
@@ -685,19 +833,159 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
     ) -> None:
         if event.select.id is None or not isinstance(event.value, str):
             return
-        config = self.providers.get(event.value)
-        if config is None:
-            return
         prefix = event.select.id.removesuffix("-inference-provider")
-        self.run_worker(
-            self._load_models(prefix, config),
-            group=f"{prefix}-models",
-            exclusive=True,
+        self._structured_controls_changed(prefix)
+        config = self.providers.get(event.value, self.drafts[prefix])
+        self._request_model_load(prefix, config)
+
+    @on(Select.Changed, "#chat-model-provider, #embedding-model-provider")
+    def model_provider_changed(self, event: Select.Changed) -> None:
+        if event.select.id is not None:
+            self._structured_controls_changed(
+                event.select.id.removesuffix("-model-provider")
+            )
+
+    @on(Input.Changed, ".model-custom-choice")
+    def custom_model_changed(self, event: Input.Changed) -> None:
+        if event.input.id is not None:
+            self._structured_controls_changed(
+                event.input.id.removesuffix("-model-name-custom")
+            )
+
+    def _structured_controls_changed(self, prefix: str) -> None:
+        if self._syncing_controls or not self.is_mounted:
+            return
+        original = self.drafts[prefix]
+        try:
+            updated = self._settings(prefix, original)
+        except ValueError:
+            return
+        self.drafts[prefix] = updated
+        self._update_yaml_values(prefix, updated)
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        text = self._yaml_text(prefix)
+        if editor.text != text:
+            self._syncing_controls = True
+            try:
+                with self.prevent(TextArea.Changed):
+                    editor.text = text
+            finally:
+                self._syncing_controls = False
+        self._validate_yaml(prefix, update_controls=False)
+
+    @on(TextArea.Changed, ".model-yaml-editor")
+    def yaml_changed(self, event: TextArea.Changed) -> None:
+        if self._syncing_controls or event.text_area.id is None:
+            return
+        prefix = event.text_area.id.removesuffix("-config-yaml")
+        if event.text_area.text == self._yaml_text(prefix):
+            self._set_yaml_state(prefix, "valid")
+            return
+        self._set_yaml_state(prefix, "neutral")
+        timer = self._yaml_timers.pop(prefix, None)
+        if timer is not None:
+            timer.stop()
+        self._yaml_timers[prefix] = self.set_timer(
+            self.YAML_VALIDATION_DELAY,
+            lambda: self._validate_yaml(prefix, update_controls=True),
         )
 
-    def _settings(
-        self, prefix: str, original: ModelConfig
+    def _validate_yaml(
+        self, prefix: str, *, update_controls: bool
     ) -> ModelConfig | None:
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        config_type = ChatModelConfig if prefix == "chat" else EmbModelConfig
+        try:
+            values = yaml.safe_load(editor.text)
+            if not isinstance(values, dict):
+                raise ValueError("Configuration must be a YAML mapping")
+            validation_values = deepcopy(values)
+            current_api_key = self.drafts[prefix].api_key
+            if isinstance(current_api_key, SecretStr) and values.get(
+                "api_key"
+            ) == str(current_api_key):
+                validation_values["api_key"] = deepcopy(current_api_key)
+            config = config_type.model_validate(validation_values)
+            if not config.model.strip() and (prefix == "chat" or config.model):
+                model_type = "Chat" if prefix == "chat" else "Embedding"
+                raise ValueError(f"{model_type} model must not be blank")
+            if (
+                config.inference_provider is not None
+                and config.inference_provider not in self.providers
+            ):
+                raise ValueError(
+                    f"Unknown inference_provider '{config.inference_provider}'"
+                )
+        except (yaml.YAMLError, ValueError) as exc:
+            error = (
+                self._validation_error_text(exc)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            )
+            self._set_yaml_state(prefix, "invalid", error)
+            return None
+        self.drafts[prefix] = config
+        self._yaml_values[prefix] = deepcopy(values)
+        self._set_yaml_state(prefix, "valid")
+        if update_controls:
+            self._update_controls_from_config(prefix, config)
+        return config
+
+    def _set_yaml_state(self, prefix: str, state: str, error: str = "") -> None:
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        editor.remove_class("yaml-valid", "yaml-invalid")
+        if state != "neutral":
+            editor.add_class(f"yaml-{state}")
+        message = self.query_one(f"#{prefix}-yaml-error", Static)
+        message.update(Text(error))
+        message.set_class(not error, "hidden")
+
+    def _update_controls_from_config(
+        self, prefix: str, config: ModelConfig
+    ) -> None:
+        inference_select = self.query_one(
+            f"#{prefix}-inference-provider", Select
+        )
+        previous_inference_provider = inference_select.value
+        self._syncing_controls = True
+        try:
+            with self.prevent(Select.Changed):
+                catalog = self.model_catalogs.get(prefix, {})
+                self._set_model_options(prefix, catalog, config.model)
+
+                model_provider = config.model_provider or self.NONE_VALUE
+                provider_select = self.query_one(
+                    f"#{prefix}-model-provider", Select
+                )
+                model_type = "embedding" if prefix == "embedding" else "chat"
+                options = [
+                    ("None", self.NONE_VALUE),
+                    *(
+                        (provider, provider)
+                        for provider in supported_model_providers(model_type)
+                    ),
+                ]
+                available = {value for _, value in options}
+                if model_provider not in available:
+                    options.append((
+                        f"Not found: {model_provider}",
+                        model_provider,
+                    ))
+                provider_select.set_options(options)
+                provider_select.value = model_provider
+                inference_provider = (
+                    config.inference_provider or self.NONE_VALUE
+                )
+                inference_select.value = inference_provider
+        finally:
+            self._syncing_controls = False
+        if inference_provider != previous_inference_provider:
+            provider_config = self.providers.get(
+                str(inference_provider), config
+            )
+            self._request_model_load(prefix, provider_config)
+
+    def _settings(self, prefix: str, original: ModelConfig) -> ModelConfig:
         model_name = self._choice_value(prefix, "model-name")
         model_provider_value = self.query_one(
             f"#{prefix}-model-provider", Select
@@ -724,8 +1012,6 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             and provider_value != self.NONE_VALUE
             else ""
         )
-        if not model_name:
-            return None
         dumped = original.model_dump(mode="python")
         configured = {
             name: deepcopy(value)
@@ -734,6 +1020,10 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         }
         for field in ("model", "model_provider", "inference_provider"):
             configured.pop(field, None)
+        if inference_provider:
+            # A named provider owns its endpoint. This mirrors ModelConfig's
+            # merge semantics when switching away from a direct endpoint.
+            configured.pop("base_url", None)
         updates = {
             "model": model_name,
             "inference_provider": inference_provider or None,
@@ -751,8 +1041,16 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
 
     def action_apply(self) -> None:
         try:
-            chat = self._settings("chat", self.chat)
-            embedding = self._settings("embedding", self.embedding)
+            for prefix in ("chat", "embedding"):
+                editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+                draft = self.drafts[prefix]
+                # If YAML has not diverged from the draft, fold in any control
+                # event still queued in Textual before doing final validation.
+                if editor.text == self._yaml_text(prefix):
+                    configured = self._settings(prefix, draft)
+                    self.drafts[prefix] = configured
+                    self._update_yaml_values(prefix, configured)
+                    editor.text = self._yaml_text(prefix)
         except ValueError as exc:
             self.notify(
                 str(exc),
@@ -762,10 +1060,32 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                 markup=False,
             )
             return
-        if chat is None:
+
+        chat = self._validate_yaml("chat", update_controls=False)
+        embedding = self._validate_yaml("embedding", update_controls=False)
+        if chat is None or embedding is None:
+            error = next(
+                (
+                    str(message.content)
+                    for message in self.query(".model-yaml-error")
+                    if str(message.content)
+                ),
+                "Invalid YAML configuration",
+            )
+            self.notify(
+                error,
+                title="Model not changed",
+                severity="error",
+                timeout=10,
+                markup=False,
+            )
+            return
+        if not chat.model:
             self.notify("Chat model is required", severity="error")
             return
         assert isinstance(chat, ChatModelConfig)
+        if not embedding.model:
+            embedding = None
         assert embedding is None or isinstance(embedding, EmbModelConfig)
         self.dismiss(ModelSelection(chat, embedding))
 
@@ -795,23 +1115,51 @@ class InformationScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding("escape,q", "close", "Close", priority=True),
-        Binding("up", "scroll_up", "Scroll up", priority=True),
-        Binding("down", "scroll_down", "Scroll down", priority=True),
-        Binding("home", "scroll_home", "Scroll to top", priority=True),
-        Binding("end", "scroll_end", "Scroll to bottom", priority=True),
-        Binding("pageup", "page_up", "Page up", priority=True),
-        Binding("pagedown", "page_down", "Page down", priority=True),
+        Binding("up", "scroll_up", "Scroll up"),
+        Binding("down", "scroll_down", "Scroll down"),
+        Binding("home", "scroll_home", "Scroll to top"),
+        Binding("end", "scroll_end", "Scroll to bottom"),
+        Binding("pageup", "page_up", "Page up"),
+        Binding("pagedown", "page_down", "Page down"),
     ]
 
-    def __init__(self, title: str, content: str) -> None:
+    def __init__(
+        self,
+        title: str,
+        content: str,
+        *,
+        config_yaml: str | None = None,
+    ) -> None:
         super().__init__()
         self.screen_title = title
         self.content = content
+        self.config_yaml = config_yaml
 
     def compose(self) -> ComposeResult:
         with Vertical(id="information"):
             yield Static(self.screen_title, id="information-title")
-            yield VerticalScroll(Markdown(self.content), id="information-body")
+            if self.config_yaml is None:
+                yield VerticalScroll(
+                    Markdown(self.content), id="information-body"
+                )
+            else:
+                with TabbedContent(id="status-tabs"):
+                    with TabPane("Status", id="status-summary-tab"):
+                        yield VerticalScroll(
+                            Markdown(self.content), id="information-body"
+                        )
+                    with TabPane("Config", id="status-config-tab"):
+                        yield Static(
+                            "Read only — select text to copy",
+                            id="status-config-readonly",
+                        )
+                        yield TextArea(
+                            self.config_yaml,
+                            language="yaml",
+                            read_only=True,
+                            show_line_numbers=True,
+                            id="status-config-yaml",
+                        )
 
     def action_close(self) -> None:
         self.dismiss(None)

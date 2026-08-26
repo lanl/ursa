@@ -366,6 +366,8 @@ async def test_collapsed_commands_retain_execution_outcomes(tmp_path):
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("r", "u", "n", "enter")
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         cards = list(app.query(RunCommandCard))
         assert [card.completed for card in cards] == [True, True, True]
         assert [card.returncode for card in cards] == [0, 2, None]
