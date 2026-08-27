@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.tools import ToolException
+from pydantic import ValidationError
 
 from ursa.tools import term_tool
 
@@ -109,6 +111,16 @@ def runtime(tmp_path):
     return SimpleNamespace(context=SimpleNamespace(workspace=str(tmp_path)))
 
 
+class MissingTerminalManager:
+    """Manager double that rejects every well-formed terminal ID."""
+
+    def __getattr__(self, name):
+        async def missing(*args, **kwargs):
+            raise KeyError(args[0])
+
+        return missing
+
+
 @pytest.fixture(autouse=True)
 def safe_command(monkeypatch):
     async def allow(command, runtime):
@@ -132,6 +144,31 @@ def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
         "  'ALPHA'='first'\n"
         "  'ZED'='last'"
     )
+
+
+@pytest.mark.parametrize(
+    ("terminal_tool", "arguments"),
+    [
+        (term_tool.term_send_bytes, {"data": [1]}),
+        (term_tool.term_send_text, {"text": "x"}),
+        (term_tool.term_send_line, {"line": "x"}),
+        (term_tool.term_send_keycode, {"keycode": 3}),
+        (term_tool.term_send_key, {"key": "c", "modifiers": ["ctrl"]}),
+        (term_tool.term_read, {}),
+        (term_tool.term_is_alive, {}),
+        (term_tool.term_wait_for, {"pattern": "ready"}),
+        (term_tool.term_resize, {"rows": 24, "cols": 80}),
+        (term_tool.term_cursor, {}),
+        (term_tool.term_size, {}),
+    ],
+)
+async def test_unknown_terminal_ids_raise_retryable_tool_errors(
+    monkeypatch, terminal_tool, arguments
+):
+    monkeypatch.setattr(term_tool, "term_manager", MissingTerminalManager())
+
+    with pytest.raises(ToolException, match="Unknown terminal ID 'Missing1'"):
+        await terminal_tool.ainvoke({"term_id": "Missing1", **arguments})
 
 
 def test_launch_safety_text_labels_text_command_and_empty_environment(tmp_path):
@@ -337,6 +374,12 @@ def test_validate_shell_reports_multiple_conflicting_flags():
     assert str(error.value).endswith("(found '-c', '--COMMAND')")
 
 
+def test_empty_shell_reports_actionable_validation_error():
+    with pytest.raises(ValueError) as error:
+        term_tool._validate_shell([])
+    assert str(error.value) == "shell must contain at least one argument"
+
+
 @pytest.mark.parametrize(
     ("shell", "env", "expected"),
     [
@@ -487,6 +530,117 @@ async def test_term_send_key_encodes_and_forwards_bytes(monkeypatch):
         == "Sent key 'c' to terminal Ab12Cd34"
     )
     assert terminal.calls == [("bytes", b"\x03")]
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        (
+            term_tool.term,
+            {"cmd": "echo unsafe schema", "shell": ["bash", "-c"]},
+        ),
+        (
+            term_tool.term_send_bytes,
+            {"term_id": "Ab12Cd34", "data": [256]},
+        ),
+        (
+            term_tool.term_send_keycode,
+            {"term_id": "Ab12Cd34", "keycode": -1},
+        ),
+        (
+            term_tool.term_send_key,
+            {"term_id": "Ab12Cd34", "key": "not-a-key"},
+        ),
+        (
+            term_tool.term_send_key,
+            {"term_id": "Ab12Cd34", "key": "a", "modifiers": ["hyper"]},
+        ),
+        (
+            term_tool.term_read,
+            {"term_id": "Ab12Cd34", "offset": -1},
+        ),
+        (
+            term_tool.term_read,
+            {"term_id": "Ab12Cd34", "lines": 0},
+        ),
+        (
+            term_tool.term_wait_for,
+            {"term_id": "Ab12Cd34", "pattern": "["},
+        ),
+        (
+            term_tool.term_resize,
+            {"term_id": "Ab12Cd34", "rows": 0, "cols": 80},
+        ),
+    ],
+)
+async def test_invalid_tool_inputs_raise_pydantic_errors_before_invocation(
+    tool, arguments
+):
+    with pytest.raises(ValidationError):
+        await tool.ainvoke(arguments)
+
+
+async def test_cross_field_key_error_is_a_retryable_pydantic_error():
+    with pytest.raises(ValidationError, match="modifiers are not supported"):
+        await term_tool.term_send_key.ainvoke({
+            "term_id": "Ab12Cd34",
+            "key": "enter",
+            "modifiers": ["ctrl"],
+        })
+
+
+@pytest.mark.parametrize("key", ["ab", "\n"])
+async def test_term_send_key_rejects_non_key_strings(key):
+    with pytest.raises(ValidationError) as error:
+        await term_tool.term_send_key.ainvoke({
+            "term_id": "Ab12Cd34",
+            "key": key,
+        })
+    assert "unknown key" in str(error.value)
+    assert error.value.errors()[0]["loc"] == ("key",)
+
+
+@pytest.mark.parametrize("key", ["page_up", "page-down"])
+async def test_term_send_key_schema_accepts_named_key_separators(
+    monkeypatch, key
+):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+    result = await term_tool.term_send_key.ainvoke({
+        "term_id": terminal.term_id,
+        "key": key,
+    })
+    assert result == f"Sent key {key!r} to terminal {terminal.term_id}"
+    assert terminal.calls[0][0] == "bytes"
+
+
+async def test_term_send_key_unknown_name_has_actionable_schema_error():
+    with pytest.raises(ValidationError) as error:
+        await term_tool.term_send_key.ainvoke({
+            "term_id": "Ab12Cd34",
+            "key": "definitely-unknown",
+        })
+    assert "unknown key: 'definitely-unknown'" in str(error.value)
+
+
+async def test_term_send_key_invalid_modifier_is_located_on_modifiers():
+    with pytest.raises(ValidationError) as error:
+        await term_tool.term_send_key.ainvoke({
+            "term_id": "Ab12Cd34",
+            "key": "a",
+            "modifiers": ["hyper"],
+        })
+    assert error.value.errors()[0]["loc"] == ("modifiers",)
+
+
+async def test_wait_for_invalid_regex_has_actionable_schema_error():
+    with pytest.raises(ValidationError) as error:
+        await term_tool.term_wait_for.ainvoke({
+            "term_id": "Ab12Cd34",
+            "pattern": "[",
+        })
+    assert "invalid regular expression" in str(error.value)
 
 
 async def test_wait_resize_cursor_and_size_wrappers(monkeypatch):

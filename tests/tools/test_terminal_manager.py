@@ -474,6 +474,87 @@ def test_capabilities_follow_default_backend_screen_support(monkeypatch):
     )
 
 
+def test_backend_status_identifies_preferred_and_fallback(monkeypatch):
+    monkeypatch.setattr(
+        TermManager,
+        "_default_backend",
+        staticmethod(lambda: (FakeTerm, True)),
+    )
+    assert TermManager.backend_status() == "Fake (preferred)"
+
+    monkeypatch.setattr(
+        TermManager,
+        "_default_backend",
+        staticmethod(lambda: (FakeTerm, False)),
+    )
+    monkeypatch.setattr("ursa.tools.terminal.manager.os.name", "posix")
+    assert TermManager.backend_status() == (
+        "Fake (fallback: pyghostty is unavailable)"
+    )
+
+
+def test_backend_status_reports_detection_failure(monkeypatch):
+    def fail():
+        raise ImportError("broken backend")
+
+    monkeypatch.setattr(TermManager, "_default_backend", staticmethod(fail))
+    assert TermManager.backend_status() == (
+        "Unavailable (ImportError: broken backend)"
+    )
+
+
+def test_forced_process_backend_is_selected_even_when_ghostty_is_available(
+    monkeypatch,
+):
+    from ursa.tools.terminal.process import ProcessTerm
+
+    ghostty_checked = False
+
+    def available_ghostty():
+        nonlocal ghostty_checked
+        ghostty_checked = True
+        return FakeTerm, True
+
+    monkeypatch.setenv("URSA_TERM_BACKEND", "process")
+    monkeypatch.setattr(
+        TermManager, "_ghostty_backend", staticmethod(available_ghostty)
+    )
+
+    assert TermManager._default_factory() is ProcessTerm
+    assert TermManager.supports_screen() is False
+    assert TermManager.backend_status() == (
+        "Process (forced by URSA_TERM_BACKEND)"
+    )
+    assert ghostty_checked is False
+
+
+def test_forced_ghostty_backend_is_selected_independently_of_host(
+    monkeypatch,
+):
+    monkeypatch.setenv("URSA_TERM_BACKEND", " GhOsTtY ")
+    monkeypatch.setattr(
+        TermManager,
+        "_ghostty_backend",
+        staticmethod(lambda: (FakeTerm, True)),
+    )
+
+    assert TermManager._default_factory() is FakeTerm
+    assert TermManager.supports_screen() is True
+    assert TermManager.backend_status() == (
+        "Fake (forced by URSA_TERM_BACKEND)"
+    )
+
+
+def test_backend_override_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("URSA_TERM_BACKEND", "surprise")
+    with pytest.raises(ValueError, match="URSA_TERM_BACKEND must be one of"):
+        TermManager._default_backend()
+    assert TermManager.backend_status() == (
+        "Unavailable (ValueError: URSA_TERM_BACKEND must be one of: "
+        "auto, ghostty, process)"
+    )
+
+
 def test_manager_marshals_operations_from_distinct_event_loop_threads(
     real_manager,
 ):

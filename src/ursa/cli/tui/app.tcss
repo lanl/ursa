@@ -534,6 +534,27 @@ ModelScreen SelectCurrent {
     background: transparent;
 }
 
+.term-card-title {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+.term-card-tail {
+    height: 1;
+    padding: 0 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+    color: $text-muted;
+}
+
+.term-card-live {
+    height: auto;
+    min-height: 12;
+    margin: 0 1;
+    overflow: auto auto;
+}
+
 .edit-group-title {
     height: 1;
     padding: 0 1;

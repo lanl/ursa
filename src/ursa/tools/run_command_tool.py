@@ -36,11 +36,11 @@ async def assess_command_safety(
             is_safe=True, reason=f"User set safety level to {prompt_level}"
         )
     if runtime.store is not None:
-        search_results = runtime.store.search(
+        search_results = await runtime.store.asearch(
             ("workspace", "file_edit"), limit=1000
         )
         edited_files = [item.key for item in search_results]
-        search_results = runtime.store.search(
+        search_results = await runtime.store.asearch(
             ("workspace", "safe_codes"), limit=1000
         )
         safe_codes = [item.key for item in search_results]
