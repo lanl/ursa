@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .base import (
     TERM_ID_LENGTH,
+    TERM_MAX_BYTES,
     TERM_TIMEOUT,
     TerminalRenderSnapshot,
     TermSession,
@@ -30,7 +31,6 @@ _STREAM_CAPABILITIES = frozenset({
     "is_alive",
     "read",
     "send_bytes",
-    "send_keycode",
     "send_line",
     "send_text",
     "wait",
@@ -473,10 +473,6 @@ class TermManager:
         """Send text and a trailing newline to a registered terminal."""
         await self._dispatch(self.get(term_id).send_line(text))
 
-    async def send_keycode(self, term_id: str, keycode: int) -> None:
-        """Send a byte-valued keycode to a registered terminal."""
-        await self._dispatch(self.get(term_id).send_keycode(keycode))
-
     async def read(
         self,
         term_id: str,
@@ -582,7 +578,7 @@ class TermManager:
         pattern: str,
         timeout: float | None = None,
     ) -> str:
-        """Wait for a regex, returning its matching line and offset."""
+        """Wait for new output matching a regex, newest match first."""
         return await self._dispatch(
             self._wait_for(term_id, pattern, timeout=timeout)
         )
@@ -602,21 +598,48 @@ class TermManager:
             raise ValueError(f"timeout cannot exceed {maximum:g} seconds")
         regex = re.compile(pattern)
         terminal = self.get(term_id)
+        marker = await terminal.output_marker()
+        cursor = marker
+        contents = ""
+        content_offset = marker
         deadline = asyncio.get_running_loop().time() + wait_timeout
         while True:
-            contents = await terminal.contents()
-            match = regex.search(contents)
+            chunk = await terminal.output_since(cursor)
+            match = None
+            if chunk:
+                cursor += len(chunk)
+                contents += chunk
+                if len(contents) > TERM_MAX_BYTES:
+                    removed = len(contents) - TERM_MAX_BYTES
+                    contents = contents[removed:]
+                    content_offset += removed
+                match = _last_overlapping_match(regex, contents)
             if match is not None:
                 line_start = contents.rfind("\n", 0, match.start()) + 1
                 line_end = contents.find("\n", match.end())
                 if line_end < 0:
                     line_end = len(contents)
                 line = contents[line_start:line_end]
-                return f"{line}\nOffset: {match.start()}"
+                return f"{line}\nOffset: {content_offset + match.start()}"
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return "Pattern not found"
             await asyncio.sleep(min(0.05, remaining))
+
+
+def _last_overlapping_match(
+    regex: re.Pattern[str], contents: str
+) -> re.Match[str] | None:
+    """Return the rightmost match, including matches that overlap."""
+    match = None
+    position = 0
+    while position <= len(contents):
+        candidate = regex.search(contents, position)
+        if candidate is None:
+            break
+        match = candidate
+        position = candidate.start() + 1
+    return match
 
 
 term_manager = TermManager()

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 import shlex
 from pathlib import Path
 from typing import Annotated
 
 from langchain.tools import ToolRuntime
+from langchain_core.messages.content import (
+    ImageContentBlock,
+    TextContentBlock,
+    create_image_block,
+    create_text_block,
+)
 from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import AfterValidator, Field, ValidationError
 
@@ -19,7 +26,9 @@ from ursa.tools.terminal import (
     TERM_MAX_LINES,
     TERM_TIMEOUT,
     TermManager,
+    settled_screen_snapshot,
     term_manager,
+    terminal_snapshot_to_png,
 )
 
 _SHELL_COMMAND_FLAGS = {
@@ -92,7 +101,6 @@ TermId = Annotated[str, Field(pattern=r"^[A-Za-z0-9]{8}$")]
 NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
 PositiveInt = Annotated[int, Field(gt=0, strict=True)]
 ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
-Keycode = ByteValue
 WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 2)]
 
 
@@ -392,16 +400,6 @@ async def term_send_line(term_id: TermId, line: str) -> str:
 
 
 @tool
-async def term_send_keycode(term_id: TermId, keycode: Keycode) -> str:
-    """Send one byte-valued keycode (0 through 255) to a terminal session."""
-    try:
-        await term_manager.send_keycode(term_id, keycode)
-    except KeyError as error:
-        raise _unknown_terminal(term_id) from error
-    return f"Sent keycode {keycode} to terminal {term_id}"
-
-
-@tool
 async def term_send_key(
     term_id: TermId,
     key: TermKey,
@@ -460,7 +458,7 @@ async def term_wait_for(
     pattern: RegexPattern,
     timeout: WaitTimeout | None = None,
 ) -> str:
-    """Wait until a regex appears in terminal output and return its line."""
+    """Wait for new output matching a regex, returning the newest match."""
     try:
         return await term_manager.wait_for(term_id, pattern, timeout)
     except KeyError as error:
@@ -497,12 +495,36 @@ async def term_size(term_id: TermId) -> tuple[int, int]:
         raise _unknown_terminal(term_id) from error
 
 
+@tool
+async def term_screenshot(
+    term_id: TermId,
+) -> list[TextContentBlock | ImageContentBlock]:
+    """Capture a styled PNG of a screen-backed terminal."""
+    try:
+        snapshot = await settled_screen_snapshot(term_manager, term_id)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+    if not snapshot.screen or snapshot.rows is None or snapshot.cols is None:
+        raise ToolException(
+            "Terminal screenshots require the Ghostty backend. Use term_read "
+            "for a Process terminal."
+        )
+
+    png = terminal_snapshot_to_png(snapshot)
+    return [
+        create_text_block(text="Screenshot attached."),
+        create_image_block(
+            base64=base64.b64encode(png).decode("ascii"),
+            mime_type="image/png",
+        ),
+    ]
+
+
 _BASE_TERM_TOOLS = [
     term,
     term_send_bytes,
     term_send_text,
     term_send_line,
-    term_send_keycode,
     term_send_key,
     term_read,
     term_is_alive,
@@ -513,6 +535,7 @@ _SCREEN_TERM_TOOLS = [
     term_resize,
     term_cursor,
     term_size,
+    term_screenshot,
 ]
 
 TERM_TOOLS = [*_BASE_TERM_TOOLS, *_SCREEN_TERM_TOOLS]

@@ -10,6 +10,7 @@ from tests.cli._app_fakes import FakeHITL
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.image_export import (
     MAX_TEXTUAL_PNG_SCALE,
+    terminal_snapshot_to_png,
     textual_app_to_png,
     textual_screenshot_to_png,
 )
@@ -37,6 +38,75 @@ def test_textual_screenshot_to_png_preserves_dimensions_and_color():
         assert image.convert("RGB").getpixel((5, 5)) == (26, 43, 60)
 
 
+def test_terminal_snapshot_to_png_renders_realistic_padded_screen_style():
+    default = TerminalStyle(foreground=(255, 255, 255), background=(0, 0, 0))
+    marker = TerminalStyle(
+        foreground=(204, 102, 102), background=(0, 0, 0), bold=True
+    )
+    marker_text = "CRIMSON_QUASAR_8271"
+    spans = [
+        TerminalSpan(marker_text, marker),
+        TerminalSpan(" " * (80 - len(marker_text)), default),
+    ]
+    for _row in range(23):
+        spans.extend((TerminalSpan("\n"), TerminalSpan(" " * 80, default)))
+    snapshot = TerminalRenderSnapshot(
+        term_id="RealGh01",
+        spans=tuple(spans),
+        rows=24,
+        cols=80,
+        screen=True,
+    )
+
+    png = terminal_snapshot_to_png(snapshot)
+
+    with Image.open(BytesIO(png)) as image:
+        pixels = image.convert("RGB").getdata()
+        assert any(
+            red > green * 1.5 and red > blue * 1.5
+            for red, green, blue in pixels
+        )
+
+
+def test_terminal_snapshot_to_png_renders_unicode_and_attributes():
+    """Wide, combining, emoji, and box glyphs survive the styled pipeline."""
+    accent = TerminalStyle(
+        foreground=(0, 240, 255),
+        background=(70, 10, 90),
+        bold=True,
+        italic=True,
+        underline=True,
+    )
+    default = TerminalStyle(foreground=(230, 230, 230), background=(0, 0, 0))
+    first = "界 🐍 e\N{COMBINING ACUTE ACCENT} ┌─┐"
+    spans = [TerminalSpan(first, accent, cells=16)]
+    spans.append(TerminalSpan(" " * 64, default))
+    for _row in range(23):
+        spans.extend((TerminalSpan("\n"), TerminalSpan(" " * 80, default)))
+    snapshot = TerminalRenderSnapshot(
+        term_id="Unicode1",
+        spans=tuple(spans),
+        rows=24,
+        cols=80,
+        screen=True,
+    )
+
+    png = terminal_snapshot_to_png(snapshot)
+
+    with Image.open(BytesIO(png)) as image:
+        assert image.width > 500
+        assert image.height > 300
+        colors = list(image.convert("RGB").getdata())
+        assert any(
+            blue > 150 and green > 150 and red < 100
+            for red, green, blue in colors
+        )
+        assert any(
+            red > 30 and blue > red and blue > green
+            for red, green, blue in colors
+        )
+
+
 def test_textual_screenshot_to_png_supports_high_dpi_scale():
     svg = '<svg xmlns="http://www.w3.org/2000/svg" width="7" height="5"/>'
 
@@ -56,14 +126,14 @@ def test_textual_screenshot_to_png_caps_scale():
 
 
 def test_textual_screenshot_to_png_caps_svg_bytes(monkeypatch):
-    monkeypatch.setattr("ursa.cli.tui.image_export.MAX_TEXTUAL_SVG_BYTES", 10)
+    monkeypatch.setattr("ursa.tools.terminal.screenshot.MAX_SVG_BYTES", 10)
 
     with pytest.raises(ValueError, match="10-byte safety limit"):
         textual_screenshot_to_png("<svg><!-- large --></svg>")
 
 
 def test_textual_screenshot_to_png_caps_pixels_before_rasterizing(monkeypatch):
-    monkeypatch.setattr("ursa.cli.tui.image_export.MAX_TEXTUAL_PNG_PIXELS", 99)
+    monkeypatch.setattr("ursa.tools.terminal.screenshot.MAX_PNG_PIXELS", 99)
     svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'
 
     with pytest.raises(ValueError, match="99-pixel safety limit"):
