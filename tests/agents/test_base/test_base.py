@@ -468,6 +468,17 @@ def test_persistent_async_only_agent_sync_invoke_uses_async_sqlite_resources(
     assert result["messages"][-1].text == "done"
 
 
+def test_async_only_agent_sync_stream_requires_astream(tmp_path: Path):
+    agent = AsyncOnlyFlagAgent(
+        llm=TinyCountingModel(),
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+
+    with pytest.raises(RuntimeError, match=r"Use `agent\.astream"):
+        list(agent.stream("hello async-only"))
+
+
 def test_persistent_agent_prunes_after_sync_terminal_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

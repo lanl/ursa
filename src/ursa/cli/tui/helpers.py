@@ -40,6 +40,7 @@ COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
     "exit": "Quit URSA gracefully",
     "status": "Tokens, models, endpoints, group, and MCP servers",
+    "terms": "View managed terminal sessions",
     "keymap": "Complete keyboard map",
     "models": "Switch chat or embedding inference providers",
     "theme": "Choose the application color theme",

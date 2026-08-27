@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 from pathlib import Path
@@ -12,7 +13,7 @@ from ursa.prompt_library.safety_prompts import (
 )
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import event_artifact
-from ursa.util.structured_output import invoke_structured
+from ursa.util.structured_output import ainvoke_structured
 from ursa.util.types import (
     AsciiValidationError,
     ascii_validation_message,
@@ -25,7 +26,7 @@ class SafetyAssessment(BaseModel):
     reason: str = Field(description="Brief reason for the safety decision.")
 
 
-def assess_command_safety(
+async def assess_command_safety(
     query: str, runtime: ToolRuntime[AgentContext]
 ) -> SafetyAssessment:
     """Apply URSA's configured command safety policy to *query*."""
@@ -43,7 +44,7 @@ def assess_command_safety(
         safe_codes = []
 
     prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
-    return invoke_structured(
+    return await ainvoke_structured(
         runtime.context.llm,
         SafetyAssessment,
         get_safety_prompt(
@@ -62,7 +63,7 @@ def assess_command_safety(
 
 
 @tool
-def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
+async def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Execute a shell command in the workspace and return its combined output.
 
     Runs the specified command using subprocess.run in the given workspace
@@ -83,7 +84,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
         return ascii_validation_message("query", exc)
     workspace_dir = Path(runtime.context.workspace)
     events = ToolEvents.from_runtime("run_command", runtime)
-    safety_result = assess_command_safety(query, runtime)
+    safety_result = await assess_command_safety(query, runtime)
 
     if not safety_result.is_safe:
         tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
@@ -111,7 +112,8 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             error="Command interrupted",
             query=query,
         ) as span:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 query,
                 text=True,
                 shell=True,

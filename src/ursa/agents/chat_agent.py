@@ -15,7 +15,6 @@ from ursa.tools import (
     list_experiences,
     read_experience,
     read_file,
-    run_command,
     write_code,
     write_experience,
 )
@@ -25,6 +24,7 @@ from ursa.tools.search_tools import (
     run_osti_search,
     run_web_search,
 )
+from ursa.tools.term_tool import get_supported_term_tools
 
 
 class ChatState(TypedDict):
@@ -96,7 +96,6 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
         **kwargs,
     ):
         default_tools = [
-            run_command,
             write_code,
             edit_code,
             read_file,
@@ -107,6 +106,7 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
             read_experience,
             edit_experience,
         ]
+        default_tools.extend(get_supported_term_tools())
         if use_web:
             default_tools.extend([
                 run_web_search,

@@ -1,6 +1,8 @@
 import asyncio
 import re
 import threading
+from dataclasses import FrozenInstanceError
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,9 @@ def manager(monkeypatch):
     instance = TermManager()
     instance._sessions.clear()
     instance._reserved_ids.clear()
+    instance._creation_reservations.clear()
+    instance._session_info.clear()
+    instance._closing = False
 
     async def inline(coroutine):
         return await coroutine
@@ -57,6 +62,9 @@ def manager(monkeypatch):
     yield instance
     instance._sessions.clear()
     instance._reserved_ids.clear()
+    instance._creation_reservations.clear()
+    instance._session_info.clear()
+    instance._closing = False
 
 
 @pytest.fixture
@@ -64,9 +72,15 @@ def real_manager():
     instance = TermManager()
     instance._sessions.clear()
     instance._reserved_ids.clear()
+    instance._creation_reservations.clear()
+    instance._session_info.clear()
+    instance._closing = False
     yield instance
     instance._sessions.clear()
     instance._reserved_ids.clear()
+    instance._creation_reservations.clear()
+    instance._session_info.clear()
+    instance._closing = False
 
 
 async def test_session_convenience_sends_and_validates_keycodes():
@@ -90,6 +104,49 @@ def test_manager_is_singleton_and_generates_alphanumeric_ids(manager):
     assert len(ids) == 100
     assert all(len(value) == TERM_ID_LENGTH for value in ids)
     assert all(re.fullmatch(r"[A-Za-z0-9]+", value) for value in ids)
+
+
+def test_terminal_metadata_is_immutable_and_oldest_to_newest(manager):
+    first = FakeTerm("first123", ["bash"])
+    second = FakeTerm("second12", ["bash"])
+    manager.register(first)
+    manager.register(second)
+
+    infos = manager.terminals()
+    assert tuple(info.term_id for info in infos) == ("first123", "second12")
+    assert infos[0].creation_order < infos[1].creation_order
+    assert infos[0].created_at.tzinfo is UTC
+    assert infos[0].backend == "fake"
+    assert infos[0].supports_screen is False
+    assert {"read", "contents", "send_text"} <= infos[0].capabilities
+    assert {"resize", "cursor", "size"}.isdisjoint(infos[0].capabilities)
+    assert manager.terminal_info("second12") is infos[1]
+    with pytest.raises(FrozenInstanceError):
+        infos[0].backend = "changed"
+
+
+def test_terminal_metadata_detects_screen_backend_and_removal(manager):
+    class ScreenTerm(FakeTerm):
+        async def resize(self, rows, cols):
+            pass
+
+        async def cursor(self):
+            return (0, 0)
+
+        async def size(self):
+            return (24, 80)
+
+    terminal = ScreenTerm("screen12", ["bash"])
+    manager.register(terminal)
+    info = manager.terminal_info(terminal.term_id)
+    assert info.backend == "screen"
+    assert info.supports_screen is True
+    assert {"resize", "cursor", "size"} <= info.capabilities
+
+    asyncio.run(manager.remove(terminal.term_id, terminate=False))
+    assert manager.terminals() == ()
+    with pytest.raises(KeyError, match="unknown terminal"):
+        manager.terminal_info(terminal.term_id)
 
 
 def test_new_id_retries_registered_and_reserved_collisions(
@@ -148,6 +205,25 @@ async def test_create_cleans_up_when_start_fails(manager):
     assert manager.ids() == ()
 
 
+async def test_failed_start_and_cleanup_remains_reachable(manager):
+    class BrokenTerm(FakeTerm):
+        async def start(self, command=None):
+            raise RuntimeError("start failed")
+
+        async def terminate(self):
+            raise OSError("cleanup failed")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        await manager.create(session_factory=BrokenTerm)
+    assert [str(error) for error in caught.value.exceptions] == [
+        "start failed",
+        "cleanup failed",
+    ]
+    (term_id,) = manager.ids()
+    assert manager.get(term_id).__class__ is BrokenTerm
+    assert manager.terminal_info(term_id).term_id == term_id
+
+
 async def test_registry_remove_close_and_unknown_errors(manager):
     first = FakeTerm("first123", ["bash"])
     second = FakeTerm("second12", ["bash"])
@@ -164,6 +240,80 @@ async def test_registry_remove_close_and_unknown_errors(manager):
         manager.get("missing")
     with pytest.raises(KeyError, match="unknown terminal"):
         await manager.remove("missing")
+
+
+async def test_close_all_drains_admitted_create_and_gates_new_ones(
+    real_manager,
+):
+    manager = real_manager
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowTerm(FakeTerm):
+        async def start(self, command=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+
+    creating = asyncio.create_task(manager.create(session_factory=SlowTerm))
+    await asyncio.to_thread(started.wait)
+    closing = asyncio.create_task(manager.close_all())
+    await asyncio.sleep(0)
+    with pytest.raises(RuntimeError, match="closing"):
+        await manager.create(session_factory=FakeTerm)
+    with pytest.raises(RuntimeError, match="closing"):
+        manager.register(FakeTerm("too-late", ["bash"]))
+    release.set()
+    terminal = await creating
+    await closing
+    assert terminal.terminated is True
+    assert manager.ids() == ()
+
+
+async def test_creation_recency_is_request_order_not_start_completion(
+    real_manager,
+):
+    manager = real_manager
+    releases = [threading.Event(), threading.Event()]
+    starts = [threading.Event(), threading.Event()]
+    made = []
+
+    class OrderedTerm(FakeTerm):
+        async def start(self, command=None):
+            index = self.index
+            starts[index].set()
+            await asyncio.to_thread(releases[index].wait)
+
+    def factory(*args, **kwargs):
+        terminal = OrderedTerm(*args, **kwargs)
+        terminal.index = len(made)
+        made.append(terminal)
+        return terminal
+
+    first = asyncio.create_task(manager.create(session_factory=factory))
+    await asyncio.to_thread(starts[0].wait)
+    second = asyncio.create_task(manager.create(session_factory=factory))
+    await asyncio.to_thread(starts[1].wait)
+    releases[1].set()
+    await second
+    releases[0].set()
+    await first
+
+    assert [info.term_id for info in manager.terminals()] == [
+        made[0].term_id,
+        made[1].term_id,
+    ]
+
+
+async def test_close_all_retains_and_propagates_cancelled_termination(manager):
+    class CancelledCleanupTerm(FakeTerm):
+        async def terminate(self):
+            raise asyncio.CancelledError("backend cancelled")
+
+    terminal = CancelledCleanupTerm("cancel12", ["bash"])
+    manager.register(terminal)
+    with pytest.raises(asyncio.CancelledError):
+        await manager.close_all()
+    assert manager.get(terminal.term_id) is terminal
 
 
 async def test_manager_io_methods_forward_to_session(manager):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -11,6 +12,50 @@ TERM_TIMEOUT: Final[float] = float(os.getenv("URSA_TERM_TIMEOUT", "10"))
 TERM_MAX_BYTES: Final[int] = int(os.getenv("URSA_TERM_MAX_BYTES", "20000"))
 TERM_MAX_LINES: Final[int] = int(os.getenv("URSA_TERM_MAX_LINES", "200"))
 TERM_ID_LENGTH: Final[int] = 8
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalStyle:
+    """Renderer-neutral visual attributes for terminal text."""
+
+    foreground: tuple[int, int, int] | None = None
+    background: tuple[int, int, int] | None = None
+    bold: bool = False
+    italic: bool = False
+    faint: bool = False
+    blink: bool = False
+    underline: bool = False
+    underline_kind: int = 0
+    underline_color: tuple[int, int, int] | None = None
+    reverse: bool = False
+    conceal: bool = False
+    strike: bool = False
+    overline: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalSpan:
+    """A run of terminal text sharing one style."""
+
+    text: str
+    style: TerminalStyle = TerminalStyle()
+    cells: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalRenderSnapshot:
+    """Immutable terminal display state safe to move across event loops.
+
+    Screen-backed snapshots have exact ``rows`` and ``cols``. Stream-backed
+    snapshots leave both dimensions unset so a consumer can reflow them to its
+    own viewport.
+    """
+
+    term_id: str
+    spans: tuple[TerminalSpan, ...]
+    rows: int | None = None
+    cols: int | None = None
+    screen: bool = False
 
 
 class TermSession(ABC):
@@ -64,6 +109,13 @@ class TermSession(ABC):
     async def contents(self) -> str:
         """Return the complete terminal output or scrollback."""
         return await self.read()
+
+    async def render_snapshot(self) -> TerminalRenderSnapshot:
+        """Return immutable display data for a view-only renderer."""
+        return TerminalRenderSnapshot(
+            term_id=self.term_id,
+            spans=(TerminalSpan(await self.read()),),
+        )
 
     @abstractmethod
     async def is_alive(self) -> dict[str, bool | int]:

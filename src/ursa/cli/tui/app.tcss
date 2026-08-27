@@ -50,6 +50,37 @@ InformationScreen {
     background: $background 50%;
 }
 
+TermsScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
+#terminals {
+    width: 90%;
+    height: 85%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#terminals-title {
+    height: 2;
+    text-style: bold;
+    color: $accent;
+}
+
+#terminal-tabs,
+#terminal-tabs TabPane,
+#terminal-tabs TerminalView {
+    height: 1fr;
+}
+
+.terminals-empty {
+    height: 1fr;
+    content-align: center middle;
+    color: $text-muted;
+}
+
 ModelScreen {
     align: center middle;
     background: $background 50%;

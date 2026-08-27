@@ -232,7 +232,7 @@ async def term(
     _validate_shell(shell)
     workspace = Path(runtime.context.workspace)
     launch_text = _launch_safety_text(cmd, env, shell, workspace)
-    safety_result = assess_command_safety(launch_text, runtime)
+    safety_result = await assess_command_safety(launch_text, runtime)
     if not safety_result.is_safe:
         return (
             "[UNSAFE] That terminal launch was deemed unsafe and "

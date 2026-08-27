@@ -624,7 +624,15 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert "agents" in screenshot
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "exit", "status", "keymap", "models", "theme"]
+        ] == [
+            "agents",
+            "exit",
+            "status",
+            "terms",
+            "keymap",
+            "models",
+            "theme",
+        ]
 
         await pilot.press("s", "t", "a", "t", "u", "s", "enter")
         await pilot.pause()

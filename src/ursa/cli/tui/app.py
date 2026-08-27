@@ -48,6 +48,7 @@ from ursa.cli.tui.widgets import (
     ModelScreen,
     ModelSelection,
     PromptArea,
+    TermsScreen,
     ThemeScreen,
     ToolMessage,
     WelcomeBanner,
@@ -557,6 +558,14 @@ class UrsaTextualApp(App[None]):
             self.push_screen(
                 ThemeScreen(choices, initial_theme=self.theme),
                 callback=self._select_theme,
+            )
+            return
+        if command == "terms":
+            from ursa.tools.terminal import term_manager
+
+            self.push_screen(
+                TermsScreen(term_manager.terminals(), manager=term_manager),
+                callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
         content = {
