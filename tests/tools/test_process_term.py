@@ -28,6 +28,21 @@ async def test_process_term_runs_command_captures_combined_output_and_exits(
     await terminal.terminate()
 
 
+async def test_process_render_snapshot_is_plain_reflowable_stream(tmp_path):
+    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
+    await terminal.start("printf 'one\\ntwo\\n'")
+    await terminal.wait()
+
+    rendered = await terminal.render_snapshot()
+
+    assert rendered.term_id == "proc1234"
+    assert tuple(span.text for span in rendered.spans) == ("one\ntwo\n",)
+    assert rendered.screen is False
+    assert rendered.rows is None
+    assert rendered.cols is None
+    await terminal.terminate()
+
+
 async def test_process_term_supports_argument_list_and_tail_slicing(tmp_path):
     terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
     await terminal.start(["printf", "one\\ntwo\\nthree\\nfour\\n"])
