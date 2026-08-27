@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -47,6 +48,7 @@ class ProcessTerm(TermSession):
 
     async def start(self, command: str | list[str] | None = None) -> None:
         """Start the configured shell and optionally submit an initial command."""
+        command = self._interactive_python_command(command)
         command_text = None
         if command is not None:
             command_text = (
@@ -59,6 +61,38 @@ class ProcessTerm(TermSession):
                 )
             )
         await asyncio.to_thread(self._start_sync, command_text)
+
+    @classmethod
+    def _interactive_python_command(
+        cls, command: str | list[str] | None
+    ) -> str | list[str] | None:
+        """Make an exact bare Python launch behave as a pipe-backed REPL."""
+        if command is None:
+            return None
+        if isinstance(command, list):
+            if len(command) == 1 and cls._is_python_executable(command[0]):
+                return [*command, "-i"]
+            return command
+
+        try:
+            words = shlex.split(command, posix=os.name != "nt")
+        except ValueError:
+            return command
+        if len(words) == 1 and cls._is_python_executable(words[0].strip("'\"")):
+            return f"{command} -i"
+        return command
+
+    @staticmethod
+    def _is_python_executable(value: str) -> bool:
+        executable = value.replace("\\", "/").rsplit("/", 1)[-1]
+        return (
+            re.fullmatch(
+                r"python(?:\d+(?:\.\d+)*)?(?:\.exe)?",
+                executable,
+                re.IGNORECASE,
+            )
+            is not None
+        )
 
     @staticmethod
     def _format_command(command: list[str]) -> str:
@@ -97,6 +131,12 @@ class ProcessTerm(TermSession):
             )
             environment = os.environ.copy()
             environment.update(self.env)
+            # ProcessTerm deliberately uses ordinary pipes/files instead of a
+            # pseudo-terminal.  Python therefore block-buffers its output by
+            # default, which makes an interactive REPL appear silent until it
+            # exits.  Make child Python processes stream output while honoring
+            # an explicit value supplied by the caller or parent environment.
+            environment.setdefault("PYTHONUNBUFFERED", "1")
             creationflags = 0
             if os.name == "nt":
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP

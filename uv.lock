@@ -8337,6 +8337,7 @@ dependencies = [
     { name = "mcp" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pyghostty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "pymupdf" },
     { name = "pymupdf4llm" },
     { name = "pyyaml" },
@@ -8384,9 +8385,6 @@ opt = [
 otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
-]
-term = [
-    { name = "pyghostty" },
 ]
 
 [package.dev-dependencies]
@@ -8444,7 +8442,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11.3.0,<12.0" },
     { name = "pillow", marker = "extra == 'image'", specifier = ">=11.3.0,<12.0.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0" },
-    { name = "pyghostty", marker = "extra == 'term'", specifier = ">=0.1.0,<0.2" },
+    { name = "pyghostty", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.1.0,<0.2" },
     { name = "pymupdf", specifier = ">=1.28.0,<2.0" },
     { name = "pymupdf4llm", specifier = ">=0.3.4,<1.0" },
     { name = "python-docx", marker = "extra == 'office-readers'", specifier = ">=1.2" },
@@ -8461,7 +8459,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.16.1" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.37.0" },
 ]
-provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel", "dsi", "image", "mp", "metric-plots", "term"]
+provides-extras = ["dashboard", "fm", "lammps", "office-readers", "opt", "otel", "dsi", "image", "mp", "metric-plots"]
 
 [package.metadata.requires-dev]
 dev = [

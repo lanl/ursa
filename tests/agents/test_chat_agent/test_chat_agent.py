@@ -86,3 +86,49 @@ async def test_chat_agent_dispatches_async_term_safety_check(
     assert len(tool_messages) == 1
     assert tool_messages[0].content == "Terminal ID: PyTerm01"
     assert result["messages"][-1].content == "Python terminal started."
+
+
+async def test_chat_agent_recovers_from_unknown_terminal_id(
+    monkeypatch, tmp_path
+):
+    """A stale terminal ID becomes a ToolMessage and the graph continues."""
+    messages = iter([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "term_read",
+                    "args": {"term_id": "Missing1"},
+                    "id": "read-missing-terminal",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content="That terminal no longer exists."),
+    ])
+    model = _TermCallingModel(messages=messages)
+
+    class Manager:
+        def supports_screen(self):
+            return False
+
+        async def read(self, term_id, **kwargs):
+            raise KeyError(term_id)
+
+    monkeypatch.setattr("ursa.tools.term_tool.term_manager", Manager())
+    agent = ChatAgent(llm=model, workspace=tmp_path)
+
+    result = await agent.ainvoke({
+        "messages": [HumanMessage(content="Read terminal Missing1")],
+        "thread_id": agent.thread_id,
+    })
+
+    tool_messages = [
+        message for message in result["messages"] if message.type == "tool"
+    ]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status == "error"
+    assert tool_messages[0].content == (
+        "Unknown terminal ID 'Missing1'. Use an ID returned by the term tool."
+    )
+    assert result["messages"][-1].content == "That terminal no longer exists."

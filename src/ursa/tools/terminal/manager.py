@@ -22,6 +22,8 @@ from .base import (
 )
 
 SessionFactory = Callable[..., TermSession]
+TERM_BACKEND_ENV = "URSA_TERM_BACKEND"
+_BACKEND_PREFERENCES = frozenset({"auto", "ghostty", "process"})
 
 _STREAM_CAPABILITIES = frozenset({
     "contents",
@@ -328,23 +330,73 @@ class TermManager:
         )
 
     @staticmethod
-    def _default_backend() -> tuple[SessionFactory, bool]:
-        """Return the usable default factory and its screen support."""
-        if os.name != "nt":
-            try:
-                from .ghostty import GhosttyTerm, PyGhosttyTerminal
+    def _backend_preference() -> str:
+        """Return and validate the configured backend preference."""
+        preference = os.environ.get(TERM_BACKEND_ENV, "auto").strip().lower()
+        if preference not in _BACKEND_PREFERENCES:
+            choices = ", ".join(sorted(_BACKEND_PREFERENCES))
+            raise ValueError(f"{TERM_BACKEND_ENV} must be one of: {choices}")
+        return preference
 
-                if PyGhosttyTerminal is not None:
-                    return GhosttyTerm, True
-            except (ImportError, OSError):
-                pass
+    @staticmethod
+    def _ghostty_backend() -> tuple[SessionFactory, bool]:
+        """Return Ghostty when its native dependency is usable."""
+        if os.name == "nt":
+            raise RuntimeError("Ghostty is unsupported on Windows")
+        from .ghostty import GhosttyTerm, PyGhosttyTerminal
+
+        if PyGhosttyTerminal is None:
+            raise RuntimeError("pyghostty is unavailable")
+        return GhosttyTerm, True
+
+    @classmethod
+    def _default_backend(cls) -> tuple[SessionFactory, bool]:
+        """Return the configured factory and its screen support."""
+        preference = cls._backend_preference()
+        if preference == "process":
+            from .process import ProcessTerm
+
+            return ProcessTerm, False
+        if preference == "ghostty":
+            return cls._ghostty_backend()
+        try:
+            return cls._ghostty_backend()
+        except (ImportError, OSError, RuntimeError):
+            pass
         from .process import ProcessTerm
 
         return ProcessTerm, False
 
-    @staticmethod
-    def _default_factory() -> SessionFactory:
-        return TermManager._default_backend()[0]
+    @classmethod
+    def _default_factory(cls) -> SessionFactory:
+        return cls._default_backend()[0]
+
+    @classmethod
+    def backend_status(cls) -> str:
+        """Return a human-readable description of the selected backend.
+
+        ProcessTerm is deliberately identified as a fallback so the status UI
+        does not imply that screen rendering and resize support are active.
+        Detection failures are reported instead of breaking the status modal.
+        """
+        try:
+            factory, supports_screen = cls._default_backend()
+        except Exception as exc:
+            return f"Unavailable ({type(exc).__name__}: {exc})"
+        name = factory.__name__
+        if name.endswith("Term"):
+            name = name[:-4]
+        preference = cls._backend_preference()
+        if preference != "auto":
+            return f"{name.capitalize()} (forced by {TERM_BACKEND_ENV})"
+        if supports_screen:
+            return f"{name.capitalize()} (preferred)"
+        reason = (
+            "Ghostty is unsupported on Windows"
+            if os.name == "nt"
+            else "pyghostty is unavailable"
+        )
+        return f"{name.capitalize()} (fallback: {reason})"
 
     @classmethod
     def supported_capabilities(cls) -> frozenset[str]:
