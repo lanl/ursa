@@ -67,6 +67,21 @@ class SnapshotManager:
         return value
 
 
+class SlowSnapshotManager(SnapshotManager):
+    def __init__(
+        self,
+        snapshots: dict[str, TerminalRenderSnapshot],
+        release: asyncio.Event,
+    ) -> None:
+        super().__init__(snapshots)
+        self.release = release
+
+    async def render_snapshot(self, term_id: str) -> TerminalRenderSnapshot:
+        self.calls.append(term_id)
+        await self.release.wait()
+        return self.snapshots[term_id]
+
+
 async def test_terms_screen_explains_when_there_are_no_terminals(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
@@ -116,6 +131,8 @@ async def test_process_terminal_fills_viewport_and_soft_wraps(tmp_path):
         assert not rendered.no_wrap
         assert view.region.width == view.parent.content_region.width
         assert view.region.height == view.parent.content_region.height
+        assert view.content_region.width == view.region.width - 2
+        assert view.content_region.height == view.region.height - 2
         assert view.virtual_size.height > 1
 
 
@@ -134,6 +151,23 @@ async def test_process_terminal_view_is_anchored_to_newest_output(tmp_path):
         screenshot = app.export_screenshot(simplify=False)
         assert "output-line-059" in screenshot
         assert "output-line-000" not in screenshot
+
+
+async def test_process_terminal_without_captured_output_is_not_blank(tmp_path):
+    manager = SnapshotManager({"process0": snapshot("process0", "")})
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        app.push_screen(
+            TermsScreen([terminal_info("process0", 1)], manager=manager)
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        view = app.screen.query_one(TerminalView)
+        assert str(view.content) == (
+            "No output has been captured from this terminal yet."
+        )
 
 
 async def test_ghostty_terminal_keeps_dimensions_and_rich_styling(tmp_path):
@@ -164,7 +198,8 @@ async def test_ghostty_terminal_keeps_dimensions_and_rich_styling(tmp_path):
         assert isinstance(rendered, Text)
         assert rendered.no_wrap
         assert rendered.overflow == "crop"
-        assert view.region.size == (31, 7)
+        assert view.region.size == (33, 9)
+        assert view.content_region.size == (31, 7)
         rich_style = rendered.get_style_at_offset(app.console, 0)
         assert rich_style.color.triplet == style.foreground
         assert rich_style.bgcolor.triplet == style.background
@@ -225,6 +260,29 @@ async def test_terminal_view_is_view_only_and_refreshes_live(tmp_path):
         await pilot.press("x", "enter")
         assert app.screen.query_one(TerminalView) is view
         assert app.query_one(PromptArea).text == prompt_text
+
+
+async def test_slow_snapshot_is_not_repeatedly_cancelled_by_refresh_timer(
+    tmp_path,
+):
+    release = asyncio.Event()
+    manager = SlowSnapshotManager(
+        {"process0": snapshot("process0", "eventual output")}, release
+    )
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(70, 22)) as pilot:
+        app.push_screen(
+            TermsScreen([terminal_info("process0", 1)], manager=manager)
+        )
+        await pilot.pause()
+        view = app.screen.query_one(TerminalView)
+
+        await asyncio.sleep(view.refresh_interval * 2.5)
+        assert manager.calls == ["process0"]
+        release.set()
+        await pilot.pause()
+        assert str(view.content) == "eventual output"
 
 
 async def test_removed_terminal_and_modal_cleanup_are_safe(tmp_path):

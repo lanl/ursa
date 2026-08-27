@@ -1,7 +1,10 @@
 import asyncio
 import os
+import re
+import shlex
 import signal
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -94,6 +97,20 @@ async def test_process_start_builds_literal_powershell_argv(monkeypatch):
         "& 'echo' 'a''b' '$x; y'",
     ]
     assert captured["kwargs"]["stdin"] is subprocess.PIPE
+    assert captured["kwargs"]["env"]["PYTHONUNBUFFERED"] == "1"
+    await terminal.terminate()
+
+
+async def test_process_term_preserves_explicit_python_buffering_env(tmp_path):
+    terminal = ProcessTerm(
+        "proc1234",
+        ["/bin/sh"],
+        env={"PYTHONUNBUFFERED": "caller-value"},
+        cwd=tmp_path,
+    )
+    await terminal.start('printf %s "$PYTHONUNBUFFERED"')
+    await terminal.wait()
+    assert await terminal.read() == "caller-value"
     await terminal.terminate()
 
 
@@ -119,6 +136,39 @@ async def test_process_term_interactive_sends_and_lifecycle(tmp_path):
     with pytest.raises(BrokenPipeError, match="not running"):
         await terminal.send_bytes(b"again")
     await terminal.terminate()
+
+
+async def test_process_term_streams_interactive_python_output_before_exit(
+    tmp_path,
+):
+    terminal = ProcessTerm("proc1234", ["/bin/sh"], cwd=tmp_path)
+    await terminal.start(shlex.quote(sys.executable))
+    await terminal.send_line("print('PROCESS_TERM_LIVE')")
+
+    await _wait_for_output(terminal, re.compile(r"PROCESS_TERM_LIVE"))
+    assert await terminal.is_alive() == {"is_alive": True}
+
+    await terminal.send_line("exit()")
+    await terminal.send_line("exit")
+    await terminal.wait()
+    await terminal.terminate()
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("python", "python -i"),
+        ("python3", "python3 -i"),
+        ("/usr/bin/python3.11", "/usr/bin/python3.11 -i"),
+        (["python3"], ["python3", "-i"]),
+        ("python -c 'print(1)'", "python -c 'print(1)'"),
+        ("python -m module", "python -m module"),
+        ("python script.py", "python script.py"),
+        (["python", "script.py"], ["python", "script.py"]),
+    ],
+)
+def test_process_term_only_normalizes_bare_python(command, expected):
+    assert ProcessTerm._interactive_python_command(command) == expected
 
 
 async def test_process_term_validates_reads_and_unsupported_screen_operations(
@@ -285,8 +335,6 @@ async def _wait_until_process_gone(pid, timeout=1.0):
 
 
 async def test_process_terminate_kills_descendant_process_group(tmp_path):
-    import re
-
     terminal = ProcessTerm("proc1234", ["/bin/bash"], cwd=tmp_path)
     await terminal.start()
     await terminal.send_line("sleep 30 & echo CHILD:$!")

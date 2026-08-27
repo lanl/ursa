@@ -2914,6 +2914,8 @@ def test_command_details_and_keymap_come_from_live_bindings(
     assert "234" in status
     assert "456" in status
     assert "test-model" in status
+    assert "| Terminal backend |" in status
+    assert "Ghostty" in status or "Process" in status
     assert "Kitty keyboard support" in keymap
     assert "not identified" in keymap
     assert "shift+⏎ / ^j" in keymap

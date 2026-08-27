@@ -14,4 +14,5 @@ from ursa.cli.tui.event_cards.files import EditCard as EditCard
 from ursa.cli.tui.event_cards.files import FileActivityCard as FileActivityCard
 from ursa.cli.tui.event_cards.plan import PlanCard as PlanCard
 from ursa.cli.tui.event_cards.search import SearchEventCard as SearchEventCard
+from ursa.cli.tui.event_cards.term import TermCard as TermCard
 from ursa.cli.tui.event_cards.tools import ToolCallCard as ToolCallCard

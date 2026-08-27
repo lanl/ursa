@@ -61,6 +61,7 @@ class TerminalView(Static):
     TerminalView {
         width: 100%;
         height: 100%;
+        border: round $accent;
         overflow: hidden;
         content-align: left bottom;
     }
@@ -83,6 +84,7 @@ class TerminalView(Static):
         self.manager = manager or term_manager
         self.refresh_interval = refresh_interval
         self._refresh_timer: Timer | None = None
+        self._snapshot_pending = False
         self._screen_snapshot = False
         self._latest_snapshot: TerminalRenderSnapshot | None = None
 
@@ -111,28 +113,35 @@ class TerminalView(Static):
 
     def request_snapshot(self) -> None:
         """Schedule a fresh immutable snapshot without blocking Textual."""
-        if not self.is_mounted or any(
-            not widget.display or not widget.visible
-            for widget in self.ancestors_with_self
+        if (
+            not self.is_mounted
+            or any(
+                not widget.display or not widget.visible
+                for widget in self.ancestors_with_self
+            )
+            or self._snapshot_pending
         ):
             return
-        self.run_worker(
-            self._update_snapshot(),
-            group=f"terminal-view-{self.term_id}",
-            exclusive=True,
-            exit_on_error=False,
-        )
+        self._snapshot_pending = True
+        try:
+            self.run_worker(self._update_snapshot(), exit_on_error=False)
+        except BaseException:
+            self._snapshot_pending = False
+            raise
 
     async def _update_snapshot(self) -> None:
         try:
-            snapshot = await self.manager.render_snapshot(self.term_id)
-        except KeyError:
-            self.update("Terminal session no longer exists.")
-            return
-        except Exception as exc:  # Keep backend failures visible in the modal.
-            self.update(f"Unable to render terminal: {exc}")
-            return
-        self._apply_snapshot(snapshot)
+            try:
+                snapshot = await self.manager.render_snapshot(self.term_id)
+            except KeyError:
+                self.update("Terminal session no longer exists.")
+                return
+            except Exception as exc:  # Keep backend failures visible.
+                self.update(f"Unable to render terminal: {exc}")
+                return
+            self._apply_snapshot(snapshot)
+        finally:
+            self._snapshot_pending = False
 
     def _apply_snapshot(self, snapshot: TerminalRenderSnapshot) -> None:
         self._screen_snapshot = snapshot.screen
@@ -140,8 +149,10 @@ class TerminalView(Static):
         if snapshot.screen:
             self.update(snapshot_text(snapshot))
             assert snapshot.cols is not None and snapshot.rows is not None
-            self.styles.width = snapshot.cols
-            self.styles.height = snapshot.rows
+            # Textual dimensions include the border. Keep the emulated grid's
+            # rows and columns exact within that surrounding chrome.
+            self.styles.width = snapshot.cols + 2
+            self.styles.height = snapshot.rows + 2
         else:
             self.styles.width = "100%"
             self.styles.height = "100%"
@@ -152,9 +163,16 @@ class TerminalView(Static):
         snapshot = self._latest_snapshot
         if snapshot is None or snapshot.screen:
             return
+        rendered = snapshot_text(snapshot)
+        if not rendered.plain:
+            # Pipe-backed interactive programs commonly suppress their prompt
+            # when stdout isn't a TTY.  Keep the modal informative instead of
+            # presenting an apparently broken, completely blank pane.
+            self.update("No output has been captured from this terminal yet.")
+            return
         width = max(1, self.content_size.width)
         height = max(1, self.content_size.height)
-        lines = snapshot_text(snapshot).wrap(
+        lines = rendered.wrap(
             self.app.console,
             width,
             overflow="fold",
