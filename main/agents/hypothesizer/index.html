@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1855,29 +1765,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2204,33 +2091,33 @@ workflow; that adversarial review behavior has been renamed and reworked as
 <a class="autorefs autorefs-internal" href="../../reference/api/agents/#ursa.agents.deep_review_agent.DeepReviewAgent"><code>DeepReviewAgent</code></a>.</p>
 <p>Use <code>HypothesizerAgent</code> when you want a durable, shareable artifact that records competing hypotheses, relative likelihoods, evidence for and against each hypothesis, uncertainties, change summaries, and recommended next evidence.</p>
 <h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">HypothesizerAgent</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
-<span class="n">agent</span> <span class="o">=</span> <span class="n">HypothesizerAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project_workspace&quot;</span><span class="p">)</span>
-
-<span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-    <span class="s2">&quot;Why did the latest alloy simulation produce a lower melting point than expected?&quot;</span>
-<span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">format_result</span><span class="p">(</span><span class="n">state</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">HypothesizerAgent</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">HypothesizerAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;project_workspace&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="s2">&quot;Why did the latest alloy simulation produce a lower melting point than expected?&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">format_result</span><span class="p">(</span><span class="n">state</span><span class="p">))</span>
 </code></pre></div>
 <p>By default, the agent writes the hypothesis-space artifact to:</p>
-<div class="highlight"><pre><span></span><code>&lt;agent den&gt;/experiences/hypothesis_space.md
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>&lt;agent den&gt;/experiences/hypothesis_space.md
 </code></pre></div>
 <p>When the agent is not persisted by name/checkpointer, the den is usually the configured workspace. When <code>agent_name</code> persistence is used, the den is the persisted agent directory for that group/name.</p>
 <h2 id="persistent-hypothesis-space-file">Persistent hypothesis-space file<a class="headerlink" href="#persistent-hypothesis-space-file" title="Permanent link">&para;</a></h2>
 <p>The key design feature is durability. The full hypothesis artifact is stored as a Markdown experience file so that it can be read later by this agent or other agents, even if conversation context has been summarized away.</p>
 <p>For example, a later <code>ChatAgent</code> or <code>ExecutionAgent</code> can use the <code>read_experience</code> tool to bring the current hypothesis space back into context.</p>
 <p>The default filename is:</p>
-<div class="highlight"><pre><span></span><code><span class="n">hypothesis_space</span><span class="o">.</span><span class="n">md</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">hypothesis_space</span><span class="o">.</span><span class="n">md</span>
 </code></pre></div>
 <p>You can choose another safe Markdown filename:</p>
-<div class="highlight"><pre><span></span><code><span class="n">agent</span> <span class="o">=</span> <span class="n">HypothesizerAgent</span><span class="p">(</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-    <span class="n">experience_filename</span><span class="o">=</span><span class="s2">&quot;melting_point_hypotheses.md&quot;</span><span class="p">,</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">HypothesizerAgent</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">experience_filename</span><span class="o">=</span><span class="s2">&quot;melting_point_hypotheses.md&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span>
 </code></pre></div>
 <p>Filenames must be simple relative Markdown filenames:</p>
 <ul>
@@ -2272,27 +2159,27 @@ workflow; that adversarial review behavior has been renamed and reworked as
 </table>
 <h2 id="input-formats">Input formats<a class="headerlink" href="#input-formats" title="Permanent link">&para;</a></h2>
 <p>You can invoke the agent with a string:</p>
-<div class="highlight"><pre><span></span><code><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Initial question or new evidence goes here.&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Initial question or new evidence goes here.&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>A string is treated as both the topic and the new information for the first update.</p>
 <p>You can also pass a mapping for more explicit control:</p>
-<div class="highlight"><pre><span></span><code><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-    <span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;Why did the alloy simulation underpredict melting point?&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;new_information&quot;</span><span class="p">:</span> <span class="s2">&quot;The run used potential X and an NPT equilibration of only 5 ps.&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;context&quot;</span><span class="p">:</span> <span class="s2">&quot;Previous execution agent found no obvious input-script syntax errors.&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;experience_filename&quot;</span><span class="p">:</span> <span class="s2">&quot;melting_point_hypotheses.md&quot;</span><span class="p">,</span>
-<span class="p">})</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;Why did the alloy simulation underpredict melting point?&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="s2">&quot;new_information&quot;</span><span class="p">:</span> <span class="s2">&quot;The run used potential X and an NPT equilibration of only 5 ps.&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="s2">&quot;context&quot;</span><span class="p">:</span> <span class="s2">&quot;Previous execution agent found no obvious input-script syntax errors.&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="s2">&quot;experience_filename&quot;</span><span class="p">:</span> <span class="s2">&quot;melting_point_hypotheses.md&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">})</span>
 </code></pre></div>
 <p>For backward compatibility, the input key <code>question</code> is accepted as a fallback for <code>query</code>.</p>
 <h2 id="follow-up-updates">Follow-up updates<a class="headerlink" href="#follow-up-updates" title="Permanent link">&para;</a></h2>
 <p><code>format_query</code> treats follow-up text as new information to incorporate into the existing hypothesis space.</p>
-<div class="highlight"><pre><span></span><code><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Why is experiment A inconsistent with simulation B?&quot;</span><span class="p">)</span>
-
-<span class="n">query</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">format_query</span><span class="p">(</span>
-    <span class="s2">&quot;New evidence: the experimental sample contained 2</span><span class="si">% i</span><span class="s2">mpurity C.&quot;</span><span class="p">,</span>
-    <span class="n">state</span><span class="o">=</span><span class="n">state</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Why is experiment A inconsistent with simulation B?&quot;</span><span class="p">)</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">query</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">format_query</span><span class="p">(</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="s2">&quot;New evidence: the experimental sample contained 2</span><span class="si">% i</span><span class="s2">mpurity C.&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">state</span><span class="o">=</span><span class="n">state</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">)</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">state</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
 </code></pre></div>
 <p>The agent reads the previous Markdown artifact, asks the model to update it, and writes the revised artifact back to the same experience file.</p>
 <h2 id="state-model">State model<a class="headerlink" href="#state-model" title="Permanent link">&para;</a></h2>
@@ -2322,7 +2209,7 @@ workflow; that adversarial review behavior has been renamed and reworked as
 <p>If the model returns an unusable response, the implementation falls back to a basic Markdown hypothesis-space scaffold.</p>
 <h2 id="graph-behavior">Graph behavior<a class="headerlink" href="#graph-behavior" title="Permanent link">&para;</a></h2>
 <p>The current graph has a single node:</p>
-<div class="highlight"><pre><span></span><code>update_hypothesis_space
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>update_hypothesis_space
 </code></pre></div>
 <p>That node:</p>
 <ol>
@@ -2392,10 +2279,12 @@ workflow now lives in
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

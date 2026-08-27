@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1930,29 +1840,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2354,24 +2241,24 @@
 </blockquote>
 <hr />
 <h2 id="quickstart">Quickstart<a class="headerlink" href="#quickstart" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1"># Fresh run (prompts auto-default after the countdown)</span>
-python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Fresh run (prompts auto-default after the countdown)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml
 </code></pre></div>
 <p>Resume from a specific checkpoint:
 This example assumes the randomly generated workspace name is <code>FOOBAR</code>.  Change it to the one generated when you ran it yourself.  It
 also assumes a checkpoint number you want to resume.</p>
 <p>It's important to understand that what this does is look in <code>workspace</code> for a checkpoint to resume from.  You can set that <code>workspace</code> yourself by name or use the name generated by URSA if you didn't choose one yourself.</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_FOOBAR<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--resume-from<span class="w"> </span>executor_checkpoint_5.db
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_FOOBAR<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--resume-from<span class="w"> </span>executor_checkpoint_5.db
 </code></pre></div>
 <p>Headless / HPC-friendly (no waiting at prompts):</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_batchrun<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--interactive-timeout<span class="w"> </span><span class="m">0</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_batchrun<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--interactive-timeout<span class="w"> </span><span class="m">0</span>
 </code></pre></div>
 <hr />
 <h2 id="what-the-script-does">What the script does<a class="headerlink" href="#what-the-script-does" title="Permanent link">&para;</a></h2>
@@ -2428,16 +2315,16 @@ also assumes a checkpoint number you want to resume.</p>
 </table>
 <hr />
 <h2 id="files-youll-see-in-a-workspace">Files you’ll see in a workspace<a class="headerlink" href="#files-youll-see-in-a-workspace" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>&lt;workspace&gt;/
-├── executor_checkpoint.db          # live executor DB (current run)
-├── executor_checkpoint_1.db        # snapshot after step 1 (single mode)
-├── executor_checkpoint_2.db        # snapshot after step 2
-├── executor_checkpoint_3_2.db      # snapshot after MAIN=3, SUB=2 (hierarchical)
-├── executor_progress.json          # single-mode progress (next_index, plan_hash, last_summary)
-├── hier_progress.json              # hierarchical progress (main index + per-step sub-progress)
-├── planner_checkpoint.db           # planner’s DB
-├── run_meta.json                   # metadata (planning_mode lock, plan hash, model, etc.)
-└── ...                             # artifacts produced by steps (csv, plots, code, html, etc.)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>&lt;workspace&gt;/
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>├── executor_checkpoint.db          # live executor DB (current run)
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>├── executor_checkpoint_1.db        # snapshot after step 1 (single mode)
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>├── executor_checkpoint_2.db        # snapshot after step 2
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>├── executor_checkpoint_3_2.db      # snapshot after MAIN=3, SUB=2 (hierarchical)
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>├── executor_progress.json          # single-mode progress (next_index, plan_hash, last_summary)
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>├── hier_progress.json              # hierarchical progress (main index + per-step sub-progress)
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>├── planner_checkpoint.db           # planner’s DB
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>├── run_meta.json                   # metadata (planning_mode lock, plan hash, model, etc.)
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>└── ...                             # artifacts produced by steps (csv, plots, code, html, etc.)
 </code></pre></div>
 <p><strong>Snapshot naming:</strong>
 - <strong>Single mode:</strong> <code>executor_checkpoint_&lt;STEP&gt;.db</code><br />
@@ -2458,15 +2345,15 @@ also assumes a checkpoint number you want to resume.</p>
 - <code>--resume-from executor_checkpoint_5.db</code> sets <code>executor_progress.json</code> so the <strong>next</strong> step to run is step <strong>6</strong>.
 - Without <code>--resume-from</code>, you’ll get an interactive chooser (with countdown). Default is <code>executor_checkpoint.db</code> (live).</p>
 <p><strong>Example tree (6 steps planned):</strong>
-<div class="highlight"><pre><span></span><code>workspace/
-├── executor_checkpoint.db
-├── executor_checkpoint_1.db
-├── executor_checkpoint_2.db
-├── executor_checkpoint_3.db
-├── executor_checkpoint_4.db
-├── executor_checkpoint_5.db
-├── executor_checkpoint_6.db
-└── executor_progress.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>workspace/
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>├── executor_checkpoint.db
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>├── executor_checkpoint_1.db
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>├── executor_checkpoint_2.db
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>├── executor_checkpoint_3.db
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>├── executor_checkpoint_4.db
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>├── executor_checkpoint_5.db
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>├── executor_checkpoint_6.db
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>└── executor_progress.json
 </code></pre></div></p>
 <p>To redo from step 3, run with: <code>--resume-from executor_checkpoint_2.db</code>.</p>
 <hr />
@@ -2483,24 +2370,24 @@ also assumes a checkpoint number you want to resume.</p>
 <hr />
 <h2 id="typical-flows">Typical flows<a class="headerlink" href="#typical-flows" title="Permanent link">&para;</a></h2>
 <h3 id="fresh-run-default-everything">Fresh run, default everything<a class="headerlink" href="#fresh-run-default-everything" title="Permanent link">&para;</a></h3>
-<p><div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml
 </code></pre></div>
 - Prompts choose defaults after the countdown.
 - A new workspace is created if <code>--workspace</code> isn’t supplied.</p>
 <h3 id="resume-from-the-latest-run-no-prompts">Resume from the latest run (no prompts)<a class="headerlink" href="#resume-from-the-latest-run-no-prompts" title="Permanent link">&para;</a></h3>
-<p><div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_myws<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--interactive-timeout<span class="w"> </span><span class="m">0</span>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_myws<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--interactive-timeout<span class="w"> </span><span class="m">0</span>
 </code></pre></div>
 - Uses the default <code>executor_checkpoint.db</code>.<br />
 - If no checkpoints exist yet, it starts fresh.</p>
 <h3 id="jump-back-to-an-earlier-point">Jump back to an earlier point<a class="headerlink" href="#jump-back-to-an-earlier-point" title="Permanent link">&para;</a></h3>
-<p><div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_myws<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--resume-from<span class="w"> </span>executor_checkpoint_5.db
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_myws<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--resume-from<span class="w"> </span>executor_checkpoint_5.db
 </code></pre></div>
 - Great for re-running from step 6 in <strong>single</strong> mode, or for precise <strong>sub-step</strong> resumes in <strong>hierarchical</strong> mode using <code>&lt;MAIN&gt;_&lt;SUB&gt;</code>.</p>
 <hr />
@@ -2521,25 +2408,25 @@ Use a <strong>new</strong> <code>--workspace</code> to switch modes for a projec
 - choose a <strong>new workspace</strong>.</p>
 <hr />
 <h2 id="example-run-the-provided-yaml">Example: run the provided YAML<a class="headerlink" href="#example-run-the-provided-yaml" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--planning-mode<span class="w"> </span>single
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>--planning-mode<span class="w"> </span>single
 </code></pre></div>
 <p>You’ll see messages like:
-<div class="highlight"><pre><span></span><code>[checkpoint] saved step snapshot: executor_checkpoint_1.db
-[checkpoint] saved step snapshot: executor_checkpoint_2.db
-...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>[checkpoint] saved step snapshot: executor_checkpoint_1.db
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>[checkpoint] saved step snapshot: executor_checkpoint_2.db
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>...
 </code></pre></div></p>
 <p>Now resume from after step 4:
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_&lt;your-workspace&gt;<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--resume-from<span class="w"> </span>executor_checkpoint_4.db
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span>--workspace<span class="w"> </span>pi_multiple_ways_&lt;your-workspace&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span>--resume-from<span class="w"> </span>executor_checkpoint_4.db
 </code></pre></div></p>
 <p>Or try <strong>hierarchical</strong> mode:
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--planning-mode<span class="w"> </span>hierarchical
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>python<span class="w"> </span>examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>--config<span class="w"> </span>examples/two_agent_examples/plan_execute/pi_multiple_ways.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span>--planning-mode<span class="w"> </span>hierarchical
 </code></pre></div>
 You’ll see sub-step snapshots like <code>executor_checkpoint_3_2.db</code>.</p>
 <hr />
@@ -2615,10 +2502,12 @@ You’ll see sub-step snapshots like <code>executor_checkpoint_3_2.db</code>.</p
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

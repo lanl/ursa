@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1846,29 +1756,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2182,9 +2069,9 @@
 <p>URSA is designed for powerful scientific workflows. Some agents can write files, run shell commands, read local files, call web tools, and connect to external MCP servers. This power requires careful information-control practices.</p>
 <h2 id="use-a-dedicated-workspace">Use a dedicated workspace<a class="headerlink" href="#use-a-dedicated-workspace" title="Permanent link">&para;</a></h2>
 <p>Run URSA in a workspace created for the task:</p>
-<div class="highlight"><pre><span></span><code>mkdir<span class="w"> </span>ursa-workspace
-<span class="nb">cd</span><span class="w"> </span>ursa-workspace
-ursa<span class="w"> </span>--config<span class="w"> </span>../config.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mkdir<span class="w"> </span>ursa-workspace
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>ursa-workspace
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>ursa<span class="w"> </span>--config<span class="w"> </span>../config.yaml
 </code></pre></div>
 <p>Avoid running execution workflows directly inside repositories, home directories, credential directories, or folders containing sensitive data unless that is intentional.</p>
 <h2 id="understand-execution-risk">Understand execution risk<a class="headerlink" href="#understand-execution-risk" title="Permanent link">&para;</a></h2>
@@ -2206,21 +2093,21 @@ ursa<span class="w"> </span>--config<span class="w"> </span>../config.yaml
 <h2 id="web-tools-are-opt-in">Web tools are opt in<a class="headerlink" href="#web-tools-are-opt-in" title="Permanent link">&para;</a></h2>
 <p>URSA web tools are opt in for information-control reasons. They are disabled by default in core CLI configuration.</p>
 <p>Enable them only when you want URSA to make network requests through web-search tools:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">use_web</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">use_web</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </code></pre></div>
 <p>or:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--use-web
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--use-web
 </code></pre></div>
 <p>When web tools are enabled, URSA may query search services or retrieve web pages as part of an agent workflow. Do not enable web tools for data that should remain fully local.</p>
 <h2 id="use-groups-to-restrict-endpoints">Use groups to restrict endpoints<a class="headerlink" href="#use-groups-to-restrict-endpoints" title="Permanent link">&para;</a></h2>
 <p>Security groups can restrict which model endpoint base URLs are allowed:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">allowed_base_urls</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.openai.com</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:11434</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">allowed_base_urls</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.openai.com</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:11434</span>
 </code></pre></div>
 <p>Create and use a group:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>create-group<span class="w"> </span>research<span class="w"> </span>allowed_urls.yaml
-ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--group<span class="w"> </span>research<span class="w"> </span>--name<span class="w"> </span>research-agent
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>create-group<span class="w"> </span>research<span class="w"> </span>allowed_urls.yaml
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--group<span class="w"> </span>research<span class="w"> </span>--name<span class="w"> </span>research-agent
 </code></pre></div>
 <p>Use narrow allowlists for sensitive projects. See
 <a href="../../persistence/groups-and-security/">Groups and endpoint security</a>.</p>
@@ -2228,7 +2115,7 @@ ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span cla
 <p>MCP servers can expose powerful external tools. Only connect MCP servers that you trust, and do not run the URSA MCP server as a shared multi-user service without adding isolation.</p>
 <h2 id="protect-secrets">Protect secrets<a class="headerlink" href="#protect-secrets" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Prefer <code>api_key_env</code> rather than literal API keys in YAML files.</li>
+<li>Prefer <code>api_key</code> environment references rather than literal API keys in YAML files.</li>
 <li>In the desktop dashboard, prefer <strong>Secure system storage</strong> so keys are kept
   in the operating system credential manager instead of configuration files.</li>
 <li>Do not store API keys in persistent agent names or prompts.</li>
@@ -2307,10 +2194,12 @@ commands do not inherit model API keys.</p>
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

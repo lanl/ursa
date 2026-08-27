@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1828,29 +1738,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2145,19 +2032,19 @@
 <h1 id="checkpoints-sharing-import-and-export">Checkpoints, sharing, import, and export<a class="headerlink" href="#checkpoints-sharing-import-and-export" title="Permanent link">&para;</a></h1>
 <p>URSA includes commands for saving, copying, sharing, importing, and deleting persistent agent state.</p>
 <h2 id="save-a-timestamped-checkpoint-copy">Save a timestamped checkpoint copy<a class="headerlink" href="#save-a-timestamped-checkpoint-copy" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>save-agent<span class="w"> </span>--name<span class="w"> </span>catalyst-assistant<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ursa<span class="w"> </span>save-agent<span class="w"> </span>--name<span class="w"> </span>catalyst-assistant<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>This creates a timestamped copy that can be used as a restore point or branch source.</p>
 <h2 id="copy-an-agent">Copy an agent<a class="headerlink" href="#copy-an-agent" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>copy-agent<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--name<span class="w"> </span>catalyst-assistant-experiment<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--from<span class="w"> </span>catalyst-assistant<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--group<span class="w"> </span>chemistry<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--from-group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>copy-agent<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--name<span class="w"> </span>catalyst-assistant-experiment<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--from<span class="w"> </span>catalyst-assistant<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--group<span class="w"> </span>chemistry<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--from-group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>Use copying to branch work without overwriting the original agent.</p>
 <h2 id="share-an-agent">Share an agent<a class="headerlink" href="#share-an-agent" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>catalyst-assistant<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>catalyst-assistant<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>This creates a shareable archive in the current working directory.</p>
 <div class="admonition warning">
@@ -2165,16 +2052,16 @@
 <p>Persistent state may contain conversation history, generated files, endpoint references, or other sensitive information. Review archives before sharing them.</p>
 </div>
 <h2 id="import-an-agent">Import an agent<a class="headerlink" href="#import-an-agent" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>import-agent<span class="w"> </span>path/to/shared-agent.tar.gz<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ursa<span class="w"> </span>import-agent<span class="w"> </span>path/to/shared-agent.tar.gz<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>You can also import compatible SQLite checkpoint databases.</p>
 <h2 id="delete-an-agent">Delete an agent<a class="headerlink" href="#delete-an-agent" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>catalyst-assistant<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>catalyst-assistant<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <h2 id="rag-collection-checkpoints">RAG collection checkpoints<a class="headerlink" href="#rag-collection-checkpoints" title="Permanent link">&para;</a></h2>
 <p>Persistent RAG collections have parallel management commands:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>save-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>chemistry
-ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>save-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>chemistry
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>See <a class="autorefs autorefs-internal" title="Persistent RAG collections" href="../rag/#persistent-rag-collections">RAG collections</a>.</p>
 
@@ -2225,10 +2112,12 @@ ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>papers<span 
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

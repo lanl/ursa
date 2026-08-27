@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://lanl.github.io/ursa/main/getting-started/dashboard/">
       
       
-        <link rel="prev" href="../cli/">
+        <link rel="prev" href="../tui/">
       
       
         <link rel="next" href="../python-scripts/">
@@ -46,6 +46,8 @@
     
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -255,18 +257,20 @@
       
   
   
+    
   
   
+  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -274,7 +278,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -282,10 +286,10 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -319,105 +323,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-    
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -485,18 +396,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install-dashboard-dependencies" class="md-nav__link">
+  <a href="#launch-the-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
-      Install dashboard dependencies
+      Launch the dashboard
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#launch-the-dashboard" class="md-nav__link">
+  <a href="#first-session" class="md-nav__link">
     <span class="md-ellipsis">
-      Launch the dashboard
+      First session
     </span>
   </a>
   
@@ -629,6 +540,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -691,12 +624,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -714,35 +647,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1828,29 +1738,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2070,18 +1957,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install-dashboard-dependencies" class="md-nav__link">
+  <a href="#launch-the-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
-      Install dashboard dependencies
+      Launch the dashboard
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#launch-the-dashboard" class="md-nav__link">
+  <a href="#first-session" class="md-nav__link">
     <span class="md-ellipsis">
-      Launch the dashboard
+      First session
     </span>
   </a>
   
@@ -2144,36 +2031,31 @@
 
 <h1 id="getting-started-web-dashboard">Getting Started - Web Dashboard<a class="headerlink" href="#getting-started-web-dashboard" title="Permanent link">&para;</a></h1>
 <p>The URSA web dashboard provides a browser-based interface for running URSA workflows.</p>
-<div class="admonition note">
-<p class="admonition-title">Screenshots forthcoming</p>
-<p>A complete dashboard walkthrough should include screenshots. This page currently covers installation and launch commands; a fuller visual guide can be added later.</p>
-</div>
-<h2 id="install-dashboard-dependencies">Install dashboard dependencies<a class="headerlink" href="#install-dashboard-dependencies" title="Permanent link">&para;</a></h2>
-<p>Install URSA with the dashboard extra:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">uv</label><label for="__tabbed_1_2">pip</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;ursa-ai[dashboard]&quot;</span>
-</code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;ursa-ai[dashboard]&quot;</span>
-</code></pre></div>
-</div>
-</div>
-</div>
+<p>Install URSA first with <code>uv tool install 'ursa[dashboard]'</code> as described in the
+<a class="autorefs autorefs-internal" title="Getting started" href="../#getting-started">getting started guide</a>.</p>
 <h2 id="launch-the-dashboard">Launch the dashboard<a class="headerlink" href="#launch-the-dashboard" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa-dashboard
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ursa-dashboard
 </code></pre></div>
 <p>By default this serves on <code>127.0.0.1:8080</code>.</p>
 <p>You can set the host, port, group, and initial config file:</p>
-<div class="highlight"><pre><span></span><code>ursa-dashboard<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--group<span class="w"> </span>default<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--config<span class="w"> </span>config.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa-dashboard<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--group<span class="w"> </span>default<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--config<span class="w"> </span>config.yaml
 </code></pre></div>
-<p>The config file initializes the dashboard LLM endpoint settings.</p>
+<p>The optional config file initializes the dashboard LLM endpoint settings. It is
+not needed for the built-in OpenAI provider.</p>
+<h2 id="first-session">First session<a class="headerlink" href="#first-session" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Open <strong>Settings → LLM</strong> and confirm the endpoint and credential source.</li>
+<li>Create a session.</li>
+<li>Select a folder you are comfortable modifying, or choose <strong>Temporary
+   workspace</strong> for disposable work.</li>
+<li>Choose an agent and submit a prompt.</li>
+<li>Follow the activity timeline and inspect generated files in the artifacts
+   panel.</li>
+</ol>
 <h2 id="configure-api-credentials">Configure API credentials<a class="headerlink" href="#configure-api-credentials" title="Permanent link">&para;</a></h2>
 <p>Open <strong>Settings -&gt; LLM</strong> and choose an API-key source:</p>
 <ul>
@@ -2279,10 +2161,12 @@ deployment-managed secret provider.</p>
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

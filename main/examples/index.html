@@ -8,25 +8,25 @@
       
       
       
-        <link rel="canonical" href="https://lanl.github.io/ursa/main/reference/tutorials/human-in-the-loop/">
+        <link rel="canonical" href="https://lanl.github.io/ursa/main/examples/">
       
       
-        <link rel="prev" href="../arxiv-execution/">
+        <link rel="prev" href="../getting-started/mcp-server/">
       
       
-        <link rel="next" href="../neutron-star/">
+        <link rel="next" href="../configuration/">
       
       
-      <link rel="icon" href="../../../assets/favicon.png">
+      <link rel="icon" href="../assets/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.21">
     
     
       
-        <title>Human in the Loop - URSA</title>
+        <title>Examples - URSA</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.2a3383ac.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.2a3383ac.min.css">
       
       
 
@@ -45,9 +45,11 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+      <link rel="stylesheet" href="../stylesheets/example-filter.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -66,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ursa-human-in-the-loop-agent-interface-documentation" class="md-skip">
+        <a href="#examples" class="md-skip">
           Skip to content
         </a>
       
@@ -81,12 +83,12 @@
             <div class="md-banner__inner md-grid md-typeset">
               
   You are not viewing the latest published version of the documentation.
-  <a href="../../../..">
+  <a href="../..">
     <strong>Go to the latest version.</strong>
   </a>
 
             </div>
-            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
           </aside>
         
       </div>
@@ -98,9 +100,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="URSA" class="md-header__button md-logo" aria-label="URSA" data-md-component="logo">
+    <a href=".." title="URSA" class="md-header__button md-logo" aria-label="URSA" data-md-component="logo">
       
-  <img src="../../../assets/favicon.png" alt="logo">
+  <img src="../assets/favicon.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -117,7 +119,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Human in the Loop
+              Examples
             
           </span>
         </div>
@@ -207,9 +209,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="URSA" class="md-nav__button md-logo" aria-label="URSA" data-md-component="logo">
+    <a href=".." title="URSA" class="md-nav__button md-logo" aria-label="URSA" data-md-component="logo">
       
-  <img src="../../../assets/favicon.png" alt="logo">
+  <img src="../assets/favicon.png" alt="logo">
 
     </a>
     URSA
@@ -236,7 +238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../installation/" class="md-nav__link">
+      <a href="../getting-started/" class="md-nav__link">
         
   
   
@@ -319,12 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../installation/uv/" class="md-nav__link">
+      <a href="../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
+    TUI
     
   </span>
   
@@ -342,98 +344,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../getting-started/dashboard/" class="md-nav__link">
+      <a href="../getting-started/dashboard/" class="md-nav__link">
         
   
   
@@ -456,7 +367,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../getting-started/python-scripts/" class="md-nav__link">
+      <a href="../getting-started/python-scripts/" class="md-nav__link">
         
   
   
@@ -479,7 +390,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../getting-started/plan-execute-yaml/" class="md-nav__link">
+      <a href="../getting-started/plan-execute-yaml/" class="md-nav__link">
         
   
   
@@ -502,7 +413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../getting-started/mcp-server/" class="md-nav__link">
+      <a href="../getting-started/mcp-server/" class="md-nav__link">
         
   
   
@@ -520,6 +431,94 @@
             
           </ul>
         </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#adding-an-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding an example
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Adding an example">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#common-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common tags
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -570,7 +569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../configuration/" class="md-nav__link">
+      <a href="../configuration/" class="md-nav__link">
         
   
   
@@ -593,12 +592,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,12 +615,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../configuration/ollama/" class="md-nav__link">
+      <a href="../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
+    Secrets
     
   </span>
   
@@ -639,30 +638,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../configuration/files-and-env/" class="md-nav__link">
+      <a href="../configuration/files-and-env/" class="md-nav__link">
         
   
   
@@ -685,7 +661,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../configuration/mcp/" class="md-nav__link">
+      <a href="../configuration/mcp/" class="md-nav__link">
         
   
   
@@ -753,7 +729,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../persistence/" class="md-nav__link">
+      <a href="../persistence/" class="md-nav__link">
         
   
   
@@ -776,7 +752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../persistence/named-agents/" class="md-nav__link">
+      <a href="../persistence/named-agents/" class="md-nav__link">
         
   
   
@@ -799,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../persistence/groups-and-security/" class="md-nav__link">
+      <a href="../persistence/groups-and-security/" class="md-nav__link">
         
   
   
@@ -822,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../persistence/rag/" class="md-nav__link">
+      <a href="../persistence/rag/" class="md-nav__link">
         
   
   
@@ -845,7 +821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../persistence/checkpoints-and-sharing/" class="md-nav__link">
+      <a href="../persistence/checkpoints-and-sharing/" class="md-nav__link">
         
   
   
@@ -868,7 +844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../persistence/quick-reference/" class="md-nav__link">
+      <a href="../persistence/quick-reference/" class="md-nav__link">
         
   
   
@@ -936,7 +912,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/" class="md-nav__link">
+      <a href="../agents/" class="md-nav__link">
         
   
   
@@ -959,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/chat/" class="md-nav__link">
+      <a href="../agents/chat/" class="md-nav__link">
         
   
   
@@ -1020,7 +996,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/acquisition/" class="md-nav__link">
+      <a href="../agents/acquisition/" class="md-nav__link">
         
   
   
@@ -1043,7 +1019,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/acquisition/arxiv/" class="md-nav__link">
+      <a href="../agents/acquisition/arxiv/" class="md-nav__link">
         
   
   
@@ -1066,7 +1042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/acquisition/osti/" class="md-nav__link">
+      <a href="../agents/acquisition/osti/" class="md-nav__link">
         
   
   
@@ -1089,7 +1065,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/acquisition/web-search/" class="md-nav__link">
+      <a href="../agents/acquisition/web-search/" class="md-nav__link">
         
   
   
@@ -1120,7 +1096,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/deep-review/" class="md-nav__link">
+      <a href="../agents/deep-review/" class="md-nav__link">
         
   
   
@@ -1143,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/dsi/" class="md-nav__link">
+      <a href="../agents/dsi/" class="md-nav__link">
         
   
   
@@ -1166,7 +1142,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/execution/" class="md-nav__link">
+      <a href="../agents/execution/" class="md-nav__link">
         
   
   
@@ -1189,7 +1165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/git-go/" class="md-nav__link">
+      <a href="../agents/git-go/" class="md-nav__link">
         
   
   
@@ -1212,7 +1188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/hypothesizer/" class="md-nav__link">
+      <a href="../agents/hypothesizer/" class="md-nav__link">
         
   
   
@@ -1235,7 +1211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/lammps/" class="md-nav__link">
+      <a href="../agents/lammps/" class="md-nav__link">
         
   
   
@@ -1258,7 +1234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../agents/planning/" class="md-nav__link">
+      <a href="../agents/planning/" class="md-nav__link">
         
   
   
@@ -1326,7 +1302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../environments/" class="md-nav__link">
+      <a href="../environments/" class="md-nav__link">
         
   
   
@@ -1349,7 +1325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../environments/agent-teams/" class="md-nav__link">
+      <a href="../environments/agent-teams/" class="md-nav__link">
         
   
   
@@ -1372,7 +1348,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../environments/agent-symposia/" class="md-nav__link">
+      <a href="../environments/agent-symposia/" class="md-nav__link">
         
   
   
@@ -1395,7 +1371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../environments/visualization/" class="md-nav__link">
+      <a href="../environments/visualization/" class="md-nav__link">
         
   
   
@@ -1463,7 +1439,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../best-practices/sandboxing/" class="md-nav__link">
+      <a href="../best-practices/sandboxing/" class="md-nav__link">
         
   
   
@@ -1486,7 +1462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../best-practices/contributing/" class="md-nav__link">
+      <a href="../best-practices/contributing/" class="md-nav__link">
         
   
   
@@ -1513,20 +1489,18 @@
       
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
         
           
           <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
@@ -1542,7 +1516,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_9">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1556,7 +1530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -1579,7 +1553,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../mcp/" class="md-nav__link">
+      <a href="../reference/mcp/" class="md-nav__link">
         
   
   
@@ -1602,7 +1576,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../logging_events/" class="md-nav__link">
+      <a href="../reference/logging_events/" class="md-nav__link">
         
   
   
@@ -1625,7 +1599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../metrics/" class="md-nav__link">
+      <a href="../reference/metrics/" class="md-nav__link">
         
   
   
@@ -1648,7 +1622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plan-execute-checkpointing/" class="md-nav__link">
+      <a href="../reference/plan-execute-checkpointing/" class="md-nav__link">
         
   
   
@@ -1668,20 +1642,18 @@
                 
   
   
-    
   
   
-  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_6" >
         
           
           <label class="md-nav__link" for="__nav_9_6" id="__nav_9_6_label" tabindex="0">
@@ -1697,7 +1669,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_9_6">
             <span class="md-nav__icon md-icon"></span>
             Tutorials and examples
@@ -1711,7 +1683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../arxiv-execution/" class="md-nav__link">
+      <a href="../reference/tutorials/arxiv-execution/" class="md-nav__link">
         
   
   
@@ -1731,93 +1703,10 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#previous-human-in-the-loop-example-has-been-deprecated" class="md-nav__link">
-    <span class="md-ellipsis">
-      Previous Human-in-the-Loop Example has been Deprecated
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      Basic Usage
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../neutron-star/" class="md-nav__link">
+      <a href="../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
   
@@ -1886,7 +1775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/agents/" class="md-nav__link">
+      <a href="../reference/api/agents/" class="md-nav__link">
         
   
   
@@ -1909,7 +1798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/environments/" class="md-nav__link">
+      <a href="../reference/api/environments/" class="md-nav__link">
         
   
   
@@ -1932,7 +1821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/prompt-library/" class="md-nav__link">
+      <a href="../reference/api/prompt-library/" class="md-nav__link">
         
   
   
@@ -1955,7 +1844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/tools/" class="md-nav__link">
+      <a href="../reference/api/tools/" class="md-nav__link">
         
   
   
@@ -1978,7 +1867,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api/util/" class="md-nav__link">
+      <a href="../reference/api/util/" class="md-nav__link">
         
   
   
@@ -2036,20 +1925,26 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#previous-human-in-the-loop-example-has-been-deprecated" class="md-nav__link">
+  <a href="#adding-an-example" class="md-nav__link">
     <span class="md-ellipsis">
-      Previous Human-in-the-Loop Example has been Deprecated
+      Adding an example
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Adding an example">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#common-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common tags
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      Basic Usage
-    </span>
-  </a>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2068,38 +1963,178 @@
                   
 
 
-  
-  
 
+<h1 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h1>
+<p>Choose an example based on what you want URSA to do. Each published example is
+a self-contained folder with setup instructions, dependencies, inputs, and
+expected results. Start with an example tagged <code>beginner</code> if this is your first
+time using an execution agent, the dashboard, or MCP.</p>
+<div class="example-tag-filter" role="group" aria-label="Filter examples by tag">
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="" aria-pressed="true">All</button>
 
-<h1 id="ursa-human-in-the-loop-agent-interface-documentation">URSA Human-in-the-Loop Agent Interface Documentation<a class="headerlink" href="#ursa-human-in-the-loop-agent-interface-documentation" title="Permanent link">&para;</a></h1>
-<h2 id="previous-human-in-the-loop-example-has-been-deprecated">Previous Human-in-the-Loop Example has been Deprecated<a class="headerlink" href="#previous-human-in-the-loop-example-has-been-deprecated" title="Permanent link">&para;</a></h2>
-<p>The HITL interface can now be accessed via the URSA CLI, launch with:</p>
-<p><code>$ ursa</code></p>
-<p>and help on commands can he accessed with </p>
-<p><code>$ ursa --help</code></p>
-<h2 id="basic-usage">Basic Usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
-<p>To prompt an URSA agent through the CLI, first select an agent, then issue a prompt to the agent:</p>
-<div class="highlight"><pre><span></span><code>ursa&gt; execute
-execute: Make me a histogram of the first 10000 prime number spacings
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="acquisition" aria-pressed="false">acquisition</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="arxiv" aria-pressed="false">arxiv</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="beginner" aria-pressed="false">beginner</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="dashboard" aria-pressed="false">dashboard</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="execution-agent" aria-pressed="false">execution-agent</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="guided" aria-pressed="false">guided</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="mcp" aria-pressed="false">mcp</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="multi-agent" aria-pressed="false">multi-agent</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="optimization" aria-pressed="false">optimization</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="plotting" aria-pressed="false">plotting</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="python-api" aria-pressed="false">python-api</button>
+
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="web-search" aria-pressed="false">web-search</button>
+
+</div>
+
+<p class="example-filter-status" aria-live="polite"></p>
+
+<div class="grid cards example-catalog">
+<ul>
+<li>
+<p><strong><a href="environments/">Agent teams and symposiums</a></strong></p>
+<p>Launch reusable team and symposium environments from YAML definitions.</p>
+<p><span class="example-tags">
+<span class="md-tag">guided</span><span class="md-tag">multi-agent</span><span class="md-tag">dashboard</span>
+</span></p>
+</li>
+<li>
+<p><strong><a href="mcp_agent_tools/">Attach MCP tools to a Python agent</a></strong></p>
+<p>Start a local MCP server, discover its tools, and attach them to an URSA ChatAgent.</p>
+<p><span class="example-tags">
+<span class="md-tag">guided</span><span class="md-tag">mcp</span><span class="md-tag">python-api</span><span class="md-tag">beginner</span>
+</span></p>
+</li>
+<li>
+<p><strong><a href="single_agent_examples/execution_agent/bayesian_optimization/">Bayesian optimization</a></strong></p>
+<p>Use an execution agent to implement, checkpoint, and continue a Bayesian optimization workflow.</p>
+<p><span class="example-tags">
+<span class="md-tag">execution-agent</span><span class="md-tag">optimization</span><span class="md-tag">python-api</span><span class="md-tag">guided</span>
+</span></p>
+</li>
+<li>
+<p><strong><a href="single_agent_examples/execution_agent/risk_buydown/">Experiment risk buy-down</a></strong></p>
+<p>Rank and select a constrained experiment campaign using transparent toy risk scores.</p>
+<p><span class="example-tags">
+<span class="md-tag">guided</span><span class="md-tag">execution-agent</span><span class="md-tag">optimization</span><span class="md-tag">plotting</span>
+</span></p>
+</li>
+<li>
+<p><strong><a href="nomad_mist/">MIST through Nomad</a></strong></p>
+<p>Connect URSA to a molecular-property model served as an MCP tool by Nomad.</p>
+<p><span class="example-tags">
+<span class="md-tag">mcp</span><span class="md-tag">guided</span>
+</span></p>
+</li>
+<li>
+<p><strong><a href="single_agent_examples/acquisition_examples/">Research acquisition agents</a></strong></p>
+<p>Query arXiv, OSTI, and the web with URSA acquisition agents.</p>
+<p><span class="example-tags">
+<span class="md-tag">acquisition</span><span class="md-tag">arxiv</span><span class="md-tag">web-search</span><span class="md-tag">python-api</span><span class="md-tag">guided</span>
+</span></p>
+</li>
+<li>
+<p><strong><a href="use_mcp_tools/">SQLite tools through MCP</a></strong></p>
+<p>Run a local SQLite MCP server, verify its tools, and connect it to the URSA dashboard.</p>
+<p><span class="example-tags">
+<span class="md-tag">guided</span><span class="md-tag">mcp</span><span class="md-tag">dashboard</span><span class="md-tag">beginner</span>
+</span></p>
+</li>
+</ul>
+</div>
+<h2 id="adding-an-example">Adding an example<a class="headerlink" href="#adding-an-example" title="Permanent link">&para;</a></h2>
+<p>Use one example per folder with this minimum structure:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>examples/category/my_example/
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── README.md       # purpose, setup, run, expected results, and cleanup
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── example.yaml    # documentation metadata
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── pyproject.toml  # isolated Python dependencies, even when empty
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>└── ...             # scripts, inputs, images, and other example files
 </code></pre></div>
-<p>You can also issue the prompt in one line by prepending the agent name:
-<div class="highlight"><pre><span></span><code>ursa&gt; execute Make me a histogram of the first 10000 prime number spacings`
-</code></pre></div></p>
-<p>to see the names of available agents, prompt the CLI with <code>help</code>:
-<div class="highlight"><pre><span></span><code>ursa&gt; help
-
-Documented commands (type help &lt;topic&gt;):
-========================================
-EOF  agents  arxiv  chat  clear  execute  exit  help  models  web
-
-Undocumented commands:
-======================
-hypothesize  plan
-</code></pre></div></p>
-<p>Some additional documentation on the URSA github repo: <a href="https://github.com/lanl/ursa">LINK</a>
-with more to come.</p>
-<p>We should have an in-depth documentation for it, but right now it's documented a bit on the main README and through the help flags with the CLI call. </p>
+<p>The metadata requires a title, summary, and tags. Examples are ordered
+alphabetically by title:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">My example</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">summary</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">One sentence explaining what the reader will learn.</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">tags</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">execution-agent</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">beginner</span>
+</code></pre></div>
+<p>The documentation build discovers every <code>example.yaml</code>. It publishes the
+folder's <code>README.md</code> at a matching <code>/examples/.../</code> URL and adds it to the
+catalog. Keep relative README links local to the example folder; the published
+page rewrites links to adjacent files so they open the version-matched source
+on GitHub.</p>
+<h3 id="common-tags">Common tags<a class="headerlink" href="#common-tags" title="Permanent link">&para;</a></h3>
+<p>Use lowercase, hyphenated tags. Prefer these common tags so related examples
+remain easy to find:</p>
+<table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guided</code></td>
+<td>A narrative walkthrough with ordered setup, execution, and review steps</td>
+</tr>
+<tr>
+<td><code>source-only</code></td>
+<td>A focused source example intended primarily to be configured and run</td>
+</tr>
+<tr>
+<td><code>beginner</code></td>
+<td>A good first example with minimal prerequisites</td>
+</tr>
+<tr>
+<td><code>tui</code></td>
+<td>Workflows driven through URSA's terminal user interface</td>
+</tr>
+<tr>
+<td><code>dashboard</code></td>
+<td>Workflows using the browser dashboard</td>
+</tr>
+<tr>
+<td><code>python-api</code></td>
+<td>Direct use of URSA classes from Python</td>
+</tr>
+<tr>
+<td><code>execution-agent</code></td>
+<td>Tasks that run commands or create workspace artifacts</td>
+</tr>
+<tr>
+<td><code>mcp</code></td>
+<td>MCP servers, clients, or tools attached to URSA agents</td>
+</tr>
+<tr>
+<td><code>multi-agent</code></td>
+<td>Teams, symposia, or other composed-agent workflows</td>
+</tr>
+<tr>
+<td><code>simulation</code></td>
+<td>Running or analyzing a scientific simulation</td>
+</tr>
+<tr>
+<td><code>plotting</code></td>
+<td>Producing plots or other visual artifacts</td>
+</tr>
+<tr>
+<td><code>optimization</code></td>
+<td>Search, experiment selection, or mathematical optimization</td>
+</tr>
+</tbody>
+</table>
 
 
 
@@ -2148,10 +2183,12 @@ with more to come.</p>
     
     
       
-      <script id="__config" type="application/json">{"base": "../../..", "features": [], "search": "../../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "content.code.copy"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      <script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../javascripts/example-filter.js"></script>
       
     
   </body>

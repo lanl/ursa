@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -255,18 +257,20 @@
       
   
   
+    
   
   
+  
     
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -274,7 +278,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -282,10 +286,10 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -319,105 +323,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-    
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -508,9 +419,9 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#set-up-a-python-project" class="md-nav__link">
     <span class="md-ellipsis">
-      Prerequisites
+      Set up a Python project
     </span>
   </a>
   
@@ -526,9 +437,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#use-a-local-or-custom-endpoint" class="md-nav__link">
+  <a href="#initialize-chat-and-embedding-models-from-a-ursa-config" class="md-nav__link">
     <span class="md-ellipsis">
-      Use a local or custom endpoint
+      Initialize chat and embedding models from a URSA config
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-an-mcp-server-and-add-its-tools-to-an-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connect an MCP server and add its tools to an agent
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#use-another-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use another provider
     </span>
   </a>
   
@@ -629,6 +558,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -691,12 +642,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -714,35 +665,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1828,29 +1756,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2070,9 +1975,9 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#set-up-a-python-project" class="md-nav__link">
     <span class="md-ellipsis">
-      Prerequisites
+      Set up a Python project
     </span>
   </a>
   
@@ -2088,9 +1993,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#use-a-local-or-custom-endpoint" class="md-nav__link">
+  <a href="#initialize-chat-and-embedding-models-from-a-ursa-config" class="md-nav__link">
     <span class="md-ellipsis">
-      Use a local or custom endpoint
+      Initialize chat and embedding models from a URSA config
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-an-mcp-server-and-add-its-tools-to-an-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connect an MCP server and add its tools to an agent
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#use-another-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use another provider
     </span>
   </a>
   
@@ -2144,76 +2067,122 @@
 
 <h1 id="getting-started-python-scripts">Getting Started - Python Scripts<a class="headerlink" href="#getting-started-python-scripts" title="Permanent link">&para;</a></h1>
 <p>URSA agents can be used directly from Python. This is useful when you want to build repeatable workflows, integrate URSA with existing scripts, or compose agents programmatically.</p>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<ul>
-<li>URSA is installed in your Python environment.</li>
-<li>You have configured access to an LLM endpoint.</li>
-<li>You have a dedicated workspace for any execution tasks.</li>
-</ul>
+<h2 id="set-up-a-python-project">Set up a Python project<a class="headerlink" href="#set-up-a-python-project" title="Permanent link">&para;</a></h2>
+<p>Install URSA in the project environment that will run your script. A separate
+<code>uv tool install ursa</code> installation provides the <code>ursa</code> command, but its
+isolated environment is not importable by project scripts.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">uv project (recommended)</label><label for="__tabbed_1_2">venv + pip — macOS/Linux</label><label for="__tabbed_1_3">venv + pip — Windows PowerShell</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>init<span class="w"> </span>ursa-script
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>ursa-script
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>add<span class="w"> </span>ursa-ai
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mkdir<span class="w"> </span>ursa-script
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>ursa-script
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>ursa-ai
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">ursa-script</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">Set-Location</span> <span class="n">ursa-script</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">py</span> <span class="p">-</span><span class="n">3</span> <span class="n">-m</span> <span class="n">venv</span> <span class="p">.</span><span class="n">venv</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-upgrade</span> <span class="n">pip</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">ursa-ai</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>Before continuing, <a class="autorefs autorefs-internal" title="Configuration" href="../../config/#configuration">configure an LLM endpoint</a> and choose a
+dedicated workspace for execution tasks.</p>
 <h2 id="minimal-execution-agent-script">Minimal execution-agent script<a class="headerlink" href="#minimal-execution-agent-script" title="Permanent link">&para;</a></h2>
 <p>Create <code>run_ursa.py</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">langchain_core.messages</span><span class="w"> </span><span class="kn">import</span> <span class="n">HumanMessage</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4&quot;</span><span class="p">)</span>
-<span class="n">agent</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">)</span>
-
-<span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
-    <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">[</span>
-        <span class="n">HumanMessage</span><span class="p">(</span>
-            <span class="n">content</span><span class="o">=</span><span class="s2">&quot;Write and run a Python script that prints the first 10 prime numbers.&quot;</span>
-        <span class="p">)</span>
-    <span class="p">],</span>
-    <span class="s2">&quot;workspace&quot;</span><span class="p">:</span> <span class="s2">&quot;./ursa-script-workspace&quot;</span><span class="p">,</span>
-<span class="p">})</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain_core.messages</span><span class="w"> </span><span class="kn">import</span> <span class="n">HumanMessage</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.cli.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">UrsaConfig</span><span class="p">,</span> <span class="n">resolve_ursa_config</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">config</span> <span class="o">=</span> <span class="n">resolve_ursa_config</span><span class="p">(</span><span class="n">UrsaConfig</span><span class="p">())</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">llm_model</span><span class="o">.</span><span class="n">init_chat_model</span><span class="p">()</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">)</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">invoke</span><span class="p">({</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">[</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">HumanMessage</span><span class="p">(</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>            <span class="n">content</span><span class="o">=</span><span class="s2">&quot;Write and run a Python script that prints the first 10 prime numbers.&quot;</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>        <span class="p">)</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    <span class="p">],</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="s2">&quot;workspace&quot;</span><span class="p">:</span> <span class="s2">&quot;./ursa-script-workspace&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="p">})</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
 </code></pre></div>
 <p>Run it:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>run_ursa.py
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>run_ursa.py
 </code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Execution safety</p>
 <p><code>ExecutionAgent</code> can create files and run shell commands. Use a dedicated workspace and review generated code and commands.</p>
 </div>
-<h2 id="use-a-local-or-custom-endpoint">Use a local or custom endpoint<a class="headerlink" href="#use-a-local-or-custom-endpoint" title="Permanent link">&para;</a></h2>
-<p>The Python API uses LangChain chat models, so the same provider packages and endpoint settings apply. For example, with Ollama:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span>
-    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;ollama:llama3.1&quot;</span><span class="p">,</span>
-    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;http://localhost:11434&quot;</span><span class="p">,</span>
-<span class="p">)</span>
+<h2 id="initialize-chat-and-embedding-models-from-a-ursa-config">Initialize chat and embedding models from a URSA config<a class="headerlink" href="#initialize-chat-and-embedding-models-from-a-ursa-config" title="Permanent link">&para;</a></h2>
+<p>Use the same YAML model configuration in scripts that you use with the TUI and
+dashboard. For example, create <code>config.yaml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">emb_model</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:text-embedding-3-large</span>
 </code></pre></div>
-<p>For a custom OpenAI-compatible endpoint:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span>
-    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:my-model-name&quot;</span><span class="p">,</span>
-    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://my-endpoint.example.com/v1&quot;</span><span class="p">,</span>
-    <span class="n">api_key</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;MY_ENDPOINT_API_KEY&quot;</span><span class="p">],</span>
-<span class="p">)</span>
+<p>The built-in <code>openai</code> inference provider supplies the endpoint and reads
+<code>OPENAI_API_KEY</code>. Load, resolve, and instantiate both models:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.cli.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">UrsaConfig</span><span class="p">,</span> <span class="n">resolve_ursa_config</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">config</span> <span class="o">=</span> <span class="n">resolve_ursa_config</span><span class="p">(</span><span class="n">UrsaConfig</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)))</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">chat_model</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">llm_model</span><span class="o">.</span><span class="n">init_chat_model</span><span class="p">()</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">embedding_model</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">config</span><span class="o">.</span><span class="n">emb_model</span><span class="o">.</span><span class="n">init_embedding</span><span class="p">()</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">emb_model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="k">else</span> <span class="kc">None</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="p">)</span>
 </code></pre></div>
+<p>Resolution applies the selected <code>inference_providers</code> settings and resolves API
+key references in memory. It does not write the secret back to the YAML file.
+<code>UrsaConfig.from_file()</code> reads the specified file; use the CLI when you need its
+full system, user, environment, explicit-file, and command-line precedence.</p>
+<p>The resulting objects are ordinary LangChain chat and embedding models and can
+be passed to URSA agents, environments, or other LangChain components.</p>
+<h2 id="connect-an-mcp-server-and-add-its-tools-to-an-agent">Connect an MCP server and add its tools to an agent<a class="headerlink" href="#connect-an-mcp-server-and-add-its-tools-to-an-agent" title="Permanent link">&para;</a></h2>
+<p>Follow the <a href="../../examples/mcp_agent_tools/">standalone MCP tools example</a>
+to start a local server, configure it, discover its tools, attach them to a
+<code>ChatAgent</code>, and invoke the agent from Python.</p>
+<h2 id="use-another-provider">Use another provider<a class="headerlink" href="#use-another-provider" title="Permanent link">&para;</a></h2>
+<p>Keep endpoint and credential settings in the URSA configuration rather than
+duplicating them in Python. See <a class="autorefs autorefs-internal" title="Models and inference providers" href="../../configuration/models/#models-and-inference-providers">Models and inference
+providers</a> for hosted, OpenAI-compatible, and
+local examples. The resolved model object above uses those same settings.</p>
 <h2 id="compose-agents-with-environments">Compose agents with environments<a class="headerlink" href="#compose-agents-with-environments" title="Permanent link">&para;</a></h2>
 <p>When one agent is not the right shape for the work, URSA environments let you
 run multiple agents behind one Python object. An <a class="autorefs autorefs-internal" title="Agent Teams" href="../../environments/agent-teams/#agent-teams">Agent Team</a> gives
 a PI delegation tools for specialist members. An
 <a class="autorefs autorefs-internal" title="Agent Symposia" href="../../environments/agent-symposia/#agent-symposia">Agent Symposium</a> asks multiple members or nested teams to work
 independently, review one another, revise, and then synthesize a final answer.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSymposiumEnvironment</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-4o-mini&quot;</span><span class="p">)</span>
-<span class="n">symposium</span> <span class="o">=</span> <span class="n">AgentSymposiumEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
-    <span class="s2">&quot;examples/environments/agent_symposium.yaml&quot;</span><span class="p">,</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">result</span> <span class="o">=</span> <span class="n">symposium</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Compare two solution strategies and recommend one.&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSymposiumEnvironment</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-4o-mini&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">symposium</span> <span class="o">=</span> <span class="n">AgentSymposiumEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="s2">&quot;examples/environments/agent_symposium.yaml&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">)</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">result</span> <span class="o">=</span> <span class="n">symposium</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="s2">&quot;Compare two solution strategies and recommend one.&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final&quot;</span><span class="p">])</span>
 </code></pre></div>
 <p>See <a class="autorefs autorefs-internal" title="Environments: agents working together" href="../../environments/#environments-agents-working-together">Environments</a> for narrative guides
 and YAML examples.</p>
@@ -2280,10 +2249,12 @@ and YAML examples.</p>
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

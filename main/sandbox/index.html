@@ -43,6 +43,8 @@
     
       <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -270,7 +272,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -281,7 +283,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -292,7 +294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/" class="md-nav__link">
+      <a href="../getting-started/" class="md-nav__link">
         
   
   
@@ -315,103 +317,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/uv/" class="md-nav__link">
+      <a href="../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -527,6 +438,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -589,12 +522,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -612,35 +545,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/ollama/" class="md-nav__link">
+      <a href="../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1726,29 +1636,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2047,39 +1934,39 @@ and execute code has the potential to cause problems like:</p>
 <p>To enable limited sandboxing insofar as containerization does this, you can run
 the following commands:</p>
 <h3 id="docker">Docker<a class="headerlink" href="#docker" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="c1"># Pull the image</span>
-docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa
-
-<span class="c1"># Run script from host system</span>
-mkdir<span class="w"> </span>-p<span class="w"> </span>scripts
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;import ursa; print(&#39;Hello from ursa&#39;)&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>scripts/my_script.py
-docker<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--mount<span class="w"> </span><span class="nv">type</span><span class="o">=</span>bind,src<span class="o">=</span><span class="nv">$PWD</span>/scripts,dst<span class="o">=</span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>ghcr.io/lanl/ursa<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;uv run /mnt/workspace/my_script.py&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Pull the image</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Run script from host system</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>scripts
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;import ursa; print(&#39;Hello from ursa&#39;)&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>scripts/my_script.py
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>docker<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span>--mount<span class="w"> </span><span class="nv">type</span><span class="o">=</span>bind,src<span class="o">=</span><span class="nv">$PWD</span>/scripts,dst<span class="o">=</span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span>ghcr.io/lanl/ursa<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;uv run /mnt/workspace/my_script.py&quot;</span>
 </code></pre></div>
 <h3 id="charliecloud">Charliecloud<a class="headerlink" href="#charliecloud" title="Permanent link">&para;</a></h3>
 <p><a href="https://charliecloud.io/">Charliecloud</a>
 is a rootless alternative to docker
 that is sometimes preferred on HPC. The following commands replicate the
 behaviors above for docker.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Pull the image</span>
-ch-image<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa<span class="w"> </span>ursa
-
-<span class="c1"># Convert image to sqfs, for use on another system</span>
-ch-convert<span class="w"> </span>ursa<span class="w"> </span>ursa.sqfs
-
-<span class="c1"># Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)</span>
-mkdir<span class="w"> </span>-p<span class="w"> </span>scripts
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;import ursa; print(&#39;Hello from ursa&#39;)&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>scripts/my_script.py
-ch-run<span class="w"> </span>-W<span class="w"> </span>ursa<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--unset-env<span class="o">=</span><span class="s2">&quot;*&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--set-env<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--set-env<span class="o">=</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--bind<span class="w"> </span><span class="si">${</span><span class="nv">PWD</span><span class="si">}</span>/scripts:/mnt/workspace<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--cd<span class="w"> </span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--<span class="w"> </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span><span class="s2">&quot;uv run --no-sync my_script.py&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Pull the image</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>ch-image<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/ursa<span class="w"> </span>ursa
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Convert image to sqfs, for use on another system</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>ch-convert<span class="w"> </span>ursa<span class="w"> </span>ursa.sqfs
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Run script from host system (if wanted, replace ursa with /path/to/ursa.sqfs)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>scripts
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;import ursa; print(&#39;Hello from ursa&#39;)&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>scripts/my_script.py
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>ch-run<span class="w"> </span>-W<span class="w"> </span>ursa<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span>--unset-env<span class="o">=</span><span class="s2">&quot;*&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span>--set-env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span>--set-env<span class="o">=</span><span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="o">=</span><span class="nv">$OPENAI_API_KEY</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span>--bind<span class="w"> </span><span class="si">${</span><span class="nv">PWD</span><span class="si">}</span>/scripts:/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span>--cd<span class="w"> </span>/mnt/workspace<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span>--<span class="w"> </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="s2">&quot;uv run --no-sync my_script.py&quot;</span>
 </code></pre></div>
 
 
@@ -2129,10 +2016,12 @@ ch-run<span class="w"> </span>-W<span class="w"> </span>ursa<span class="w"> </s
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "content.code.copy"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../javascripts/example-filter.js"></script>
       
     
   </body>

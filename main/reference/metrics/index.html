@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1906,29 +1816,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2302,17 +2189,17 @@
 <p>This guide covers how to use <code>metrics_cli.py</code> to generate per-run, per-thread, and cross-thread (SUPER) charts from Telemetry JSON. It includes the new model- and agent-level aggregations and the interactive timeline.</p>
 <hr />
 <h2 id="quickstart">Quickstart<a class="headerlink" href="#quickstart" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1"># Generate thread-level + per-run charts for every thread under a directory</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/path/to/metrics<span class="w"> </span>--chart<span class="w"> </span>all
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Generate thread-level + per-run charts for every thread under a directory</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/path/to/metrics<span class="w"> </span>--chart<span class="w"> </span>all
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Walk all subdirectories, run `all` in each, then build a SUPER rollup at the root</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/path/to/workspaces<span class="w"> </span>--chart<span class="w"> </span>all-recursive
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Walk all subdirectories, run `all` in each, then build a SUPER rollup at the root</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/path/to/workspaces<span class="w"> </span>--chart<span class="w"> </span>all-recursive
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Single JSON: make a time lollipop, token totals, KDE, or tokens/sec</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>lollipop
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>tokens-bar
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>tokens-kde
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>tokens-rate
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Single JSON: make a time lollipop, token totals, KDE, or tokens/sec</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>lollipop
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>tokens-bar
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>tokens-kde
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/agent_metrics.json<span class="w"> </span>--chart<span class="w"> </span>tokens-rate
 </code></pre></div>
 <hr />
 <h2 id="what-the-cli-reads-what-it-makes">What the CLI reads &amp; what it makes<a class="headerlink" href="#what-the-cli-reads-what-it-makes" title="Permanent link">&para;</a></h2>
@@ -2337,41 +2224,41 @@ python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span
 <hr />
 <h2 id="modes">Modes<a class="headerlink" href="#modes" title="Permanent link">&para;</a></h2>
 <h3 id="1-single-json-targeted-charts">1) Single JSON (targeted charts)<a class="headerlink" href="#1-single-json-targeted-charts" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>lollipop
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>tokens-bar
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>tokens-kde
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>tokens-rate
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>lollipop
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>tokens-bar
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>tokens-kde
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>path/to/run.json<span class="w"> </span>--chart<span class="w"> </span>tokens-rate
 </code></pre></div>
 <p>Use <code>--title</code> and <code>--out</code> to customize:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>run.json<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--chart<span class="w"> </span>tokens-rate<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;Model TPS (build #814)&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--out<span class="w"> </span>out/my_rate.png
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>run.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--chart<span class="w"> </span>tokens-rate<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;Model TPS (build #814)&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--out<span class="w"> </span>out/my_rate.png
 </code></pre></div>
 <hr />
 <h3 id="2-thread-level-aggregate-all-runs-of-one-thread_id">2) Thread-level (aggregate all runs of one <code>thread_id</code>)<a class="headerlink" href="#2-thread-level-aggregate-all-runs-of-one-thread_id" title="Permanent link">&para;</a></h3>
 <p>List threads the CLI can see in a directory:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--list-threads
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--list-threads
 </code></pre></div>
 <p>Generate a specific thread’s charts:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Time lollipop</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-lollipop<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
-
-<span class="c1"># Token totals / KDE / TPS</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-tokens-bar<span class="w">  </span>--thread<span class="w"> </span>&lt;thread_id&gt;
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-tokens-kde<span class="w">  </span>--thread<span class="w"> </span>&lt;thread_id&gt;<span class="w"> </span>--log-x
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-tokens-rate<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
-
-<span class="c1"># Interactive timeline (HTML); y-axis grouped by agent (default) or one row per run</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>timeline-html<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;<span class="w"> </span>--group-by<span class="w"> </span>agent
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>timeline-html<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;<span class="w"> </span>--group-by<span class="w"> </span>run
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Time lollipop</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-lollipop<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Token totals / KDE / TPS</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-tokens-bar<span class="w">  </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-tokens-kde<span class="w">  </span>--thread<span class="w"> </span>&lt;thread_id&gt;<span class="w"> </span>--log-x
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-tokens-rate<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="c1"># Interactive timeline (HTML); y-axis grouped by agent (default) or one row per run</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>timeline-html<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;<span class="w"> </span>--group-by<span class="w"> </span>agent
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>timeline-html<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;<span class="w"> </span>--group-by<span class="w"> </span>run
 </code></pre></div>
 <p><strong>Agent rollups for a thread:</strong></p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Tokens stacked by agent</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-agents-tokens<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
-
-<span class="c1"># Tokens/sec by agent (two baselines)</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-agents-tps<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Tokens stacked by agent</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-agents-tokens<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Tokens/sec by agent (two baselines)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>thread-agents-tps<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
 </code></pre></div>
 <blockquote>
 <p>Thread-level TPS uses two denominators:<br />
@@ -2381,7 +2268,7 @@ python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span
 <hr />
 <h3 id="3-all-non-recursive-for-a-directory">3) “All” (non-recursive) for a directory<a class="headerlink" href="#3-all-non-recursive-for-a-directory" title="Permanent link">&para;</a></h3>
 <p>Run <strong>all</strong> thread-level charts and per-run charts inside a directory:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>all
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/metrics<span class="w"> </span>--chart<span class="w"> </span>all
 </code></pre></div>
 <p>What it produces:
 - For each thread: lollipop, tokens-bar, tokens-kde, tokens-rate, timeline HTML
@@ -2390,7 +2277,7 @@ python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span
 <hr />
 <h3 id="4-all-recursive-super-cross-thread-rollups">4) “All-recursive” + SUPER (cross-thread rollups)<a class="headerlink" href="#4-all-recursive-super-cross-thread-rollups" title="Permanent link">&para;</a></h3>
 <p>Walk subdirectories, run <code>all</code> in each, then build a rollup at the root:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/workspaces<span class="w"> </span>--chart<span class="w"> </span>all-recursive
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/workspaces<span class="w"> </span>--chart<span class="w"> </span>all-recursive
 </code></pre></div>
 <p>SUPER artifacts at <code>--dir</code>:
 - <code>super_lollipop.png</code> (time by component across all threads)
@@ -2400,8 +2287,8 @@ python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span
 - <strong>By agent:</strong> <code>super_agents_tokens.png</code>, <code>super_agents_tps.png</code><br />
 <em>(Use the explicit charts below if you want just the agent rollups without re-running everything.)</em></p>
 <p>Build <em>only</em> the SUPER agent rollups for a directory you’ve already processed:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tokens
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tps
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tokens
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>/workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tps
 </code></pre></div>
 <blockquote>
 <p>In SUPER charts, the bottom footer <strong>does not</strong> show a single start→end “window”, since different threads can overlap or run on different machines. Where relevant, the footer shows <strong>Σ thread windows</strong> and <strong>Σ LLM-active seconds</strong> instead.</p>
@@ -2495,60 +2382,60 @@ python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span
 </table>
 <hr />
 <h2 id="examples-copypaste">Examples (copy/paste)<a class="headerlink" href="#examples-copypaste" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1"># See what threads are in a directory</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span>--list-threads
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># See what threads are in a directory</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span>--list-threads
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Thread-level bundle for a single thread (PNG + HTML)</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--chart<span class="w"> </span>thread-tokens-rate<span class="w"> </span>--thread<span class="w"> </span>modsim_predict_final_mild-orange
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--chart<span class="w"> </span>timeline-html<span class="w"> </span>--thread<span class="w"> </span>modsim_predict_final_mild-orange<span class="w"> </span>--group-by<span class="w"> </span>agent
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Thread-level bundle for a single thread (PNG + HTML)</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span>--chart<span class="w"> </span>thread-tokens-rate<span class="w"> </span>--thread<span class="w"> </span>modsim_predict_final_mild-orange
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span>--chart<span class="w"> </span>timeline-html<span class="w"> </span>--thread<span class="w"> </span>modsim_predict_final_mild-orange<span class="w"> </span>--group-by<span class="w"> </span>agent
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Agent breakdowns for one thread (stacked tokens + TPS)</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--chart<span class="w"> </span>thread-agents-tokens<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--chart<span class="w"> </span>thread-agents-tps<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Agent breakdowns for one thread (stacked tokens + TPS)</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>--chart<span class="w"> </span>thread-agents-tokens<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span>--chart<span class="w"> </span>thread-agents-tps<span class="w"> </span>--thread<span class="w"> </span>&lt;thread_id&gt;
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Directory-wide (non-recursive) batch</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span>--chart<span class="w"> </span>all
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Directory-wide (non-recursive) batch</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces/myrun<span class="w"> </span>--chart<span class="w"> </span>all
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Recursive batch + SUPER rollups at the root</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces<span class="w"> </span>--chart<span class="w"> </span>all-recursive
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Recursive batch + SUPER rollups at the root</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces<span class="w"> </span>--chart<span class="w"> </span>all-recursive
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Only the SUPER agent charts (when you already have per-thread results)</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tokens
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tps
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Only the SUPER agent charts (when you already have per-thread results)</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tokens
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>--dir<span class="w"> </span>./workspaces<span class="w"> </span>--chart<span class="w"> </span>super-agents-tps
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># Single JSON – compare denominators in TPS</span>
-python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>./workspaces/t1/run_0007.json<span class="w"> </span>--chart<span class="w"> </span>tokens-rate<span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;step 7 TPS&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Single JSON – compare denominators in TPS</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>python<span class="w"> </span>ursa/scripts/metrics_cli.py<span class="w"> </span>./workspaces/t1/run_0007.json<span class="w"> </span>--chart<span class="w"> </span>tokens-rate<span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;step 7 TPS&quot;</span>
 </code></pre></div>
 <hr />
 <h2 id="output-naming-where-to-find-things">Output naming &amp; where to find things<a class="headerlink" href="#output-naming-where-to-find-things" title="Permanent link">&para;</a></h2>
 <p><strong>Per run (single JSON):</strong>
-<div class="highlight"><pre><span></span><code>&lt;path&gt;/run_breakdown_lollipop.png
-&lt;path&gt;/run_breakdown_tokens_bar.png
-&lt;path&gt;/run_breakdown_tokens_kde.png
-&lt;path&gt;/run_breakdown_tokens_rate.png
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>&lt;path&gt;/run_breakdown_lollipop.png
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>&lt;path&gt;/run_breakdown_tokens_bar.png
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>&lt;path&gt;/run_breakdown_tokens_kde.png
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>&lt;path&gt;/run_breakdown_tokens_rate.png
 </code></pre></div></p>
 <p><strong>Thread-level (in --dir):</strong>
-<div class="highlight"><pre><span></span><code>thread_&lt;thread_id&gt;_lollipop.png
-thread_&lt;thread_id&gt;_tokens_bar.png
-thread_&lt;thread_id&gt;_tokens_kde.png
-thread_&lt;thread_id&gt;_tokens_rate.png
-thread_&lt;thread_id&gt;_timeline.html
-thread_&lt;thread_id&gt;_agents_tokens.png
-thread_&lt;thread_id&gt;_agents_tps.png
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>thread_&lt;thread_id&gt;_lollipop.png
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>thread_&lt;thread_id&gt;_tokens_bar.png
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>thread_&lt;thread_id&gt;_tokens_kde.png
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>thread_&lt;thread_id&gt;_tokens_rate.png
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>thread_&lt;thread_id&gt;_timeline.html
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>thread_&lt;thread_id&gt;_agents_tokens.png
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>thread_&lt;thread_id&gt;_agents_tps.png
 </code></pre></div></p>
 <p><strong>SUPER (at the root --dir for all-recursive):</strong>
-<div class="highlight"><pre><span></span><code>super_lollipop.png
-super_tokens_bar.png
-super_tokens_kde.png
-super_tokens_rate.png
-super_tokens_bar_by_model.png
-super_tokens_rate_by_model.png
-super_agents_tokens.png
-super_agents_tps.png
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>super_lollipop.png
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>super_tokens_bar.png
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>super_tokens_kde.png
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>super_tokens_rate.png
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>super_tokens_bar_by_model.png
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>super_tokens_rate_by_model.png
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>super_agents_tokens.png
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>super_agents_tps.png
 </code></pre></div></p>
 <hr />
 <h2 id="tips">Tips<a class="headerlink" href="#tips" title="Permanent link">&para;</a></h2>
@@ -2629,10 +2516,12 @@ super_agents_tps.png
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

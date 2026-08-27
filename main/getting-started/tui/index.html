@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://lanl.github.io/ursa/main/configuration/langchain-providers/">
+        <link rel="canonical" href="https://lanl.github.io/ursa/main/getting-started/tui/">
       
       
-        <link rel="prev" href="../ollama/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../files-and-env/">
+        <link rel="next" href="../dashboard/">
       
       
       <link rel="icon" href="../../assets/favicon.png">
@@ -22,7 +22,7 @@
     
     
       
-        <title>LangChain providers - URSA</title>
+        <title>TUI - URSA</title>
       
     
     
@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -66,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#langchain-providers" class="md-skip">
+        <a href="#getting-started-tui" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +119,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              LangChain providers
+              TUI
             
           </span>
         </div>
@@ -255,280 +257,6 @@
       
   
   
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
-        
-          
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Installation
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2">
-            <span class="md-nav__icon md-icon"></span>
-            Installation
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Overview
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Web Dashboard
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/python-scripts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Python Scripts
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/plan-execute-yaml/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Plan-Execute From YAML
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/mcp-server/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    MCP Server
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
     
   
   
@@ -542,15 +270,15 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
   <span class="md-ellipsis">
-    Configuration
+    Getting Started
     
   </span>
   
@@ -558,10 +286,10 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Configuration
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -578,52 +306,6 @@
   
   <span class="md-ellipsis">
     Overview
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../openai-compatible/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    OpenAI-compatible endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../ollama/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Ollama and local endpoints
     
   </span>
   
@@ -655,7 +337,7 @@
   
   
   <span class="md-ellipsis">
-    LangChain providers
+    TUI
     
   </span>
   
@@ -668,7 +350,7 @@
   
   
   <span class="md-ellipsis">
-    LangChain providers
+    TUI
     
   </span>
   
@@ -691,54 +373,96 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#openai" class="md-nav__link">
+  <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
-      OpenAI
+      Prerequisites
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#anthropic" class="md-nav__link">
+  <a href="#1-start-with-the-default-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      Anthropic
+      1. Start with the default configuration
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#google-genai" class="md-nav__link">
+  <a href="#2-start-ursa" class="md-nav__link">
     <span class="md-ellipsis">
-      Google GenAI
+      2. Start URSA
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Start URSA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#full-screen-interface-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      Full-screen interface controls
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-chat-with-the-assistant" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Chat with the assistant
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#ollama" class="md-nav__link">
+  <a href="#4-use-the-planning-agent" class="md-nav__link">
     <span class="md-ellipsis">
-      Ollama
+      4. Use the planning agent
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#azure-openai" class="md-nav__link">
+  <a href="#5-use-the-execution-agent" class="md-nav__link">
     <span class="md-ellipsis">
-      Azure OpenAI
+      5. Use the execution agent
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#additional-provider-options" class="md-nav__link">
+  <a href="#6-optional-use-a-named-agent" class="md-nav__link">
     <span class="md-ellipsis">
-      Additional provider options
+      6. Optional: use a named agent
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#useful-ursa-cli-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Useful ursa CLI commands
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      Where next?
     </span>
   </a>
   
@@ -760,7 +484,235 @@
   
   
     <li class="md-nav__item">
-      <a href="../files-and-env/" class="md-nav__link">
+      <a href="../dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Web Dashboard
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-scripts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python Scripts
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan-execute-yaml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plan-Execute From YAML
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    MCP Server
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Configuration
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Configuration
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Models and inference providers
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Secrets
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/files-and-env/" class="md-nav__link">
         
   
   
@@ -783,7 +735,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp/" class="md-nav__link">
+      <a href="../../configuration/mcp/" class="md-nav__link">
         
   
   
@@ -1828,29 +1780,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2070,54 +1999,96 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#openai" class="md-nav__link">
+  <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
-      OpenAI
+      Prerequisites
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#anthropic" class="md-nav__link">
+  <a href="#1-start-with-the-default-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      Anthropic
+      1. Start with the default configuration
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#google-genai" class="md-nav__link">
+  <a href="#2-start-ursa" class="md-nav__link">
     <span class="md-ellipsis">
-      Google GenAI
+      2. Start URSA
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Start URSA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#full-screen-interface-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      Full-screen interface controls
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-chat-with-the-assistant" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Chat with the assistant
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#ollama" class="md-nav__link">
+  <a href="#4-use-the-planning-agent" class="md-nav__link">
     <span class="md-ellipsis">
-      Ollama
+      4. Use the planning agent
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#azure-openai" class="md-nav__link">
+  <a href="#5-use-the-execution-agent" class="md-nav__link">
     <span class="md-ellipsis">
-      Azure OpenAI
+      5. Use the execution agent
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#additional-provider-options" class="md-nav__link">
+  <a href="#6-optional-use-a-named-agent" class="md-nav__link">
     <span class="md-ellipsis">
-      Additional provider options
+      6. Optional: use a named agent
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#useful-ursa-cli-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Useful ursa CLI commands
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      Where next?
     </span>
   </a>
   
@@ -2142,47 +2113,119 @@
   
 
 
-<h1 id="langchain-providers">LangChain providers<a class="headerlink" href="#langchain-providers" title="Permanent link">&para;</a></h1>
-<p>URSA initializes chat and embedding models through LangChain. The model string usually uses:</p>
-<div class="highlight"><pre><span></span><code>&lt;provider&gt;:&lt;model-name&gt;
-</code></pre></div>
-<p>The following provider integrations are installed with URSA's core dependencies and are common choices for URSA workflows.</p>
-<h2 id="openai">OpenAI<a class="headerlink" href="#openai" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:gpt-5.4</span>
-<span class="w">  </span><span class="nt">api_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OPENAI_API_KEY</span>
-</code></pre></div>
-<h2 id="anthropic">Anthropic<a class="headerlink" href="#anthropic" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic:claude-sonnet-4-5</span>
-<span class="w">  </span><span class="nt">api_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ANTHROPIC_API_KEY</span>
-</code></pre></div>
-<h2 id="google-genai">Google GenAI<a class="headerlink" href="#google-genai" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">google_genai:gemini-2.5-pro</span>
-<span class="w">  </span><span class="nt">api_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GOOGLE_API_KEY</span>
-</code></pre></div>
-<h2 id="ollama">Ollama<a class="headerlink" href="#ollama" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ollama:gpt-oss-20b</span>
-<span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:11434</span>
-</code></pre></div>
-<h2 id="azure-openai">Azure OpenAI<a class="headerlink" href="#azure-openai" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">azure_openai:deployment-name</span>
-<span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://your-resource.openai.azure.com/</span>
-<span class="w">  </span><span class="nt">api_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">AZURE_OPENAI_API_KEY</span>
-</code></pre></div>
-<p>Azure deployments often need provider-specific settings. LangChain accepts additional provider keyword arguments, and URSA allows extra model fields in the YAML model configuration.</p>
-<h2 id="additional-provider-options">Additional provider options<a class="headerlink" href="#additional-provider-options" title="Permanent link">&para;</a></h2>
-<p>URSA passes model settings to LangChain. For provider-specific options, consult the LangChain provider documentation:</p>
+<h1 id="getting-started-tui">Getting Started - TUI<a class="headerlink" href="#getting-started-tui" title="Permanent link">&para;</a></h1>
+<p>This guide walks through URSA's terminal user interface (TUI): starting it with
+the <code>ursa</code> CLI command, chatting with the default assistant, and running the
+planning and execution agents.</p>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>langchain-openai</code></li>
-<li><code>langchain-anthropic</code></li>
-<li><code>langchain-google-genai</code></li>
-<li><code>langchain-ollama</code></li>
+<li>URSA is installed. See <a class="autorefs autorefs-internal" href="../#getting-started">Getting started</a>.</li>
+<li>You have access to an LLM endpoint.</li>
+<li>You have a dedicated workspace directory for files URSA may create or modify.</li>
 </ul>
-<p>If you use a provider integration that is not installed by URSA, install the relevant LangChain package in the same environment.</p>
+<div class="admonition warning">
+<p class="admonition-title">Be aware of your workspace</p>
+<p>The execution agent can write files and run shell commands. Be careful using workspaces with source tree or data directory you cannot risk modifying. Good practice is to make backups or copies of directories before working.</p>
+</div>
+<h2 id="1-start-with-the-default-configuration">1. Start with the default configuration<a class="headerlink" href="#1-start-with-the-default-configuration" title="Permanent link">&para;</a></h2>
+<p>OpenAI works without a config file. Set the API key in your shell:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">macOS/Linux</label><label for="__tabbed_1_2">Windows PowerShell</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>The built-in <code>openai</code> provider supplies the model and base URL. Use a persistent
+<a class="autorefs autorefs-internal" title="Configuration files, CLI flags, and environment variables" href="../../configuration/files-and-env/#configuration-files-cli-flags-and-environment-variables">user configuration</a>
+only when you need to change a default or select another provider.</p>
+<h2 id="2-start-ursa">2. Start URSA<a class="headerlink" href="#2-start-ursa" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa
+</code></pre></div>
+<p>You should see the full-screen URSA interface. Type <code>/</code> to browse app
+commands, <code>#</code> to route a message to an agent, or <code>@</code> to insert a workspace
+path.</p>
+<h3 id="full-screen-interface-controls">Full-screen interface controls<a class="headerlink" href="#full-screen-interface-controls" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>Browse application commands. Use <code>/keymap</code> for every keyboard shortcut.</td>
+</tr>
+<tr>
+<td><code>#</code></td>
+<td>Choose an agent and route the message to it.</td>
+</tr>
+<tr>
+<td><code>@</code></td>
+<td>Insert a workspace file or directory into the message.</td>
+</tr>
+<tr>
+<td><strong>Enter</strong></td>
+<td>Submit the message.</td>
+</tr>
+<tr>
+<td><strong>Shift+Enter</strong> or <strong>Ctrl+J</strong></td>
+<td>Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Q</strong> or <code>/exit</code></td>
+<td>Exit gracefully, waiting for an active turn to finish.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+D</strong></td>
+<td>Exit immediately without cleanup; reserve this for a stuck turn.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-chat-with-the-assistant">3. Chat with the assistant<a class="headerlink" href="#3-chat-with-the-assistant" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Summarize what URSA can help me do.
+</code></pre></div>
+<p>Plain text input is handled by the default chat behavior.</p>
+<h2 id="4-use-the-planning-agent">4. Use the planning agent<a class="headerlink" href="#4-use-the-planning-agent" title="Permanent link">&para;</a></h2>
+<p>Run the planning agent with the <code>#plan</code> macro. Typing <code>#</code> opens the agent
+picker and inserts the selected behavior at the front of the prompt:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>#plan Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
+</code></pre></div>
+<p>The leading <code>#</code> is required; <code>plan ...</code> without it is ordinary chat input.</p>
+<h2 id="5-use-the-execution-agent">5. Use the execution agent<a class="headerlink" href="#5-use-the-execution-agent" title="Permanent link">&para;</a></h2>
+<p>The execution agent can write files and run commands in the configured workspace.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>#execute Write and run a Python script that prints the first 10 prime numbers.
+</code></pre></div>
+<p>Review the actions and outputs carefully. For more safety guidance, see
+<a class="autorefs autorefs-internal" href="../../best-practices/sandboxing/#sandboxing-and-information-control">Sandboxing and information control</a>.</p>
+<h2 id="6-optional-use-a-named-agent">6. Optional: use a named agent<a class="headerlink" href="#6-optional-use-a-named-agent" title="Permanent link">&para;</a></h2>
+<p>A named agent stores state so you can return to it later:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>my-first-agent
+</code></pre></div>
+<p>For detailed commands to list, save, copy, share, import, and delete agents, see <a href="../../persistence/">Persistence</a>.</p>
+<h2 id="useful-ursa-cli-commands">Useful <code>ursa</code> CLI commands<a class="headerlink" href="#useful-ursa-cli-commands" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ursa
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>ursa<span class="w"> </span>--help
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>ursa<span class="w"> </span>--print-config
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>ursa<span class="w"> </span>--name<span class="w"> </span>my-agent
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>ursa<span class="w"> </span>--use-web
+</code></pre></div>
+<p>Web tools are opt in. Use <code>--use-web</code> or <code>use_web: true</code> only when you want URSA
+to make network requests through its web-search tools.</p>
+<h2 id="where-next">Where next?<a class="headerlink" href="#where-next" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../configuration/">Configure model endpoints</a></li>
+<li><a href="../../persistence/">Learn about persistence</a></li>
+<li><a class="autorefs autorefs-internal" title="Getting Started - Python Scripts" href="../python-scripts/#getting-started-python-scripts">Use URSA from Python scripts</a></li>
+<li><a class="autorefs autorefs-internal" title="Getting Started - MCP Server" href="../mcp-server/#getting-started-mcp-server">Run URSA as an MCP server</a></li>
+</ul>
 
 
 
@@ -2231,10 +2274,12 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

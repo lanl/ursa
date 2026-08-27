@@ -43,6 +43,8 @@
     
       <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -270,7 +272,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -281,7 +283,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -292,7 +294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/" class="md-nav__link">
+      <a href="../getting-started/" class="md-nav__link">
         
   
   
@@ -315,103 +317,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/uv/" class="md-nav__link">
+      <a href="../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -527,6 +438,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -589,12 +522,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -612,35 +545,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/ollama/" class="md-nav__link">
+      <a href="../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1726,29 +1636,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -1997,44 +1884,30 @@
 
 <h2 id="command-line-usage">Command Line Usage<a class="headerlink" href="#command-line-usage" title="Permanent link">&para;</a></h2>
 <p>You can install <code>ursa</code> as a command line app with <code>pip install</code>; or with <a href="https://docs.astral.sh/uv/"><code>uv</code></a> via</p>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>ursa-ai
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa[dashboard]&#39;</span>
 </code></pre></div>
 <p>To use the command line app, run</p>
-<div class="highlight"><pre><span></span><code>ursa --llm_model.model openai:gpt-5.2
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>--llm_model.model<span class="w"> </span>openai:gpt-5.2
 </code></pre></div>
-<p>This will start a REPL in your terminal.</p>
-<div class="highlight"><pre><span></span><code>  __  ________________ _
- / / / / ___/ ___/ __ `/
-/ /_/ / /  (__  ) /_/ /
-\__,_/_/  /____/\__,_/
-
-For help, type: ? or help. Exit with Ctrl+d.
-ursa&gt;
-</code></pre></div>
-<p>Within the REPL, you can get help by typing <code>?</code> or <code>help</code>.</p>
+<p>This starts the full-screen terminal app. Type <code>/</code> to browse commands,
+<code>#</code> to choose an agent behavior, or <code>@</code> to insert a workspace path.</p>
 <p>You can chat with an LLM by simply typing into the terminal.</p>
-<div class="highlight"><pre><span></span><code>ursa&gt; How are you?
-Thanks for asking! I’m doing well. How are you today? What can I help you with?
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>How are you?
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>Thanks for asking! I’m doing well. How are you today? What can I help you with?
 </code></pre></div>
-<p>You can run various agents by typing the name of the agent. For example,</p>
-<div class="highlight"><pre><span></span><code>ursa&gt; plan
-plan: Write a python script to do linear regression using only numpy.
-</code></pre></div>
-<p>Or by prepending the agent name to the query:</p>
-<div class="highlight"><pre><span></span><code>ursa&gt;<span class="w"> </span>plan<span class="w"> </span>Write<span class="w"> </span>a<span class="w"> </span>python<span class="w"> </span>script<span class="w"> </span>to<span class="w"> </span><span class="k">do</span><span class="w"> </span>linear<span class="w"> </span>regression<span class="w"> </span>using<span class="w"> </span>only<span class="w"> </span>numpy.
+<p>Use the required <code>#</code> macro to route a prompt to another agent behavior:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>#plan Write a python script to do linear regression using only numpy.
 </code></pre></div>
 <p>If you run subsequent agents, the last output will be appended to the prompt for the next agent.</p>
 <p>So, to run the Planning Agent followed by the Execution Agent:
-<div class="highlight"><pre><span></span><code>ursa&gt; plan
-plan: Write a python script to do linear regression using only numpy.
-
-...
-
-ursa&gt; execute
-execute: Execute the plan.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>#plan Write a python script to do linear regression using only numpy.
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>...
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>#execute Execute the plan.
 </code></pre></div></p>
 <p>You can get a list of available command line options via
-<div class="highlight"><pre><span></span><code>ursa --help
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>--help
 </code></pre></div></p>
 
 
@@ -2084,10 +1957,12 @@ execute: Execute the plan.
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": [], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "content.code.copy"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../javascripts/example-filter.js"></script>
       
     
   </body>

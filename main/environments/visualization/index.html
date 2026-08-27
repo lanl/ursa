@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1873,29 +1783,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2249,80 +2136,80 @@ running.</p>
 <li>What failed, and at what point in the collaboration?</li>
 </ul>
 <p>The visualization helpers are available from <code>ursa.environments</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">arun_with_visualization</span><span class="p">,</span> <span class="n">run_with_visualization</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">arun_with_visualization</span><span class="p">,</span> <span class="n">run_with_visualization</span>
 </code></pre></div>
 <h2 id="run-a-team-with-visualization">Run a team with visualization<a class="headerlink" href="#run-a-team-with-visualization" title="Permanent link">&para;</a></h2>
 <p>Use <code>run_with_visualization(...)</code> anywhere you would normally call
 <code>environment.invoke(...)</code> synchronously.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentTeamEnvironment</span><span class="p">,</span> <span class="n">run_with_visualization</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
-
-<span class="n">team</span> <span class="o">=</span> <span class="n">AgentTeamEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
-    <span class="s2">&quot;examples/environments/agent_team.yaml&quot;</span><span class="p">,</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
-    <span class="n">team</span><span class="p">,</span>
-    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Analyze this research question and recommend a next step.&quot;</span><span class="p">},</span>
-<span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentTeamEnvironment</span><span class="p">,</span> <span class="n">run_with_visualization</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">team</span> <span class="o">=</span> <span class="n">AgentTeamEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="s2">&quot;examples/environments/agent_team.yaml&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">team</span><span class="p">,</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Analyze this research question and recommend a next step.&quot;</span><span class="p">},</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="p">)</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
 </code></pre></div>
 <p><code>run_with_visualization(...)</code> creates an environment run recorder, invokes the
 environment with the recorder attached as a LangChain callback, and writes a
 replayable event stream to disk.</p>
 <h2 id="run-a-symposium-with-visualization">Run a symposium with visualization<a class="headerlink" href="#run-a-symposium-with-visualization" title="Permanent link">&para;</a></h2>
 <p>The same helper works for <code>AgentSymposiumEnvironment</code>.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSymposiumEnvironment</span><span class="p">,</span> <span class="n">run_with_visualization</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
-
-<span class="n">symposium</span> <span class="o">=</span> <span class="n">AgentSymposiumEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
-    <span class="s2">&quot;examples/environments/agent_symposium.yaml&quot;</span><span class="p">,</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
-    <span class="n">symposium</span><span class="p">,</span>
-    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Compare two solution strategies and recommend one.&quot;</span><span class="p">},</span>
-<span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSymposiumEnvironment</span><span class="p">,</span> <span class="n">run_with_visualization</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">symposium</span> <span class="o">=</span> <span class="n">AgentSymposiumEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="s2">&quot;examples/environments/agent_symposium.yaml&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="n">symposium</span><span class="p">,</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Compare two solution strategies and recommend one.&quot;</span><span class="p">},</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="p">)</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final&quot;</span><span class="p">])</span>
 </code></pre></div>
 <p>Symposium replays include the initial independent work, review rounds, revision
 rounds, synthesis step, and final symposium completion event.</p>
 <h2 id="async-usage">Async usage<a class="headerlink" href="#async-usage" title="Permanent link">&para;</a></h2>
 <p>Use <code>arun_with_visualization(...)</code> when running an environment from async code.
 It mirrors <code>environment.ainvoke(...)</code>.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSymposiumEnvironment</span><span class="p">,</span> <span class="n">arun_with_visualization</span>
-
-<span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
-
-<span class="n">symposium</span> <span class="o">=</span> <span class="n">AgentSymposiumEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
-    <span class="s2">&quot;examples/environments/agent_symposium.yaml&quot;</span><span class="p">,</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">arun_with_visualization</span><span class="p">(</span>
-    <span class="n">symposium</span><span class="p">,</span>
-    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Evaluate competing hypotheses and produce a final recommendation.&quot;</span><span class="p">},</span>
-<span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final&quot;</span><span class="p">])</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.environments</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentSymposiumEnvironment</span><span class="p">,</span> <span class="n">arun_with_visualization</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">init_chat_model</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai:gpt-5.4-mini&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">symposium</span> <span class="o">=</span> <span class="n">AgentSymposiumEnvironment</span><span class="o">.</span><span class="n">from_yaml</span><span class="p">(</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="s2">&quot;examples/environments/agent_symposium.yaml&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">arun_with_visualization</span><span class="p">(</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">symposium</span><span class="p">,</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Evaluate competing hypotheses and produce a final recommendation.&quot;</span><span class="p">},</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="p">)</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">&quot;final&quot;</span><span class="p">])</span>
 </code></pre></div>
 <h2 id="choose-a-run-id">Choose a run ID<a class="headerlink" href="#choose-a-run-id" title="Permanent link">&para;</a></h2>
 <p>By default, URSA generates a unique run ID. You can provide one when you want a
 stable name for a run:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
-    <span class="n">team</span><span class="p">,</span>
-    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Summarize the experiment plan.&quot;</span><span class="p">},</span>
-    <span class="n">run_id</span><span class="o">=</span><span class="s2">&quot;experiment-plan-review&quot;</span><span class="p">,</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">team</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Summarize the experiment plan.&quot;</span><span class="p">},</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">run_id</span><span class="o">=</span><span class="s2">&quot;experiment-plan-review&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">)</span>
 </code></pre></div>
 <p>If you reuse a run ID, the recorder writes into the same run directory. Prefer a
 new run ID for each replay unless you intentionally want to update or replace a
@@ -2331,14 +2218,14 @@ specific run record.</p>
 <p>Both helpers accept an optional <code>config</code> argument. URSA merges this config with
 the visualization recorder config so you can keep passing callbacks, tags, or
 metadata that your application already uses.</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
-    <span class="n">team</span><span class="p">,</span>
-    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Review these results.&quot;</span><span class="p">},</span>
-    <span class="n">config</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;paper-review&quot;</span><span class="p">],</span>
-        <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;project&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">},</span>
-    <span class="p">},</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">team</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Review these results.&quot;</span><span class="p">},</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">config</span><span class="o">=</span><span class="p">{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>        <span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;paper-review&quot;</span><span class="p">],</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;project&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">},</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="p">},</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="p">)</span>
 </code></pre></div>
 <p>The visualization callback is added to the run while your supplied config remains
 available to the underlying LangChain calls.</p>
@@ -2347,23 +2234,23 @@ available to the underlying LangChain calls.</p>
 outputs, errors, and final results. Large strings are truncated before they are
 written to the event file. The default per-string limit is 30,000 characters.</p>
 <p>You can lower or raise that limit with <code>max_payload_chars</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
-    <span class="n">team</span><span class="p">,</span>
-    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Inspect these files and report findings.&quot;</span><span class="p">},</span>
-    <span class="n">max_payload_chars</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_with_visualization</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">team</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="p">{</span><span class="s2">&quot;task&quot;</span><span class="p">:</span> <span class="s2">&quot;Inspect these files and report findings.&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">max_payload_chars</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="p">)</span>
 </code></pre></div>
 <p>Use a smaller value when you expect very large tool outputs or want smaller replay
 files.</p>
 <h2 id="where-runs-are-stored">Where runs are stored<a class="headerlink" href="#where-runs-are-stored" title="Permanent link">&para;</a></h2>
 <p>Recorded environment runs are stored under the active URSA group cache:</p>
-<div class="highlight"><pre><span></span><code>~/.cache/ursa/&lt;group&gt;/environment_runs/&lt;run_id&gt;/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>~/.cache/ursa/&lt;group&gt;/environment_runs/&lt;run_id&gt;/
 </code></pre></div>
 <p>Each run directory contains:</p>
-<div class="highlight"><pre><span></span><code>manifest.json
-events.jsonl
-artifacts/
-logs/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>manifest.json
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>events.jsonl
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>artifacts/
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>logs/
 </code></pre></div>
 <p><code>manifest.json</code> stores run metadata such as the run ID, group, environment name,
 environment type, status, timestamps, and task preview.</p>
@@ -2375,7 +2262,7 @@ log output.</p>
 <h2 id="view-runs-in-the-dashboard">View runs in the dashboard<a class="headerlink" href="#view-runs-in-the-dashboard" title="Permanent link">&para;</a></h2>
 <p>Start the URSA dashboard as usual, then open the <strong>Environment Runs</strong> page from
 the dashboard toolbar. You can also navigate directly to:</p>
-<div class="highlight"><pre><span></span><code>/ui/environment-runs
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/ui/environment-runs
 </code></pre></div>
 <p>The dashboard can also create and launch environments without a Python wrapper:</p>
 <ol>
@@ -2423,20 +2310,20 @@ load, the dashboard falls back to a simpler graph display.</p>
 </div>
 <h2 id="raw-run-apis">Raw run APIs<a class="headerlink" href="#raw-run-apis" title="Permanent link">&para;</a></h2>
 <p>The dashboard also exposes authenticated JSON endpoints for recorded runs:</p>
-<div class="highlight"><pre><span></span><code>GET /environment-runs
-POST /environment-runs
-POST /environment-runs/validate
-GET /environment-runs/{run_id}
-GET /environment-runs/{run_id}/events
-GET /environment-runs/{run_id}/stream
-POST /environment-runs/{run_id}/cancel
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>GET /environment-runs
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>POST /environment-runs
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>POST /environment-runs/validate
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>GET /environment-runs/{run_id}
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>GET /environment-runs/{run_id}/events
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>GET /environment-runs/{run_id}/stream
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>POST /environment-runs/{run_id}/cancel
 </code></pre></div>
 <p>Use the events endpoint with <code>after_seq</code> and <code>limit</code> to page through the event
 stream:</p>
-<div class="highlight"><pre><span></span><code>/environment-runs/example-run/events?after_seq=0&amp;limit=1000
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/environment-runs/example-run/events?after_seq=0&amp;limit=1000
 </code></pre></div>
 <p>The stream endpoint uses server-sent events for live updates:</p>
-<div class="highlight"><pre><span></span><code>/environment-runs/example-run/stream?after_seq=42
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>/environment-runs/example-run/stream?after_seq=42
 </code></pre></div>
 <h2 id="what-is-recorded">What is recorded<a class="headerlink" href="#what-is-recorded" title="Permanent link">&para;</a></h2>
 <p>Agent team runs record events such as:</p>
@@ -2529,10 +2416,12 @@ include:</p>
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

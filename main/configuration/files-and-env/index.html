@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://lanl.github.io/ursa/main/configuration/files-and-env/">
       
       
-        <link rel="prev" href="../langchain-providers/">
+        <link rel="prev" href="../secrets/">
       
       
         <link rel="next" href="../mcp/">
@@ -46,6 +46,8 @@
     
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -529,6 +440,28 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -595,12 +528,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../openai-compatible/" class="md-nav__link">
+      <a href="../models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -618,35 +551,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../ollama/" class="md-nav__link">
+      <a href="../secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -714,9 +624,33 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#yaml-files-preferred" class="md-nav__link">
+  <a href="#configuration-precedence" class="md-nav__link">
     <span class="md-ellipsis">
-      YAML files: preferred
+      Configuration precedence
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration precedence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-configuration-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Default configuration paths
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-yaml-files-preferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      User YAML files: preferred
     </span>
   </a>
   
@@ -1819,29 +1753,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2061,9 +1972,33 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#yaml-files-preferred" class="md-nav__link">
+  <a href="#configuration-precedence" class="md-nav__link">
     <span class="md-ellipsis">
-      YAML files: preferred
+      Configuration precedence
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration precedence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-configuration-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Default configuration paths
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-yaml-files-preferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      User YAML files: preferred
     </span>
   </a>
   
@@ -2125,66 +2060,145 @@
 
 
 <h1 id="configuration-files-cli-flags-and-environment-variables">Configuration files, CLI flags, and environment variables<a class="headerlink" href="#configuration-files-cli-flags-and-environment-variables" title="Permanent link">&para;</a></h1>
-<p>URSA supports three configuration mechanisms. Prefer YAML files for project settings, CLI flags for temporary overrides, and environment variables for secrets or automation.</p>
-<h2 id="yaml-files-preferred">YAML files: preferred<a class="headerlink" href="#yaml-files-preferred" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:gpt-5.4</span>
-<span class="w">  </span><span class="nt">api_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OPENAI_API_KEY</span>
-
-<span class="nt">workspace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./ursa-workspace</span>
-<span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
-<span class="nt">use_web</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<p>URSA configs can be layered. Use YAML files for reusable settings, environment
+variables for secrets or automation, and CLI flags for temporary overrides.</p>
+<h2 id="configuration-precedence">Configuration precedence<a class="headerlink" href="#configuration-precedence" title="Permanent link">&para;</a></h2>
+<p>URSA loads configuration in this order, with later sources overriding earlier ones:</p>
+<ol>
+<li>Built-in defaults</li>
+<li>The native platform system config</li>
+<li>User configs: native platform location, <code>~/.config/ursa/config.yaml</code>, then
+   <code>$XDG_CONFIG_HOME/ursa/config.yaml</code></li>
+<li>Environment variables</li>
+<li>The file passed to <code>--config</code></li>
+<li>CLI flags</li>
+</ol>
+<p>Higher-precedence sources only override settings they specify. Set a nullable
+setting to <code>null</code> to clear it.</p>
+<p><code>XDG_CONFIG_HOME</code> is supported on every platform and only affects the user
+configuration layer.</p>
+<h3 id="default-configuration-paths">Default configuration paths<a class="headerlink" href="#default-configuration-paths" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>System config</th>
+<th>Native user config</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux and other Unix</td>
+<td><code>/etc/ursa/config.yaml</code></td>
+<td><code>~/.config/ursa/config.yaml</code></td>
+</tr>
+<tr>
+<td>macOS</td>
+<td><code>/Library/Application Support/ursa/config.yaml</code></td>
+<td><code>~/Library/Application Support/ursa/config.yaml</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>%PROGRAMDATA%\ursa\config.yaml</code></td>
+<td><code>%APPDATA%\ursa\config.yaml</code></td>
+</tr>
+</tbody>
+</table>
+<p>On every platform, URSA then checks <code>~/.config/ursa/config.yaml</code> and, when
+<code>XDG_CONFIG_HOME</code> is set, <code>$XDG_CONFIG_HOME/ursa/config.yaml</code>. These user files
+are loaded in that order, with duplicates skipped. A missing file is ignored.</p>
+<h2 id="user-yaml-files-preferred">User YAML files: preferred<a class="headerlink" href="#user-yaml-files-preferred" title="Permanent link">&para;</a></h2>
+<p>For defaults that should follow you across projects, edit the user config path
+listed above. A small user config is usually better than a complete copy of the
+resolved defaults. For example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">emb_model</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:text-embedding-3-large</span>
 </code></pre></div>
-<p>Run:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml
+<p>OpenAI chat needs no YAML; set <code>OPENAI_API_KEY</code> and run <code>ursa</code>. Use an explicit
+file only for a project-specific or one-off override:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml
 </code></pre></div>
 <p>YAML files are best when you want to reuse the same model, workspace, group, MCP server, or agent settings across multiple runs.</p>
 <h2 id="cli-flags-useful-overrides">CLI flags: useful overrides<a class="headerlink" href="#cli-flags-useful-overrides" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--llm_model.model<span class="w"> </span>openai:gpt-5.4
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--llm_model.model<span class="w"> </span>openai:gpt-5.4
 </code></pre></div>
 <p>Common flags include:</p>
-<div class="highlight"><pre><span></span><code>--workspace
---group
---thread_id
---use_web
---name
---llm_model.model
---llm_model.base_url
---llm_model.api_key_env
---llm_model.ssl_verify
---llm_model.max_completion_tokens
---emb_model
---mcp_servers
---rag-tools
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>--workspace
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>--group
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>--thread_id
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>--use_web
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>--name
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>--llm_model.model
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>--llm_model.base_url
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>--llm_model.api_key.env
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>--llm_model.ssl_verify
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>--llm_model.max_completion_tokens
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>--emb_model
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>--mcp_servers
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>--rag-tools
 </code></pre></div>
 <p>Use <code>ursa --help</code> for the authoritative list.</p>
 <h2 id="environment-variables-secrets-and-automation">Environment variables: secrets and automation<a class="headerlink" href="#environment-variables-secrets-and-automation" title="Permanent link">&para;</a></h2>
 <p>URSA exposes environment-variable equivalents for many CLI settings, but for most users environment variables are best for API keys and automated deployment.</p>
 <p>Example:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">macOS/Linux</label><label for="__tabbed_1_2">Windows PowerShell</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
 </code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
+</code></pre></div>
+</div>
+</div>
+</div>
 <p>Then in YAML:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">llm_model</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:gpt-5.4</span>
-<span class="w">  </span><span class="nt">api_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OPENAI_API_KEY</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">llm_model</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:gpt-5.4</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">api_key</span><span class="p">:</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OPENAI_API_KEY</span>
 </code></pre></div>
 <p>You can also set URSA configuration options directly:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">URSA_LLM_MODEL__MODEL</span><span class="o">=</span>openai:gpt-5.4<span class="w"> </span>ursa
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">macOS/Linux</label><label for="__tabbed_2_2">Windows PowerShell</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">URSA_LLM_MODEL__MODEL</span><span class="o">=</span>openai:gpt-5.4<span class="w"> </span>ursa
 </code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nv">$env:URSA_LLM_MODEL__MODEL</span> <span class="p">=</span> <span class="s2">&quot;openai:gpt-5.4&quot;</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">ursa</span>
+</code></pre></div>
+</div>
+</div>
+</div>
 <p>Use <code>ursa --help</code> to view supported <code>URSA_...</code> variables.</p>
 <h2 id="environment-interpolation-in-config-files">Environment interpolation in config files<a class="headerlink" href="#environment-interpolation-in-config-files" title="Permanent link">&para;</a></h2>
 <p>URSA config loading supports environment interpolation in YAML values. For MCP server environment blocks, this is useful for passing secrets to subprocesses:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">mcp_servers</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">example</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stdio</span>
-<span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">example-server</span>
-<span class="w">    </span><span class="nt">env</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">API_KEY</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${EXAMPLE_API_KEY}</span>
-<span class="w">      </span><span class="nt">OPTIONAL_SETTING</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPTIONAL_SETTING:default-value}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">mcp_servers</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">example</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stdio</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">example-server</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">env</span><span class="p">:</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">      </span><span class="nt">API_KEY</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${EXAMPLE_API_KEY}</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">      </span><span class="nt">OPTIONAL_SETTING</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPTIONAL_SETTING:default-value}</span>
 </code></pre></div>
 <h2 id="inspect-the-active-configuration">Inspect the active configuration<a class="headerlink" href="#inspect-the-active-configuration" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--print-config
+<p><code>--print-config</code> prints the full active configuration, including defaults and
+null values:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ursa<span class="w"> </span>--print-config
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>ursa<span class="w"> </span>--print-config<span class="o">=</span>resolved
 </code></pre></div>
+<p>To inspect values before provider settings and other derived values are applied:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>ursa<span class="w"> </span>--print-config<span class="o">=</span>merged
+</code></pre></div>
+<p>You can also inspect a particular file layer:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>./.ursa/config.yaml<span class="w"> </span>--print-config<span class="o">=</span>file,resolved
+</code></pre></div>
+<p>The complete form is <code>--print-config=LEVEL[+],STAGE</code>. Levels are <code>system</code>,
+<code>user</code>, <code>file</code>, and <code>final</code>; stages are <code>merged</code> and <code>resolved</code>. Add <code>+</code> to include
+lower-precedence sources.</p>
 
 
 
@@ -2233,10 +2247,12 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

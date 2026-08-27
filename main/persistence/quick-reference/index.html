@@ -47,6 +47,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -274,7 +276,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -285,7 +287,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -319,103 +321,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -531,6 +442,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -593,12 +526,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -616,35 +549,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1810,29 +1720,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2108,35 +1995,35 @@
 
 <h1 id="persistence-quick-reference">Persistence quick reference<a class="headerlink" href="#persistence-quick-reference" title="Permanent link">&para;</a></h1>
 <h2 id="named-agents">Named agents<a class="headerlink" href="#named-agents" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>list-agents<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>show-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>save-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>copy-agent<span class="w"> </span>--name<span class="w"> </span>my-agent-copy<span class="w"> </span>--from<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default<span class="w"> </span>--from-group<span class="w"> </span>default
-ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>import-agent<span class="w"> </span>path/to/agent.tar.gz<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>ursa<span class="w"> </span>list-agents<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>ursa<span class="w"> </span>show-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>ursa<span class="w"> </span>save-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>ursa<span class="w"> </span>copy-agent<span class="w"> </span>--name<span class="w"> </span>my-agent-copy<span class="w"> </span>--from<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default<span class="w"> </span>--from-group<span class="w"> </span>default
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>ursa<span class="w"> </span>import-agent<span class="w"> </span>path/to/agent.tar.gz<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
 </code></pre></div>
 <h2 id="groups">Groups<a class="headerlink" href="#groups" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>list-groups
-ursa<span class="w"> </span>create-group<span class="w"> </span>research<span class="w"> </span>allowed_urls.yaml
-ursa<span class="w"> </span>show-group<span class="w"> </span>research
-ursa<span class="w"> </span>update-group<span class="w"> </span>research<span class="w"> </span>updated_allowed_urls.yaml
-ursa<span class="w"> </span>delete-group<span class="w"> </span>research
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>list-groups
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>ursa<span class="w"> </span>create-group<span class="w"> </span>research<span class="w"> </span>allowed_urls.yaml
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>ursa<span class="w"> </span>show-group<span class="w"> </span>research
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>ursa<span class="w"> </span>update-group<span class="w"> </span>research<span class="w"> </span>updated_allowed_urls.yaml
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>ursa<span class="w"> </span>delete-group<span class="w"> </span>research
 </code></pre></div>
 <h2 id="rag-collections">RAG collections<a class="headerlink" href="#rag-collections" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>rag-ingest<span class="w"> </span>./papers<span class="w"> </span>--name<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>rag-query<span class="w"> </span>--name<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default<span class="w"> </span><span class="s2">&quot;What are the main findings?&quot;</span>
-ursa<span class="w"> </span>list-rag-agents<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>show-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>save-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa<span class="w"> </span>rag-ingest<span class="w"> </span>./papers<span class="w"> </span>--name<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>ursa<span class="w"> </span>rag-query<span class="w"> </span>--name<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default<span class="w"> </span><span class="s2">&quot;What are the main findings?&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>ursa<span class="w"> </span>list-rag-agents<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>ursa<span class="w"> </span>show-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>ursa<span class="w"> </span>save-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>papers<span class="w"> </span>--group<span class="w"> </span>default
 </code></pre></div>
 <h2 id="attach-rag-collections-as-tools">Attach RAG collections as tools<a class="headerlink" href="#attach-rag-collections-as-tools" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--name<span class="w"> </span>assistant<span class="w"> </span>--rag-tools<span class="w"> </span>papers
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--name<span class="w"> </span>assistant<span class="w"> </span>--rag-tools<span class="w"> </span>papers
 </code></pre></div>
 <p>Multiple collections can be comma-separated:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--name<span class="w"> </span>assistant<span class="w"> </span>--rag-tools<span class="w"> </span>papers,lab-notes
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--name<span class="w"> </span>assistant<span class="w"> </span>--rag-tools<span class="w"> </span>papers,lab-notes
 </code></pre></div>
 
 
@@ -2186,10 +2073,12 @@ ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>papers<span 
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

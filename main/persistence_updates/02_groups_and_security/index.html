@@ -43,6 +43,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -270,7 +272,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -281,7 +283,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -292,7 +294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -315,103 +317,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -527,6 +438,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -589,12 +522,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -612,35 +545,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1726,29 +1636,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2053,52 +1940,52 @@
 <p>Groups organize persistent agents and can restrict which model endpoints they are allowed to use.</p>
 <h2 id="storage-layout">Storage layout<a class="headerlink" href="#storage-layout" title="Permanent link">&para;</a></h2>
 <p>Groups are stored under:</p>
-<div class="highlight"><pre><span></span><code>~/.cache/ursa_agents/&lt;group&gt;/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>~/.cache/ursa_agents/&lt;group&gt;/
 </code></pre></div>
 <p>Each non-default group has a config file:</p>
-<div class="highlight"><pre><span></span><code>~/.cache/ursa_agents/&lt;group&gt;/group.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>~/.cache/ursa_agents/&lt;group&gt;/group.yaml
 </code></pre></div>
 <p>The default group is:</p>
-<div class="highlight"><pre><span></span><code>default
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>default
 </code></pre></div>
 <p>The <code>default</code> group is unrestricted by the group endpoint whitelist policy.</p>
 <h2 id="group-config-format">Group config format<a class="headerlink" href="#group-config-format" title="Permanent link">&para;</a></h2>
 <p>A non-default group must define allowed model base URLs:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">allowed_base_urls</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://models.example.org/v1</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8000/v1</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">allowed_base_urls</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://models.example.org/v1</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8000/v1</span>
 </code></pre></div>
 <p>The whitelist is checked against model base URLs. Matching accepts the same normalized URL or same origin.</p>
 <h2 id="cli-group-commands">CLI group commands<a class="headerlink" href="#cli-group-commands" title="Permanent link">&para;</a></h2>
 <p>Create a group:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>create-group<span class="w"> </span>chemistry<span class="w"> </span>chemistry_group.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>create-group<span class="w"> </span>chemistry<span class="w"> </span>chemistry_group.yaml
 </code></pre></div>
 <p>List groups:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>list-groups
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>list-groups
 </code></pre></div>
 <p>Show a group:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>show-group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ursa<span class="w"> </span>show-group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>Update a group config:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>update-group<span class="w"> </span>chemistry<span class="w"> </span>chemistry_group.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ursa<span class="w"> </span>update-group<span class="w"> </span>chemistry<span class="w"> </span>chemistry_group.yaml
 </code></pre></div>
 <p>Delete a group:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>delete-group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ursa<span class="w"> </span>delete-group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>The <code>default</code> group cannot be deleted.</p>
 <h2 id="using-a-group">Using a group<a class="headerlink" href="#using-a-group" title="Permanent link">&para;</a></h2>
 <p>CLI:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--name<span class="w"> </span>catalyst-helper<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>catalyst-helper<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>Python:</p>
-<div class="highlight"><pre><span></span><code><span class="n">agent</span> <span class="o">=</span> <span class="n">ChatAgent</span><span class="p">(</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;catalyst-helper&quot;</span><span class="p">,</span>
-    <span class="n">group</span><span class="o">=</span><span class="s2">&quot;chemistry&quot;</span><span class="p">,</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ChatAgent</span><span class="p">(</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;catalyst-helper&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">group</span><span class="o">=</span><span class="s2">&quot;chemistry&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="p">)</span>
 </code></pre></div>
 <p>Dashboard:</p>
-<div class="highlight"><pre><span></span><code>ursa-dashboard<span class="w"> </span>--group<span class="w"> </span>chemistry
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>ursa-dashboard<span class="w"> </span>--group<span class="w"> </span>chemistry
 </code></pre></div>
 <p>The dashboard group is selected at launch. Agent discovery and management are scoped to that group.</p>
 <h2 id="security-behavior">Security behavior<a class="headerlink" href="#security-behavior" title="Permanent link">&para;</a></h2>
@@ -2106,17 +1993,17 @@
 <p>This applies in main runtime paths including:</p>
 <ul>
 <li>base agent construction</li>
-<li>CLI/HITL model setup</li>
+<li>TUI model setup</li>
 <li>RAG agent model and embedding setup</li>
 <li>RAG ingest/query commands</li>
 </ul>
 <p>If a URL is not allowed, URSA raises an error and includes the allowed base URLs.</p>
 <h2 id="rag-groups">RAG groups<a class="headerlink" href="#rag-groups" title="Permanent link">&para;</a></h2>
 <p>Persistent RAG agents use a parallel storage root:</p>
-<div class="highlight"><pre><span></span><code>~/.cache/ursa_rag/&lt;group&gt;/&lt;rag_agent_name&gt;/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>~/.cache/ursa_rag/&lt;group&gt;/&lt;rag_agent_name&gt;/
 </code></pre></div>
 <p>For non-default groups, the regular agent group must already exist:</p>
-<div class="highlight"><pre><span></span><code>~/.cache/ursa_agents/&lt;group&gt;/group.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>~/.cache/ursa_agents/&lt;group&gt;/group.yaml
 </code></pre></div>
 <p>URSA copies that group config into the RAG group when creating the RAG group if needed.</p>
 <h2 id="best-practices">Best practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
@@ -2125,7 +2012,7 @@
 <li>Use named groups for projects that must stay on approved model endpoints.</li>
 <li>Keep group names simple and descriptive.</li>
 <li>Update group configs when endpoint policy changes.</li>
-<li>Launch the dashboard with the same group you use from the CLI for a project.</li>
+<li>Launch the dashboard with the same group you use in the TUI for a project.</li>
 </ul>
 
 
@@ -2175,10 +2062,12 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>

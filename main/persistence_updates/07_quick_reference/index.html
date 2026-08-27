@@ -43,6 +43,8 @@
     
       <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
+      <link rel="stylesheet" href="../../stylesheets/example-filter.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -270,7 +272,7 @@
   
   
   <span class="md-ellipsis">
-    Installation
+    Getting Started
     
   </span>
   
@@ -281,7 +283,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Installation
+            Getting Started
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -292,7 +294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -315,103 +317,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/uv/" class="md-nav__link">
+      <a href="../../getting-started/tui/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Install with uv
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../installation/pip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Install with pip
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    Getting Started
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
-            <span class="md-nav__icon md-icon"></span>
-            Getting Started
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting-started/cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI
+    TUI
     
   </span>
   
@@ -527,6 +438,28 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
     
     
     
@@ -589,12 +522,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/openai-compatible/" class="md-nav__link">
+      <a href="../../configuration/models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    OpenAI-compatible endpoints
+    Models and inference providers
     
   </span>
   
@@ -612,35 +545,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/ollama/" class="md-nav__link">
+      <a href="../../configuration/secrets/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ollama and local endpoints
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/langchain-providers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    LangChain providers
+    Secrets
     
   </span>
   
@@ -1726,29 +1636,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tutorials/human-in-the-loop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Human in the Loop
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../reference/tutorials/neutron-star/" class="md-nav__link">
         
   
@@ -2042,60 +1929,60 @@
 
 <h1 id="quick-reference">Quick Reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h1>
 <h2 id="persistent-agents">Persistent agents<a class="headerlink" href="#persistent-agents" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--name<span class="w"> </span>my-agent
-ursa<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>my-group
-
-ursa<span class="w"> </span>list-agents<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>show-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>save-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>copy-agent<span class="w"> </span>--name<span class="w"> </span>new-agent<span class="w"> </span>--from<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-
-ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default<span class="w"> </span>--no-checkpoint
-ursa<span class="w"> </span>import-agent<span class="w"> </span>./archive.tar.gz<span class="w"> </span>--group<span class="w"> </span>default
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>my-agent
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>ursa<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>my-group
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>ursa<span class="w"> </span>list-agents<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>ursa<span class="w"> </span>show-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>ursa<span class="w"> </span>save-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>ursa<span class="w"> </span>copy-agent<span class="w"> </span>--name<span class="w"> </span>new-agent<span class="w"> </span>--from<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>ursa<span class="w"> </span>delete-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>ursa<span class="w"> </span>share-agent<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--group<span class="w"> </span>default<span class="w"> </span>--no-checkpoint
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>ursa<span class="w"> </span>import-agent<span class="w"> </span>./archive.tar.gz<span class="w"> </span>--group<span class="w"> </span>default
 </code></pre></div>
 <h2 id="groups">Groups<a class="headerlink" href="#groups" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>list-groups
-ursa<span class="w"> </span>create-group<span class="w"> </span>my-group<span class="w"> </span>group.yaml
-ursa<span class="w"> </span>show-group<span class="w"> </span>my-group
-ursa<span class="w"> </span>update-group<span class="w"> </span>my-group<span class="w"> </span>group.yaml
-ursa<span class="w"> </span>delete-group<span class="w"> </span>my-group
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>list-groups
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>ursa<span class="w"> </span>create-group<span class="w"> </span>my-group<span class="w"> </span>group.yaml
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>ursa<span class="w"> </span>show-group<span class="w"> </span>my-group
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>ursa<span class="w"> </span>update-group<span class="w"> </span>my-group<span class="w"> </span>group.yaml
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>ursa<span class="w"> </span>delete-group<span class="w"> </span>my-group
 </code></pre></div>
 <p>Example <code>group.yaml</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">allowed_base_urls</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://models.example.org/v1</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8000/v1</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">allowed_base_urls</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://models.example.org/v1</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8000/v1</span>
 </code></pre></div>
 <h2 id="rag-agents">RAG agents<a class="headerlink" href="#rag-agents" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>rag-ingest<span class="w"> </span>./docs<span class="w"> </span>--name<span class="w"> </span>docs-rag
-ursa<span class="w"> </span>rag-ingest<span class="w"> </span>./paper.pdf<span class="w"> </span>--name<span class="w"> </span>paper-rag<span class="w"> </span>--group<span class="w"> </span>my-group
-
-ursa<span class="w"> </span>rag-query<span class="w"> </span>--name<span class="w"> </span>docs-rag<span class="w"> </span>What<span class="w"> </span>is<span class="w"> </span><span class="k">in</span><span class="w"> </span>the<span class="w"> </span>documents?
-ursa<span class="w"> </span>rag-query<span class="w"> </span>--name<span class="w"> </span>docs-rag
-
-ursa<span class="w"> </span>list-rag-agents<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>show-rag-agent<span class="w"> </span>docs-rag<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>save-rag-agent<span class="w"> </span>docs-rag<span class="w"> </span>--group<span class="w"> </span>default
-ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>docs-rag<span class="w"> </span>--group<span class="w"> </span>default
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ursa<span class="w"> </span>rag-ingest<span class="w"> </span>./docs<span class="w"> </span>--name<span class="w"> </span>docs-rag
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>ursa<span class="w"> </span>rag-ingest<span class="w"> </span>./paper.pdf<span class="w"> </span>--name<span class="w"> </span>paper-rag<span class="w"> </span>--group<span class="w"> </span>my-group
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>ursa<span class="w"> </span>rag-query<span class="w"> </span>--name<span class="w"> </span>docs-rag<span class="w"> </span>What<span class="w"> </span>is<span class="w"> </span><span class="k">in</span><span class="w"> </span>the<span class="w"> </span>documents?
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>ursa<span class="w"> </span>rag-query<span class="w"> </span>--name<span class="w"> </span>docs-rag
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>ursa<span class="w"> </span>list-rag-agents<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>ursa<span class="w"> </span>show-rag-agent<span class="w"> </span>docs-rag<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>ursa<span class="w"> </span>save-rag-agent<span class="w"> </span>docs-rag<span class="w"> </span>--group<span class="w"> </span>default
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>ursa<span class="w"> </span>delete-rag-agent<span class="w"> </span>docs-rag<span class="w"> </span>--group<span class="w"> </span>default
 </code></pre></div>
 <h2 id="rag-tools">RAG tools<a class="headerlink" href="#rag-tools" title="Permanent link">&para;</a></h2>
 <p>CLI:</p>
-<div class="highlight"><pre><span></span><code>ursa<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--rag-tools<span class="w"> </span>docs-rag,paper-rag
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>my-agent<span class="w"> </span>--rag-tools<span class="w"> </span>docs-rag,paper-rag
 </code></pre></div>
 <p>Python:</p>
-<div class="highlight"><pre><span></span><code><span class="n">agent</span> <span class="o">=</span> <span class="n">ChatAgent</span><span class="p">(</span>
-    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
-    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span>
-    <span class="n">rag_tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;docs-rag&quot;</span><span class="p">,</span> <span class="s2">&quot;paper-rag&quot;</span><span class="p">],</span>
-<span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ChatAgent</span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">rag_tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;docs-rag&quot;</span><span class="p">,</span> <span class="s2">&quot;paper-rag&quot;</span><span class="p">],</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">)</span>
 </code></pre></div>
 <p>Dashboard:</p>
-<div class="highlight"><pre><span></span><code>Settings -&gt; Agent tools -&gt; Add RAG agents -&gt; Save
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Settings -&gt; Agent tools -&gt; Add RAG agents -&gt; Save
 </code></pre></div>
 <h2 id="dashboard">Dashboard<a class="headerlink" href="#dashboard" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>ursa-dashboard
-ursa-dashboard<span class="w"> </span>--group<span class="w"> </span>my-group
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ursa-dashboard
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>ursa-dashboard<span class="w"> </span>--group<span class="w"> </span>my-group
 </code></pre></div>
 <p>Dashboard concepts:</p>
 <ul>
@@ -2107,19 +1994,19 @@ ursa-dashboard<span class="w"> </span>--group<span class="w"> </span>my-group
 </ul>
 <h2 id="python-examples">Python examples<a class="headerlink" href="#python-examples" title="Permanent link">&para;</a></h2>
 <p>Chat behavior:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatAgent</span>
-
-<span class="n">agent</span> <span class="o">=</span> <span class="n">ChatAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatAgent</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ChatAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>Execution behavior:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span>
-
-<span class="n">agent</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionAgent</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">ExecutionAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>Prompt refinement:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">PromptingAgent</span>
-
-<span class="n">agent</span> <span class="o">=</span> <span class="n">PromptingAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;prompt-helper&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ursa.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">PromptingAgent</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">agent</span> <span class="o">=</span> <span class="n">PromptingAgent</span><span class="p">(</span><span class="n">llm</span><span class="o">=</span><span class="n">llm</span><span class="p">,</span> <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;prompt-helper&quot;</span><span class="p">)</span>
 </code></pre></div>
 
 
@@ -2169,10 +2056,12 @@ ursa-dashboard<span class="w"> </span>--group<span class="w"> </span>my-group
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/example-filter.js"></script>
       
     
   </body>
