@@ -14,8 +14,11 @@ from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
 from ursa.cli.tui.widgets import (
     ActivityIndicator,
+    InformationScreen,
     MessageCard,
+    ModelScreen,
     PromptArea,
+    TermsScreen,
     WelcomeBanner,
 )
 
@@ -279,12 +282,14 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         await pilot.press("w", "a", "i", "t", "enter")
         await started.wait()
         prompt = app.query_one(PromptArea)
-        assert prompt.disabled
+        assert not prompt.disabled
+        assert app._agent_running
 
         await pilot.press("ctrl+c")
         assert await wait_for(pilot, lambda: len(notifications) == 1)
 
-        assert prompt.disabled
+        assert not prompt.disabled
+        assert app._agent_running
         assert any(worker.group == "agent" for worker in app.workers)
         assert "not supported" in notifications[0][0]
         assert "Ctrl+D" in notifications[0][0]
@@ -293,6 +298,68 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         release.set()
         await app.workers.wait_for_complete()
         assert await wait_for(pilot, lambda: not prompt.disabled)
+        assert not app._agent_running
+
+
+async def test_active_turn_allows_commands_but_blocks_models_and_prompts(
+    tmp_path, monkeypatch
+):
+    hitl = FakeHITL(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_agent(name, prompt, callbacks=None):
+        hitl.calls.append((name, prompt))
+        started.set()
+        await release.wait()
+        return "Finished"
+
+    hitl.run_agent = run_agent
+    app = UrsaTextualApp(hitl)
+    notifications = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("w", "a", "i", "t", "enter")
+        await started.wait()
+        prompt = app.query_one(PromptArea)
+        assert not prompt.disabled
+
+        commands = app._hotlist_candidates("/")
+        assert any(choice.startswith("status ") for choice in commands)
+        assert any(choice.startswith("terms ") for choice in commands)
+        assert any(choice.startswith("theme ") for choice in commands)
+        assert not any(choice.startswith("models ") for choice in commands)
+
+        await app._show_command("status")
+        await pilot.pause()
+        assert isinstance(app.screen, InformationScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await app._show_command("terms")
+        await pilot.pause()
+        assert isinstance(app.screen, TermsScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await app._show_command("models")
+        await pilot.pause()
+        assert not isinstance(app.screen, ModelScreen)
+        assert "cannot be changed" in notifications[-1][0]
+
+        await pilot.press("n", "e", "x", "t", "enter")
+        await pilot.pause()
+        assert hitl.calls == [("chat", "wait")]
+        assert prompt.text == "next"
+        assert "another prompt" in notifications[-1][0]
+
+        release.set()
+        await app.workers.wait_for_complete()
 
 
 async def test_clear_conversation_is_refused_during_active_turn(

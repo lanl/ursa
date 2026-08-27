@@ -245,14 +245,21 @@ async def test_run_command_blocks_commands_that_fail_safety_check(
     store.put(("workspace", "safe_codes"), "julia", {})
 
     search_calls = []
-    original_search = InMemoryStore.search
+    original_asearch = InMemoryStore.asearch
 
-    def tracked_search(self, namespace_prefix, /, **kwargs):
+    async def tracked_asearch(self, namespace_prefix, /, **kwargs):
         if self is store:
             search_calls.append((namespace_prefix, kwargs.get("limit")))
-        return original_search(self, namespace_prefix, **kwargs)
+        return await original_asearch(self, namespace_prefix, **kwargs)
 
-    monkeypatch.setattr(InMemoryStore, "search", tracked_search)
+    monkeypatch.setattr(
+        InMemoryStore,
+        "search",
+        lambda *args, **kwargs: pytest.fail(
+            "async safety assessment must not call store.search"
+        ),
+    )
+    monkeypatch.setattr(InMemoryStore, "asearch", tracked_asearch)
 
     result, recorder = await ainvoke_with_event_recorder(
         run_command.coroutine,

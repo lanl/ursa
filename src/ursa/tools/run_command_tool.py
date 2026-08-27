@@ -31,11 +31,11 @@ async def assess_command_safety(
 ) -> SafetyAssessment:
     """Apply URSA's configured command safety policy to *query*."""
     if runtime.store is not None:
-        search_results = runtime.store.search(
+        search_results = await runtime.store.asearch(
             ("workspace", "file_edit"), limit=1000
         )
         edited_files = [item.key for item in search_results]
-        search_results = runtime.store.search(
+        search_results = await runtime.store.asearch(
             ("workspace", "safe_codes"), limit=1000
         )
         safe_codes = [item.key for item in search_results]

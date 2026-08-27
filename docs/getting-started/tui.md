@@ -137,12 +137,17 @@ Useful commands inside the full-screen interface include:
 
 | Command | Purpose |
 | --- | --- |
-| `/status` | Show runtime, model, endpoint, group, and MCP status. |
+| `/status` | Show runtime, model, endpoint, group, terminal backend, and MCP status. |
 | `/terms` | Browse managed terminal sessions in a live, view-only modal. |
 | `/keymap` | Show the complete keyboard map. |
 | `/models` | Switch chat or embedding providers. |
 | `/theme` | Change the interface theme. |
 | `/exit` | Exit gracefully. |
+
+Terminal tool activity is grouped by session within each conversation turn.
+Its compact card shows the terminal's latest non-empty line; expand the card
+to see the live, styled terminal view. Repeated operations on the same session
+update that card instead of adding a card for every tool call.
 
 ## Where next?
 

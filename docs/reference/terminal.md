@@ -41,21 +41,34 @@ check does not cover input sent later through the `term_send_*` tools.
 `GhosttyTerm` is the preferred backend on supported macOS and Linux systems. It
 uses [`pyghostty`](https://github.com/AnswerDotAI/pyghostty) to maintain a real
 terminal screen, including scrollback, cursor position, and resize behavior.
-Install URSA's `term` extra where upstream publishes a wheel:
+It is installed automatically with URSA on the supported operating-system and
+CPU combinations where upstream publishes a wheel:
 
 ```bash
-uv pip install "ursa-ai[term]"
+uv sync
 ```
 
 - macOS 13 or newer on x86-64 or Apple silicon;
 - glibc-based Linux on x86-64 or AArch64.
 
+Python dependency markers cannot distinguish glibc Linux from musl Linux or
+express a minimum macOS release. Consequently, automatic dependency selection
+can still fail during installation on musl-based Linux or macOS older than 13;
+those environments must omit `pyghostty` when constructing an installation in
+order to use the runtime `ProcessTerm` fallback.
+
 `ProcessTerm` is the fallback when `pyghostty` is unavailable, including on
-Windows, unsupported architectures, and base installations without the `term`
-extra. It captures combined standard output and standard error in a private
-temporary file. It supports command execution, input, status, waiting, and
-line-based reads, but it does not emulate a terminal screen; cursor, size, and
-resize operations are therefore unavailable.
+Windows and unsupported architectures. It captures combined standard output
+and standard error in a private temporary file. It supports command execution,
+input, status, waiting, and line-based reads, but it does not emulate a
+terminal screen; cursor, size, and resize operations are therefore unavailable.
+
+Set `URSA_TERM_BACKEND=process` before starting URSA to force the portable
+fallback, even when Ghostty is installed. This is useful for testing the exact
+backend that Windows and unsupported platforms use. `URSA_TERM_BACKEND=ghostty`
+forces Ghostty and reports a configuration error if it is unavailable;
+`URSA_TERM_BACKEND=auto` (the default) prefers Ghostty and falls back to
+ProcessTerm. `/status` identifies forced backend selection.
 
 On Unix, sessions use Bash by default. On Windows, URSA prefers Git Bash when it
 is installed and otherwise uses PowerShell. Pass `shell` to `term` to override
@@ -126,6 +139,7 @@ The defaults can be changed before starting URSA:
 
 | Environment variable | Default | Meaning |
 | --- | ---: | --- |
+| `URSA_TERM_BACKEND` | `auto` | Backend selection: `auto`, `ghostty`, or `process`. |
 | `URSA_TERM_TIMEOUT` | `10` | Seconds allowed for a direct short-command result. |
 | `URSA_TERM_MAX_BYTES` | `20000` | UTF-8 output size at which `term` returns a session ID. |
 | `URSA_TERM_MAX_LINES` | `200` | Output line count at which `term` returns a session ID. |
