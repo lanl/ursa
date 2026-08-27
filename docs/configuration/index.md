@@ -1,12 +1,9 @@
 # Configuration
 
-YAML configuration files are the preferred way to configure URSA. They make model settings, workspaces, groups, agent options, RAG tools, and MCP servers easy to reuse and version with a project.
-
-URSA can also be configured with CLI flags and environment variables, but the recommended order is:
-
-1. **YAML configuration files** for reusable project settings.
-2. **CLI arguments** for one-off overrides.
-3. **Environment variables** mainly for secrets and automation.
+YAML files make model, workspace, agent, RAG, and MCP settings easy to reuse.
+URSA configs can also be
+[layered with environment variables and CLI flags][configuration-files-cli-flags-and-environment-variables],
+with commands to inspect the resulting configuration.
 
 ## Minimal config file
 
@@ -15,8 +12,8 @@ Create `config.yaml`:
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
-
+  api_key:
+    env: OPENAI_API_KEY
 workspace: ./ursa-workspace
 ```
 
@@ -33,15 +30,14 @@ workspace: ./ursa-workspace
 group: default
 thread_id: null
 use_web: false
-
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
   max_completion_tokens: 10000
-
 emb_model: null
 rag_tools: []
-agent_config: null
+agent_config: {}
 mcp_servers: {}
 ```
 
@@ -51,7 +47,7 @@ Use:
 ursa --print-config
 ```
 
-to inspect the active configuration and defaults.
+to inspect the full active configuration, including defaults and null values.
 
 ## Model configuration
 
@@ -84,22 +80,63 @@ llm_model:
   base_url: http://localhost:11434
 ```
 
-## Prefer `api_key_env` for secrets
+## Credential references
 
-Avoid hard-coding API keys in YAML files. Prefer:
+Keep credentials out of configuration files by referencing environment
+variables or the operating system keyring. See [Secrets][secrets] for keyring
+and MCP header examples.
+
+## Inference providers
+
+Use `inference_providers` to share endpoint and credential settings between
+models:
 
 ```yaml
+inference_providers:
+  openai_public:
+    base_url: https://api.openai.com/v1
+    api_key:
+      env: OPENAI_API_KEY
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  inference_provider: openai_public
+emb_model:
+  model: openai:text-embedding-3-large
+  inference_provider: openai_public
 ```
 
-Then set the key in your shell or secret manager.
+Models inherit unspecified provider settings; model-specific values override
+them. URSA validates provider values and rejects any model whose selected
+provider does not exist. Set a nullable model value to `null` to clear an
+inherited value.
+
+URSA includes an explicit `openai` provider by default, with
+`https://api.openai.com/v1` as its base URL and `OPENAI_API_KEY` as its API-key
+environment reference. The default chat model selects this provider. You can
+override its settings by defining `inference_providers.openai`.
+
+## `use_web` and `agent_config`
+
+Use `agent_config` for per-agent options. Top-level `use_web: true` enables web
+tools for supported agents unless an agent overrides it:
+
+```yaml
+use_web: true
+agent_config:
+  prompt:
+    use_web: false
+```
+
+## `workspace: tmp`
+
+Set `workspace: tmp` to create a temporary workspace for the run. If a local
+directory named `tmp` already exists, URSA uses that directory.
 
 ## More configuration topics
 
 - [OpenAI-compatible endpoints][openai-compatible-endpoints]
 - [Ollama and local endpoints][ollama-and-local-endpoints]
 - [LangChain providers][langchain-providers]
+- [Secrets][secrets]
 - [Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
 - [MCP server configuration][mcp-server-configuration]

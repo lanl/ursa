@@ -26,9 +26,8 @@ from ursa import agents
 from ursa.agents import BaseAgent
 from ursa.agents.base import URSA_VERSION, AgentWithTools
 from ursa.cli.callbacks import HITLLogEventHandler
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import UrsaConfig, resolve_ursa_config
 from ursa.security import (
-    enforce_group_base_url_policy,
     enforce_model_group_policy,
 )
 from ursa.util.has_optional_dep_group import has_optional_dep_group
@@ -118,48 +117,26 @@ def get_base_url(model: BaseChatModel) -> str | None:
 
 class HITL:
     def __init__(self, config: UrsaConfig):
-        self.config = config
-        self.thread_id = config.thread_id or "ursa"
+        self.config = resolve_ursa_config(config)
+        self.thread_id = self.config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
-        agent_overrides = dict(config.agent_config or {})
-
         self.agent_name = self.config.agent_name
         self.group = self.config.group
 
-        enforce_group_base_url_policy(
-            self.config.llm_model.base_url, self.group
-        )
         self.model: BaseChatModel = self.config.llm_model.init_chat_model()
         enforce_model_group_policy(self.model, self.group)
-        if self.config.emb_model:
-            enforce_group_base_url_policy(
-                self.config.emb_model.base_url, self.group
-            )
+
         self.embedding = (
             self.config.emb_model.init_embedding()
-            if self.config.emb_model
+            if self.config.emb_model is not None
             else None
         )
         enforce_model_group_policy(self.embedding, self.group)
 
         self.mcp_client = start_mcp_client(self.config.mcp_servers)
-        if base_url := getattr(self.config.llm_model, "base_url"):
-            if model_base_url := get_base_url(self.model):
-                if base_url != model_base_url:
-                    logging.error(
-                        f"Model base url ({model_base_url}) and config ({base_url}) do not match"
-                    )
-
-        if self.embedding:
-            if base_url := getattr(self.config.emb_model, "base_url"):
-                if model_base_url := get_base_url(self.model):
-                    if base_url != model_base_url:
-                        logging.error(
-                            f"Model base url ({model_base_url}) and config ({base_url}) do not match"
-                        )
 
         rag_tool_config = {
             "rag_tools": self.config.rag_tools,
@@ -167,42 +144,31 @@ class HITL:
         }
 
         self.agents: dict[str, AgentHITL] = {}
-        self.agents["chat"] = AgentHITL(
-            agent_class=agents.ChatAgent,
-            config={"use_web": self.config.use_web, **rag_tool_config},
-        )
-        self.agents["arxiv"] = AgentHITL(agent_class=agents.ArxivAgent)
-        if has_optional_dep_group("dsi"):
-            self.agents["dsi"] = AgentHITL(
-                agent_class=agents.DSIAgent,
-                config=dict(rag_tool_config),
-            )
-        self.agents["execute"] = AgentHITL(
-            agent_class=agents.ExecutionAgent,
-            config={
-                "use_web": self.config.use_web,
-                **rag_tool_config,
-            },
-        )
-        self.agents["deep_review"] = AgentHITL(
-            agent_class=agents.DeepReviewAgent,
-            config={"use_web": self.config.use_web, **rag_tool_config},
-        )
-        self.agents["hypothesize"] = AgentHITL(
-            agent_class=agents.HypothesizerAgent
-        )
-        self.agents["plan"] = AgentHITL(agent_class=agents.PlanningAgent)
-        self.agents["prompt"] = AgentHITL(
-            agent_class=agents.PromptingAgent,
-            config={"use_web": self.config.use_web},
-        )
-        self.agents["web"] = AgentHITL(agent_class=agents.WebSearchAgent)
+        for agent_name, agent_class_name, deps in [
+            ("chat", "ChatAgent", None),
+            ("arxiv", "ArxivAgent", None),
+            ("dsi", "DSIAgent", "dsi"),
+            ("execute", "ExecutionAgent", None),
+            ("deep_review", "DeepReviewAgent", None),
+            ("hypothesize", "HypothesizerAgent", None),
+            ("plan", "PlanningAgent", None),
+            ("prompt", "PromptingAgent", None),
+            ("web", "WebSearchAgent", None),
+            ("lammps", "LammpsAgent", "lammps"),
+        ]:
+            if deps is not None and not has_optional_dep_group(deps):
+                continue
 
-        if has_optional_dep_group("lammps"):
-            self.agents["lammps"] = AgentHITL(agent_class=agents.LammpsAgent)
+            config = {}
+            if agent_name in {"chat", "execute", "deep_review", "dsi"}:
+                config.update(rag_tool_config)
+            self.agents[agent_name] = AgentHITL(
+                agent_class=getattr(agents, agent_class_name),
+                config=config,
+            )
 
         # Apply agent-specific configuration overrides
-        for agent, agent_config in agent_overrides.items():
+        for agent, agent_config in self.config.agent_config.items():
             assert agent in self.agents, (
                 f"Unknown agent {agent}, Know agents: {','.join(self.agents.keys())}"
             )

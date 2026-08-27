@@ -17,6 +17,9 @@ ursa rag-query --help
 
 ## Common top-level commands
 
+URSA configs can be
+[layered with environment variables and CLI flags][configuration-files-cli-flags-and-environment-variables].
+
 ```bash
 ursa --config config.yaml
 ursa --print-config

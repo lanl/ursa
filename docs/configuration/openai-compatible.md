@@ -8,7 +8,8 @@ Many hosted and self-hosted model services expose an OpenAI-compatible API. Conf
 llm_model:
   model: openai:my-model-name
   base_url: https://my-endpoint.example.com/v1
-  api_key_env: MY_ENDPOINT_API_KEY
+  api_key:
+    env: MY_ENDPOINT_API_KEY
 ```
 
 Run:
@@ -23,7 +24,7 @@ ursa --config config.yaml
 ursa \
   --llm_model.model openai:my-model-name \
   --llm_model.base_url https://my-endpoint.example.com/v1 \
-  --llm_model.api_key_env MY_ENDPOINT_API_KEY
+  --llm_model.api_key.env MY_ENDPOINT_API_KEY
 ```
 
 ## SSL verification
@@ -34,7 +35,8 @@ By default URSA verifies TLS certificates. If you are using a test endpoint with
 llm_model:
   model: openai:my-model-name
   base_url: https://my-endpoint.example.com/v1
-  api_key_env: MY_ENDPOINT_API_KEY
+  api_key:
+    env: MY_ENDPOINT_API_KEY
   ssl_verify: false
 ```
 

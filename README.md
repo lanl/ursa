@@ -44,7 +44,8 @@ A reusable YAML configuration file is the preferred way to select endpoints and 
 ```yaml
 llm_model:
   model: openai:gpt-5.2
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
 workspace: .
 ```
 

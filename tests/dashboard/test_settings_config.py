@@ -12,7 +12,10 @@ from ursa_dashboard.settings import (
 )
 
 
-def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
+def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SAFE_API_KEY", "secret")
     cfg_path = tmp_path / "endpoint.yaml"
     cfg_path.write_text(
         "\n".join([
@@ -29,7 +32,7 @@ def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
         encoding="utf-8",
     )
 
-    patch = dashboard_llm_patch_from_ursa_config(cfg_path)
+    patch = dashboard_llm_patch_from_ursa_config(cfg_path, group="default")
 
     assert patch == {
         "llm": {
@@ -47,7 +50,10 @@ def test_dashboard_config_maps_cli_llm_model_to_dashboard_settings(tmp_path):
     }
 
 
-def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(tmp_path):
+def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SAFE_EMBEDDING_KEY", "secret")
     cfg_path = tmp_path / "endpoint.yaml"
     cfg_path.write_text(
         "\n".join([
@@ -64,7 +70,7 @@ def test_dashboard_config_maps_cli_emb_model_to_dashboard_settings(tmp_path):
         encoding="utf-8",
     )
 
-    patch = dashboard_llm_patch_from_ursa_config(cfg_path)
+    patch = dashboard_llm_patch_from_ursa_config(cfg_path, group="default")
 
     assert patch["embedding"] == {
         "model": "openai:text-embedding-3-large",
@@ -87,7 +93,7 @@ def test_dashboard_config_rejects_raw_api_key(tmp_path):
     )
 
     with pytest.raises(ValueError, match="does not store raw"):
-        dashboard_llm_patch_from_ursa_config(cfg_path)
+        dashboard_llm_patch_from_ursa_config(cfg_path, group="default")
 
 
 def test_dashboard_config_rejects_raw_embedding_api_key(tmp_path):
@@ -106,7 +112,34 @@ def test_dashboard_config_rejects_raw_embedding_api_key(tmp_path):
     with pytest.raises(
         ValueError, match="does not store raw emb_model.api_key"
     ):
-        dashboard_llm_patch_from_ursa_config(cfg_path)
+        dashboard_llm_patch_from_ursa_config(cfg_path, group="default")
+
+
+def test_dashboard_patch_enforces_selected_group_not_config_file_group(
+    tmp_path, monkeypatch
+):
+    cfg_path = tmp_path / "endpoint.yaml"
+    cfg_path.write_text(
+        "\n".join([
+            "group: source-group",
+            "llm_model:",
+            "  model: openai:gpt-test",
+            "  base_url: https://models.example.org/v1",
+        ]),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(
+        "ursa.cli.config.enforce_group_base_url_policy",
+        lambda base_url, group: calls.append((base_url, group)),
+    )
+
+    patch = dashboard_llm_patch_from_ursa_config(
+        cfg_path, group="dashboard-group"
+    )
+
+    assert patch["llm"]["base_url"] == "https://models.example.org/v1"
+    assert calls == [("https://models.example.org/v1", "dashboard-group")]
 
 
 def test_apply_dashboard_config_validates_group_before_persisting(
@@ -140,6 +173,17 @@ def test_apply_dashboard_config_validates_group_before_persisting(
     assert settings.llm.model == "openai:gpt-safe"
     assert settings.llm.base_url == "https://safe.example.org/v1"
 
+    model_only_cfg = tmp_path / "model_only.yaml"
+    model_only_cfg.write_text(
+        "llm_model:\n  model: openai:gpt-updated\n",
+        encoding="utf-8",
+    )
+    settings = apply_dashboard_config(
+        store, model_only_cfg, group="my_safety_group"
+    )
+    assert settings.llm.model == "openai:gpt-updated"
+    assert settings.llm.base_url == "https://safe.example.org/v1"
+
     unsafe_cfg = tmp_path / "unsafe_endpoint.yaml"
     unsafe_cfg.write_text(
         "\n".join([
@@ -154,6 +198,6 @@ def test_apply_dashboard_config_validates_group_before_persisting(
         apply_dashboard_config(store, unsafe_cfg, group="my_safety_group")
 
     persisted = json.loads(store.path.read_text(encoding="utf-8"))
-    assert persisted["llm"]["model"] == "openai:gpt-safe"
+    assert persisted["llm"]["model"] == "openai:gpt-updated"
     assert persisted["llm"]["base_url"] == "https://safe.example.org/v1"
     assert persisted["updated_at"] != original.updated_at

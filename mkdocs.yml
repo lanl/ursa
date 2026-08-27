@@ -57,6 +57,7 @@ nav:
       - OpenAI-compatible endpoints: configuration/openai-compatible.md
       - Ollama and local endpoints: configuration/ollama.md
       - LangChain providers: configuration/langchain-providers.md
+      - Secrets: configuration/secrets.md
       - Files, CLI flags, and environment variables: configuration/files-and-env.md
       - MCP server configuration: configuration/mcp.md
   - Persistence:
