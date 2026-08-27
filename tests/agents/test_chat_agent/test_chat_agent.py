@@ -4,6 +4,11 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from ursa.agents.chat_agent import ChatAgent
+from ursa.tools.terminal import (
+    TerminalRenderSnapshot,
+    TerminalSpan,
+    TerminalStyle,
+)
 
 
 async def test_chat_agent_appends_ai_response(chat_model, tmpdir):
@@ -86,6 +91,64 @@ async def test_chat_agent_dispatches_async_term_safety_check(
     assert len(tool_messages) == 1
     assert tool_messages[0].content == "Terminal ID: PyTerm01"
     assert result["messages"][-1].content == "Python terminal started."
+
+
+async def test_chat_agent_receives_terminal_screenshot_image(
+    monkeypatch, tmp_path
+):
+    """ToolNode injects runtime and preserves model-visible image content."""
+    messages = iter([
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "term_screenshot",
+                    "args": {"term_id": "ShotTerm"},
+                    "id": "capture-terminal",
+                    "type": "tool_call",
+                }
+            ],
+        ),
+        AIMessage(content="I can see the attached terminal screenshot."),
+    ])
+    model = _TermCallingModel(messages=messages)
+    snapshot = TerminalRenderSnapshot(
+        term_id="ShotTerm",
+        spans=(
+            TerminalSpan(
+                "UNIQUE_MARKER",
+                TerminalStyle(foreground=(255, 0, 0), bold=True),
+            ),
+        ),
+        rows=4,
+        cols=20,
+        screen=True,
+    )
+
+    class Manager:
+        def supports_screen(self):
+            return True
+
+        async def render_snapshot(self, term_id):
+            assert term_id == "ShotTerm"
+            return snapshot
+
+    monkeypatch.setattr("ursa.tools.term_tool.term_manager", Manager())
+    agent = ChatAgent(llm=model, workspace=tmp_path)
+
+    result = await agent.ainvoke({
+        "messages": [HumanMessage(content="Capture the terminal")],
+        "thread_id": agent.thread_id,
+    })
+
+    tool_message = next(
+        message for message in result["messages"] if message.type == "tool"
+    )
+    assert tool_message.content[0]["type"] == "text"
+    assert tool_message.content[0]["text"] == "Screenshot attached."
+    assert tool_message.content[1]["type"] == "image"
+    assert tool_message.content[1]["mime_type"] == "image/png"
+    assert not list(tmp_path.glob("term-*.png"))
 
 
 async def test_chat_agent_recovers_from_unknown_terminal_id(

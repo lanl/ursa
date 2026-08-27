@@ -1,11 +1,30 @@
 import asyncio
+import base64
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.tools import ToolException
+from PIL import Image
 from pydantic import ValidationError
 
+import ursa.tools as tools_package
 from ursa.tools import term_tool
+from ursa.tools.terminal import (
+    TerminalRenderSnapshot,
+    TerminalSpan,
+    TerminalStyle,
+    screenshot,
+)
+
+
+def test_term_send_keycode_is_not_publicly_exported():
+    assert not hasattr(term_tool, "term_send_keycode")
+    assert not hasattr(tools_package, "term_send_keycode")
+
+
+def test_term_screenshot_is_publicly_exported():
+    assert tools_package.term_screenshot is term_tool.term_screenshot
 
 
 class WrapperTerm:
@@ -36,9 +55,6 @@ class WrapperTerm:
 
     async def send_line(self, value):
         self.calls.append(("line", value))
-
-    async def send_keycode(self, value):
-        self.calls.append(("keycode", value))
 
     async def is_alive(self):
         return {"is_alive": True}
@@ -76,9 +92,6 @@ class WrapperManager:
     async def send_line(self, term_id, line):
         await self.get(term_id).send_line(line)
 
-    async def send_keycode(self, term_id, keycode):
-        await self.get(term_id).send_keycode(keycode)
-
     async def read(self, term_id, **kwargs):
         return await self.get(term_id).read(**kwargs)
 
@@ -99,6 +112,9 @@ class WrapperManager:
 
     async def size(self, term_id):
         return await self.get(term_id).size()
+
+    async def render_snapshot(self, term_id):
+        return await self.get(term_id).render_snapshot()
 
     async def remove(self, term_id, **kwargs):
         self.removed.append((term_id, kwargs))
@@ -152,7 +168,6 @@ def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
         (term_tool.term_send_bytes, {"data": [1]}),
         (term_tool.term_send_text, {"text": "x"}),
         (term_tool.term_send_line, {"line": "x"}),
-        (term_tool.term_send_keycode, {"keycode": 3}),
         (term_tool.term_send_key, {"key": "c", "modifiers": ["ctrl"]}),
         (term_tool.term_read, {}),
         (term_tool.term_is_alive, {}),
@@ -427,9 +442,6 @@ async def test_send_read_and_state_wrappers(monkeypatch):
     assert await term_tool.term_send_line.coroutine(term_id, "line") == (
         "Sent line to terminal Ab12Cd34"
     )
-    assert await term_tool.term_send_keycode.coroutine(term_id, 3) == (
-        "Sent keycode 3 to terminal Ab12Cd34"
-    )
     assert (
         await term_tool.term_read.coroutine(term_id, offset=2, lines=4)
         == "output\n"
@@ -438,11 +450,10 @@ async def test_send_read_and_state_wrappers(monkeypatch):
     assert await term_tool.term_is_alive.coroutine(term_id) == {
         "is_alive": True
     }
-    assert terminal.calls[:6] == [
+    assert terminal.calls[:5] == [
         ("bytes", b"ab"),
         ("text", "txt"),
         ("line", "line"),
-        ("keycode", 3),
         ("read", {"offset": 2, "lines": 4}),
         ("read", {"offset": 0, "lines": None}),
     ]
@@ -542,10 +553,6 @@ async def test_term_send_key_encodes_and_forwards_bytes(monkeypatch):
         (
             term_tool.term_send_bytes,
             {"term_id": "Ab12Cd34", "data": [256]},
-        ),
-        (
-            term_tool.term_send_keycode,
-            {"term_id": "Ab12Cd34", "keycode": -1},
         ),
         (
             term_tool.term_send_key,
@@ -659,6 +666,114 @@ async def test_wait_resize_cursor_and_size_wrappers(monkeypatch):
     assert ("resize", 40, 120) in terminal.calls
 
 
+async def test_term_screenshot_returns_styled_png(monkeypatch, tmp_path):
+    snapshot = TerminalRenderSnapshot(
+        term_id="Ab12Cd34",
+        spans=(
+            TerminalSpan(
+                "styled output",
+                TerminalStyle(foreground=(255, 0, 0), bold=True),
+            ),
+        ),
+        rows=4,
+        cols=20,
+        screen=True,
+    )
+
+    class ScreenshotManager:
+        async def render_snapshot(self, term_id):
+            assert term_id == "Ab12Cd34"
+            return snapshot
+
+    monkeypatch.setattr(term_tool, "term_manager", ScreenshotManager())
+    result = await term_tool.term_screenshot.coroutine("Ab12Cd34")
+
+    assert result[0]["type"] == "text"
+    assert result[0]["text"] == "Screenshot attached."
+    assert result[1]["type"] == "image"
+    assert result[1]["mime_type"] == "image/png"
+    png = base64.b64decode(result[1]["base64"])
+    with Image.open(BytesIO(png)) as image:
+        assert image.width > 0
+        assert image.height > 0
+        assert any(
+            red > green * 2 and red > blue * 2
+            for red, green, blue in image.convert("RGB").getdata()
+        )
+    assert not list(tmp_path.glob("term-*.png"))
+
+
+async def test_term_screenshot_rejects_process_terminal(monkeypatch, tmp_path):
+    snapshot = TerminalRenderSnapshot(
+        term_id="Ab12Cd34",
+        spans=(TerminalSpan("plain output"),),
+    )
+
+    class ScreenshotManager:
+        async def render_snapshot(self, term_id):
+            assert term_id == "Ab12Cd34"
+            return snapshot
+
+    monkeypatch.setattr(term_tool, "term_manager", ScreenshotManager())
+    with pytest.raises(ToolException, match="require the Ghostty backend"):
+        await term_tool.term_screenshot.coroutine("Ab12Cd34")
+
+
+async def test_screenshot_settle_waits_for_new_stable_content(monkeypatch):
+    blank = TerminalRenderSnapshot(
+        "Ab12Cd34",
+        (TerminalSpan(" " * 80),),
+        rows=24,
+        cols=80,
+        screen=True,
+    )
+    content = TerminalRenderSnapshot(
+        "Ab12Cd34",
+        (TerminalSpan("Python 3.11 >>>"),),
+        rows=24,
+        cols=80,
+        screen=True,
+    )
+
+    class EvolvingManager:
+        calls = 0
+
+        async def render_snapshot(self, term_id):
+            assert term_id == "Ab12Cd34"
+            self.calls += 1
+            return blank if self.calls == 1 else content
+
+    manager = EvolvingManager()
+    result = await screenshot.settled_screen_snapshot(
+        manager, "Ab12Cd34", interval=0
+    )
+
+    assert result is content
+    assert manager.calls == 3
+
+
+async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
+    blank = TerminalRenderSnapshot(
+        "Ab12Cd34", (TerminalSpan(" " * 80),), rows=24, cols=80, screen=True
+    )
+
+    class BlankManager:
+        async def render_snapshot(self, term_id):
+            assert term_id == "Ab12Cd34"
+            return blank
+
+    manager = BlankManager()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    result = await screenshot.settled_screen_snapshot(
+        manager, "Ab12Cd34", timeout=0.01, interval=0.001
+    )
+
+    assert result is blank
+    assert loop.time() - started < 0.2
+
+
 @pytest.mark.parametrize(
     ("screen", "expected_names"),
     [
@@ -669,7 +784,6 @@ async def test_wait_resize_cursor_and_size_wrappers(monkeypatch):
                 "term_send_bytes",
                 "term_send_text",
                 "term_send_line",
-                "term_send_keycode",
                 "term_send_key",
                 "term_read",
                 "term_is_alive",
@@ -683,7 +797,6 @@ async def test_wait_resize_cursor_and_size_wrappers(monkeypatch):
                 "term_send_bytes",
                 "term_send_text",
                 "term_send_line",
-                "term_send_keycode",
                 "term_send_key",
                 "term_read",
                 "term_is_alive",
@@ -691,6 +804,7 @@ async def test_wait_resize_cursor_and_size_wrappers(monkeypatch):
                 "term_resize",
                 "term_cursor",
                 "term_size",
+                "term_screenshot",
             },
         ),
     ],
@@ -707,3 +821,6 @@ def test_get_supported_term_tools_filters_screen_capabilities(
     assert first is not second
     assert first == second
     assert term_tool.term_send_key in term_tool.TERM_TOOLS
+    assert all(
+        tool.name != "term_send_keycode" for tool in term_tool.TERM_TOOLS
+    )

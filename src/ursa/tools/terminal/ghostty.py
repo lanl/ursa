@@ -8,6 +8,7 @@ terminal which consumes the bytes read from the PTY master.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import errno
 import os
 import pty
@@ -23,6 +24,73 @@ from .base import (
     TerminalStyle,
     TermSession,
 )
+
+_C1_ERROR_HANDLER = "ursa_terminal_c1_controls"
+
+
+def _decode_c1_control(
+    error: UnicodeDecodeError,
+) -> tuple[str, int]:
+    """Preserve isolated 8-bit C1 controls rejected by UTF-8 decoding."""
+    invalid = error.object[error.start : error.end]
+    replacement = "".join(
+        chr(byte) if 0x80 <= byte <= 0x9F else "\ufffd" for byte in invalid
+    )
+    return replacement, error.end
+
+
+codecs.register_error(_C1_ERROR_HANDLER, _decode_c1_control)
+
+
+class _VisibleOutputDecoder:
+    """Incrementally decode UTF-8 while removing VT control sequences."""
+
+    def __init__(self) -> None:
+        self._decoder = codecs.getincrementaldecoder("utf-8")(
+            errors=_C1_ERROR_HANDLER
+        )
+        self._state = "text"
+
+    def decode(self, data: bytes, *, final: bool = False) -> str:
+        visible: list[str] = []
+        for character in self._decoder.decode(data, final=final):
+            if self._state == "text":
+                if character == "\x1b":
+                    self._state = "escape"
+                elif character == "\x9b":
+                    self._state = "csi"
+                elif character in "\x90\x9d\x9e\x9f":
+                    self._state = "string"
+                elif (
+                    character == "\n" or character == "\r" or character == "\t"
+                ):
+                    visible.append(character)
+                elif character >= " ":
+                    visible.append(character)
+            elif self._state == "escape":
+                if character == "[":
+                    self._state = "csi"
+                elif character in "]P^_":
+                    self._state = "string"
+                elif " " <= character <= "/":
+                    self._state = "escape_intermediate"
+                else:
+                    self._state = "text"
+            elif self._state == "escape_intermediate":
+                if "0" <= character <= "~":
+                    self._state = "text"
+            elif self._state == "csi":
+                if "@" <= character <= "~":
+                    self._state = "text"
+            elif self._state == "string":
+                if character == "\a" or character == "\x9c":
+                    self._state = "text"
+                elif character == "\x1b":
+                    self._state = "string_escape"
+            elif self._state == "string_escape":
+                self._state = "text" if character == "\\" else "string"
+        return "".join(visible)
+
 
 _FALLBACK_ANSI_COLORS: tuple[tuple[int, int, int], ...] = (
     (0, 0, 0),
@@ -100,6 +168,9 @@ class GhosttyTerm(TermSession):
         self._cached_text = ""
         self._cached_contents = ""
         self._cached_render_snapshot: TerminalRenderSnapshot | None = None
+        self._output_chunks: list[str] = []
+        self._output_length = 0
+        self._output_decoder = _VisibleOutputDecoder()
 
     async def start(self, command: str | list[str] | None = None) -> None:
         if self._pid is not None:
@@ -166,10 +237,19 @@ class GhosttyTerm(TermSession):
                     if not data:
                         return
                     async with self._io_lock:
+                        decoded = self._output_decoder.decode(data)
+                        if decoded:
+                            self._output_chunks.append(decoded)
+                            self._output_length += len(decoded)
                         self._terminal.feed(data)
         except asyncio.CancelledError:
             raise
         finally:
+            async with self._io_lock:
+                decoded = self._output_decoder.decode(b"", final=True)
+                if decoded:
+                    self._output_chunks.append(decoded)
+                    self._output_length += len(decoded)
             await asyncio.shield(self._close_master(fd))
 
     async def _close_master(self, fd: int) -> None:
@@ -261,6 +341,25 @@ class GhosttyTerm(TermSession):
                 if self._terminal_closed
                 else self._terminal.contents()
             )
+
+    async def output_marker(self) -> int:
+        async with self._io_lock:
+            return self._output_length
+
+    async def output_since(self, marker: int) -> str:
+        if marker < 0:
+            raise ValueError("output marker must be non-negative")
+        async with self._io_lock:
+            if marker >= self._output_length:
+                return ""
+            skipped = 0
+            pieces: list[str] = []
+            for chunk in self._output_chunks:
+                chunk_end = skipped + len(chunk)
+                if chunk_end > marker:
+                    pieces.append(chunk[max(0, marker - skipped) :])
+                skipped = chunk_end
+            return "".join(pieces)
 
     async def text(self) -> str:
         """Return the plain text of the currently visible screen."""

@@ -8,6 +8,7 @@ render a screen in the way the Ghostty backend can.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import os
 import re
 import shlex
@@ -45,6 +46,13 @@ class ProcessTerm(TermSession):
         self._write_lock = threading.Lock()
         self._send_lock = asyncio.Lock()
         self._termination_task: asyncio.Task[None] | None = None
+        self._output_decoder = codecs.getincrementaldecoder("utf-8")(
+            errors="replace"
+        )
+        self._output_byte_offset = 0
+        self._output_chunks: list[str] = []
+        self._output_length = 0
+        self._output_finalized = False
 
     async def start(self, command: str | list[str] | None = None) -> None:
         """Start the configured shell and optionally submit an initial command."""
@@ -211,6 +219,50 @@ class ProcessTerm(TermSession):
         if lines is not None and lines < 0:
             raise ValueError("lines must be non-negative")
         return await asyncio.to_thread(self._read_sync, offset, lines)
+
+    async def output_marker(self) -> int:
+        return await asyncio.to_thread(self._output_marker_sync)
+
+    def _output_marker_sync(self) -> int:
+        with self._state_lock:
+            self._update_output_journal_locked()
+            return self._output_length
+
+    async def output_since(self, marker: int) -> str:
+        if marker < 0:
+            raise ValueError("output marker must be non-negative")
+        return await asyncio.to_thread(self._output_since_sync, marker)
+
+    def _output_since_sync(self, marker: int) -> str:
+        with self._state_lock:
+            self._update_output_journal_locked()
+            if marker >= self._output_length:
+                return ""
+            skipped = 0
+            pieces: list[str] = []
+            for chunk in self._output_chunks:
+                chunk_end = skipped + len(chunk)
+                if chunk_end > marker:
+                    pieces.append(chunk[max(0, marker - skipped) :])
+                skipped = chunk_end
+            return "".join(pieces)
+
+    def _update_output_journal_locked(self) -> None:
+        self._require_started()
+        assert self._output_path is not None
+        with self._output_path.open("rb") as stream:
+            stream.seek(self._output_byte_offset)
+            data = stream.read()
+        self._output_byte_offset += len(data)
+        process_done = self._require_started().poll() is not None
+        final = process_done and not self._output_finalized
+        if not data and not final:
+            return
+        decoded = self._output_decoder.decode(data, final=final)
+        self._output_finalized = self._output_finalized or final
+        if decoded:
+            self._output_chunks.append(decoded)
+            self._output_length += len(decoded)
 
     def _read_sync(self, offset: int, lines: int | None) -> str:
         with self._state_lock:
