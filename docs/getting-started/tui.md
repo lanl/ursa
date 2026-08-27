@@ -55,6 +55,31 @@ path.
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
 | **Ctrl+D** | Exit immediately without cleanup; reserve this for a stuck turn. |
 
+### View managed terminals
+
+Run `/terms` to open a live, view-only browser for terminal sessions created by
+URSA's terminal tools:
+
+```text
+/terms
+```
+
+Each session has a tab labeled with its terminal ID. Tabs are ordered from the
+oldest session on the left to the newest on the right, and the newest session
+is active when the browser opens. Select another tab to inspect that session.
+The display refreshes while it is open, but it does not accept terminal input;
+agent tools remain responsible for sending text and keys.
+
+Ghostty-backed sessions preserve their exact emulated row and column size and
+display terminal foreground/background colors and text styling. They do not
+reflow to fill the modal. Process-backed sessions have no terminal screen
+model, so their captured text fills the available pane and long lines soft-wrap
+at the current view width.
+
+Press **Escape** or **Q** to close the terminal browser and return focus to the
+message prompt. If no managed sessions exist, `/terms` displays an empty-state
+message.
+
 ## 3. Chat with the assistant
 
 ```text
@@ -107,6 +132,17 @@ ursa --use-web
 
 Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA
 to make network requests through its web-search tools.
+
+Useful commands inside the full-screen interface include:
+
+| Command | Purpose |
+| --- | --- |
+| `/status` | Show runtime, model, endpoint, group, and MCP status. |
+| `/terms` | Browse managed terminal sessions in a live, view-only modal. |
+| `/keymap` | Show the complete keyboard map. |
+| `/models` | Switch chat or embedding providers. |
+| `/theme` | Change the interface theme. |
+| `/exit` | Exit gracefully. |
 
 ## Where next?
 

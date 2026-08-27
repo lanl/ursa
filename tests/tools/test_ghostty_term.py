@@ -24,6 +24,21 @@ class FakeGhosttyTerminal:
     def text(self):
         return f"SCREEN:{self.contents()}"
 
+    def style(self, col, row):
+        return {
+            "fg": ("rgb", (10 + col, 20, 30)),
+            "bg": ("palette", 1),
+            "bold": row == 0,
+            "italic": False,
+            "faint": False,
+            "blink": False,
+            "underline": 0,
+            "inverse": False,
+            "invisible": False,
+            "strikethrough": False,
+            "overline": False,
+        }
+
     def resize(self, cols, rows):
         self.resize_calls.append((cols, rows))
         self.size = (cols, rows)
@@ -74,6 +89,31 @@ async def test_ghostty_screen_primitives_and_read_slicing(
     assert terminal._terminal.resize_calls == [(100, 30)]
     assert resize_ioctl == [(99, 30, 100)]
     assert await terminal.size() == (30, 100)
+
+
+async def test_ghostty_render_snapshot_has_exact_grid_and_cell_styles(
+    fake_ghostty,
+):
+    terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"], rows=2, cols=12)
+    terminal._terminal.text = lambda: "ab\nc"
+
+    rendered = await terminal.render_snapshot()
+
+    assert rendered.term_id == "ghost123"
+    assert rendered.screen is True
+    assert (rendered.rows, rendered.cols) == (2, 12)
+    assert "".join(span.text for span in rendered.spans) == (
+        "ab" + " " * 10 + "\n" + "c" + " " * 11
+    )
+    assert rendered.spans[0].style.foreground == (10, 20, 30)
+    assert rendered.spans[0].style.background == (205, 49, 49)
+    assert rendered.spans[0].style.bold is True
+    assert rendered.spans[1].style.foreground == (11, 20, 30)
+    assert rendered.spans[-1].style.bold is False
+
+    await terminal.terminate()
+    assert terminal._terminal.closed
+    assert await terminal.render_snapshot() == rendered
 
 
 async def test_ghostty_validates_operations(fake_ghostty):
@@ -274,6 +314,28 @@ async def test_real_ghostty_ansi_cursor_and_resize(tmp_path):
     assert await terminal.cursor() == (2, 5)
     await terminal.resize(8, 30)
     assert await terminal.size() == (8, 30)
+    await terminal.terminate()
+
+
+@pytest.mark.skipif(
+    ghostty.PyGhosttyTerminal is None or os.name == "nt",
+    reason="requires native pyghostty on Unix",
+)
+async def test_real_ghostty_snapshot_uses_grid_graphemes_and_live_palette():
+    terminal = ghostty.GhosttyTerm("realgrid", ["/bin/sh"], rows=1, cols=16)
+    terminal._terminal.feed(
+        "👩\u200d💻👍🏽\x1b]4;1;#010203\x07\x1b[38;5;1mX\x1b[4:3;58:2::4:5:6mY"
+    )
+
+    rendered = await terminal.render_snapshot()
+    text = "".join(span.text for span in rendered.spans)
+    assert text.startswith("👩\u200d💻👍🏽XY")
+    assert sum(span.cells or 0 for span in rendered.spans) == 16
+    x_span = next(span for span in rendered.spans if "X" in span.text)
+    y_span = next(span for span in rendered.spans if "Y" in span.text)
+    assert x_span.style.foreground == (1, 2, 3)
+    assert y_span.style.underline_kind == 3
+    assert y_span.style.underline_color == (4, 5, 6)
     await terminal.terminate()
 
 

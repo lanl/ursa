@@ -161,6 +161,143 @@ def invoke_structured(
     raise StructuredOutputError(message, context=context, attempts=attempts)
 
 
+async def ainvoke_structured(
+    llm: Any,
+    schema: type[Any],
+    input: Any,
+    *,
+    config: Any | None = None,
+    include_raw: bool = False,
+    methods: Iterable[str | None] = (None, "function_calling"),
+    validator: Callable[[Any], Any] | None = None,
+    fallback: Any = _MISSING,
+    context: str = "structured output",
+    repair: bool | int = False,
+) -> Any | StructuredOutputResult:
+    """Asynchronously invoke an LLM with structured output and validate it."""
+    normalized_methods = tuple(methods) or (None,)
+    repair_attempts = _repair_count(repair)
+    attempts: list[StructuredOutputAttempt] = []
+
+    result = await _atry_methods(
+        llm,
+        schema,
+        input,
+        config=config,
+        include_raw=include_raw,
+        methods=normalized_methods,
+        validator=validator,
+        attempts=attempts,
+        repair_index=None,
+    )
+    if result is not None:
+        return result
+
+    last_error = (
+        attempts[-1].error if attempts else "unknown structured-output failure"
+    )
+    last_raw = attempts[-1].raw if attempts else None
+    for repair_index in range(1, repair_attempts + 1):
+        repair_input = _build_repair_input(
+            input,
+            schema,
+            context=context,
+            error=last_error,
+            raw=last_raw,
+            repair_index=repair_index,
+            repair_attempts=repair_attempts,
+        )
+        result = await _atry_methods(
+            llm,
+            schema,
+            repair_input,
+            config=config,
+            include_raw=include_raw,
+            methods=normalized_methods,
+            validator=validator,
+            attempts=attempts,
+            repair_index=repair_index,
+        )
+        if result is not None:
+            return result
+        last_error = attempts[-1].error if attempts else last_error
+        last_raw = attempts[-1].raw if attempts else last_raw
+
+    if fallback is not _MISSING:
+        try:
+            parsed = _validate_parsed(schema, fallback, validator=validator)
+        except Exception as exc:
+            attempts.append(
+                StructuredOutputAttempt(
+                    method="fallback",
+                    repair_index=None,
+                    error=f"Fallback did not validate: {exc}",
+                    raw=fallback,
+                )
+            )
+        else:
+            fallback_result = StructuredOutputResult(
+                parsed=parsed,
+                raw=None,
+                parsing_error=None,
+                attempts=attempts,
+            )
+            return fallback_result if include_raw else parsed
+
+    message = _format_error_message(context, attempts)
+    raise StructuredOutputError(message, context=context, attempts=attempts)
+
+
+async def _atry_methods(
+    llm: Any,
+    schema: type[Any],
+    input: Any,
+    *,
+    config: Any | None,
+    include_raw: bool,
+    methods: Sequence[str | None],
+    validator: Callable[[Any], Any] | None,
+    attempts: list[StructuredOutputAttempt],
+    repair_index: int | None,
+) -> Any | StructuredOutputResult | None:
+    for method in methods:
+        method_name = method or "default"
+        output = _MISSING
+        try:
+            kwargs: dict[str, Any] = {}
+            if include_raw:
+                kwargs["include_raw"] = True
+            if method is not None:
+                kwargs["method"] = method
+            structured_llm = llm.with_structured_output(schema, **kwargs)
+            invoke_kwargs = {"config": config} if config is not None else {}
+            output = await structured_llm.ainvoke(input, **invoke_kwargs)
+            parsed, raw, parsing_error = _extract_output(output, include_raw)
+            parsed = _validate_parsed(schema, parsed, validator=validator)
+            result = StructuredOutputResult(
+                parsed=parsed,
+                raw=raw,
+                parsing_error=parsing_error,
+                attempts=attempts,
+            )
+            return result if include_raw else parsed
+        except Exception as exc:
+            raw = None
+            parsing_error = None
+            if output is not _MISSING:
+                raw, parsing_error = _diagnostics_from_output(output)
+            attempts.append(
+                StructuredOutputAttempt(
+                    method=method_name,
+                    repair_index=repair_index,
+                    error=f"{type(exc).__name__}: {exc}",
+                    raw=raw,
+                    parsing_error=parsing_error,
+                )
+            )
+    return None
+
+
 def _try_methods(
     llm: Any,
     schema: type[Any],
