@@ -17,15 +17,44 @@ import struct
 from contextlib import suppress
 from typing import Any
 
-from .base import TermSession
+from .base import (
+    TerminalRenderSnapshot,
+    TerminalSpan,
+    TerminalStyle,
+    TermSession,
+)
+
+_FALLBACK_ANSI_COLORS: tuple[tuple[int, int, int], ...] = (
+    (0, 0, 0),
+    (205, 49, 49),
+    (13, 188, 121),
+    (229, 229, 16),
+    (36, 114, 200),
+    (188, 63, 188),
+    (17, 168, 205),
+    (229, 229, 229),
+    (102, 102, 102),
+    (241, 76, 76),
+    (35, 209, 139),
+    (245, 245, 67),
+    (59, 142, 234),
+    (214, 112, 214),
+    (41, 184, 219),
+    (255, 255, 255),
+)
+
 
 try:
     from pyghostty import Terminal as PyGhosttyTerminal
+    from pyghostty._ffi import check as _ghostty_check
+    from pyghostty._ffi import ffi as _ghostty_ffi
+    from pyghostty._ffi import lib as _ghostty_lib
 except (
     ImportError,
     OSError,
 ) as exc:  # The wheel may exist without its native library.
     PyGhosttyTerminal = None  # type: ignore[assignment,misc]
+    _ghostty_check = _ghostty_ffi = _ghostty_lib = None
     _PYGHOSTTY_IMPORT_ERROR: BaseException | None = exc
 else:
     _PYGHOSTTY_IMPORT_ERROR = None
@@ -70,6 +99,7 @@ class GhosttyTerm(TermSession):
         self._terminal_closed = False
         self._cached_text = ""
         self._cached_contents = ""
+        self._cached_render_snapshot: TerminalRenderSnapshot | None = None
 
     async def start(self, command: str | list[str] | None = None) -> None:
         if self._pid is not None:
@@ -241,6 +271,281 @@ class GhosttyTerm(TermSession):
                 else self._terminal.text()
             )
 
+    async def render_snapshot(self) -> TerminalRenderSnapshot:
+        """Capture the visible Ghostty grid with its per-cell styling."""
+        async with self._io_lock:
+            if self._terminal_closed:
+                if self._cached_render_snapshot is None:
+                    return TerminalRenderSnapshot(
+                        self.term_id, (TerminalSpan(self._cached_text),)
+                    )
+                return self._cached_render_snapshot
+            return self._render_snapshot_unlocked()
+
+    def _render_snapshot_unlocked(self) -> TerminalRenderSnapshot:
+        cols, rows = self._terminal.size
+        palette, default_foreground, default_background = (
+            self._colors_unlocked()
+        )
+        raw_cells = self._has_raw_grid_api()
+        visible = self._terminal.text().splitlines() if not raw_cells else []
+        visible.extend([""] * (rows - len(visible)))
+        spans: list[TerminalSpan] = []
+        for row in range(rows):
+            col = 0
+            if raw_cells:
+                while col < cols:
+                    text, width = self._raw_cell(col, row)
+                    self._append_span(
+                        spans,
+                        text,
+                        self._style_at(
+                            col,
+                            row,
+                            palette,
+                            default_foreground,
+                            default_background,
+                        ),
+                        cells=width,
+                    )
+                    col += width
+            else:
+                line = visible[row] if row < len(visible) else ""
+                for character in line:
+                    self._append_span(
+                        spans,
+                        character,
+                        self._style_at(
+                            col,
+                            row,
+                            palette,
+                            default_foreground,
+                            default_background,
+                        ),
+                    )
+                    col += 1
+            while col < cols:
+                self._append_span(
+                    spans,
+                    " ",
+                    self._style_at(
+                        col,
+                        row,
+                        palette,
+                        default_foreground,
+                        default_background,
+                    ),
+                )
+                col += 1
+            if row != rows - 1:
+                spans.append(TerminalSpan("\n"))
+        return TerminalRenderSnapshot(
+            term_id=self.term_id,
+            spans=tuple(spans),
+            rows=rows,
+            cols=cols,
+            screen=True,
+        )
+
+    @staticmethod
+    def _append_span(
+        spans: list[TerminalSpan],
+        text: str,
+        style: TerminalStyle,
+        *,
+        cells: int | None = None,
+    ) -> None:
+        if (
+            spans
+            and spans[-1].style == style
+            and spans[-1].cells is not None
+            and cells is not None
+        ):
+            previous = spans[-1]
+            spans[-1] = TerminalSpan(
+                previous.text + text, style, previous.cells + cells
+            )
+        else:
+            spans.append(TerminalSpan(text, style, cells))
+
+    def _has_raw_grid_api(self) -> bool:
+        return _ghostty_ffi is not None and hasattr(self._terminal, "_t")
+
+    def _raw_cell(self, col: int, row: int) -> tuple[str, int]:
+        """Return one Ghostty grid cell's grapheme and occupied width."""
+        assert _ghostty_ffi is not None
+        assert _ghostty_lib is not None
+        assert _ghostty_check is not None
+        reference = self._terminal.ref(col, row)
+        cell = _ghostty_ffi.new("GhosttyCell*")
+        _ghostty_check(
+            _ghostty_lib.ghostty_grid_ref_cell(reference, cell),
+            f"grid cell {col},{row}",
+        )
+        has_text = _ghostty_ffi.new("bool*")
+        _ghostty_check(
+            _ghostty_lib.ghostty_cell_get(
+                cell[0],
+                _ghostty_lib.GHOSTTY_CELL_DATA_HAS_TEXT,
+                has_text,
+            ),
+            f"cell text {col},{row}",
+        )
+        wide = _ghostty_ffi.new("GhosttyCellWide*")
+        _ghostty_check(
+            _ghostty_lib.ghostty_cell_get(
+                cell[0], _ghostty_lib.GHOSTTY_CELL_DATA_WIDE, wide
+            ),
+            f"cell width {col},{row}",
+        )
+        width = 2 if wide[0] == _ghostty_lib.GHOSTTY_CELL_WIDE_WIDE else 1
+        if not has_text[0]:
+            return " ", width
+        length = _ghostty_ffi.new("size_t*")
+        _ghostty_lib.ghostty_grid_ref_graphemes(
+            reference, _ghostty_ffi.NULL, 0, length
+        )
+        if not length[0]:
+            codepoint = _ghostty_ffi.new("uint32_t*")
+            _ghostty_check(
+                _ghostty_lib.ghostty_cell_get(
+                    cell[0],
+                    _ghostty_lib.GHOSTTY_CELL_DATA_CODEPOINT,
+                    codepoint,
+                ),
+                f"cell codepoint {col},{row}",
+            )
+            return chr(codepoint[0]), width
+        codepoints = _ghostty_ffi.new("uint32_t[]", length[0])
+        _ghostty_check(
+            _ghostty_lib.ghostty_grid_ref_graphemes(
+                reference, codepoints, length[0], length
+            ),
+            f"cell grapheme {col},{row}",
+        )
+        return "".join(chr(value) for value in codepoints), width
+
+    def _colors_unlocked(
+        self,
+    ) -> tuple[
+        tuple[tuple[int, int, int], ...],
+        tuple[int, int, int] | None,
+        tuple[int, int, int] | None,
+    ]:
+        if not self._has_raw_grid_api():
+            return _FALLBACK_ANSI_COLORS, None, None
+        assert _ghostty_ffi is not None
+        assert _ghostty_lib is not None
+        assert _ghostty_check is not None
+        state = _ghostty_ffi.new("GhosttyRenderState*")
+        _ghostty_check(
+            _ghostty_lib.ghostty_render_state_new(_ghostty_ffi.NULL, state),
+            "render state creation",
+        )
+        try:
+            _ghostty_check(
+                _ghostty_lib.ghostty_render_state_update(
+                    state[0], self._terminal._t[0]
+                ),
+                "render state update",
+            )
+            return self._render_colors(state[0])
+        finally:
+            _ghostty_lib.ghostty_render_state_free(state[0])
+
+    @staticmethod
+    def _render_colors(
+        render_state: Any,
+    ) -> tuple[
+        tuple[tuple[int, int, int], ...],
+        tuple[int, int, int],
+        tuple[int, int, int],
+    ]:
+        assert _ghostty_ffi is not None
+        assert _ghostty_lib is not None
+        assert _ghostty_check is not None
+        colors = _ghostty_ffi.new("GhosttyColorRgb[256]")
+        _ghostty_check(
+            _ghostty_lib.ghostty_render_state_get(
+                render_state,
+                _ghostty_lib.GHOSTTY_RENDER_STATE_DATA_COLOR_PALETTE,
+                colors,
+            ),
+            "terminal color palette",
+        )
+        foreground = _ghostty_ffi.new("GhosttyColorRgb*")
+        background = _ghostty_ffi.new("GhosttyColorRgb*")
+        for key, output, label in (
+            (
+                _ghostty_lib.GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND,
+                foreground,
+                "foreground",
+            ),
+            (
+                _ghostty_lib.GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND,
+                background,
+                "background",
+            ),
+        ):
+            _ghostty_check(
+                _ghostty_lib.ghostty_render_state_get(
+                    render_state, key, output
+                ),
+                f"terminal {label} color",
+            )
+        return (
+            tuple((color.r, color.g, color.b) for color in colors),
+            (foreground.r, foreground.g, foreground.b),
+            (background.r, background.g, background.b),
+        )
+
+    def _style_at(
+        self,
+        col: int,
+        row: int,
+        palette: tuple[tuple[int, int, int], ...],
+        default_foreground: tuple[int, int, int] | None,
+        default_background: tuple[int, int, int] | None,
+    ) -> TerminalStyle:
+        raw = self._terminal.style(col, row)
+        return TerminalStyle(
+            foreground=(
+                self._resolve_color(raw["fg"], palette) or default_foreground
+            ),
+            background=(
+                self._resolve_color(raw["bg"], palette) or default_background
+            ),
+            bold=raw["bold"],
+            italic=raw["italic"],
+            faint=raw["faint"],
+            blink=raw["blink"],
+            underline=bool(raw["underline"]),
+            underline_kind=raw["underline"],
+            underline_color=self._resolve_color(
+                raw.get("underline_color"), palette
+            ),
+            reverse=raw["inverse"],
+            conceal=raw["invisible"],
+            strike=raw["strikethrough"],
+            overline=raw["overline"],
+        )
+
+    @staticmethod
+    def _resolve_color(
+        color: tuple[str, int | tuple[int, int, int]] | None,
+        palette: tuple[tuple[int, int, int], ...],
+    ) -> tuple[int, int, int] | None:
+        if color is None:
+            return None
+        kind, value = color
+        if kind == "rgb":
+            assert isinstance(value, tuple)
+            return value
+        assert isinstance(value, int)
+        if value < len(palette):
+            return palette[value]
+        return None
+
     async def is_alive(self) -> dict[str, bool | int]:
         if self._pid is None:
             return {"is_alive": False}
@@ -296,6 +601,10 @@ class GhosttyTerm(TermSession):
 
             async with self._io_lock:
                 if not self._terminal_closed:
+                    with suppress(BaseException):
+                        self._cached_render_snapshot = (
+                            self._render_snapshot_unlocked()
+                        )
                     with suppress(BaseException):
                         self._cached_text = self._terminal.text()
                     with suppress(BaseException):

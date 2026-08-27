@@ -5,9 +5,12 @@ from .base import (
     TERM_MAX_BYTES,
     TERM_MAX_LINES,
     TERM_TIMEOUT,
+    TerminalRenderSnapshot,
+    TerminalSpan,
+    TerminalStyle,
     TermSession,
 )
-from .manager import TermManager, term_manager
+from .manager import TermInfo, TermManager, term_manager
 
 __all__ = [
     "TERM_ID_LENGTH",
@@ -15,6 +18,10 @@ __all__ = [
     "TERM_MAX_LINES",
     "TERM_TIMEOUT",
     "TermManager",
+    "TermInfo",
     "TermSession",
+    "TerminalRenderSnapshot",
+    "TerminalSpan",
+    "TerminalStyle",
     "term_manager",
 ]

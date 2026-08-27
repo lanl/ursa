@@ -133,3 +133,33 @@ The defaults can be changed before starting URSA:
 The values are read when the terminal package is imported. All sessions receive
 an ID internally, but a successfully completed short command returns its
 captured output prefixed by `Terminal contents:`.
+
+## Exporting the Textual view as PNG
+
+Textual's compositor can export the currently running app as SVG. URSA can
+rasterize that exact view to PNG through PyMuPDF, which is already a core
+dependency:
+
+```python
+from ursa.cli.tui.image_export import textual_app_to_png
+
+png = textual_app_to_png(app, scale=2)
+```
+
+This is an application screenshot helper, not a `term_read` mode or a headless
+terminal-rendering API. `textual_app_to_png` asks a running Textual app for its
+current composed SVG screen, then rasterizes that SVG. It returns PNG bytes and
+does not write to the filesystem. It preserves the composed Textual appearance;
+theme blending and modal opacity may make the resulting pixels differ from raw
+Ghostty RGB values.
+
+Rasterization rejects SVG input above 16 MiB, scale factors above 8, and output
+above 64 million pixels before allocating the output pixmap.
+
+The app must already be running, as required by Textual's screenshot API. The
+helper captures the whole screen exactly as composed, including overlays. To
+capture the terminal browser, open `/terms`, select the wanted tab, and call the
+helper while that modal is active. It does not temporarily push a screen,
+select a terminal, or crop the result to the terminal widget. Use
+`textual_screenshot_to_png(svg)` only when an SVG screenshot has already been
+captured and needs rasterization.

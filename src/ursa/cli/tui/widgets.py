@@ -46,7 +46,9 @@ from ursa.cli.config import (
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
 from ursa.cli.tui.helpers import _fuzzy_score
+from ursa.cli.tui.terminal_view import TerminalView
 from ursa.cli.tui.tips import random_tip
+from ursa.tools.terminal import TermInfo, TermManager, term_manager
 from ursa.util.inference_providers import (
     ProviderModel,
     list_provider_models,
@@ -1197,6 +1199,52 @@ class InformationScreen(ModalScreen[None]):
 
     def action_page_down(self) -> None:
         self._scroll_view().action_page_down()
+
+
+class TermsScreen(ModalScreen[None]):
+    """Tabbed, view-only display of managed terminal sessions."""
+
+    BINDINGS = [
+        Binding("escape,q", "close", "Close", priority=True),
+    ]
+
+    def __init__(
+        self,
+        terminals: Sequence[TermInfo],
+        *,
+        manager: TermManager = term_manager,
+    ) -> None:
+        super().__init__()
+        self.terminals = tuple(
+            sorted(terminals, key=lambda term: term.creation_order)
+        )
+        self.manager = manager
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="terminals"):
+            yield Static("Terminals", id="terminals-title")
+            if not self.terminals:
+                yield Static(
+                    "No managed terminal sessions.",
+                    classes="terminals-empty",
+                )
+                return
+            newest_pane = f"terminal-tab-{self.terminals[-1].term_id}"
+            with TabbedContent(initial=newest_pane, id="terminal-tabs"):
+                for terminal in self.terminals:
+                    term_id = terminal.term_id
+                    with TabPane(
+                        term_id,
+                        id=f"terminal-tab-{term_id}",
+                    ):
+                        yield TerminalView(
+                            term_id,
+                            manager=self.manager,
+                            id=f"terminal-view-{term_id}",
+                        )
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 def _markdown_cell(value: object) -> str:

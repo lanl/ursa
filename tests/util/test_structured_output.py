@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 from ursa.util.structured_output import (
     StructuredOutputResult,
+    ainvoke_structured,
     invoke_structured,
 )
 
@@ -22,16 +23,35 @@ class FakeStructuredLLM:
             raise response
         return response
 
+    async def ainvoke(self, input, **kwargs):
+        self.parent.async_invocations.append((input, kwargs))
+        response = self.parent.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
 
 class FakeLLM:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
         self.invocations = []
+        self.async_invocations = []
 
     def with_structured_output(self, schema, **kwargs):
         self.calls.append((schema, kwargs))
         return FakeStructuredLLM(self)
+
+
+async def test_ainvoke_structured_uses_async_model_interface_only():
+    llm = FakeLLM([{"ok": True, "reason": "async worked"}])
+
+    result = await ainvoke_structured(llm, ExampleSchema, "prompt")
+
+    assert isinstance(result, ExampleSchema)
+    assert result.reason == "async worked"
+    assert llm.invocations == []
+    assert llm.async_invocations == [("prompt", {})]
 
 
 def test_invoke_structured_retries_function_calling_after_none():

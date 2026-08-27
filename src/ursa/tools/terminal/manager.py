@@ -10,9 +10,16 @@ import shutil
 import string
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .base import TERM_ID_LENGTH, TERM_TIMEOUT, TermSession
+from .base import (
+    TERM_ID_LENGTH,
+    TERM_TIMEOUT,
+    TerminalRenderSnapshot,
+    TermSession,
+)
 
 SessionFactory = Callable[..., TermSession]
 
@@ -28,6 +35,30 @@ _STREAM_CAPABILITIES = frozenset({
     "wait_for",
 })
 _SCREEN_CAPABILITIES = frozenset({"cursor", "resize", "size"})
+
+
+@dataclass(frozen=True, slots=True)
+class TermInfo:
+    """Immutable registry metadata for a terminal session.
+
+    ``creation_order`` is the authoritative recency key.  ``created_at`` is
+    supplied for display only, since wall clocks can move or have insufficient
+    resolution to distinguish terminals created close together.
+    """
+
+    term_id: str
+    backend: str
+    created_at: datetime
+    creation_order: int
+    capabilities: frozenset[str]
+    supports_screen: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CreationReservation:
+    term_id: str
+    created_at: datetime
+    creation_order: int
 
 
 class TermManager:
@@ -46,7 +77,11 @@ class TermManager:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
                 cls._instance._sessions = {}
+                cls._instance._session_info = {}
+                cls._instance._creation_counter = 0
                 cls._instance._reserved_ids = set()
+                cls._instance._creation_reservations = {}
+                cls._instance._closing = False
                 cls._instance._sessions_lock = threading.RLock()
                 cls._instance._loop_ready = threading.Event()
                 cls._instance._owner_thread = threading.Thread(
@@ -106,6 +141,26 @@ class TermManager:
                     pass
             raise
 
+    async def _dispatch_close(self) -> None:
+        """Run close atomically even when its caller is cancelled."""
+        if asyncio.get_running_loop() is self._owner_loop:
+            await self._close_all()
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self._close_all(), self._owner_loop
+        )
+        wrapped = asyncio.wrap_future(future)
+        try:
+            await asyncio.shield(wrapped)
+        except asyncio.CancelledError:
+            # Do not reopen the creation gate while close is still mutating the
+            # registry.  Consume its eventual result, then preserve cancellation.
+            try:
+                await asyncio.shield(wrapped)
+            except BaseException:
+                pass
+            raise
+
     @classmethod
     def default_shell(cls) -> list[str]:
         """Return the platform's preferred interactive shell command."""
@@ -159,8 +214,21 @@ class TermManager:
         session_factory: SessionFactory | None = None,
     ) -> TermSession:
         """Construct, start, and register a terminal session."""
+        with self._sessions_lock:
+            if self._closing:
+                raise RuntimeError("terminal manager is closing")
+            term_id = self.new_id()
+            self._creation_counter += 1
+            reservation = _CreationReservation(
+                term_id=term_id,
+                created_at=datetime.now(UTC),
+                creation_order=self._creation_counter,
+            )
+            self._reserved_ids.add(term_id)
+            self._creation_reservations[term_id] = reservation
         return await self._dispatch_create(
             self._create(
+                reservation,
                 command,
                 env=env,
                 shell=shell,
@@ -171,6 +239,7 @@ class TermManager:
 
     async def _create(
         self,
+        reservation: _CreationReservation,
         command: str | list[str] | None,
         *,
         env: dict[str, str] | None,
@@ -179,9 +248,7 @@ class TermManager:
         session_factory: SessionFactory | None,
     ) -> TermSession:
         factory = session_factory or self._default_factory()
-        with self._sessions_lock:
-            term_id = self.new_id()
-            self._reserved_ids.add(term_id)
+        term_id = reservation.term_id
         terminal: TermSession | None = None
         try:
             terminal = factory(
@@ -191,20 +258,74 @@ class TermManager:
                 cwd=cwd,
             )
             await terminal.start(command)
-        except BaseException:
+        except BaseException as start_error:
+            cleanup_error: BaseException | None = None
             try:
                 if terminal is not None:
                     await terminal.terminate()
-            except BaseException:
-                pass
+            except BaseException as error:
+                cleanup_error = error
             with self._sessions_lock:
                 self._reserved_ids.discard(term_id)
+                self._creation_reservations.pop(term_id, None)
+                if terminal is not None and cleanup_error is not None:
+                    self._sessions[term_id] = terminal
+                    self._record_info(terminal, reservation)
+            if cleanup_error is not None:
+                raise BaseExceptionGroup(
+                    "terminal startup and cleanup failed",
+                    [start_error, cleanup_error],
+                )
             raise
         assert terminal is not None
         with self._sessions_lock:
             self._reserved_ids.discard(term_id)
+            self._creation_reservations.pop(term_id, None)
             self._sessions[term_id] = terminal
+            self._record_info(terminal, reservation)
         return terminal
+
+    @staticmethod
+    def _session_capabilities(terminal: TermSession) -> frozenset[str]:
+        capabilities = _STREAM_CAPABILITIES
+        session_type = type(terminal)
+        if all(
+            getattr(session_type, operation)
+            is not getattr(TermSession, operation)
+            for operation in ("cursor", "resize", "size")
+        ):
+            capabilities |= _SCREEN_CAPABILITIES
+        return capabilities
+
+    @staticmethod
+    def _backend_name(terminal: TermSession) -> str:
+        name = type(terminal).__name__
+        if name.endswith("Term"):
+            name = name[:-4]
+        return name.lower()
+
+    def _record_info(
+        self,
+        terminal: TermSession,
+        reservation: _CreationReservation | None = None,
+    ) -> None:
+        """Record metadata while ``_sessions_lock`` is held."""
+        if reservation is None:
+            self._creation_counter += 1
+            reservation = _CreationReservation(
+                term_id=terminal.term_id,
+                created_at=datetime.now(UTC),
+                creation_order=self._creation_counter,
+            )
+        capabilities = self._session_capabilities(terminal)
+        self._session_info[terminal.term_id] = TermInfo(
+            term_id=terminal.term_id,
+            backend=self._backend_name(terminal),
+            created_at=reservation.created_at,
+            creation_order=reservation.creation_order,
+            capabilities=capabilities,
+            supports_screen=_SCREEN_CAPABILITIES <= capabilities,
+        )
 
     @staticmethod
     def _default_backend() -> tuple[SessionFactory, bool]:
@@ -246,6 +367,8 @@ class TermManager:
     def register(self, terminal: TermSession) -> None:
         """Register an already-created session, primarily for integrations."""
         with self._sessions_lock:
+            if self._closing:
+                raise RuntimeError("terminal manager is closing")
             if (
                 terminal.term_id in self._sessions
                 or terminal.term_id in self._reserved_ids
@@ -254,6 +377,7 @@ class TermManager:
                     f"terminal already registered: {terminal.term_id}"
                 )
             self._sessions[terminal.term_id] = terminal
+            self._record_info(terminal)
 
     def get(self, term_id: str) -> TermSession:
         """Return a session or raise ``KeyError`` for an unknown ID."""
@@ -267,6 +391,23 @@ class TermManager:
         """Return a stable snapshot of registered IDs."""
         with self._sessions_lock:
             return tuple(self._sessions)
+
+    def terminals(self) -> tuple[TermInfo, ...]:
+        """Return an immutable oldest-to-newest terminal metadata snapshot."""
+        with self._sessions_lock:
+            infos = (
+                self._session_info[term_id]
+                for term_id in self._sessions
+                if term_id in self._session_info
+            )
+            return tuple(sorted(infos, key=lambda info: info.creation_order))
+
+    def terminal_info(self, term_id: str) -> TermInfo:
+        """Return immutable metadata for one registered terminal."""
+        with self._sessions_lock:
+            if term_id not in self._sessions:
+                raise KeyError(f"unknown terminal: {term_id}")
+            return self._session_info[term_id]
 
     async def send_bytes(self, term_id: str, data: bytes) -> None:
         """Send raw bytes to a registered terminal."""
@@ -308,6 +449,10 @@ class TermManager:
         """Return a registered terminal's complete output or scrollback."""
         return await self._dispatch(self.get(term_id).contents())
 
+    async def render_snapshot(self, term_id: str) -> TerminalRenderSnapshot:
+        """Return immutable display state for a registered terminal."""
+        return await self._dispatch(self.get(term_id).render_snapshot())
+
     async def resize(self, term_id: str, rows: int, cols: int) -> None:
         """Resize a registered terminal."""
         await self._dispatch(self.get(term_id).resize(rows, cols))
@@ -334,12 +479,29 @@ class TermManager:
         with self._sessions_lock:
             if self._sessions.get(term_id) is terminal:
                 del self._sessions[term_id]
+                self._session_info.pop(term_id, None)
 
     async def close_all(self) -> None:
         """Terminate and unregister every session."""
-        await self._dispatch(self._close_all())
+        with self._sessions_lock:
+            if self._closing:
+                raise RuntimeError("terminal manager is already closing")
+            self._closing = True
+        try:
+            await self._dispatch_close()
+        finally:
+            with self._sessions_lock:
+                self._closing = False
 
     async def _close_all(self) -> None:
+        # Creates admitted before close_all set the gate may still be queued on
+        # the owner loop or awaiting backend startup.  Yield until each has
+        # either registered a reachable session or failed cleanly.
+        while True:
+            with self._sessions_lock:
+                if not self._reserved_ids:
+                    break
+            await asyncio.sleep(0)
         with self._sessions_lock:
             terminals = tuple(self._sessions.values())
         results = await asyncio.gather(
@@ -351,11 +513,16 @@ class TermManager:
                 if not isinstance(result, BaseException):
                     if self._sessions.get(terminal.term_id) is terminal:
                         del self._sessions[terminal.term_id]
+                        self._session_info.pop(terminal.term_id, None)
         failures = [
-            result for result in results if isinstance(result, Exception)
+            result for result in results if isinstance(result, BaseException)
         ]
-        if failures:
+        if len(failures) == 1:
             raise failures[0]
+        if failures:
+            raise BaseExceptionGroup(
+                "multiple terminals failed to close", failures
+            )
 
     async def wait_for(
         self,

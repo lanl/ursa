@@ -59,6 +59,15 @@ def invoke_with_parent_run(call):
     return RunnableLambda(lambda _, config: call(config)).invoke(None)
 
 
+async def ainvoke_with_parent_run(call):
+    """Run an async ``call(config)`` inside a LangChain parent run."""
+
+    async def invoke(_, config):
+        return await call(config)
+
+    return await RunnableLambda(invoke).ainvoke(None)
+
+
 def _inject_runtime_config(config: dict[str, Any], value: Any) -> None:
     if isinstance(value, ToolRuntime):
         value.config = config
@@ -80,6 +89,28 @@ def invoke_with_event_recorder(
         return f(*args, **kwargs)
 
     result = RunnableLambda(call).invoke(
+        None,
+        config={"callbacks": [recorder]},
+    )
+    return result, recorder
+
+
+async def ainvoke_with_event_recorder(
+    f,
+    *args: Any,
+    **kwargs: Any,
+) -> tuple[Any, CustomEventRecorder]:
+    """Run an async callable inside a parent run and capture events."""
+    recorder = CustomEventRecorder()
+
+    async def call(_, config):
+        for arg in args:
+            _inject_runtime_config(config, arg)
+        for value in kwargs.values():
+            _inject_runtime_config(config, value)
+        return await f(*args, **kwargs)
+
+    result = await RunnableLambda(call).ainvoke(
         None,
         config={"callbacks": [recorder]},
     )
