@@ -1259,6 +1259,11 @@ class BaseAgent(Generic[TState], ABC):
             await self.aclose()
 
     def _stream(self, input, **config):
+        if self._has_async_only_tools():
+            raise RuntimeError(
+                "This agent has async-only tools, but `.stream()` was called. "
+                "Use `agent.astream(...)` instead."
+            )
         config = self.build_config(**config)
         graph = self.compiled_graph
         yield from graph.stream(input, config=config, context=self.context)

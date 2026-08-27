@@ -111,11 +111,10 @@ def runtime(tmp_path):
 
 @pytest.fixture(autouse=True)
 def safe_command(monkeypatch):
-    monkeypatch.setattr(
-        term_tool,
-        "assess_command_safety",
-        lambda command, runtime: SimpleNamespace(is_safe=True, reason="safe"),
-    )
+    async def allow(command, runtime):
+        return SimpleNamespace(is_safe=True, reason="safe")
+
+    monkeypatch.setattr(term_tool, "assess_command_safety", allow)
 
 
 def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
@@ -290,7 +289,7 @@ async def test_term_blocks_unsafe_command_before_creating_terminal(
     monkeypatch.setattr(term_tool, "term_manager", manager)
     assessed = []
 
-    def reject(command, runtime):
+    async def reject(command, runtime):
         assessed.append(command)
         return SimpleNamespace(is_safe=False, reason="test rejection")
 
@@ -315,11 +314,11 @@ async def test_term_rejects_shell_execution_flags_before_assessment(
     manager = WrapperManager(terminal)
     monkeypatch.setattr(term_tool, "term_manager", manager)
     assessed = []
-    monkeypatch.setattr(
-        term_tool,
-        "assess_command_safety",
-        lambda text, runtime: assessed.append(text),
-    )
+
+    async def record_assessment(text, runtime):
+        assessed.append(text)
+
+    monkeypatch.setattr(term_tool, "assess_command_safety", record_assessment)
     with pytest.raises(ValueError) as error:
         await term_tool.term.coroutine(
             "safe", runtime=runtime(tmp_path), shell=["bash", flag, "payload"]
@@ -353,7 +352,7 @@ async def test_term_safety_assesses_shell_and_environment_inputs(
     monkeypatch.setattr(term_tool, "term_manager", manager)
     assessed = []
 
-    def reject(text, runtime):
+    async def reject(text, runtime):
         assessed.append(text)
         return SimpleNamespace(is_safe=False, reason="configuration")
 
