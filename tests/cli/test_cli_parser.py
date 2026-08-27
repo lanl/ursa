@@ -7,7 +7,6 @@ from warnings import catch_warnings, simplefilter
 import pytest
 import yaml
 from jsonargparse import Namespace
-from openai import OpenAIError
 from pydantic import ValidationError
 
 from ursa.cli import (
@@ -45,18 +44,18 @@ def _stub_mcp_server(monkeypatch):
     hitl = MagicMock()
     hitl.as_mcp_server.return_value = mcp
     hitl_class = MagicMock(return_value=hitl)
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     return hitl, mcp
 
 
-def _stub_cli_repl(monkeypatch):
+def _stub_textual(monkeypatch):
     hitl_class = MagicMock()
-    repl_class = MagicMock()
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
-    monkeypatch.setattr("ursa.cli.hitl.UrsaRepl", repl_class)
+    run_textual = MagicMock()
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    return hitl_class, repl_class
+    return hitl_class, run_textual
 
 
 def _parse_config_args(parser, args):
@@ -75,7 +74,7 @@ def _resolve_args(parser, args):
 def test_cli_warns_about_legacy_unnamed_checkpoint(
     monkeypatch, tmp_path, capsys
 ):
-    _stub_cli_repl(monkeypatch)
+    _stub_textual(monkeypatch)
     checkpoint = tmp_path / "db" / "checkpointer.db"
     checkpoint.parent.mkdir()
     checkpoint.touch()
@@ -95,7 +94,7 @@ def test_cli_warns_about_legacy_unnamed_checkpoint(
 def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
     monkeypatch, tmp_path, capsys
 ):
-    _stub_cli_repl(monkeypatch)
+    _stub_textual(monkeypatch)
     checkpoint = tmp_path / "db" / "checkpointer.db"
     checkpoint.parent.mkdir()
     checkpoint.touch()
@@ -108,41 +107,79 @@ def test_cli_does_not_warn_about_legacy_checkpoint_with_name(
 def test_cli_does_not_warn_without_legacy_checkpoint(
     monkeypatch, tmp_path, capsys
 ):
-    _stub_cli_repl(monkeypatch)
+    _stub_textual(monkeypatch)
 
     main(["--workspace", str(tmp_path)])
 
     assert capsys.readouterr().err == ""
 
 
-@pytest.mark.parametrize("args", [[], ["mcp-server"]])
-def test_cli_reports_model_initialization_error_without_traceback(
+def test_exec_uses_textual_one_shot_renderer(monkeypatch):
+    hitl = MagicMock()
+    run_once = MagicMock()
+    monkeypatch.setattr("ursa.cli.runtime.HITL", MagicMock(return_value=hitl))
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    main(["exec", "#plan inspect this"])
+
+    run_once.assert_called_once_with(hitl, "#plan inspect this")
+
+
+@pytest.mark.parametrize("mode", ["interactive", "exec"])
+def test_named_agent_reaches_textual_runtime(monkeypatch, mode):
+    hitl_class = MagicMock()
+    run_textual = MagicMock()
+    run_once = MagicMock()
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual", run_textual)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    args = ["--name", "lab-assistant"]
+    if mode == "exec":
+        args.extend(["exec", "#plan inspect this"])
+
+    main(args)
+
+    config = hitl_class.call_args.args[0]
+    assert config.agent_name == "lab-assistant"
+    if mode == "interactive":
+        run_textual.assert_called_once_with(hitl_class.return_value)
+    else:
+        run_once.assert_called_once_with(
+            hitl_class.return_value, "#plan inspect this"
+        )
+
+
+@pytest.mark.parametrize("args", [[], ["mcp-server"], ["exec", "hello"]])
+def test_cli_reports_runtime_initialization_error_without_traceback(
     monkeypatch, capsys, args
 ):
-    error = OpenAIError(
-        "The api_key client option must be set by setting the "
-        "OPENAI_API_KEY environment variable"
+    monkeypatch.setattr(
+        "ursa.cli.runtime.HITL",
+        MagicMock(side_effect=ValueError("API credentials are invalid")),
     )
-    monkeypatch.setattr("ursa.cli.hitl.HITL", MagicMock(side_effect=error))
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     with pytest.raises(SystemExit, match="2"):
         main(args)
 
     stderr = capsys.readouterr().err
-    assert stderr.startswith("Error: unable to initialize the language model.")
-    assert "OPENAI_API_KEY" in stderr
+    assert stderr == "Error: API credentials are invalid\n"
     assert "Traceback" not in stderr
 
 
-def test_exec_runs_prompt_with_repl(monkeypatch):
-    hitl_class, repl_class = _stub_cli_repl(monkeypatch)
+def test_exec_runs_prompt_with_textual_runtime(monkeypatch):
+    hitl_class = MagicMock()
+    run_once = MagicMock()
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.tui.app.run_textual_once", run_once)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     main(["exec", "summarize this"])
 
     hitl = hitl_class.return_value
-    repl_class.assert_called_once_with(hitl)
-    repl_class.return_value.run_prompt.assert_called_once_with("summarize this")
+    run_once.assert_called_once_with(hitl, "summarize this")
 
 
 @pytest.mark.parametrize(
@@ -156,7 +193,7 @@ def test_exec_runs_prompt_with_repl(monkeypatch):
 def test_legacy_ursa_name_is_supported_with_deprecation_warning(
     monkeypatch, modern_env, cli_args, expected
 ):
-    hitl_class, _ = _stub_cli_repl(monkeypatch)
+    hitl_class, _ = _stub_textual(monkeypatch)
     monkeypatch.setenv("URSA_NAME", "legacy-agent")
     if modern_env is not None:
         monkeypatch.setenv("URSA_AGENT_NAME", modern_env)
@@ -249,7 +286,7 @@ def test_mcp_server_config_flag_sets_hosted_llm(monkeypatch, tmp_path):
     hitl_class = MagicMock()
     hitl_class.return_value = MagicMock()
     hitl_class.return_value.as_mcp_server.return_value = MagicMock()
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     config_file = tmp_path / "mcp.yaml"
@@ -279,7 +316,7 @@ def test_mcp_server_config_flag_parses_alongside_transport(
     hitl_class.return_value = MagicMock()
     mcp = MagicMock()
     hitl_class.return_value.as_mcp_server.return_value = mcp
-    monkeypatch.setattr("ursa.cli.hitl.HITL", hitl_class)
+    monkeypatch.setattr("ursa.cli.runtime.HITL", hitl_class)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     config_file = tmp_path / "mcp.yaml"

@@ -1,14 +1,15 @@
 # generic_acquisition_agents.py
 
+import asyncio
 import hashlib
 import json
+import operator
 import os
 import re
 import shutil
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
-from typing import Any, Optional, TypedDict
+from pathlib import Path
+from typing import Annotated, Any, NotRequired, Optional, TypedDict
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -19,6 +20,7 @@ import requests
 from langchain.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langgraph.types import Overwrite, Send
 from PIL import Image
 
 from ursa.agents.base import BaseAgent
@@ -62,7 +64,22 @@ class AcquisitionState(TypedDict, total=False):
     context: str
     items: list[ItemMetadata]
     summaries: list[str]
-    final_summary: str
+    final_summary: str | None
+    source_tasks: list["SourceTask"]
+    processed_sources: Annotated[list["ProcessedSource"], operator.add]
+
+
+class SourceTask(TypedDict):
+    index: int
+    context: str
+    hit: NotRequired[dict[str, Any]]
+    cached_path: NotRequired[str]
+
+
+class ProcessedSource(TypedDict):
+    index: int
+    item: ItemMetadata
+    summary: str | None
 
 
 # ---------- Small Utilities reused across agents ----------
@@ -87,11 +104,11 @@ def _looks_like_pdf_url(url: str) -> bool:
 
 
 def _download(url: str, dest_path: str, timeout: int = 20) -> str:
-    r = requests.get(url, stream=True, timeout=timeout)
-    r.raise_for_status()
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    with open(dest_path, "wb") as f:
-        shutil.copyfileobj(r.raw, f)
+    with requests.get(url, stream=True, timeout=timeout) as response:
+        response.raise_for_status()
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with open(dest_path, "wb") as f:
+            shutil.copyfileobj(response.raw, f)
     return dest_path
 
 
@@ -158,22 +175,23 @@ def extract_and_describe_images(
         return [f"[Image extraction failed: {e}]"]
 
     count = 0
-    for pi in range(len(doc)):
-        if count >= max_images:
-            break
-        page = doc[pi]
-        for ji, img in enumerate(page.get_images(full=True)):
+    with doc:
+        for pi in range(len(doc)):
             if count >= max_images:
                 break
-            xref = img[0]
-            base = doc.extract_image(xref)
-            image = Image.open(BytesIO(base["image"]))
-            try:
-                desc = describe_image(image) if OpenAI else ""
-            except Exception as e:
-                desc = f"[Error: {e}]"
-            descriptions.append(f"Page {pi + 1}, Image {ji + 1}: {desc}")
-            count += 1
+            page = doc[pi]
+            for ji, img in enumerate(page.get_images(full=True)):
+                if count >= max_images:
+                    break
+                xref = img[0]
+                base = doc.extract_image(xref)
+                with Image.open(BytesIO(base["image"])) as image:
+                    try:
+                        desc = describe_image(image) if OpenAI else ""
+                    except Exception as e:
+                        desc = f"[Error: {e}]"
+                descriptions.append(f"Page {pi + 1}, Image {ji + 1}: {desc}")
+                count += 1
     return descriptions
 
 
@@ -195,6 +213,8 @@ class BaseAcquisitionAgent(BaseAgent):
       - _filter_hit(self, hit) -> bool
     """
 
+    state_type = AcquisitionState
+
     def __init__(
         self,
         llm: BaseChatModel,
@@ -207,9 +227,14 @@ class BaseAcquisitionAgent(BaseAgent):
         summaries_path: str = "acq_summaries",
         vectorstore_path: str = "acq_vectorstores",
         num_threads: int = 4,
+        max_concurrency: int | None = None,
         download: bool = True,
         **kwargs,
     ):
+        self.max_concurrency = max(
+            1, num_threads if max_concurrency is None else max_concurrency
+        )
+        self.num_threads = self.max_concurrency
         super().__init__(llm, **kwargs)
         self.summarize = summarize
         self.rag_embedding = rag_embedding
@@ -219,10 +244,14 @@ class BaseAcquisitionAgent(BaseAgent):
         self.summaries_path = self.den / summaries_path
         self.vectorstore_path = self.den / vectorstore_path
         self.download = download
-        self.num_threads = num_threads
 
         self.database_path.mkdir(exist_ok=True, parents=True)
         self.summaries_path.mkdir(exist_ok=True, parents=True)
+
+    def build_config(self, **overrides) -> dict:
+        """Use LangGraph's executor to bound concurrent source tasks."""
+        overrides.setdefault("max_concurrency", self.max_concurrency)
+        return super().build_config(**overrides)
 
     # ---- abstract-ish methods ----
     def _search(self, query: str) -> list[dict[str, Any]]:
@@ -230,6 +259,14 @@ class BaseAcquisitionAgent(BaseAgent):
 
     def _materialize(self, hit: dict[str, Any]) -> ItemMetadata:
         raise NotImplementedError
+
+    async def _asearch(self, query: str) -> list[dict[str, Any]]:
+        """Run a synchronous source search without blocking the event loop."""
+        return await asyncio.to_thread(self._search, query)
+
+    async def _amaterialize(self, hit: dict[str, Any]) -> ItemMetadata:
+        """Materialize one source without blocking the event loop."""
+        return await asyncio.to_thread(self._materialize, hit)
 
     def _id(self, hit_or_item: dict[str, Any]) -> str:
         raise NotImplementedError
@@ -258,57 +295,25 @@ class BaseAcquisitionAgent(BaseAgent):
         return text
 
     # ---- shared nodes ----
-    def _fetch_items(self, query: str) -> list[ItemMetadata]:
-        hits = self._search(query)[: self.max_results] if self.download else []
-        items: list[ItemMetadata] = []
+    async def _load_cached_item(self, path: Path) -> ItemMetadata:
+        def load() -> ItemMetadata:
+            try:
+                if path.suffix.lower() == ".pdf":
+                    full_text = read_pdf(str(path))
+                else:
+                    full_text = path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                full_text = f"[Error reading cached file: {exc}]"
+            full_text = self._postprocess_text(full_text, str(path))
+            return {
+                "id": path.stem,
+                "local_path": str(path),
+                "full_text": full_text,
+            }
 
-        # If not downloading/scraping, try to load whatever is cached in database_path.
-        if not self.download:
-            for fname in os.listdir(self.database_path):
-                if fname.lower().endswith((".pdf", ".txt", ".html")):
-                    item_id = os.path.splitext(fname)[0]
-                    local_path = os.path.join(self.database_path, fname)
-                    full_text = ""
-                    try:
-                        if fname.lower().endswith(".pdf"):
-                            full_text = read_pdf(local_path)
-                        else:
-                            with open(
-                                local_path,
-                                "r",
-                                encoding="utf-8",
-                                errors="ignore",
-                            ) as f:
-                                full_text = f.read()
-                    except Exception as e:
-                        full_text = f"[Error reading cached file: {e}]"
-                    full_text = self._postprocess_text(full_text, local_path)
-                    items.append({
-                        "id": item_id,
-                        "local_path": local_path,
-                        "full_text": full_text,
-                    })
-            return items
-
-        # Normal path: search → materialize each
-        with ThreadPoolExecutor(
-            max_workers=min(self.num_threads, max(1, len(hits)))
-        ) as ex:
-            futures = [
-                ex.submit(self._materialize, h)
-                for h in hits
-                if self._filter_hit(h)
-            ]
-            for fut in as_completed(futures):
-                try:
-                    item = fut.result()
-                    items.append(item)
-                except Exception as e:
-                    items.append({
-                        "id": _hash(str(time.time())),
-                        "full_text": f"[Error: {e}]",
-                    })
-        return items
+        return await asyncio.to_thread(load)
 
     def _normalize_inputs(self, inputs) -> AcquisitionState:
         if isinstance(inputs, str):
@@ -319,7 +324,7 @@ class BaseAcquisitionAgent(BaseAgent):
             raise TypeError(f"Invalid input for {self.__class__.__name__}")
 
     def format_result(self, state: AcquisitionState) -> str:
-        if summary := state["final_summary"]:
+        if summary := state.get("final_summary"):
             return summary
 
         # Fallback to dumping an empty string if `self.summarize=False`.
@@ -331,20 +336,57 @@ class BaseAcquisitionAgent(BaseAgent):
         """Generate a search query from the input search task (context)"""
         existing = state.get("query")
         if existing:
-            return state
+            return {}
 
         context = state["context"]
         query = await self.llm.ainvoke(
             f"The user stated {context}. Generate between 1 and 8 words for a search query to address the users need. Return only the words to search."
         )
-        state["query"] = query.content or context
-        return state
+        return {"query": query.text or context}
 
-    def _fetch_node(self, state: AcquisitionState) -> AcquisitionState:
-        items = self._fetch_items(state["query"])
-        return {**state, "items": items}
+    async def _search_sources(
+        self, state: AcquisitionState
+    ) -> AcquisitionState:
+        """Create source tasks for LangGraph's fan-out router."""
+        context = state["context"]
+        if not self.download:
+            paths = sorted(
+                path
+                for path in self.database_path.iterdir()
+                if path.suffix.lower() in {".pdf", ".txt", ".html"}
+            )
+            tasks = [
+                SourceTask(
+                    index=index,
+                    context=context,
+                    cached_path=str(path),
+                )
+                for index, path in enumerate(paths)
+            ]
+        else:
+            hits = (await self._asearch(state["query"]))[: self.max_results]
+            tasks = [
+                SourceTask(index=index, context=context, hit=hit)
+                for index, hit in enumerate(hits)
+                if self._filter_hit(hit)
+            ]
+        return {
+            "source_tasks": tasks,
+            "processed_sources": Overwrite([]),
+        }
 
-    def _summarize_node(self, state: AcquisitionState) -> AcquisitionState:
+    def _fan_out_sources(self, state: AcquisitionState) -> list[Send] | str:
+        """Dispatch one LangGraph task per source, or reduce an empty set."""
+        tasks = state.get("source_tasks", [])
+        if not tasks:
+            return "_reduce_sources"
+        return [Send("_process_source", task) for task in tasks]
+
+    async def _summarize_source(
+        self, item: ItemMetadata, index: int, context: str
+    ) -> str:
+        """Summarize one source inside its LangGraph fan-out task."""
+        item_id = item.get("id", f"item_{index}")
         prompt = ChatPromptTemplate.from_template("""
         You are an assistant responsible for summarizing retrieved content in the context of this task: {context}
 
@@ -353,40 +395,61 @@ class BaseAcquisitionAgent(BaseAgent):
         {retrieved_content}
         """)
         chain = prompt | self.llm | StrOutputParser()
-
-        if "items" not in state or not state["items"]:
-            return {**state, "summaries": None}
-
-        summaries: list[Optional[str]] = [None] * len(state["items"])
-
-        def process(i: int, item: ItemMetadata):
-            item_id = item.get("id", f"item_{i}")
-            out_path = os.path.join(
-                self.summaries_path, f"{_safe_filename(item_id)}_summary.txt"
+        try:
+            cleaned = remove_surrogates(item.get("full_text", ""))
+            summary = await chain.ainvoke(
+                {"retrieved_content": cleaned, "context": context},
+                config=self.build_config(tags=["acq", "summarize_each"]),
             )
-            try:
-                cleaned = remove_surrogates(item.get("full_text", ""))
-                summary = chain.invoke(
-                    {"retrieved_content": cleaned, "context": state["context"]},
-                    config=self.build_config(tags=["acq", "summarize_each"]),
+        except Exception as exc:  # noqa: BLE001
+            summary = f"[Error summarizing item {item_id}: {exc}]"
+
+        out_path = self.summaries_path / (
+            f"{_safe_filename(item_id)}_summary.txt"
+        )
+        try:
+            await asyncio.to_thread(
+                out_path.write_text, summary, encoding="utf-8"
+            )
+        except (OSError, UnicodeError):
+            # Cache persistence is best-effort; the in-memory result is still
+            # useful and should be allowed to reach the reducer.
+            pass
+        return summary
+
+    async def _process_source(self, task: SourceTask) -> AcquisitionState:
+        """Materialize and optionally summarize one fanned-out source."""
+        index = task["index"]
+        hit = task.get("hit")
+        if hit is None:
+            cached_path = task.get("cached_path")
+            if cached_path is None:
+                raise ValueError(
+                    "A source task must contain either 'hit' or 'cached_path'"
                 )
-            except Exception as e:
-                summary = f"[Error summarizing item {item_id}: {e}]"
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(summary)
-            return i, summary
+            item = await self._load_cached_item(Path(cached_path))
+        else:
+            try:
+                item = await self._amaterialize(hit)
+            except Exception as exc:  # noqa: BLE001
+                item: ItemMetadata = {
+                    "id": self._id(hit),
+                    "title": str(hit.get("title") or ""),
+                    "url": str(hit.get("href") or hit.get("url") or ""),
+                    "full_text": f"[Error: {exc}]",
+                }
 
-        with ThreadPoolExecutor(
-            max_workers=min(self.num_threads, len(state["items"]))
-        ) as ex:
-            futures = [
-                ex.submit(process, i, it) for i, it in enumerate(state["items"])
-            ]
-            for fut in as_completed(futures):
-                i, s = fut.result()
-                summaries[i] = s
-
-        return {**state, "summaries": summaries}  # type: ignore
+        summary = (
+            await self._summarize_source(item, index, task["context"])
+            if self.summarize and self.rag_embedding is None
+            else None
+        )
+        processed = ProcessedSource(
+            index=index,
+            item=item,
+            summary=summary,
+        )
+        return {"processed_sources": [processed]}
 
     def _rag_node(self, state: AcquisitionState) -> AcquisitionState:
         new_state = state.copy()
@@ -402,24 +465,32 @@ class BaseAcquisitionAgent(BaseAgent):
         ]
         return new_state
 
-    def _aggregate_node(self, state: AcquisitionState) -> AcquisitionState:
-        if not state.get("summaries") or not state.get("items"):
-            return {**state, "final_summary": None}
+    async def _arag_node(self, state: AcquisitionState) -> AcquisitionState:
+        return await asyncio.to_thread(self._rag_node, state)
+
+    async def _aggregate_sources(
+        self,
+        items: list[ItemMetadata],
+        summaries: list[str],
+        context: str,
+    ) -> str | None:
+        """Reduce ordered source summaries to the final answer."""
+        if not summaries or not items:
+            return None
 
         blocks: list[str] = []
-        for idx, (item, summ) in enumerate(
-            zip(state["items"], state["summaries"])
-        ):  # type: ignore
+        for idx, (item, summ) in enumerate(zip(items, summaries)):
             cite = self._citation(item)
             blocks.append(f"[{idx + 1}] {cite}\n\nSummary:\n{summ}")
 
         combined = "\n\n" + ("\n\n" + "-" * 40 + "\n\n").join(blocks)
-        with open(
-            os.path.join(self.summaries_path, "summaries_combined.txt"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(combined)
+        combined_path = self.summaries_path / "summaries_combined.txt"
+        try:
+            await asyncio.to_thread(
+                combined_path.write_text, combined, encoding="utf-8"
+            )
+        except (OSError, UnicodeError):
+            pass
 
         prompt = ChatPromptTemplate.from_template("""
         You are a scientific assistant extracting insights from multiple summaries.
@@ -432,39 +503,79 @@ class BaseAcquisitionAgent(BaseAgent):
         """)
         chain = prompt | self.llm | StrOutputParser()
 
-        final_summary = chain.invoke(
-            {"Summaries": combined, "context": state["context"]},
+        final_summary = await chain.ainvoke(
+            {"Summaries": combined, "context": context},
             config=self.build_config(tags=["acq", "aggregate"]),
         )
-        with open(
-            os.path.join(self.summaries_path, "final_summary.txt"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(final_summary)
+        final_path = self.summaries_path / "final_summary.txt"
+        try:
+            await asyncio.to_thread(
+                final_path.write_text, final_summary, encoding="utf-8"
+            )
+        except (OSError, UnicodeError):
+            pass
 
-        return {**state, "final_summary": final_summary}
+        return final_summary
+
+    async def _reduce_sources(
+        self, state: AcquisitionState
+    ) -> AcquisitionState:
+        """Collect LangGraph reducer output and produce the final state."""
+        processed = sorted(
+            state.get("processed_sources", []),
+            key=lambda source: source["index"],
+        )
+        items = [source["item"] for source in processed]
+        summaries = [
+            source["summary"]
+            for source in processed
+            if source["summary"] is not None
+        ]
+        result: AcquisitionState = {
+            "items": items,
+            "summaries": summaries,
+        }
+        if self.summarize and self.rag_embedding is not None:
+            rag_state = await self._arag_node({**state, "items": items})
+            result["final_summary"] = rag_state.get("final_summary")
+        elif self.summarize:
+            result["final_summary"] = await self._aggregate_sources(
+                items, summaries, state["context"]
+            )
+        return result
+
+    def _invoke(self, input, **config):
+        """Run the async-only graph for legacy synchronous callers."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._ainvoke(input, **config))
+        raise RuntimeError(
+            "Acquisition agents are async-first; use `await agent.ainvoke(...)` "
+            "inside an active event loop."
+        )
+
+    def _stream(self, input, **config):
+        """Reject sync streaming because all acquisition nodes are async."""
+        raise RuntimeError(
+            "Acquisition agents are async-first and do not support synchronous "
+            "`.stream()`. Use `await agent.ainvoke(...)` instead."
+        )
 
     def _build_graph(self):
         self.add_node(self._search_query)
+        self.add_node(self._search_sources)
+        self.add_node(self._process_source)
+        self.add_node(self._reduce_sources)
         self.graph.set_entry_point("_search_query")
-        self.add_node(self._fetch_node)
-        self.graph.add_edge("_search_query", "_fetch_node")
-
-        if self.summarize:
-            if self.rag_embedding:
-                self.add_node(self._rag_node)
-                self.graph.add_edge("_fetch_node", "_rag_node")
-                self.graph.set_finish_point("_rag_node")
-            else:
-                self.add_node(self._summarize_node)
-                self.add_node(self._aggregate_node)
-
-                self.graph.add_edge("_fetch_node", "_summarize_node")
-                self.graph.add_edge("_summarize_node", "_aggregate_node")
-                self.graph.set_finish_point("_aggregate_node")
-        else:
-            self.graph.set_finish_point("_fetch_node")
+        self.graph.add_edge("_search_query", "_search_sources")
+        self.graph.add_conditional_edges(
+            "_search_sources",
+            self._fan_out_sources,
+            ["_process_source", "_reduce_sources"],
+        )
+        self.graph.add_edge("_process_source", "_reduce_sources")
+        self.graph.set_finish_point("_reduce_sources")
 
 
 # ---------- Concrete: Web Search via ddgs ----------
@@ -526,9 +637,9 @@ class WebSearchAgent(BaseAcquisitionAgent):
                 _download(url, local_path)
                 full_text = read_pdf(local_path)
             else:
-                r = requests.get(url, headers=headers, timeout=20)
-                r.raise_for_status()
-                html = r.text
+                with requests.get(url, headers=headers, timeout=20) as response:
+                    response.raise_for_status()
+                    html = response.text
                 local_path = os.path.join(
                     self.database_path, _safe_filename(item_id) + ".html"
                 )
@@ -614,7 +725,7 @@ class OSTIAgent(BaseAcquisitionAgent):
         except Exception as e:
             return [
                 {
-                    "id": _hash(query + str(time.time())),
+                    "id": _hash(query + ":search-error"),
                     "title": "Search error",
                     "error": str(e),
                 }
@@ -698,14 +809,16 @@ class OSTIAgent(BaseAcquisitionAgent):
             full_text = f"[Error materializing OSTI {item_id}: {e}]"
 
         full_text = self._postprocess_text(full_text, local_path)
-        return {
+        item: ItemMetadata = {
             "id": item_id,
             "title": title,
-            "url": landing,
             "local_path": local_path,
             "full_text": full_text,
             "extra": {"raw_hit": hit},
         }
+        if landing:
+            item["url"] = landing
+        return item
 
 
 # ---------- (Optional) Refactor your ArxivAgent to reuse the parent ----------
@@ -759,9 +872,9 @@ class ArxivAgent(BaseAcquisitionAgent):
         enc = quote(query)
         url = f"http://export.arxiv.org/api/query?search_query=all:{enc}&start=0&max_results={self.max_results}"
         try:
-            resp = requests.get(url, timeout=15)
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.content)
+            with requests.get(url, timeout=15) as response:
+                response.raise_for_status()
+                feed = feedparser.parse(response.content)
             entries = feed.entries if hasattr(feed, "entries") else []
             hits = []
             for e in entries:
@@ -775,7 +888,7 @@ class ArxivAgent(BaseAcquisitionAgent):
         except Exception as e:
             return [
                 {
-                    "id": _hash(query + str(time.time())),
+                    "id": _hash(query + ":search-error"),
                     "title": "Search error",
                     "error": str(e),
                 }

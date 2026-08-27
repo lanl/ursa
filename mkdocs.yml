@@ -98,7 +98,6 @@ nav:
       - Plan-Execute checkpointing: reference/plan-execute-checkpointing.md
       - Tutorials and examples:
           - Combining arXiv agent and execution agent: reference/tutorials/arxiv-execution.md
-          - Human in the Loop: reference/tutorials/human-in-the-loop.md
           - Neutron Star: reference/tutorials/neutron-star.md
       - API Reference:
           - agents: reference/api/agents.md

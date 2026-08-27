@@ -1,103 +1,100 @@
 # Getting Started - CLI
 
-This guide walks through starting URSA from the terminal, configuring a model, chatting with the default assistant, and running the planning and execution agents.
+This guide walks through starting URSA from the terminal, chatting with the
+default assistant, and routing messages to the planning and execution agents.
 
 ## Prerequisites
 
 - URSA is installed. See [Installation](../installation/index.md).
-- You have access to an LLM endpoint.
+- `OPENAI_API_KEY` is set for the default OpenAI endpoint.
 - You have a dedicated workspace directory for files URSA may create or modify.
 
 !!! warning "Be aware of your workspace"
     The execution agent can write files and run shell commands. Be careful using workspaces with source tree or data directory you cannot risk modifying. Good practice is to make backups or copies of directories before working.
 
-## 1. Create a configuration file
+For Ollama, Anthropic, Google GenAI, custom OpenAI-compatible endpoints, and
+configuration files, see [Configuration](../configuration/index.md).
 
-YAML configuration files are reusable and easy to edit. URSA configs can be
-layered; see
-[Configuration files, CLI flags, and environment variables][configuration-files-cli-flags-and-environment-variables]
-for the precedence order.
+## 1. Start URSA
 
-Create `config.yaml`:
-
-```yaml
-llm_model:
-  model: openai:gpt-5.4
-  api_key:
-    env: OPENAI_API_KEY
-workspace: .
-```
-
-Then set your API key in the shell:
+Set your OpenAI API key and launch URSA:
 
 === "macOS/Linux"
 
     ```bash
     export OPENAI_API_KEY="..."
+    ursa
     ```
 
 === "Windows PowerShell"
 
     ```powershell
     $env:OPENAI_API_KEY = "..."
+    ursa
     ```
 
-See [Configuration](../configuration/index.md) for Ollama, Anthropic, Google GenAI, and custom OpenAI-compatible endpoints.
+You should see the full-screen URSA interface. Type `/` to browse app
+commands, `#` to route a message to an agent, or `@` to insert a workspace
+path.
 
-## 2. Start URSA
+### Full-screen interface controls
 
-```bash
-ursa --config config.yaml
-```
+| Input | Action |
+|---|---|
+| `/` | Browse application commands. Use `/keymap` for every keyboard shortcut. |
+| `#` | Choose an agent and route the message to it. |
+| `@` | Insert a workspace file or directory into the message. |
+| **Enter** | Submit the message. |
+| **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
+| **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |
+| **Ctrl+D** | Exit immediately without cleanup; reserve this for a stuck turn. |
 
-You should see the URSA prompt:
+## 2. Chat with the assistant
 
 ```text
-ursa>
-```
-
-Type `help` or `?` inside the prompt to see available interactive commands.
-
-## 3. Chat with the assistant
-
-```text
-ursa> Summarize what URSA can help me do.
+Summarize what URSA can help me do.
 ```
 
 Plain text input is handled by the default chat behavior.
 
-## 4. Use the planning agent
+## 3. Route a message to the planning agent
 
-Run the planning agent with the `plan` command:
-
-```text
-ursa> plan Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
-```
-
-You can also type the agent name first and provide the prompt interactively:
+Route a message to the planning agent with the `#plan` macro. Typing `#` opens
+the agent picker and inserts the selected agent at the front of the message:
 
 ```text
-ursa> plan
-plan: Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
+#plan Write a plan for building a suite of surrogate models on data.csv and performing assessment of predictive capability and uncertainty quantification.
 ```
 
-## 5. Use the execution agent
+The leading `#` is required; `plan ...` without it is ordinary chat input.
+
+## 4. Route a message to the execution agent
 
 The execution agent can write files and run commands in the configured workspace.
 
 ```text
-ursa> execute Write and run a Python script that prints the first 10 prime numbers.
+#execute Write and run a Python script that prints the first 10 prime numbers.
 ```
 
 Review the actions and outputs carefully. For more safety guidance, see
 [Sandboxing and information control][sandboxing-and-information-control].
 
-## 6. Optional: use a named agent
+To direct the agent to a particular workspace file, type `@` and choose it
+from the path picker:
+
+```text
+#execute Read @data/measurements.csv and create a histogram of the pressure column.
+```
+
+The picker inserts the path into the message; the receiving agent decides how
+to use it and must have an appropriate file tool.
+
+## 5. Optional: use a named agent
 
 A named agent stores state so you can return to it later:
 
 ```bash
-ursa --config config.yaml --name my-first-agent
+ursa --name my-first-agent
 ```
 
 For detailed commands to list, save, copy, share, import, and delete agents, see [Persistence](../persistence/index.md).
@@ -105,15 +102,16 @@ For detailed commands to list, save, copy, share, import, and delete agents, see
 ## Useful CLI commands
 
 ```bash
+ursa
 ursa --help
 ursa --print-config
-ursa --config config.yaml
-ursa --config config.yaml --name my-agent
-ursa --config config.yaml --use-web
+ursa --name my-agent
+ursa --use-web
 ```
 
-Web tools are opt in. Use `--use-web` or `use_web: true` only when you want URSA
-to make network requests through its web-search tools.
+Web tools are opt in. Use `--use-web` only when you want URSA to make network
+requests through its web-search tools. Configuration files and their
+`use_web` setting are covered in [Configuration](../configuration/index.md).
 
 ## Where next?
 

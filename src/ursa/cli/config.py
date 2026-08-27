@@ -303,6 +303,16 @@ class ModelConfig(BaseModel):
                 f"Model base url ({model_url}) and config ({self.base_url}) do not match"
             )
 
+    def pretty_repr(self, short: bool = False) -> str:
+        if short:
+            return f"{self.model} ({self.inference_provider or self.base_url})"
+        return f"{self.model} ({self.endpoint_repr()})"
+
+    def endpoint_repr(self):
+        if self.inference_provider is None:
+            return self.base_url
+        return f"{self.inference_provider} - {self.base_url}"
+
 
 class ChatModelConfig(ModelConfig):
     """Configuration for instantiating a chat model"""

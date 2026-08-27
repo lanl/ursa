@@ -12,55 +12,29 @@ To use the command line app, run
 ursa --llm_model.model openai:gpt-5.2
 ```
 
-This will start a REPL in your terminal.
-
-```
-  __  ________________ _
- / / / / ___/ ___/ __ `/
-/ /_/ / /  (__  ) /_/ /
-\__,_/_/  /____/\__,_/
-
-For help, type: ? or help. Exit with Ctrl+d.
-ursa>
-```
-
-Within the REPL, you can get help by typing `?` or `help`.
+This starts the full-screen terminal app. Type `/` to browse commands,
+`#` to choose an agent behavior, or `@` to insert a workspace path.
+See [Getting Started - CLI](getting-started/cli.md#full-screen-interface-controls)
+for prompt editing, multiline input, clipboard, and exit behavior.
 
 You can chat with an LLM by simply typing into the terminal.
 
 ```
-ursa> How are you?
+How are you?
 Thanks for asking! I’m doing well. How are you today? What can I help you with?
 ```
 
-You can run various agents by typing the name of the agent. For example,
+Use the required `#` macro to route a prompt to another agent behavior:
 
 ```
-ursa> plan
-plan: Write a python script to do linear regression using only numpy.
+#plan Write a python script to do linear regression using only numpy.
 ```
 
-Or by prepending the agent name to the query:
-
-```shell
-ursa> plan Write a python script to do linear regression using only numpy.
-```
-
-If you run subsequent agents, the last output will be appended to the prompt for the next agent.
-
-So, to run the Planning Agent followed by the Execution Agent:
-```
-ursa> plan
-plan: Write a python script to do linear regression using only numpy.
-
-...
-
-ursa> execute
-execute: Execute the plan.
-```
+Agent macros route only the prompt in which they appear. Output from a previous
+agent is not automatically appended to the next prompt; quote or reference any
+needed result explicitly when switching behaviors.
 
 You can get a list of available command line options via
 ```
 ursa --help
 ```
-
