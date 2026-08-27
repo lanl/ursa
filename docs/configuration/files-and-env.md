@@ -33,23 +33,19 @@ On every platform, URSA then checks `~/.config/ursa/config.yaml` and, when
 `XDG_CONFIG_HOME` is set, `$XDG_CONFIG_HOME/ursa/config.yaml`. These user files
 are loaded in that order, with duplicates skipped. A missing file is ignored.
 
-## YAML files: preferred
+## User YAML files: preferred
+
+For defaults that should follow you across projects, edit the user config path
+listed above. A small user config is usually better than a complete copy of the
+resolved defaults. For example:
 
 ```yaml
-llm_model:
-  model: openai:gpt-5.4
-  api_key:
-    env: OPENAI_API_KEY
-workspace: ./ursa-workspace
-group: default
-use_web: false
-agent_config:
-  execute:
-    safe_codes:
-      - python
+emb_model:
+  model: openai:text-embedding-3-large
 ```
 
-Run:
+OpenAI chat needs no YAML; set `OPENAI_API_KEY` and run `ursa`. Use an explicit
+file only for a project-specific or one-off override:
 
 ```bash
 ursa --config config.yaml
@@ -89,9 +85,17 @@ URSA exposes environment-variable equivalents for many CLI settings, but for mos
 
 Example:
 
-```bash
-export OPENAI_API_KEY="..."
-```
+=== "macOS/Linux"
+
+    ```bash
+    export OPENAI_API_KEY="..."
+    ```
+
+=== "Windows PowerShell"
+
+    ```powershell
+    $env:OPENAI_API_KEY = "..."
+    ```
 
 Then in YAML:
 
@@ -104,9 +108,18 @@ llm_model:
 
 You can also set URSA configuration options directly:
 
-```bash
-URSA_LLM_MODEL__MODEL=openai:gpt-5.4 ursa
-```
+=== "macOS/Linux"
+
+    ```bash
+    URSA_LLM_MODEL__MODEL=openai:gpt-5.4 ursa
+    ```
+
+=== "Windows PowerShell"
+
+    ```powershell
+    $env:URSA_LLM_MODEL__MODEL = "openai:gpt-5.4"
+    ursa
+    ```
 
 Use `ursa --help` to view supported `URSA_...` variables.
 
@@ -148,5 +161,4 @@ ursa --config ./.ursa/config.yaml --print-config=file,resolved
 
 The complete form is `--print-config=LEVEL[+],STAGE`. Levels are `system`,
 `user`, `file`, and `final`; stages are `merged` and `resolved`. Add `+` to include
-lower-precedence sources. If you provide only a level, URSA uses the `resolved`
-stage; for example, `--print-config=user` shows resolved user configuration.
+lower-precedence sources.

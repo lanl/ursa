@@ -1,5 +1,4 @@
 from langchain.chat_models import init_chat_model
-from langchain.embeddings import init_embeddings
 from langchain_core.messages import HumanMessage
 
 from ursa.agents import ExecutionAgent
@@ -19,8 +18,6 @@ Optimize the six-hump camel function.
 """
 
 model = init_chat_model(model="ollama:gpt-oss:20b")
-
-embedding_model = init_embeddings(model="ollama:nomic-embed-text:latest")
 
 # Initialize the agent
 executor = ExecutionAgent(llm=model)

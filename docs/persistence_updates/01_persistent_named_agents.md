@@ -111,7 +111,7 @@ ursa import-agent ./ursa_agent_default_lab-assistant_full_YYYYMMDD_HHMMSS.tar.gz
 
 ## Web dashboard
 
-The dashboard uses the same persistent agent store as the CLI:
+The dashboard and TUI use the same persistent agent store:
 
 ```text
 ~/.cache/ursa_agents/<group>/
