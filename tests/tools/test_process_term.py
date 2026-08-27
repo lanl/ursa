@@ -129,7 +129,7 @@ async def test_process_term_interactive_sends_and_lifecycle(tmp_path):
     await terminal.start()
     assert await terminal.is_alive() == {"is_alive": True}
     await terminal.send_text("printf interactive")
-    await terminal.send_keycode(10)
+    await terminal.send_line("")
     await terminal.send_line("exit")
     assert await terminal.wait() == 0
     assert await terminal.read() == "interactive"
@@ -151,6 +151,38 @@ async def test_process_term_streams_interactive_python_output_before_exit(
     await terminal.send_line("exit()")
     await terminal.send_line("exit")
     await terminal.wait()
+    await terminal.terminate()
+
+
+async def test_process_term_output_marker_excludes_prior_output(tmp_path):
+    terminal = ProcessTerm("procmark", ["/bin/sh"], cwd=tmp_path)
+    await terminal.start()
+    await terminal.send_line("printf 'BEFORE\\n'")
+    await _wait_for_output(terminal, re.compile(r"BEFORE"))
+    marker = await terminal.output_marker()
+    await terminal.send_line("printf 'AFTER\\n'")
+    await _wait_for_output(terminal, re.compile(r"AFTER"))
+    output = await terminal.output_since(marker)
+    assert "AFTER" in output
+    assert "BEFORE" not in output
+    await terminal.send_line("exit")
+    await terminal.wait()
+    await terminal.terminate()
+
+
+async def test_process_term_marker_does_not_split_multibyte_utf8(tmp_path):
+    terminal = ProcessTerm("procutf8", ["/bin/sh"], cwd=tmp_path)
+    await terminal.start("printf '\\342'; sleep 0.15; printf '\\202\\254X'")
+    while (
+        terminal._output_path is None
+        or terminal._output_path.stat().st_size < 1
+    ):
+        await asyncio.sleep(0.005)
+
+    marker = await terminal.output_marker()
+    assert marker == 0
+    await terminal.wait()
+    assert await terminal.output_since(marker) == "€X"
     await terminal.terminate()
 
 
