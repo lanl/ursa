@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
 from pathlib import Path
+from typing import Annotated
 
 from langchain.tools import ToolRuntime
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, ToolException, tool
+from pydantic import AfterValidator, Field, ValidationError
 
 from ursa.agents.base import AgentContext
 from ursa.tools.run_command_tool import assess_command_safety
@@ -82,6 +85,15 @@ _CONTROL_CHARACTERS = {
     "?": 127,
 }
 _ESC = bytes((27,))
+
+
+NonEmptyStr = Annotated[str, Field(min_length=1)]
+TermId = Annotated[str, Field(pattern=r"^[A-Za-z0-9]{8}$")]
+NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
+PositiveInt = Annotated[int, Field(gt=0, strict=True)]
+ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
+Keycode = ByteValue
+WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 2)]
 
 
 def _canonical_modifiers(
@@ -192,10 +204,12 @@ def _launch_safety_text(
     )
 
 
-def _validate_shell(shell: list[str] | None) -> None:
+def _validate_shell(shell: list[str] | None) -> list[str] | None:
     """Reject shell arguments that compete with backend command handling."""
     if shell is None:
-        return
+        return None
+    if not shell:
+        raise ValueError("shell must contain at least one argument")
     conflicting = [
         argument
         for argument in shell[1:]
@@ -207,15 +221,67 @@ def _validate_shell(shell: list[str] | None) -> None:
             "shell must not contain command-execution flags; pass the command "
             f"through cmd instead (found {flags})"
         )
+    return shell
+
+
+def _validate_key(key: str) -> str:
+    """Validate a key independently of its modifiers for tool input parsing."""
+    if len(key) == 1 and key.isprintable():
+        return key
+    name = key.casefold().replace("_", "").replace("-", "")
+    if name not in {
+        *_SIMPLE_KEYS,
+        *_CSI_FINAL_KEYS,
+        *_CSI_TILDE_KEYS,
+        *_FUNCTION_FINAL_KEYS,
+    }:
+        raise ValueError(f"unknown key: {key!r}")
+    return key
+
+
+def _validate_modifiers(
+    modifiers: set[str] | list[str] | None,
+) -> set[str] | list[str] | None:
+    _canonical_modifiers(modifiers)
+    return modifiers
+
+
+def _validate_pattern(pattern: str) -> str:
+    """Reject malformed regular expressions at the tool schema boundary."""
+    try:
+        re.compile(pattern)
+    except re.error as error:
+        raise ValueError(f"invalid regular expression: {error}") from error
+    return pattern
+
+
+ShellArgv = Annotated[
+    Annotated[list[NonEmptyStr], Field(min_length=1)] | None,
+    AfterValidator(_validate_shell),
+]
+CommandArgv = Annotated[list[NonEmptyStr], Field(min_length=1)]
+TermKey = Annotated[NonEmptyStr, AfterValidator(_validate_key)]
+TermModifiers = Annotated[
+    set[str] | list[str] | None,
+    AfterValidator(_validate_modifiers),
+]
+RegexPattern = Annotated[NonEmptyStr, AfterValidator(_validate_pattern)]
+
+
+def _unknown_terminal(term_id: str) -> ToolException:
+    """Translate a stale terminal ID into a retryable tool failure."""
+    return ToolException(
+        f"Unknown terminal ID {term_id!r}. Use an ID returned by the term tool."
+    )
 
 
 @tool
 async def term(
-    cmd: str | list[str],
+    cmd: NonEmptyStr | CommandArgv,
     runtime: ToolRuntime[AgentContext],
     env: dict[str, str] | None = None,
     session: bool = False,
-    shell: list[str] | None = None,
+    shell: ShellArgv = None,
 ) -> str:
     """Run a command, returning its output or a persistent terminal ID.
 
@@ -229,6 +295,8 @@ async def term(
         session: Return immediately with a persistent terminal ID.
         shell: Optional shell executable and arguments.
     """
+    # Keep direct coroutine callers safe too; normal tool calls have already
+    # performed this check through ``ShellArgv``'s Pydantic validator.
     _validate_shell(shell)
     workspace = Path(runtime.context.workspace)
     launch_text = _launch_safety_text(cmd, env, shell, workspace)
@@ -281,7 +349,9 @@ async def term(
 
 
 @tool
-async def term_send_bytes(term_id: str, data: bytes | list[int]) -> str:
+async def term_send_bytes(
+    term_id: TermId, data: bytes | list[ByteValue]
+) -> str:
     """Send raw bytes to a terminal session."""
     if isinstance(data, list):
         if any(
@@ -294,86 +364,137 @@ async def term_send_bytes(term_id: str, data: bytes | list[int]) -> str:
         payload = bytes(data)
     else:
         payload = data
-    await term_manager.send_bytes(term_id, payload)
+    try:
+        await term_manager.send_bytes(term_id, payload)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
     return f"Sent {len(payload)} bytes to terminal {term_id}"
 
 
 @tool
-async def term_send_text(term_id: str, text: str) -> str:
+async def term_send_text(term_id: TermId, text: str) -> str:
     """Send text to a terminal session without appending a newline."""
-    await term_manager.send_text(term_id, text)
+    try:
+        await term_manager.send_text(term_id, text)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
     return f"Sent text to terminal {term_id}"
 
 
 @tool
-async def term_send_line(term_id: str, line: str) -> str:
+async def term_send_line(term_id: TermId, line: str) -> str:
     """Send text followed by a newline to a terminal session."""
-    await term_manager.send_line(term_id, line)
+    try:
+        await term_manager.send_line(term_id, line)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
     return f"Sent line to terminal {term_id}"
 
 
 @tool
-async def term_send_keycode(term_id: str, keycode: int) -> str:
+async def term_send_keycode(term_id: TermId, keycode: Keycode) -> str:
     """Send one byte-valued keycode (0 through 255) to a terminal session."""
-    await term_manager.send_keycode(term_id, keycode)
+    try:
+        await term_manager.send_keycode(term_id, keycode)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
     return f"Sent keycode {keycode} to terminal {term_id}"
 
 
 @tool
 async def term_send_key(
-    term_id: str,
-    key: str,
-    modifiers: set[str] | list[str] | None = None,
+    term_id: TermId,
+    key: TermKey,
+    modifiers: TermModifiers = None,
 ) -> str:
     """Send a printable or named key with optional keyboard modifiers."""
-    payload = encode_term_key(key, modifiers)
-    await term_manager.send_bytes(term_id, payload)
+    try:
+        payload = encode_term_key(key, modifiers)
+    except ValueError as error:
+        # Cross-field constraints (for example Ctrl+Enter) cannot be expressed
+        # on either annotation alone. Still expose them as retryable Pydantic
+        # input errors rather than leaking an implementation ValueError.
+        raise ValidationError.from_exception_data(
+            "term_send_key",
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("key", "modifiers"),
+                    "input": {"key": key, "modifiers": modifiers},
+                    "ctx": {"error": error},
+                }
+            ],
+        ) from error
+    try:
+        await term_manager.send_bytes(term_id, payload)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
     return f"Sent key {key!r} to terminal {term_id}"
 
 
 @tool
 async def term_read(
-    term_id: str,
-    offset: int = 0,
-    lines: int | None = None,
+    term_id: TermId,
+    offset: NonNegativeInt = 0,
+    lines: PositiveInt | None = None,
 ) -> str:
     """Read terminal text, optionally selecting lines back from the end."""
-    return await term_manager.read(term_id, offset=offset, lines=lines)
+    try:
+        return await term_manager.read(term_id, offset=offset, lines=lines)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
 
 
 @tool
-async def term_is_alive(term_id: str) -> dict[str, bool | int]:
+async def term_is_alive(term_id: TermId) -> dict[str, bool | int]:
     """Report whether a terminal is alive, or return its process exit code."""
-    return await term_manager.is_alive(term_id)
+    try:
+        return await term_manager.is_alive(term_id)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
 
 
 @tool
 async def term_wait_for(
-    term_id: str,
-    pattern: str,
-    timeout: float | None = None,
+    term_id: TermId,
+    pattern: RegexPattern,
+    timeout: WaitTimeout | None = None,
 ) -> str:
     """Wait until a regex appears in terminal output and return its line."""
-    return await term_manager.wait_for(term_id, pattern, timeout)
+    try:
+        return await term_manager.wait_for(term_id, pattern, timeout)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
 
 
 @tool
-async def term_resize(term_id: str, rows: int, cols: int) -> str:
+async def term_resize(
+    term_id: TermId, rows: PositiveInt, cols: PositiveInt
+) -> str:
     """Resize a terminal screen to the requested rows and columns."""
-    await term_manager.resize(term_id, rows, cols)
+    try:
+        await term_manager.resize(term_id, rows, cols)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
     return f"Resized terminal {term_id} to {rows} rows by {cols} columns"
 
 
 @tool
-async def term_cursor(term_id: str) -> tuple[int, int]:
+async def term_cursor(term_id: TermId) -> tuple[int, int]:
     """Return a terminal's cursor position as ``(row, column)``."""
-    return await term_manager.cursor(term_id)
+    try:
+        return await term_manager.cursor(term_id)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
 
 
 @tool
-async def term_size(term_id: str) -> tuple[int, int]:
+async def term_size(term_id: TermId) -> tuple[int, int]:
     """Return a terminal's screen size as ``(rows, columns)``."""
-    return await term_manager.size(term_id)
+    try:
+        return await term_manager.size(term_id)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
 
 
 _BASE_TERM_TOOLS = [

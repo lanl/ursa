@@ -183,6 +183,9 @@ class PromptArea(TextArea):
         self.insert("\n")
 
     def action_clear_prompt(self) -> None:
+        if getattr(self.app, "_agent_running", False):
+            self.app.action_cancel_agent()
+            return
         self._remember(self.text)
         self._history_index = len(self.prompt_history)
         self.load_text("")
