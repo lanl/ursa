@@ -1,0 +1,14 @@
+[project]
+name = "ursa-example-acquisition-examples"
+version = "0.1.0"
+description = "Query arXiv, OSTI, and the web with URSA acquisition agents."
+requires-python = ">=3.11"
+dependencies = [
+    "ursa-ai[dashboard]",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../../..", editable = true }

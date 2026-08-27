@@ -1,0 +1,5 @@
+title: MIST through Nomad
+summary: Connect URSA to a molecular-property model served as an MCP tool by Nomad.
+tags:
+  - mcp
+  - guided
