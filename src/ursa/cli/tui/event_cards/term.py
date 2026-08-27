@@ -24,7 +24,6 @@ TERM_TOOLS = frozenset({
     "term_send_bytes",
     "term_send_text",
     "term_send_line",
-    "term_send_keycode",
     "term_send_key",
     "term_read",
     "term_is_alive",
@@ -32,6 +31,7 @@ TERM_TOOLS = frozenset({
     "term_resize",
     "term_cursor",
     "term_size",
+    "term_screenshot",
 })
 _TERM_RESULT = re.compile(r"Terminal ID:\s*([A-Za-z0-9]{8})")
 

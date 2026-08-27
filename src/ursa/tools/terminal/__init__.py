@@ -11,6 +11,11 @@ from .base import (
     TermSession,
 )
 from .manager import TermInfo, TermManager, term_manager
+from .screenshot import (
+    settled_screen_snapshot,
+    snapshot_text,
+    terminal_snapshot_to_png,
+)
 
 __all__ = [
     "TERM_ID_LENGTH",
@@ -23,5 +28,8 @@ __all__ = [
     "TerminalRenderSnapshot",
     "TerminalSpan",
     "TerminalStyle",
+    "settled_screen_snapshot",
+    "snapshot_text",
+    "terminal_snapshot_to_png",
     "term_manager",
 ]

@@ -96,12 +96,6 @@ class TermSession(ABC):
         """Write text followed by a newline."""
         await self.send_text(f"{text}\n")
 
-    async def send_keycode(self, keycode: int) -> None:
-        """Write a single byte keycode to the terminal."""
-        if not 0 <= keycode <= 255:
-            raise ValueError("keycode must be between 0 and 255")
-        await self.send_bytes(bytes((keycode,)))
-
     @abstractmethod
     async def read(self, *, offset: int = 0, lines: int | None = None) -> str:
         """Read output, optionally selecting lines back from the end."""
@@ -109,6 +103,16 @@ class TermSession(ABC):
     async def contents(self) -> str:
         """Return the complete terminal output or scrollback."""
         return await self.read()
+
+    async def output_marker(self) -> int:
+        """Return a monotonic character offset into the backend output stream."""
+        return len(await self.contents())
+
+    async def output_since(self, marker: int) -> str:
+        """Return output emitted at or after a marker from ``output_marker``."""
+        if marker < 0:
+            raise ValueError("output marker must be non-negative")
+        return (await self.contents())[marker:]
 
     async def render_snapshot(self) -> TerminalRenderSnapshot:
         """Return immutable display data for a view-only renderer."""
