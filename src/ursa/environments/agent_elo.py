@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+import shutil
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,6 +22,9 @@ from .config import EnvironmentMemberConfig
 class EloPlayer:
     name: str
     rating: float = 1500.0
+    generation: int = 0
+    parent: str | None = None
+    latest_output: str | None = None
 
 
 @dataclass
@@ -38,17 +42,39 @@ class MatchResult:
             return self.player_b
         return None
 
+    @property
+    def loser(self) -> str | None:
+        if self.score_a == 1.0:
+            return self.player_b
+        if self.score_a == 0.0:
+            return self.player_a
+        return None
+
 
 class AgentEloEnvironment(BaseEnvironment):
-    """Pairwise competitive environment with Elo ratings.
+    """Pairwise competitive environment with Elo-based reproduction.
 
-    Stage 1:
+    Stage 2:
     - All members independently answer the same task.
     - Members are paired.
-    - An LLM judge returns A, B, or DRAW for each pair.
+    - An LLM judge returns A, B, or DRAW.
     - Elo ratings are updated deterministically.
-    - No elimination or reproduction yet.
+    - A fixed number of match losers are eliminated.
+    - The highest-rated survivors reproduce.
+    - Children inherit the parent's latest output and workspace.
+    - True agent checkpoint/state cloning is deferred to Stage 4.
     """
+
+    JUDGE_OUTPUT_INSTRUCTIONS = (
+        "\n\n"
+        "After evaluating the candidates, you must return exactly one JSON "
+        "object with this schema:\n"
+        "{\n"
+        '  "winner": "A" | "B" | "DRAW",\n'
+        '  "reasoning": "brief explanation"\n'
+        "}\n"
+        "Do not include markdown fences or any text outside the JSON object."
+    )
 
     def __init__(
         self,
@@ -60,6 +86,7 @@ class AgentEloEnvironment(BaseEnvironment):
         workspace: str | Path | None = None,
         initial_rating: float = 1500.0,
         k_factor: float = 32.0,
+        deaths_per_round: int = 1,
         judge_prompt: str | None = None,
         persist_members: bool = True,
         **kwargs: Any,
@@ -73,8 +100,12 @@ class AgentEloEnvironment(BaseEnvironment):
             **kwargs,
         )
 
+        if deaths_per_round < 0:
+            raise ValueError("deaths_per_round must be non-negative.")
+
         self.initial_rating = float(initial_rating)
         self.k_factor = float(k_factor)
+        self.deaths_per_round = int(deaths_per_round)
 
         self.member_configs = [
             self._coerce_member(member)
@@ -94,6 +125,9 @@ class AgentEloEnvironment(BaseEnvironment):
             for member in self.member_configs
         }
 
+        # Used only to guarantee unique descendant names.
+        self._offspring_counts: dict[str, int] = {}
+
         default_judge_prompt = (
             "You are an impartial judge comparing two candidate solutions "
             "to the same task.\n\n"
@@ -101,21 +135,13 @@ class AgentEloEnvironment(BaseEnvironment):
             "use of evidence, and adherence to the task. Do not prefer a candidate "
             "merely because it is longer or better written."
         )
-        
+
         judge_instructions = judge_prompt or default_judge_prompt
-        
-        output_instructions = (
-            "\n\n"
-            "After evaluating the candidates, you must return exactly one JSON "
-            "object with this schema:\n"
-            "{\n"
-            '  "winner": "A" | "B" | "DRAW",\n'
-            '  "reasoning": "brief explanation"\n'
-            "}\n"
-            "Do not include markdown fences or any text outside the JSON object."
+
+        self.judge_prompt = (
+            judge_instructions
+            + self.JUDGE_OUTPUT_INSTRUCTIONS
         )
-        
-        self.judge_prompt = judge_instructions + output_instructions
 
     @staticmethod
     def _coerce_member(
@@ -180,10 +206,9 @@ class AgentEloEnvironment(BaseEnvironment):
     ) -> list[tuple[str, str]]:
         """Pair members in their current order.
 
-        Stage 1 keeps matchmaking intentionally simple.
+        Stage 2 still keeps matchmaking intentionally simple.
 
-        If the population is odd, the final member receives
-        a bye and does not play this round.
+        If the population is odd, the final member receives a bye.
         """
         return [
             (names[index], names[index + 1])
@@ -201,13 +226,34 @@ class AgentEloEnvironment(BaseEnvironment):
             else ""
         )
 
+        player = self.players[member.name]
+
+        inherited_state = ""
+
+        if (
+            player.parent is not None
+            and player.latest_output
+        ):
+            inherited_state = (
+                "\n\n"
+                "You are a descendant of another research agent. "
+                "You inherit the following research state from your parent. "
+                "Use it as prior work, but independently continue the problem "
+                "and improve, revise, or extend it where appropriate.\n\n"
+                "Inherited research state:\n"
+                "-------------------------\n"
+                f"{player.latest_output}\n"
+                "-------------------------"
+            )
+
         return (
             f"You are competitor '{member.name}'.\n"
             f"Your role is: {member.role}.\n\n"
             "Work independently on the task below. "
             "Produce your best complete solution. "
             "Your response will be compared against another competitor."
-            f"{extra}\n\n"
+            f"{extra}"
+            f"{inherited_state}\n\n"
             f"Task:\n{task}"
         )
 
@@ -323,6 +369,166 @@ class AgentEloEnvironment(BaseEnvironment):
         player_a.rating = new_a
         player_b.rating = new_b
 
+    def _select_losers(
+        self,
+        match_results: list[MatchResult],
+    ) -> list[str]:
+        """Choose which match losers are eliminated.
+
+        Draws produce no loser.
+
+        If there are more decisive losers than deaths_per_round,
+        eliminate the lowest-rated losers first.
+        """
+        losers = [
+            result.loser
+            for result in match_results
+            if result.loser is not None
+        ]
+
+        # Defensive deduplication. Under the current matchmaking
+        # each player appears in at most one match.
+        losers = list(dict.fromkeys(losers))
+
+        losers.sort(
+            key=lambda name: self.players[name].rating
+        )
+
+        return losers[: self.deaths_per_round]
+
+    def _eliminate(
+        self,
+        losers: list[str],
+    ) -> None:
+        """Remove players from the active population.
+
+        Their workspaces are intentionally left on disk so the history
+        of extinct lineages remains inspectable.
+        """
+        loser_set = set(losers)
+
+        for name in losers:
+            self.players.pop(name, None)
+            self.members.pop(name, None)
+
+        self.member_configs = [
+            member
+            for member in self.member_configs
+            if member.name not in loser_set
+        ]
+
+    def _top_survivors(
+        self,
+        count: int,
+    ) -> list[EloPlayer]:
+        """Return the highest-rated surviving players."""
+        return sorted(
+            self.players.values(),
+            key=lambda player: player.rating,
+            reverse=True,
+        )[:count]
+
+    def _next_child_name(
+        self,
+        parent: EloPlayer,
+    ) -> str:
+        """Generate a unique descendant name."""
+        count = self._offspring_counts.get(
+            parent.name,
+            0,
+        ) + 1
+
+        self._offspring_counts[parent.name] = count
+
+        return (
+            f"{parent.name}_g"
+            f"{parent.generation + 1}_"
+            f"{count}"
+        )
+
+    def _copy_parent_workspace(
+        self,
+        parent_name: str,
+        child_name: str,
+    ) -> None:
+        """Copy the parent's workspace into the child's workspace."""
+        parent_workspace = self._member_workspace(
+            parent_name
+        )
+
+        child_workspace = self._member_workspace(
+            child_name
+        )
+
+        if parent_workspace.exists():
+            shutil.copytree(
+                parent_workspace,
+                child_workspace,
+                dirs_exist_ok=True,
+            )
+        else:
+            child_workspace.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+    def _reproduce(
+        self,
+        parents: list[EloPlayer],
+    ) -> list[str]:
+        """Create one child for every selected parent.
+
+        Stage-2 inheritance consists of:
+        - inherited Elo rating,
+        - parent/generation metadata,
+        - parent's latest output,
+        - copied workspace.
+
+        True checkpoint inheritance is deferred to Stage 4.
+        """
+        children: list[str] = []
+
+        config_by_name = {
+            member.name: member
+            for member in self.member_configs
+        }
+
+        for parent in parents:
+            parent_config = config_by_name[parent.name]
+
+            child_name = self._next_child_name(parent)
+
+            child_config = replace(
+                parent_config,
+                name=child_name,
+            )
+
+            self._copy_parent_workspace(
+                parent.name,
+                child_name,
+            )
+
+            child = self.build_member(
+                child_config
+            )
+
+            self.members[child_name] = child
+            self.member_configs.append(
+                child_config
+            )
+
+            self.players[child_name] = EloPlayer(
+                name=child_name,
+                rating=parent.rating,
+                generation=parent.generation + 1,
+                parent=parent.name,
+                latest_output=parent.latest_output,
+            )
+
+            children.append(child_name)
+
+        return children
+
     def standings(self) -> list[dict[str, Any]]:
         ordered = sorted(
             self.players.values(),
@@ -335,6 +541,8 @@ class AgentEloEnvironment(BaseEnvironment):
                 "rank": rank,
                 "name": player.name,
                 "rating": player.rating,
+                "generation": player.generation,
+                "parent": player.parent,
             }
             for rank, player in enumerate(
                 ordered,
@@ -368,9 +576,18 @@ class AgentEloEnvironment(BaseEnvironment):
                 "AgentEloEnvironment requires at least two members."
             )
 
-        invoke_kwargs = invocation_kwargs(config)
+        initial_population_size = len(
+            self.players
+        )
 
-        # Phase 1: all competitors work independently.
+        invoke_kwargs = invocation_kwargs(
+            config
+        )
+
+        # ---------------------------------------------------------
+        # Phase 1: competitors work independently.
+        # ---------------------------------------------------------
+
         member_results = await asyncio.gather(
             *[
                 self._run_member(
@@ -384,7 +601,15 @@ class AgentEloEnvironment(BaseEnvironment):
 
         outputs = dict(member_results)
 
-        # Stage 1 matchmaking: pair in configured order.
+        for name, output in outputs.items():
+            self.players[name].latest_output = (
+                output
+            )
+
+        # ---------------------------------------------------------
+        # Phase 2: pairwise matches.
+        # ---------------------------------------------------------
+
         pairs = self._make_pairs(
             [
                 member.name
@@ -394,7 +619,6 @@ class AgentEloEnvironment(BaseEnvironment):
 
         match_results: list[MatchResult] = []
 
-        # Judge sequentially for now. Easy to parallelize later.
         for player_a, player_b in pairs:
             result = await self._judge_match(
                 task=task,
@@ -407,6 +631,51 @@ class AgentEloEnvironment(BaseEnvironment):
             self._apply_match_result(result)
             match_results.append(result)
 
+        standings_after_matches = (
+            self.standings()
+        )
+
+        # ---------------------------------------------------------
+        # Phase 3: selection.
+        # ---------------------------------------------------------
+
+        eliminated = self._select_losers(
+            match_results
+        )
+
+        self._eliminate(eliminated)
+
+        # ---------------------------------------------------------
+        # Phase 4: reproduction.
+        #
+        # Reproduce exactly as many agents as were actually killed,
+        # thereby conserving population size even when draws occur.
+        # ---------------------------------------------------------
+
+        parents = self._top_survivors(
+            len(eliminated)
+        )
+
+        parent_names = [
+            parent.name
+            for parent in parents
+        ]
+
+        children = self._reproduce(
+            parents
+        )
+
+        final_population_size = len(
+            self.players
+        )
+
+        if final_population_size != initial_population_size:
+            raise RuntimeError(
+                "Population size changed unexpectedly: "
+                f"{initial_population_size} -> "
+                f"{final_population_size}"
+            )
+
         return {
             "task": task,
             "outputs": outputs,
@@ -415,10 +684,16 @@ class AgentEloEnvironment(BaseEnvironment):
                     "player_a": result.player_a,
                     "player_b": result.player_b,
                     "winner": result.winner,
+                    "loser": result.loser,
                     "score_a": result.score_a,
                     "reasoning": result.reasoning,
                 }
                 for result in match_results
             ],
+            "standings_after_matches": standings_after_matches,
+            "eliminated": eliminated,
+            "reproducing_parents": parent_names,
+            "children": children,
             "standings": self.standings(),
+            "population_size": final_population_size,
         }
