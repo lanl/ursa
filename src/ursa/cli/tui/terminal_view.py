@@ -4,49 +4,14 @@
 
 from __future__ import annotations
 
-from rich.cells import cell_len
-from rich.color import Color
-from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.timer import Timer
 from textual.widgets import Static
 
-from ursa.tools.terminal.base import TerminalRenderSnapshot, TerminalStyle
+from ursa.tools.terminal.base import TerminalRenderSnapshot
 from ursa.tools.terminal.manager import TermManager, term_manager
-
-
-def _rich_style(style: TerminalStyle) -> Style:
-    """Translate a renderer-neutral terminal style to Rich."""
-    foreground = Color.from_rgb(*style.foreground) if style.foreground else None
-    background = Color.from_rgb(*style.background) if style.background else None
-    return Style(
-        color=foreground,
-        bgcolor=background,
-        bold=style.bold,
-        dim=style.faint,
-        italic=style.italic,
-        underline=style.underline,
-        underline2=style.underline_kind == 2,
-        blink=style.blink,
-        reverse=style.reverse,
-        conceal=style.conceal,
-        strike=style.strike,
-        overline=style.overline,
-    )
-
-
-def snapshot_text(snapshot: TerminalRenderSnapshot) -> Text:
-    """Create the styled Rich representation of a terminal snapshot."""
-    output = Text(
-        no_wrap=snapshot.screen, overflow="crop" if snapshot.screen else "fold"
-    )
-    for span in snapshot.spans:
-        text = span.text
-        if span.cells is not None:
-            text += " " * max(0, span.cells - cell_len(text))
-        output.append(text, _rich_style(span.style))
-    return output
+from ursa.tools.terminal.screenshot import snapshot_text
 
 
 class TerminalView(Static):

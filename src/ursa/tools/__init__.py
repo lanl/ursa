@@ -15,9 +15,9 @@ from .term_tool import term_cursor as term_cursor
 from .term_tool import term_is_alive as term_is_alive
 from .term_tool import term_read as term_read
 from .term_tool import term_resize as term_resize
+from .term_tool import term_screenshot as term_screenshot
 from .term_tool import term_send_bytes as term_send_bytes
 from .term_tool import term_send_key as term_send_key
-from .term_tool import term_send_keycode as term_send_keycode
 from .term_tool import term_send_line as term_send_line
 from .term_tool import term_send_text as term_send_text
 from .term_tool import term_size as term_size

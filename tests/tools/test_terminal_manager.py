@@ -14,6 +14,7 @@ class FakeTerm(TermSession):
     def __init__(self, *args, output: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         self.output = output
+        self.output_stream = output
         self.started_with = None
         self.writes: list[bytes] = []
         self.terminated = False
@@ -33,6 +34,16 @@ class FakeTerm(TermSession):
 
     async def contents(self):
         return self.output
+
+    async def output_marker(self):
+        return len(self.output_stream)
+
+    async def output_since(self, marker):
+        return self.output_stream[marker:]
+
+    def emit(self, text, *, screen=None):
+        self.output_stream += text
+        self.output = self.output + text if screen is None else screen
 
     async def is_alive(self):
         return {"is_alive": True} if self.running else {"exit_code": 0}
@@ -83,14 +94,11 @@ def real_manager():
     instance._closing = False
 
 
-async def test_session_convenience_sends_and_validates_keycodes():
+async def test_session_convenience_sends():
     terminal = FakeTerm("abcdefgh", ["bash"])
     await terminal.send_text("é")
     await terminal.send_line("hello")
-    await terminal.send_keycode(3)
-    assert terminal.writes == ["é".encode(), b"hello\n", b"\x03"]
-    with pytest.raises(ValueError, match="between 0 and 255"):
-        await terminal.send_keycode(256)
+    assert terminal.writes == ["é".encode(), b"hello\n"]
 
 
 def test_session_rejects_empty_shell():
@@ -322,8 +330,7 @@ async def test_manager_io_methods_forward_to_session(manager):
     await manager.send_bytes(terminal.term_id, b"x")
     await manager.send_text(terminal.term_id, "y")
     await manager.send_line(terminal.term_id, "z")
-    await manager.send_keycode(terminal.term_id, 4)
-    assert terminal.writes == [b"x", b"y", b"z\n", b"\x04"]
+    assert terminal.writes == [b"x", b"y", b"z\n"]
     assert await manager.read(terminal.term_id) == "abc"
     assert await manager.is_alive(terminal.term_id) == {"is_alive": True}
 
@@ -351,13 +358,14 @@ def test_registry_access_is_safe_across_threads_and_event_loops(manager):
     assert manager.ids() == ()
 
 
-async def test_wait_for_returns_matching_line_and_absolute_offset(manager):
+async def test_wait_for_ignores_output_that_already_exists(manager):
     terminal = FakeTerm(
         "wait1234", ["bash"], output="before\nstatus: READY now\nafter\n"
     )
     manager.register(terminal)
-    result = await manager.wait_for(terminal.term_id, r"READY")
-    assert result == "status: READY now\nOffset: 15"
+    assert await manager.wait_for(terminal.term_id, r"READY", 0) == (
+        "Pattern not found"
+    )
 
 
 async def test_wait_for_observes_new_output(manager):
@@ -366,11 +374,94 @@ async def test_wait_for_observes_new_output(manager):
 
     async def update():
         await asyncio.sleep(0.01)
-        terminal.output += "done 42\n"
+        terminal.emit("done 42\n")
 
     task = asyncio.create_task(update())
     assert await manager.wait_for(terminal.term_id, r"done \d+", 0.5) == (
         "done 42\nOffset: 9"
+    )
+    await task
+
+
+async def test_wait_for_returns_newest_new_match(manager):
+    terminal = FakeTerm("wait1234", ["bash"], output="old READY\n")
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.emit("first READY\nlast READY here\n")
+
+    task = asyncio.create_task(update())
+    assert await manager.wait_for(terminal.term_id, r"READY", 0.5) == (
+        "last READY here\nOffset: 27"
+    )
+    await task
+
+
+async def test_wait_for_preserves_boundary_when_scrollback_is_truncated(
+    manager,
+):
+    terminal = FakeTerm(
+        "wait1234", ["bash"], output="discard READY\nretained stale READY\n"
+    )
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.emit("new READY\n", screen="retained stale READY\nnew READY\n")
+
+    task = asyncio.create_task(update())
+    assert await manager.wait_for(terminal.term_id, r"READY", 0.5) == (
+        "new READY\nOffset: 39"
+    )
+    await task
+
+
+async def test_wait_for_ignores_stale_match_when_screen_content_changes(
+    manager,
+):
+    terminal = FakeTerm(
+        "wait1234", ["bash"], output="progress 10%\nstale READY\n"
+    )
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.emit("progress 20%\r", screen="progress 20%\nstale READY\n")
+
+    task = asyncio.create_task(update())
+    assert await manager.wait_for(terminal.term_id, r"READY", 0.05) == (
+        "Pattern not found"
+    )
+    await task
+
+
+async def test_wait_for_detects_repeated_text_moved_on_ghostty_screen(manager):
+    terminal = FakeTerm("wait1234", ["bash"], output="READY\nfoo\n")
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.emit("READY\n", screen="foo\nREADY\n")
+
+    task = asyncio.create_task(update())
+    assert await manager.wait_for(terminal.term_id, r"READY", 0.5) == (
+        "READY\nOffset: 10"
+    )
+    await task
+
+
+async def test_wait_for_finds_rightmost_overlapping_match(manager):
+    terminal = FakeTerm("wait1234", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.emit("ababa\n")
+
+    task = asyncio.create_task(update())
+    assert await manager.wait_for(terminal.term_id, r"aba", 0.5) == (
+        "ababa\nOffset: 2"
     )
     await task
 
@@ -437,12 +528,12 @@ def test_manager_capabilities_follow_selected_backend(monkeypatch, screen):
         "is_alive",
         "read",
         "send_bytes",
-        "send_keycode",
         "send_line",
         "send_text",
         "wait",
         "wait_for",
     }
+    assert "send_keycode" not in capabilities
     assert TermManager.supports_screen() is screen
     for capability in {"resize", "cursor", "size"}:
         assert (capability in capabilities) is screen

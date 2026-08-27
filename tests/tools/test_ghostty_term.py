@@ -1,9 +1,15 @@
 import asyncio
 import os
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from ursa.tools.terminal import ghostty
+from ursa.tools.terminal.screenshot import (
+    settled_screen_snapshot,
+    terminal_snapshot_to_png,
+)
 
 
 class FakeGhosttyTerminal:
@@ -60,6 +66,20 @@ def test_ghostty_requires_library_and_valid_dimensions(
     monkeypatch.setattr(ghostty, "PyGhosttyTerminal", None)
     with pytest.raises(RuntimeError, match="requires a working pyghostty"):
         ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
+
+
+def test_visible_output_decoder_strips_split_color_and_title_sequences():
+    decoder = ghostty._VisibleOutputDecoder()
+    assert decoder.decode(b"\x1b[31") == ""
+    assert decoder.decode(b"mREADY\x1b[0m\n") == "READY\n"
+    assert decoder.decode(b"\x1b]0;secret") == ""
+    assert decoder.decode(b" title\x1b\\clean") == "clean"
+    assert decoder.decode(b"\x1b(Btext") == "text"
+    assert decoder.decode("\x9b31mRED\x9b0m".encode()) == "RED"
+    assert decoder.decode("\x9d0;hidden\x9cshown".encode()) == "shown"
+    assert decoder.decode(b"\x9b31mRAW\x9b0m") == "RAW"
+    assert decoder.decode(b"\x9d0;raw title\x9cvisible") == "visible"
+    assert decoder.decode("؛".encode()) == "؛"
 
 
 async def test_ghostty_screen_primitives_and_read_slicing(
@@ -209,8 +229,12 @@ async def test_ghostty_pumps_pty_output_and_caches_on_close(
     fake_ghostty, tmp_path
 ):
     terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"], cwd=tmp_path)
-    await terminal.start("printf 'ghost-output\\n'; exit 4")
+    marker = await terminal.output_marker()
+    await terminal.start("printf '\\033[31mghost-output\\033[0m\\n'; exit 4")
     assert await terminal.wait() == 4
+    emitted = await terminal.output_since(marker)
+    assert "ghost-output" in emitted
+    assert "\x1b" not in emitted
     assert "ghost-output" in await terminal.read()
     assert await terminal.is_alive() == {"exit_code": 4}
     with pytest.raises(RuntimeError, match="not running"):
@@ -315,6 +339,38 @@ async def test_real_ghostty_ansi_cursor_and_resize(tmp_path):
     await terminal.resize(8, 30)
     assert await terminal.size() == (8, 30)
     await terminal.terminate()
+
+
+@pytest.mark.skipif(
+    ghostty.PyGhosttyTerminal is None or os.name == "nt",
+    reason="requires native pyghostty on Unix",
+)
+async def test_real_ghostty_screenshot_settles_initial_python_output(
+    tmp_path,
+):
+    terminal = ghostty.GhosttyTerm(
+        "realshot", ["/bin/sh"], cwd=tmp_path, rows=24, cols=80
+    )
+
+    class Manager:
+        async def render_snapshot(self, term_id):
+            assert term_id == "realshot"
+            return await terminal.render_snapshot()
+
+    manager = Manager()
+    await terminal.start("python")
+    try:
+        rendered = await settled_screen_snapshot(manager, "realshot")
+        text = "".join(span.text for span in rendered.spans)
+        assert "Python" in text
+        assert ">>>" in text
+        png = terminal_snapshot_to_png(rendered)
+        with Image.open(BytesIO(png)) as image:
+            assert image.width > 0
+            assert image.height > 0
+            assert len(set(image.convert("RGB").getdata())) > 1
+    finally:
+        await terminal.terminate()
 
 
 @pytest.mark.skipif(

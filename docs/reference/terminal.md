@@ -104,14 +104,14 @@ process environment; it does not replace the complete environment.
 | `term_send_bytes(term_id, data)` | Send `bytes`, or a JSON-compatible list of integer byte values from 0 through 255. |
 | `term_send_text(term_id, text)` | Send UTF-8 text without a newline. |
 | `term_send_line(term_id, line)` | Send UTF-8 text followed by a newline. |
-| `term_send_keycode(term_id, keycode)` | Send one byte-valued keycode from 0 through 255. |
 | `term_send_key(term_id, key, modifiers=None)` | Send a printable or named key with optional modifiers. |
 | `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
 | `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
-| `term_wait_for(term_id, pattern, timeout=None)` | Wait for a regular expression and return its matching line and character offset. |
+| `term_wait_for(term_id, pattern, timeout=None)` | Search output emitted after the call begins, newest-first, and return the newest matching line and stream offset. |
 | `term_resize(term_id, rows, cols)` | Resize a Ghostty-backed screen. |
 | `term_cursor(term_id)` | Return the Ghostty-backed cursor as `(row, column)`. |
 | `term_size(term_id)` | Return the Ghostty-backed size as `(rows, columns)`. |
+| `term_screenshot(term_id)` | Return a styled PNG image of a Ghostty-backed screen. |
 
 With Ghostty, `term_read(id)` returns the visible screen. Supplying a nonzero
 `offset` or a `lines` value switches to the complete terminal contents,
@@ -177,3 +177,14 @@ helper while that modal is active. It does not temporarily push a screen,
 select a terminal, or crop the result to the terminal widget. Use
 `textual_screenshot_to_png(svg)` only when an SVG screenshot has already been
 captured and needs rasterization.
+
+## Terminal screenshots
+
+On the Ghostty backend, `term_screenshot(term_id)` returns a PNG image of the
+terminal's current screen, including colors and text styling. It uses the same
+styled snapshot and Rich/Textual rendering path as the live terminal view.
+Newly started screen sessions are sampled briefly for initial output and a
+stable frame, preventing an immediate screenshot from capturing the empty PTY
+state before the child process has rendered its first prompt.
+The Process fallback has no emulated screen, so it does not advertise this
+tool; use `term_read` for Process terminal output.
