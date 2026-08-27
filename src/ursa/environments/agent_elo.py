@@ -10,6 +10,12 @@ from typing import Any, Mapping
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from .config import (
+    AgentEloConfig,
+    EnvironmentMemberConfig,
+    load_elo_config,
+)
+
 from .base import (
     BaseEnvironment,
     invocation_kwargs,
@@ -80,37 +86,74 @@ class AgentEloEnvironment(BaseEnvironment):
         self,
         llm: BaseChatModel,
         *,
-        name: str = "agent_elo",
-        group: str = "default",
-        members: list[EnvironmentMemberConfig | Mapping[str, Any]] | None = None,
+        config: AgentEloConfig
+        | Mapping[str, Any]
+        | str
+        | Path
+        | None = None,
+        name: str | None = None,
+        group: str | None = None,
+        members: list[
+            EnvironmentMemberConfig
+            | Mapping[str, Any]
+        ]
+        | None = None,
         workspace: str | Path | None = None,
-        initial_rating: float = 1500.0,
-        k_factor: float = 32.0,
-        deaths_per_round: int = 1,
+        initial_rating: float | None = None,
+        k_factor: float | None = None,
+        deaths_per_round: int | None = None,
         judge_prompt: str | None = None,
         persist_members: bool = True,
         **kwargs: Any,
     ):
-        super().__init__(
-            llm,
+
+
+        elo_config = self._coerce_config(
+            config=config,
             name=name,
             group=group,
+            members=members,
             workspace=workspace,
+            initial_rating=initial_rating,
+            k_factor=k_factor,
+            deaths_per_round=deaths_per_round,
+            judge_prompt=judge_prompt,
+        )
+                    
+        super().__init__(
+            llm,
+            name=elo_config.name,
+            group=elo_config.group,
+            workspace=elo_config.workspace or workspace,
             persist_members=persist_members,
             **kwargs,
         )
 
-        if deaths_per_round < 0:
-            raise ValueError("deaths_per_round must be non-negative.")
 
-        self.initial_rating = float(initial_rating)
-        self.k_factor = float(k_factor)
-        self.deaths_per_round = int(deaths_per_round)
+        self.config = elo_config
+        
+        self.initial_rating = float(
+            elo_config.initial_rating
+        )
+        
+        self.k_factor = float(
+            elo_config.k_factor
+        )
+        
+        self.deaths_per_round = int(
+            elo_config.deaths_per_round
+        )
 
-        self.member_configs = [
-            self._coerce_member(member)
-            for member in (members or [])
-        ]
+        
+        if self.deaths_per_round < 0:
+            raise ValueError(
+                "deaths_per_round must be non-negative."
+            )
+        
+
+        self.member_configs = list(
+            self.config.members
+        )
 
         self.members = {
             member.name: self.build_member(member)
@@ -136,13 +179,129 @@ class AgentEloEnvironment(BaseEnvironment):
             "merely because it is longer or better written."
         )
 
-        judge_instructions = judge_prompt or default_judge_prompt
-
+        judge_instructions = (
+            self.config.judge_prompt
+            or default_judge_prompt
+        )
+        
         self.judge_prompt = (
             judge_instructions
             + self.JUDGE_OUTPUT_INSTRUCTIONS
         )
 
+
+    def _coerce_config(
+        self,
+        *,
+        config: AgentEloConfig
+        | Mapping[str, Any]
+        | str
+        | Path
+        | None,
+        name: str | None,
+        group: str | None,
+        members: list[
+            EnvironmentMemberConfig
+            | Mapping[str, Any]
+        ]
+        | None,
+        workspace: str | Path | None,
+        initial_rating: float | None,
+        k_factor: float | None,
+        deaths_per_round: int | None,
+        judge_prompt: str | None,
+    ) -> AgentEloConfig:
+        if isinstance(config, (str, Path)):
+            base = load_elo_config(config)
+    
+        elif isinstance(config, Mapping):
+            base = AgentEloConfig.from_mapping(
+                config
+            )
+    
+        elif isinstance(config, AgentEloConfig):
+            base = config
+    
+        else:
+            member_cfgs = [
+                self._coerce_member(member)
+                for member in (members or [])
+            ]
+    
+            base = AgentEloConfig(
+                name=name or "agent_elo",
+                group=group or "default",
+                members=member_cfgs,
+                workspace=(
+                    str(workspace)
+                    if workspace
+                    else None
+                ),
+                initial_rating=(
+                    initial_rating
+                    if initial_rating is not None
+                    else 1500.0
+                ),
+                k_factor=(
+                    k_factor
+                    if k_factor is not None
+                    else 32.0
+                ),
+                deaths_per_round=(
+                    deaths_per_round
+                    if deaths_per_round is not None
+                    else 1
+                ),
+                judge_prompt=judge_prompt,
+            )
+    
+        return AgentEloConfig(
+            name=name or base.name,
+            group=group or base.group,
+            description=base.description,
+            members=base.members,
+            workspace=(
+                str(workspace)
+                if workspace
+                else base.workspace
+            ),
+            defaults=base.defaults,
+            initial_rating=(
+                initial_rating
+                if initial_rating is not None
+                else base.initial_rating
+            ),
+            k_factor=(
+                k_factor
+                if k_factor is not None
+                else base.k_factor
+            ),
+            deaths_per_round=(
+                deaths_per_round
+                if deaths_per_round is not None
+                else base.deaths_per_round
+            ),
+            judge_prompt=(
+                judge_prompt
+                if judge_prompt is not None
+                else base.judge_prompt
+            ),
+        )    
+
+
+    @classmethod
+    def from_yaml(
+        cls,
+        path: str | Path,
+        *,
+        llm: BaseChatModel,
+        **kwargs: Any,
+    ) -> "AgentEloEnvironment":
+        return cls(
+            llm=llm,
+            config=load_elo_config(path),
+            **kwargs,
+        )    
     @staticmethod
     def _coerce_member(
         member: EnvironmentMemberConfig | Mapping[str, Any],
