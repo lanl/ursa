@@ -1,0 +1,135 @@
+# Terminal tools
+
+URSA's terminal tools run commands in managed shell sessions. A short command
+normally returns its output directly. Interactive, long-running, or large-output
+commands return `Terminal ID: <id>`, where `<id>` is eight characters; use the
+ID with the other terminal tools.
+
+!!! warning
+    Terminal sessions execute commands with the permissions of the URSA
+    process. Treat command text and environment values as sensitive input, and
+    use a restricted workspace when running untrusted commands.
+
+The terminal tool set is opt-in. `TERM_TOOLS` is not part of the default Chat
+or Execution agent tool set because later calls such as `term_send_line` can
+submit arbitrary shell input without a complete command to assess. Add the
+tools explicitly only when an agent should control interactive processes.
+Use `get_supported_term_tools()` to omit screen operations that the selected
+fallback backend cannot implement:
+
+```python
+from ursa.agents import ExecutionAgent
+from ursa.tools import get_supported_term_tools
+
+agent = ExecutionAgent(llm, extra_tools=get_supported_term_tools())
+```
+
+`TERM_TOOLS` remains available as the complete, unfiltered tool catalog.
+
+The initial terminal launch uses the same fail-closed safety assessment as
+`run_command`. The assessment includes the command, resolved shell arguments,
+working directory, and every environment override key and value. Do not put
+secrets in `env`: those values are sent to the configured safety-review model
+because environment variables can change what a shell executes. A launch that
+cannot be assessed as safe is rejected before a session starts. Shell arguments
+must not contain command-execution flags such as `-c`, `--command`,
+`-Command`, or `-EncodedCommand`; pass the command through `cmd`. The initial
+check does not cover input sent later through the `term_send_*` tools.
+
+## Backends
+
+`GhosttyTerm` is the preferred backend on supported macOS and Linux systems. It
+uses [`pyghostty`](https://github.com/AnswerDotAI/pyghostty) to maintain a real
+terminal screen, including scrollback, cursor position, and resize behavior.
+Install URSA's `term` extra where upstream publishes a wheel:
+
+```bash
+uv pip install "ursa-ai[term]"
+```
+
+- macOS 13 or newer on x86-64 or Apple silicon;
+- glibc-based Linux on x86-64 or AArch64.
+
+`ProcessTerm` is the fallback when `pyghostty` is unavailable, including on
+Windows, unsupported architectures, and base installations without the `term`
+extra. It captures combined standard output and standard error in a private
+temporary file. It supports command execution, input, status, waiting, and
+line-based reads, but it does not emulate a terminal screen; cursor, size, and
+resize operations are therefore unavailable.
+
+On Unix, sessions use Bash by default. On Windows, URSA prefers Git Bash when it
+is installed and otherwise uses PowerShell. Pass `shell` to `term` to override
+the default.
+
+## Start a command
+
+```text
+term(
+    cmd: str | list[str],
+    env: dict[str, str] | None = None,
+    session: bool = False,
+    shell: list[str] | None = None,
+)
+```
+
+Set `session=true` for an interactive program and `term` immediately returns
+`Terminal ID: <id>`. With the default `session=false`, output is returned as
+`Terminal contents:\n<contents>`
+only when the command finishes before `URSA_TERM_TIMEOUT` and remains within
+both output limits. If the output reaches either limit, the session stays
+registered and `term` returns `Terminal ID: <id>` so output can be inspected
+incrementally. In other words, direct output must be strictly below both byte
+and line thresholds.
+
+`cmd` may be shell text or a list of arguments. `env` is merged into the child
+process environment; it does not replace the complete environment.
+
+## Interact with a session
+
+| Tool | Purpose |
+| --- | --- |
+| `term_send_bytes(term_id, data)` | Send `bytes`, or a JSON-compatible list of integer byte values from 0 through 255. |
+| `term_send_text(term_id, text)` | Send UTF-8 text without a newline. |
+| `term_send_line(term_id, line)` | Send UTF-8 text followed by a newline. |
+| `term_send_keycode(term_id, keycode)` | Send one byte-valued keycode from 0 through 255. |
+| `term_send_key(term_id, key, modifiers=None)` | Send a printable or named key with optional modifiers. |
+| `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
+| `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
+| `term_wait_for(term_id, pattern, timeout=None)` | Wait for a regular expression and return its matching line and character offset. |
+| `term_resize(term_id, rows, cols)` | Resize a Ghostty-backed screen. |
+| `term_cursor(term_id)` | Return the Ghostty-backed cursor as `(row, column)`. |
+| `term_size(term_id)` | Return the Ghostty-backed size as `(rows, columns)`. |
+
+With Ghostty, `term_read(id)` returns the visible screen. Supplying a nonzero
+`offset` or a `lines` value switches to the complete terminal contents,
+including scrollback, and selects from the end. `ProcessTerm` has no screen
+model, so an unbounded read returns its complete captured output. For a
+tail-like read, `offset` skips trailing lines and `lines` limits the preceding
+selection. For example, `term_read(id, offset=10, lines=20)` returns the 20
+lines immediately before the final 10 lines.
+
+`term_send_key` supports printable characters, Enter, Tab, Escape, Backspace,
+Delete, the arrow keys, Home, End, Page Up, Page Down, Insert, and F1 through
+F12. Modifier names are case-insensitive: `ctrl`/`control`, `alt`/`option`,
+`shift`, and `super`/`cmd`/`meta`. Modified navigation and function keys use
+xterm modifier parameters. Super-modified printable characters use Kitty's
+CSI-u keyboard encoding, so applications that do not understand that protocol
+may not recognize them.
+
+`term_wait_for` uses Python regular-expression syntax. Its default timeout is
+`URSA_TERM_TIMEOUT`; a requested timeout cannot exceed twice that value. It
+returns `Pattern not found` when the deadline expires.
+
+## Limits
+
+The defaults can be changed before starting URSA:
+
+| Environment variable | Default | Meaning |
+| --- | ---: | --- |
+| `URSA_TERM_TIMEOUT` | `10` | Seconds allowed for a direct short-command result. |
+| `URSA_TERM_MAX_BYTES` | `20000` | UTF-8 output size at which `term` returns a session ID. |
+| `URSA_TERM_MAX_LINES` | `200` | Output line count at which `term` returns a session ID. |
+
+The values are read when the terminal package is imported. All sessions receive
+an ID internally, but a successfully completed short command returns its
+captured output prefixed by `Terminal contents:`.

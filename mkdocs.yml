@@ -113,6 +113,7 @@ nav:
   - Reference:
       - CLI reference: reference/cli.md
       - MCP reference: reference/mcp.md
+      - Terminal tools: reference/terminal.md
       - Event logging: reference/logging_events.md
       - Metrics: reference/metrics.md
       - OpenTelemetry export: reference/otel.md
