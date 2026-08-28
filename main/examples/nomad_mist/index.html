@@ -1873,45 +1873,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-install-the-example-environment" class="md-nav__link">
+  <a href="#install-the-example-environment" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Install the example environment
+      Install the example environment
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-pull-the-nomad-image" class="md-nav__link">
+  <a href="#start-the-nomad-container" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Pull the Nomad image
+      Start the Nomad container
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-start-nomad" class="md-nav__link">
+  <a href="#connect-ursa-to-nomad" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Start Nomad
+      Connect URSA to Nomad
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-connect-ursa-to-nomad" class="md-nav__link">
+  <a href="#run-the-mist-workflow" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Connect URSA to Nomad
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-run-the-mist-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      5. Run the MIST workflow
+      Run the MIST workflow
     </span>
   </a>
   
@@ -1968,31 +1959,35 @@
 
 
 <h1 id="connect-ursa-to-mist-through-nomad"><a aria-label="View this example on GitHub" class="example-github-link" href="https://github.com/lanl/ursa/tree/main/examples/nomad_mist" title="View this example on GitHub"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg></span></a> Connect URSA to MIST through Nomad<a class="headerlink" href="#connect-ursa-to-mist-through-nomad" title="Permanent link">&para;</a></h1>
-<p>Use this walkthrough to ask URSA for a molecular-property prediction from a
-MIST scientific foundation model. <a href="https://github.com/lanl/nomad">Nomad</a> serves
-the model as an MCP tool; URSA discovers the tool, finds caffeine in PubChem,
-and writes a short report from the model output.</p>
+<p>In this tutorial, we'll connect URSA to a
+<a href="https://huggingface.co/mist-models">MIST surrogate model</a> that predicts quantum
+mechanical properties. We'll use <a href="https://github.com/lanl/nomad">Nomad</a>, an MCP
+server for scientific foundation models (SciFMs), to expose the MIST model as an
+MCP tool. URSA can then query the model to predict properties such as the
+HOMO–LUMO gap of caffeine.</p>
 <p>MIST is a family of molecular foundation models for property prediction. Browse
 the <a href="https://huggingface.co/mist-models">MIST models on Hugging Face</a> before you
-begin if you want to see the available weights and model cards.</p>
+begin to see the available weights and model cards. This tutorial connects one
+MIST model, but Nomad can serve additional MIST models or
+<a href="https://lanl.github.io/nomad/guides/model-builder.html">a different SciFM</a>.</p>
 <h2 id="what-you-will-do">What you will do<a class="headerlink" href="#what-you-will-do" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Install this example's URSA environment.</li>
-<li>Start Nomad's pre-built demo container.</li>
-<li>Add the local Nomad MCP endpoint to your URSA user configuration.</li>
-<li>Run a guided prompt and inspect <code>mist_caffeine_report.txt</code>.</li>
+<li>Start Nomad's prebuilt demo container.</li>
+<li>Configure URSA to connect to the local Nomad MCP endpoint.</li>
+<li>Run a guided prompt and inspect <code>mist_caffeine_report.json</code>.</li>
 </ol>
-<p>The first container launch downloads model weights. The models used here are
+<p>The first container launch downloads model weights. The model used here is
 small enough to run without a GPU, although a GPU makes inference faster.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://docs.astral.sh/uv/">uv</a></li>
 <li>Docker Desktop or Docker Engine</li>
-<li>An API key for the language model that will direct URSA's tool calls</li>
+<li>An API key for the inference provider URSA will use</li>
 <li>Optional: an NVIDIA GPU available to Docker</li>
 </ul>
-<p>Run every command from this <code>examples/nomad_mist</code> directory.</p>
-<h2 id="1-install-the-example-environment">1. Install the example environment<a class="headerlink" href="#1-install-the-example-environment" title="Permanent link">&para;</a></h2>
+<p>Run every command from the <a href="https://github.com/lanl/ursa/tree/main/examples/nomad_mist"><code>examples/nomad_mist</code></a> directory.</p>
+<h2 id="install-the-example-environment">Install the example environment<a class="headerlink" href="#install-the-example-environment" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>sync
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>ursa<span class="w"> </span>--help
 </code></pre></div>
@@ -2000,110 +1995,140 @@ small enough to run without a GPU, although a GPU makes inference faster.</p>
 that the command comes from the example's environment.</p>
 <p>If this is your first URSA session, follow the
 <a href="../../configuration/">configuration overview</a> to configure your
-LLM credentials. Standard OpenAI access only requires <code>OPENAI_API_KEY</code>.</p>
-<h2 id="2-pull-the-nomad-image">2. Pull the Nomad image<a class="headerlink" href="#2-pull-the-nomad-image" title="Permanent link">&para;</a></h2>
+LLM credentials.</p>
+<h2 id="start-the-nomad-container">Start the Nomad container<a class="headerlink" href="#start-the-nomad-container" title="Permanent link">&para;</a></h2>
+<p>The following command starts the Nomad demo container in a terminal. Wait for
+it to start, then leave it running and open a second terminal.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">macOS/Linux</label><label for="__tabbed_1_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lanl/nomad:latest
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>cache
-</code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">docker</span> <span class="n">pull</span> <span class="n">ghcr</span><span class="p">.</span><span class="n">io</span><span class="p">/</span><span class="n">lanl</span><span class="p">/</span><span class="n">nomad</span><span class="p">:</span><span class="n">latest</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Force</span> <span class="n">cache</span> <span class="p">|</span> <span class="nb">Out-Null</span>
-</code></pre></div>
-</div>
-</div>
-</div>
-<p>The <code>cache</code> directory retains downloaded model weights between container runs.</p>
-<h2 id="3-start-nomad">3. Start Nomad<a class="headerlink" href="#3-start-nomad" title="Permanent link">&para;</a></h2>
-<p>Choose the command for your platform and leave this terminal running.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">macOS/Linux</label><label for="__tabbed_2_2">Windows PowerShell</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">With GPU</label><label for="__tabbed_2_2">Without GPU</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># CPU-only: delete the &quot;--gpus all&quot; line.</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--publish<span class="w"> </span><span class="m">38217</span>:38217<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/cache:/var/cache/nomad&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>ghcr.io/lanl/nomad:latest<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span>serve<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span>--transport<span class="o">=</span>streamable-http<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span>--host<span class="o">=</span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span>--port<span class="o">=</span><span class="m">38217</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span>/nomad/container/demo/nomad-smoke.yml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--publish<span class="w"> </span><span class="m">38217</span>:38217<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">&quot;nomad-cache:/var/cache/nomad&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>ghcr.io/lanl/nomad:v0.2.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>serve<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--transport<span class="o">=</span>streamable-http<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--host<span class="o">=</span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--port<span class="o">=</span><span class="m">38217</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>/nomad/container/demo/nomad.yml
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c"># CPU-only: delete the &quot;--gpus all&quot; line.</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">docker</span> <span class="n">run</span> <span class="p">-</span><span class="n">-rm</span> <span class="p">`</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="p">-</span><span class="n">-gpus</span> <span class="n">all</span> <span class="p">`</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="p">-</span><span class="n">-publish</span> <span class="n">38217</span><span class="p">:</span><span class="n">38217</span> <span class="p">`</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="p">-</span><span class="n">-volume</span> <span class="s2">&quot;${PWD}/cache:/var/cache/nomad&quot;</span> <span class="p">`</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">ghcr</span><span class="p">.</span><span class="n">io</span><span class="p">/</span><span class="n">lanl</span><span class="p">/</span><span class="n">nomad</span><span class="p">:</span><span class="n">latest</span> <span class="p">`</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">serve</span> <span class="p">`</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="p">-</span><span class="n">-transport</span><span class="p">=</span><span class="n">streamable-http</span> <span class="p">`</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="p">-</span><span class="n">-host</span><span class="p">=</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span> <span class="p">`</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="p">-</span><span class="n">-port</span><span class="p">=</span><span class="n">38217</span> <span class="p">`</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="p">/</span><span class="n">nomad</span><span class="p">/</span><span class="n">container</span><span class="p">/</span><span class="n">demo</span><span class="p">/</span><span class="n">nomad-smoke</span><span class="p">.</span><span class="n">yml</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--publish<span class="w"> </span><span class="m">38217</span>:38217<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--volume<span class="w"> </span><span class="s2">&quot;nomad-cache:/var/cache/nomad&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>ghcr.io/lanl/nomad:v0.2.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>serve<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--transport<span class="o">=</span>streamable-http<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span>--host<span class="o">=</span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span>--port<span class="o">=</span><span class="m">38217</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span>/nomad/container/demo/nomad.yml
 </code></pre></div>
+</div>
+</div>
+</div>
+</div>
+<div class="tabbed-block">
+<div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">With GPU</label><label for="__tabbed_3_2">Without GPU</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">docker</span> <span class="n">run</span> <span class="p">-</span><span class="n">-rm</span> <span class="p">`</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="p">-</span><span class="n">-gpus</span> <span class="n">all</span> <span class="p">`</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="p">-</span><span class="n">-publish</span> <span class="n">38217</span><span class="p">:</span><span class="n">38217</span> <span class="p">`</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="p">-</span><span class="n">-volume</span> <span class="s2">&quot;nomad-cache:/var/cache/nomad&quot;</span> <span class="p">`</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  <span class="n">ghcr</span><span class="p">.</span><span class="n">io</span><span class="p">/</span><span class="n">lanl</span><span class="p">/</span><span class="n">nomad</span><span class="p">:</span><span class="n">v0</span><span class="p">.</span><span class="n">2</span><span class="p">.</span><span class="n">0</span> <span class="p">`</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  <span class="n">serve</span> <span class="p">`</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>  <span class="p">-</span><span class="n">-transport</span><span class="p">=</span><span class="n">streamable-http</span> <span class="p">`</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>  <span class="p">-</span><span class="n">-host</span><span class="p">=</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span> <span class="p">`</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>  <span class="p">-</span><span class="n">-port</span><span class="p">=</span><span class="n">38217</span> <span class="p">`</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>  <span class="p">/</span><span class="n">nomad</span><span class="p">/</span><span class="n">container</span><span class="p">/</span><span class="n">demo</span><span class="p">/</span><span class="n">nomad</span><span class="p">.</span><span class="n">yml</span>
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">docker</span> <span class="n">run</span> <span class="p">-</span><span class="n">-rm</span> <span class="p">`</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="p">-</span><span class="n">-publish</span> <span class="n">38217</span><span class="p">:</span><span class="n">38217</span> <span class="p">`</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="p">-</span><span class="n">-volume</span> <span class="s2">&quot;nomad-cache:/var/cache/nomad&quot;</span> <span class="p">`</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">ghcr</span><span class="p">.</span><span class="n">io</span><span class="p">/</span><span class="n">lanl</span><span class="p">/</span><span class="n">nomad</span><span class="p">:</span><span class="n">v0</span><span class="p">.</span><span class="n">2</span><span class="p">.</span><span class="n">0</span> <span class="p">`</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">serve</span> <span class="p">`</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="p">-</span><span class="n">-transport</span><span class="p">=</span><span class="n">streamable-http</span> <span class="p">`</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="p">-</span><span class="n">-host</span><span class="p">=</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span> <span class="p">`</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="p">-</span><span class="n">-port</span><span class="p">=</span><span class="n">38217</span> <span class="p">`</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="p">/</span><span class="n">nomad</span><span class="p">/</span><span class="n">container</span><span class="p">/</span><span class="n">demo</span><span class="p">/</span><span class="n">nomad</span><span class="p">.</span><span class="n">yml</span>
+</code></pre></div>
+</div>
+</div>
+</div>
 </div>
 </div>
 </div>
 <p>Wait until Nomad reports that the server is listening on port <code>38217</code>.</p>
-<h2 id="4-connect-ursa-to-nomad">4. Connect URSA to Nomad<a class="headerlink" href="#4-connect-ursa-to-nomad" title="Permanent link">&para;</a></h2>
-<p>Open your persistent URSA user configuration and merge in this block without
-replacing your model settings:</p>
+<div class="admonition tip">
+<p class="admonition-title">Port already in use</p>
+<p>If port <code>38217</code> is already in use, choose another five-digit port. Update
+both values in <code>--publish</code>, the value passed to <code>--port</code>, and the URL in
+<code>ursa.yaml</code> below.</p>
+</div>
+<h2 id="connect-ursa-to-nomad">Connect URSA to Nomad<a class="headerlink" href="#connect-ursa-to-nomad" title="Permanent link">&para;</a></h2>
+<p>Create a file named <code>ursa.yaml</code> with the following content:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">mcp_servers</span><span class="p">:</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">nomad</span><span class="p">:</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">streamable-http</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:38217/mcp</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="c1"># Other existing MCP servers here</span>
 </code></pre></div>
-<p>The <a href="../../configuration/files-and-env/">configuration-file guide</a> lists
-the user-config location for macOS, Linux, and Windows. The
-<a href="../../configuration/mcp/">MCP configuration guide</a> explains transports,
-headers, timeouts, and environment expansion.</p>
-<p>In a second terminal, confirm that URSA loaded the user setting:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ursa<span class="w"> </span>--print-config<span class="o">=</span>user,resolved
+<div class="admonition tip">
+<p class="admonition-title">Configuration files</p>
+<p>To connect to this MCP server by default, add the same block to your user
+configuration instead. See the
+<a href="../../configuration/">URSA configuration guide</a> for details.</p>
+</div>
+<p>In the second terminal, confirm that URSA loaded the configuration:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ursa<span class="w"> </span>--config<span class="w"> </span>ursa.yaml<span class="w"> </span>--print-config
 </code></pre></div>
 <p>Look for <code>mcp_servers.nomad</code> in the output, then start the TUI:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ursa
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ursa<span class="w"> </span>--config<span class="w"> </span>ursa.yaml
 </code></pre></div>
-<h2 id="5-run-the-mist-workflow">5. Run the MIST workflow<a class="headerlink" href="#5-run-the-mist-workflow" title="Permanent link">&para;</a></h2>
-<p>Paste this prompt into the TUI:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>#execute Use the connected Nomad tools to find caffeine in PubChem, inspect the
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>model card for mist_models---mist_26p9M_kkgx0omx_qm9, and run that MIST model
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>on caffeine&#39;s canonical SMILES string. Save mist_caffeine_report.txt with the
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>SMILES input, every predicted property, units and descriptions when available,
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>and a brief explanation of what this demonstrates about connecting scientific
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>foundation models to URSA.
+<h2 id="run-the-mist-workflow">Run the MIST workflow<a class="headerlink" href="#run-the-mist-workflow" title="Permanent link">&para;</a></h2>
+<p>Once URSA starts, confirm that the Nomad MCP server is attached by entering
+<code>/agents</code> at the prompt. Under the <code>#execute</code> tab, verify that some tools show
+<code>(MCP: nomad)</code> next to their names. This label indicates that the tools came
+from the <code>nomad</code> MCP server.</p>
+<p>Press <code>Esc</code> to close the Agents modal, then enter the following prompt:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>#execute Use the connected Nomad tools to compute the chemical properties of
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>caffeine. Save all computed properties to `mist_caffeine_report.json`.
 </code></pre></div>
-<p>URSA should first resolve caffeine to a canonical SMILES string, inspect the
-served model card, call the MIST model, and create
-<code>mist_caffeine_report.txt</code> in the selected workspace. Review the report and the
-tool activity rather than treating the generated prediction as experimentally
-validated data.</p>
-<p>The requested model has a
-<a href="https://huggingface.co/mist-models/mist-26.9M-kkgx0omx-qm9">MIST QM9 model card</a>.</p>
+<p>URSA should resolve caffeine to a canonical SMILES string, call the MIST model,
+and create <code>mist_caffeine_report.json</code> in the selected workspace. Review the
+report and tool activity rather than treating the generated predictions as
+experimentally validated data.</p>
+<p>You can also ask URSA to tell you more about how the MIST model was trained:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>#execute Use the connected Nomad tools to explain how the MIST 26.9M QM9 model
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>was trained.
+</code></pre></div>
+<p>URSA will query Nomad for the
+<a href="https://huggingface.co/mist-models/mist-26.9M-kkgx0omx-qm9">MIST QM9 model card</a>
+to answer your question.</p>
 <h2 id="use-the-dashboard-instead">Use the dashboard instead<a class="headerlink" href="#use-the-dashboard-instead" title="Permanent link">&para;</a></h2>
-<p>The same user-level MCP configuration is available to the browser interface.
-Follow the <a href="../../getting-started/dashboard/">dashboard guide</a> for the
-dashboard installation, credential settings, workspace selection, and launch
-command. Choose the execution agent and submit the same prompt, then inspect the
-activity timeline and generated report in the artifacts panel.</p>
+<p>You can run the same workflow in the browser interface. Follow the
+<a href="../../getting-started/dashboard/">dashboard guide</a> to install and launch
+the dashboard, configure the same Nomad MCP endpoint, and select a workspace.
+Choose the execution agent and submit the same prompt, then inspect the activity
+timeline and generated report in the artifacts panel.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Ask <code>#execute List the connected Nomad tools</code> to confirm MCP discovery before
-  running the full prompt.</li>
 <li>If no Nomad tools appear, recheck the resolved configuration and confirm that
-  the container is still listening on port <code>38217</code>.</li>
+  the container is still listening on port <code>38217</code>. Also verify that the URL in
+  <code>ursa.yaml</code> uses the same port.</li>
 <li>If Docker rejects <code>--gpus all</code>, remove that line and run on the CPU.</li>
 <li>If the first model call is slow, watch the Nomad terminal; it may still be
-  downloading weights into <code>cache</code>.</li>
+  downloading weights into its cache.</li>
 </ul>
-<p>Stop Nomad with <strong>Ctrl+C</strong>. Remove the <code>nomad</code> block from your user config when
-you no longer want URSA to connect to the local server.</p>
+<p>Stop Nomad with <strong>Ctrl+C</strong>. Stop passing <code>--config ursa.yaml</code> when you no longer
+want URSA to connect to the local server.</p>
 <p>The endpoint uses unauthenticated local HTTP for this exercise. Before exposing
 Nomad on a network, apply appropriate authentication and transport security.
 See Nomad's <a href="https://lanl.github.io/nomad/guides/getting-started.html">getting-started guide</a>
