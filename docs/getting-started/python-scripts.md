@@ -49,9 +49,9 @@ Create `run_ursa.py`:
 from langchain_core.messages import HumanMessage
 
 from ursa.agents import ExecutionAgent
-from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.cli.config import UrsaConfig
 
-config = resolve_ursa_config(UrsaConfig())
+config = UrsaConfig().resolve()
 llm = config.llm_model.init_chat_model()
 agent = ExecutionAgent(llm=llm)
 
@@ -92,9 +92,9 @@ The built-in `openai` inference provider supplies the endpoint and reads
 ```python
 from pathlib import Path
 
-from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.cli.config import UrsaConfig
 
-config = resolve_ursa_config(UrsaConfig.from_file(Path("config.yaml")))
+config = UrsaConfig.from_file(Path("config.yaml")).resolve()
 
 chat_model = config.llm_model.init_chat_model()
 embedding_model = (
@@ -104,8 +104,9 @@ embedding_model = (
 )
 ```
 
-Resolution applies the selected `inference_providers` settings and resolves API
-key references in memory. It does not write the secret back to the YAML file.
+Resolution applies the selected `inference_providers` settings and prepares API
+key references with their effective keyring usernames. The secret value is read
+only when a model is initialized and is not written back to the YAML file.
 `UrsaConfig.from_file()` reads the specified file; use the CLI when you need its
 full system, user, environment, explicit-file, and command-line precedence.
 

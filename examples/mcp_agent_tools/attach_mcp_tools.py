@@ -4,12 +4,12 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 
 from ursa.agents import ChatAgent
-from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.cli.config import UrsaConfig
 from ursa.util.mcp import start_mcp_client
 
 
 async def main() -> None:
-    config = resolve_ursa_config(UrsaConfig.from_file(Path("config.yaml")))
+    config = UrsaConfig.from_file(Path("config.yaml")).resolve()
     agent = ChatAgent(
         llm=config.llm_model.init_chat_model(),
         workspace=Path("ursa-script-workspace"),
