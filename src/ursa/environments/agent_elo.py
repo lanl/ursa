@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
+import random
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -123,6 +124,7 @@ class AgentEloEnvironment(BaseEnvironment):
         initial_rating: float | None = None,
         k_factor: float | None = None,
         deaths_per_round: int | None = None,
+        seed: int | None = None,
         judge_prompt: str | None = None,
         persist_members: bool = True,
         **kwargs: Any,
@@ -136,6 +138,7 @@ class AgentEloEnvironment(BaseEnvironment):
             initial_rating=initial_rating,
             k_factor=k_factor,
             deaths_per_round=deaths_per_round,
+            seed=seed,
             judge_prompt=judge_prompt,
         )
 
@@ -161,6 +164,10 @@ class AgentEloEnvironment(BaseEnvironment):
         self.deaths_per_round = int(
             elo_config.deaths_per_round
         )
+
+        self.seed = elo_config.seed
+
+        self._rng = random.Random(self.seed)
 
         if self.deaths_per_round < 0:
             raise ValueError(
@@ -238,6 +245,7 @@ class AgentEloEnvironment(BaseEnvironment):
         initial_rating: float | None,
         k_factor: float | None,
         deaths_per_round: int | None,
+        seed: int | None,
         judge_prompt: str | None,
     ) -> AgentEloConfig:
         if isinstance(config, (str, Path)):
@@ -281,6 +289,7 @@ class AgentEloEnvironment(BaseEnvironment):
                     if deaths_per_round is not None
                     else 1
                 ),
+                seed=seed,
                 judge_prompt=judge_prompt,
             )
 
@@ -325,6 +334,11 @@ class AgentEloEnvironment(BaseEnvironment):
                 deaths_per_round
                 if deaths_per_round is not None
                 else base.deaths_per_round
+            ),
+            seed=(
+                seed
+                if seed is not None
+                else base.seed
             ),
             judge_prompt=(
                 judge_prompt
@@ -571,22 +585,31 @@ class AgentEloEnvironment(BaseEnvironment):
         self,
         names: list[str],
     ) -> list[tuple[str, str]]:
-        """Pair active members in their current order.
-
-        For an odd population, the final member receives a bye.
+        """Randomly pair active members.
+    
+        The environment-local RNG makes pairings reproducible
+        when a seed is configured.
+    
+        For an odd population, one random member receives a bye.
         """
+        shuffled = list(names)
+    
+        self._rng.shuffle(
+            shuffled
+        )
+    
         return [
             (
-                names[index],
-                names[index + 1],
+                shuffled[index],
+                shuffled[index + 1],
             )
             for index in range(
                 0,
-                len(names) - 1,
+                len(shuffled) - 1,
                 2,
             )
         ]
-
+    
     def _member_prompt(
         self,
         member: EnvironmentMemberConfig,
@@ -758,12 +781,16 @@ class AgentEloEnvironment(BaseEnvironment):
             dict.fromkeys(losers)
         )
 
+        self._rng.shuffle(
+            losers
+        )
+        
         losers.sort(
             key=lambda name: (
                 self.players[name].rating
             )
         )
-
+        
         return losers[
             : self.deaths_per_round
         ]
@@ -812,12 +839,25 @@ class AgentEloEnvironment(BaseEnvironment):
         self,
         count: int,
     ) -> list[EloPlayer]:
-        """Return the highest-rated surviving agents."""
-        return sorted(
-            self.players.values(),
+        """Return the highest-rated surviving agents.
+    
+        Equal-rated survivors are ordered randomly using
+        the environment RNG.
+        """
+        candidates = list(
+            self.players.values()
+        )
+    
+        self._rng.shuffle(
+            candidates
+        )
+    
+        candidates.sort(
             key=lambda player: player.rating,
             reverse=True,
-        )[:count]
+        )
+    
+        return candidates[:count]
 
     # ------------------------------------------------------------------
     # Reproduction

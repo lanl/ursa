@@ -157,6 +157,7 @@ class AgentEloConfig:
     initial_rating: float = 1500.0
     k_factor: float = 32.0
     deaths_per_round: int = 1
+    seed: int | None = None
     judge_prompt: str | None = None
 
     @classmethod
