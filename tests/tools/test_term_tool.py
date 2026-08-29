@@ -113,6 +113,11 @@ class WrapperManager:
     async def size(self, term_id):
         return await self.get(term_id).size()
 
+    async def mouse_input(
+        self, term_id, row, col, events, *, modifiers=frozenset()
+    ):
+        self.get(term_id).calls.append(("mouse", row, col, events, modifiers))
+
     async def render_snapshot(self, term_id):
         return await self.get(term_id).render_snapshot()
 
@@ -195,6 +200,14 @@ def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
         (term_tool.term_resize, {"rows": 24, "cols": 80}),
         (term_tool.term_cursor, {}),
         (term_tool.term_size, {}),
+        (term_tool.term_click, {"row": 0, "col": 0}),
+        (term_tool.term_mouse_down, {"row": 0, "col": 0}),
+        (term_tool.term_mouse_up, {"row": 0, "col": 0}),
+        (term_tool.term_hover, {"row": 0, "col": 0}),
+        (
+            term_tool.term_scroll,
+            {"row": 0, "col": 0, "delta_y": 1},
+        ),
     ],
 )
 async def test_unknown_terminal_ids_raise_retryable_tool_errors(
@@ -563,6 +576,91 @@ async def test_term_send_key_encodes_and_forwards_bytes(monkeypatch):
     assert terminal.calls == [("bytes", b"\x03")]
 
 
+async def test_mouse_tools_forward_cell_events_and_modifiers(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    assert (
+        await term_tool.term_click.coroutine(
+            terminal.term_id, 2, 4, "right", ["ctrl", "shift"]
+        )
+        == "Clicked right at (2, 4) in terminal Ab12Cd34"
+    )
+    assert (
+        await term_tool.term_mouse_down.coroutine(
+            terminal.term_id, 3, 5, "middle", None
+        )
+        == "Pressed middle at (3, 5) in terminal Ab12Cd34"
+    )
+    assert (
+        await term_tool.term_mouse_up.coroutine(
+            terminal.term_id, 3, 5, "middle", None
+        )
+        == "Released middle at (3, 5) in terminal Ab12Cd34"
+    )
+    assert (
+        await term_tool.term_hover.coroutine(terminal.term_id, 6, 7, ["alt"])
+        == "Moved pointer to (6, 7) in terminal Ab12Cd34"
+    )
+    assert (
+        await term_tool.term_scroll.coroutine(
+            terminal.term_id, 8, 9, -2, 1, None
+        )
+        == "Scrolled (-2, 1) at (8, 9) in terminal Ab12Cd34"
+    )
+
+    assert terminal.calls == [
+        (
+            "mouse",
+            2,
+            4,
+            (("press", "right"), ("release", "right")),
+            frozenset({"ctrl", "shift"}),
+        ),
+        ("mouse", 3, 5, (("press", "middle"),), frozenset()),
+        ("mouse", 3, 5, (("release", "middle"),), frozenset()),
+        ("mouse", 6, 7, (("motion", None),), frozenset({"alt"})),
+        (
+            "mouse",
+            8,
+            9,
+            (("press", "wheel_up"),) * 2 + (("press", "wheel_right"),),
+            frozenset(),
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            ValueError(
+                "mouse position (40, 0) is outside the 40 by 120 terminal"
+            ),
+            r"mouse position \(40, 0\) is outside the 40 by 120 terminal",
+        ),
+        (
+            NotImplementedError(
+                "mouse input requires a screen-backed terminal"
+            ),
+            "mouse input requires a screen-backed terminal",
+        ),
+    ],
+)
+async def test_mouse_tool_backend_errors_are_retryable(
+    monkeypatch, error, message
+):
+    class RejectingManager:
+        async def mouse_input(self, *args, **kwargs):
+            raise error
+
+    monkeypatch.setattr(term_tool, "term_manager", RejectingManager())
+
+    with pytest.raises(ToolException, match=message):
+        await term_tool.term_click.coroutine("Ab12Cd34", 40, 0, "left", None)
+
+
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
@@ -597,6 +695,22 @@ async def test_term_send_key_encodes_and_forwards_bytes(monkeypatch):
         (
             term_tool.term_resize,
             {"term_id": "Ab12Cd34", "rows": 0, "cols": 80},
+        ),
+        (
+            term_tool.term_click,
+            {"term_id": "Ab12Cd34", "row": -1, "col": 0},
+        ),
+        (
+            term_tool.term_click,
+            {"term_id": "Ab12Cd34", "row": 0, "col": 0, "button": "x"},
+        ),
+        (
+            term_tool.term_hover,
+            {"term_id": "Ab12Cd34", "row": 0, "col": 0, "modifiers": ["hyper"]},
+        ),
+        (
+            term_tool.term_scroll,
+            {"term_id": "Ab12Cd34", "row": 0, "col": 0, "delta_y": 0},
         ),
     ],
 )
@@ -911,9 +1025,10 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("screen", "expected_names"),
+    ("screen", "mouse", "expected_names"),
     [
         (
+            False,
             False,
             {
                 "term",
@@ -927,6 +1042,7 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
             },
         ),
         (
+            True,
             True,
             {
                 "term",
@@ -942,16 +1058,22 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
                 "term_size",
                 "term_screenshot",
                 "term_wait_screen",
+                "term_click",
+                "term_mouse_down",
+                "term_mouse_up",
+                "term_hover",
+                "term_scroll",
             },
         ),
     ],
 )
 def test_get_supported_term_tools_filters_screen_capabilities(
-    monkeypatch, screen, expected_names
+    monkeypatch, screen, mouse, expected_names
 ):
     monkeypatch.setattr(
         term_tool.term_manager, "supports_screen", lambda: screen
     )
+    monkeypatch.setattr(term_tool.term_manager, "supports_mouse", lambda: mouse)
     first = term_tool.get_supported_term_tools()
     second = term_tool.get_supported_term_tools()
     assert {tool.name for tool in first} == expected_names

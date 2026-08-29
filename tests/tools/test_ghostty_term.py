@@ -68,6 +68,12 @@ def test_ghostty_requires_library_and_valid_dimensions(
         ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
 
 
+def test_ghostty_default_screen_is_120_columns_by_40_rows(fake_ghostty):
+    terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
+
+    assert terminal._terminal.size == (120, 40)
+
+
 def test_visible_output_decoder_strips_split_color_and_title_sequences():
     decoder = ghostty._VisibleOutputDecoder()
     assert decoder.decode(b"\x1b[31") == ""
@@ -301,6 +307,109 @@ async def test_ghostty_closed_screen_operations_fail(fake_ghostty):
         await terminal.cursor()
     with pytest.raises(RuntimeError, match="closed"):
         await terminal.size()
+
+
+async def test_ghostty_mouse_batches_do_not_interleave(
+    fake_ghostty, monkeypatch
+):
+    terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
+    calls = []
+
+    async def record(action, row, col, *, button, modifiers):
+        calls.append((action, row, col, button, modifiers))
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(terminal, "_send_mouse_event", record)
+    first = (("press", "left"), ("release", "left"))
+    second = (("press", "right"), ("release", "right"))
+
+    await asyncio.gather(
+        terminal.mouse_events(1, 2, first),
+        terminal.mouse_events(3, 4, second, modifiers=frozenset({"ctrl"})),
+    )
+
+    assert calls in (
+        [
+            ("press", 1, 2, "left", frozenset()),
+            ("release", 1, 2, "left", frozenset()),
+            ("press", 3, 4, "right", frozenset({"ctrl"})),
+            ("release", 3, 4, "right", frozenset({"ctrl"})),
+        ],
+        [
+            ("press", 3, 4, "right", frozenset({"ctrl"})),
+            ("release", 3, 4, "right", frozenset({"ctrl"})),
+            ("press", 1, 2, "left", frozenset()),
+            ("release", 1, 2, "left", frozenset()),
+        ],
+    )
+
+
+@pytest.mark.skipif(
+    ghostty.PyGhosttyTerminal is None or os.name == "nt",
+    reason="requires native pyghostty on Unix",
+)
+async def test_real_ghostty_mouse_events_use_negotiated_sgr_protocol():
+    terminal = ghostty.GhosttyTerm("realmouse", ["/bin/sh"], rows=40, cols=120)
+    sent = []
+
+    async def capture(data):
+        sent.append(data)
+
+    terminal.send_bytes = capture
+    try:
+        await terminal.mouse_event("press", 2, 4, button="left")
+        assert sent == []
+
+        terminal._terminal.feed(b"\x1b[?1003h\x1b[?1006h")
+        await terminal.mouse_event("press", 2, 4, button="left")
+        await terminal.mouse_event("motion", 2, 4)
+        await terminal.mouse_event("release", 2, 4, button="left")
+        await terminal.mouse_event("motion", 2, 4)
+        await terminal.mouse_event(
+            "press",
+            2,
+            4,
+            button="wheel_down",
+            modifiers=frozenset({"ctrl"}),
+        )
+    finally:
+        await terminal.terminate()
+
+    assert sent == [
+        b"\x1b[<0;5;3M",
+        b"\x1b[<32;5;3M",
+        b"\x1b[<0;5;3m",
+        b"\x1b[<35;5;3M",
+        b"\x1b[<81;5;3M",
+    ]
+    assert terminal._mouse_encoder is None
+
+
+@pytest.mark.skipif(
+    ghostty.PyGhosttyTerminal is None or os.name == "nt",
+    reason="requires native pyghostty on Unix",
+)
+async def test_real_ghostty_disabled_release_clears_held_drag_button():
+    terminal = ghostty.GhosttyTerm("mousestate", ["/bin/sh"])
+    sent = []
+
+    async def capture(data):
+        sent.append(data)
+
+    terminal.send_bytes = capture
+    try:
+        terminal._terminal.feed(b"\x1b[?1003h\x1b[?1006h")
+        await terminal.mouse_event("press", 2, 4, button="left")
+
+        terminal._terminal.feed(b"\x1b[?1003l\x1b[?1006l")
+        await terminal.mouse_event("release", 2, 4, button="left")
+
+        terminal._terminal.feed(b"\x1b[?1003h\x1b[?1006h")
+        await terminal.mouse_event("motion", 2, 4)
+    finally:
+        await terminal.terminate()
+
+    assert sent == [b"\x1b[<0;5;3M", b"\x1b[<35;5;3M"]
 
 
 @pytest.mark.skipif(
