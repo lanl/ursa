@@ -109,6 +109,11 @@ process environment; it does not replace the complete environment.
 | `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
 | `term_wait_for(term_id, pattern, timeout=None)` | Search output emitted after the call begins, newest-first, and return the newest matching line and stream offset. |
 | `term_wait_screen(term_id, condition="stable", bounding_box=None, include_styling=true, timeout=None)` | Wait for a Ghostty screen to remain unchanged for one second or ten frames (minimum two frames), or to change. |
+| `term_click(term_id, row, col, button="left", modifiers=None)` | Click a mouse button at a Ghostty screen cell. |
+| `term_mouse_down(term_id, row, col, button="left", modifiers=None)` | Press and hold a mouse button at a Ghostty screen cell. |
+| `term_mouse_up(term_id, row, col, button="left", modifiers=None)` | Release a mouse button at a Ghostty screen cell. |
+| `term_hover(term_id, row, col, modifiers=None)` | Move the pointer to a Ghostty screen cell. |
+| `term_scroll(term_id, row, col, delta_y, delta_x=0, modifiers=None)` | Send vertical or horizontal wheel events at a Ghostty screen cell. |
 | `term_resize(term_id, rows, cols)` | Resize a Ghostty-backed screen. |
 | `term_cursor(term_id)` | Return the Ghostty-backed cursor as `(row, column)`. |
 | `term_size(term_id)` | Return the Ghostty-backed size as `(rows, columns)`. |
@@ -139,6 +144,14 @@ found` when its deadline expires. Terminal wait tools default to five times
 optional bounding box is `(top, left, bottom, right)` in zero-based terminal
 cells, with exclusive bottom and right edges. It is available only with the
 Ghostty backend.
+
+Mouse coordinates are zero-based. Click, press, and release accept left,
+middle, or right buttons and the same modifiers as `term_send_key`. Positive
+scroll deltas move down or right; negative deltas move up or left. A held
+button can be dragged with `term_mouse_down`, one or more `term_hover` calls,
+then `term_mouse_up`. Mouse tools are available only with Ghostty and emit
+input only when the terminal application has enabled mouse tracking. New
+Ghostty sessions default to 120 columns by 40 rows.
 
 ## Limits
 

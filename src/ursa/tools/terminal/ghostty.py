@@ -138,8 +138,8 @@ class GhosttyTerm(TermSession):
         *,
         env: dict[str, str] | None = None,
         cwd: str | os.PathLike[str] | None = None,
-        rows: int = 24,
-        cols: int = 80,
+        rows: int = 40,
+        cols: int = 120,
         scrollback: int = 10_000,
     ) -> None:
         super().__init__(term_id, shell, env=env, cwd=cwd)
@@ -171,6 +171,9 @@ class GhosttyTerm(TermSession):
         self._output_chunks: list[str] = []
         self._output_length = 0
         self._output_decoder = _VisibleOutputDecoder()
+        self._mouse_encoder = None
+        self._mouse_lock = asyncio.Lock()
+        self._held_mouse_buttons: list[str] = []
 
     async def start(self, command: str | list[str] | None = None) -> None:
         if self._pid is not None:
@@ -710,6 +713,13 @@ class GhosttyTerm(TermSession):
                         self._cached_text = self._terminal.text()
                     with suppress(BaseException):
                         self._cached_contents = self._terminal.contents()
+                    if self._mouse_encoder is not None:
+                        with suppress(BaseException):
+                            assert _ghostty_lib is not None
+                            _ghostty_lib.ghostty_mouse_encoder_free(
+                                self._mouse_encoder[0]
+                            )
+                        self._mouse_encoder = None
                     with suppress(BaseException):
                         self._terminal.close()
                     self._terminal_closed = True
@@ -742,6 +752,174 @@ class GhosttyTerm(TermSession):
                 raise RuntimeError("terminal session is closed")
             cols, rows = self._terminal.size
             return rows, cols
+
+    async def mouse_event(
+        self,
+        action: str,
+        row: int,
+        col: int,
+        *,
+        button: str | None = None,
+        modifiers: frozenset[str] = frozenset(),
+    ) -> None:
+        """Encode and send a mouse event using Ghostty's negotiated protocol."""
+        async with self._mouse_lock:
+            await self._send_mouse_event(
+                action, row, col, button=button, modifiers=modifiers
+            )
+
+    async def mouse_events(
+        self,
+        row: int,
+        col: int,
+        events: tuple[tuple[str, str | None], ...],
+        *,
+        modifiers: frozenset[str] = frozenset(),
+    ) -> None:
+        """Send a mouse batch without allowing another batch to interleave."""
+        async with self._mouse_lock:
+            for action, button in events:
+                await self._send_mouse_event(
+                    action, row, col, button=button, modifiers=modifiers
+                )
+
+    async def _send_mouse_event(
+        self,
+        action: str,
+        row: int,
+        col: int,
+        *,
+        button: str | None,
+        modifiers: frozenset[str],
+    ) -> None:
+        encoded_button = button
+        if action == "motion" and encoded_button is None:
+            encoded_button = (
+                self._held_mouse_buttons[-1]
+                if self._held_mouse_buttons
+                else None
+            )
+        async with self._io_lock:
+            payload = self._encode_mouse_event(
+                action, row, col, button=encoded_button, modifiers=modifiers
+            )
+        if payload:
+            await self.send_bytes(payload)
+            if (
+                action == "press"
+                and button in {"left", "middle", "right"}
+                and button not in self._held_mouse_buttons
+            ):
+                self._held_mouse_buttons.append(button)
+        if action == "release" and button in self._held_mouse_buttons:
+            self._held_mouse_buttons.remove(button)
+
+    def _encode_mouse_event(
+        self,
+        action: str,
+        row: int,
+        col: int,
+        *,
+        button: str | None,
+        modifiers: frozenset[str],
+    ) -> bytes:
+        assert _ghostty_check is not None
+        assert _ghostty_ffi is not None
+        assert _ghostty_lib is not None
+        if self._terminal_closed:
+            raise RuntimeError("terminal session is closed")
+        if self._mouse_encoder is None:
+            encoder = _ghostty_ffi.new("GhosttyMouseEncoder*")
+            _ghostty_check(
+                _ghostty_lib.ghostty_mouse_encoder_new(
+                    _ghostty_ffi.NULL, encoder
+                ),
+                "mouse encoder",
+            )
+            self._mouse_encoder = encoder
+
+        encoder_handle = self._mouse_encoder[0]
+        _ghostty_lib.ghostty_mouse_encoder_setopt_from_terminal(
+            encoder_handle, self._terminal._t[0]
+        )
+        cols, rows = self._terminal.size
+        size = _ghostty_ffi.new("GhosttyMouseEncoderSize*")
+        size.size = _ghostty_ffi.sizeof("GhosttyMouseEncoderSize")
+        size.screen_width = cols * 8
+        size.screen_height = rows * 16
+        size.cell_width = 8
+        size.cell_height = 16
+        _ghostty_lib.ghostty_mouse_encoder_setopt(
+            encoder_handle, _ghostty_lib.GHOSTTY_MOUSE_ENCODER_OPT_SIZE, size
+        )
+
+        event = _ghostty_ffi.new("GhosttyMouseEvent*")
+        _ghostty_check(
+            _ghostty_lib.ghostty_mouse_event_new(_ghostty_ffi.NULL, event),
+            "mouse event",
+        )
+        try:
+            event_handle = event[0]
+            position = _ghostty_ffi.new("GhosttyMousePosition*")
+            position.x = col * 8 + 4
+            position.y = row * 16 + 8
+            _ghostty_lib.ghostty_mouse_event_set_position(
+                event_handle, position[0]
+            )
+            actions = {
+                "press": _ghostty_lib.GHOSTTY_MOUSE_ACTION_PRESS,
+                "release": _ghostty_lib.GHOSTTY_MOUSE_ACTION_RELEASE,
+                "motion": _ghostty_lib.GHOSTTY_MOUSE_ACTION_MOTION,
+            }
+            buttons = {
+                "left": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_LEFT,
+                "middle": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_MIDDLE,
+                "right": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_RIGHT,
+                "wheel_up": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_FOUR,
+                "wheel_down": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_FIVE,
+                "wheel_left": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_SIX,
+                "wheel_right": _ghostty_lib.GHOSTTY_MOUSE_BUTTON_SEVEN,
+            }
+            _ghostty_lib.ghostty_mouse_event_set_action(
+                event_handle, actions[action]
+            )
+            if button is None:
+                _ghostty_lib.ghostty_mouse_event_clear_button(event_handle)
+            else:
+                _ghostty_lib.ghostty_mouse_event_set_button(
+                    event_handle, buttons[button]
+                )
+            modifier_bits = sum(
+                {"shift": 1, "ctrl": 2, "alt": 4, "super": 8}[modifier]
+                for modifier in modifiers
+            )
+            _ghostty_lib.ghostty_mouse_event_set_mods(
+                event_handle, modifier_bits
+            )
+            output_size = _ghostty_ffi.new("size_t*")
+            _ghostty_lib.ghostty_mouse_encoder_encode(
+                encoder_handle,
+                event_handle,
+                _ghostty_ffi.NULL,
+                0,
+                output_size,
+            )
+            if output_size[0] == 0:
+                return b""
+            output = _ghostty_ffi.new("char[]", output_size[0])
+            _ghostty_check(
+                _ghostty_lib.ghostty_mouse_encoder_encode(
+                    encoder_handle,
+                    event_handle,
+                    output,
+                    output_size[0],
+                    output_size,
+                ),
+                "mouse encode",
+            )
+            return bytes(_ghostty_ffi.buffer(output, output_size[0]))
+        finally:
+            _ghostty_lib.ghostty_mouse_event_free(event[0])
 
     @staticmethod
     def _set_winsize(fd: int, rows: int, cols: int) -> None:
