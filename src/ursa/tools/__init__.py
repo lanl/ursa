@@ -22,6 +22,7 @@ from .term_tool import term_send_line as term_send_line
 from .term_tool import term_send_text as term_send_text
 from .term_tool import term_size as term_size
 from .term_tool import term_wait_for as term_wait_for
+from .term_tool import term_wait_screen as term_wait_screen
 from .workspace_tools import list_workspace_files as list_workspace_files
 from .write_code_tool import edit_code as edit_code
 from .write_code_tool import write_code as write_code

@@ -56,6 +56,7 @@ class TerminalRenderSnapshot:
     rows: int | None = None
     cols: int | None = None
     screen: bool = False
+    cursor: tuple[int, int] | None = None
 
 
 class TermSession(ABC):
