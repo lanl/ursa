@@ -106,6 +106,21 @@ ScrollDelta = Annotated[int, Field(ge=-100, le=100, strict=True)]
 MouseButton = Literal["left", "middle", "right"]
 
 
+def _validate_paste_text(text: str) -> str:
+    if any(character in text for character in ("\x00", chr(27), "\r", "\n")):
+        raise ValueError(
+            "paste text must not contain NUL, Escape, or line-break characters"  # pragma: no mutate
+        )
+    return text
+
+
+PasteText = Annotated[
+    str,
+    Field(min_length=1),
+    AfterValidator(_validate_paste_text),
+]
+
+
 def _canonical_modifiers(
     modifiers: set[str] | list[str] | None,
 ) -> frozenset[str]:
@@ -416,6 +431,18 @@ async def term_send_text(term_id: TermId, text: str) -> str:
 
 
 @tool
+async def term_paste_text(term_id: TermId, text: PasteText) -> str:
+    """Paste literal text without triggering per-character terminal bindings."""
+    try:
+        await term_manager.paste_text(term_id, text)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+    except NotImplementedError as error:
+        raise ToolException(str(error)) from error
+    return f"Pasted text to terminal {term_id}"
+
+
+@tool
 async def term_send_line(term_id: TermId, line: str) -> str:
     """Send text followed by a newline to a terminal session."""
     try:
@@ -701,6 +728,8 @@ _BASE_TERM_TOOLS = [
     term_wait_for,
 ]
 
+_PASTE_TERM_TOOLS = [term_paste_text]
+
 _SCREEN_TERM_TOOLS = [
     term_wait_screen,
     term_resize,
@@ -717,7 +746,12 @@ _MOUSE_TERM_TOOLS = [
     term_scroll,
 ]
 
-TERM_TOOLS = [*_BASE_TERM_TOOLS, *_SCREEN_TERM_TOOLS, *_MOUSE_TERM_TOOLS]
+TERM_TOOLS = [
+    *_BASE_TERM_TOOLS,
+    *_SCREEN_TERM_TOOLS,
+    *_MOUSE_TERM_TOOLS,
+    *_PASTE_TERM_TOOLS,
+]
 
 
 def get_supported_term_tools() -> list[BaseTool]:
@@ -727,4 +761,6 @@ def get_supported_term_tools() -> list[BaseTool]:
         tools.extend(_SCREEN_TERM_TOOLS)
     if term_manager.supports_mouse():
         tools.extend(_MOUSE_TERM_TOOLS)
+    if term_manager.supports_paste():
+        tools.extend(_PASTE_TERM_TOOLS)
     return tools

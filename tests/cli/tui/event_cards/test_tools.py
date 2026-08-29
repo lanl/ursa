@@ -387,6 +387,10 @@ async def test_term_card_full_ghostty_width_is_reachable_in_narrow_app(
         assert live.max_scroll_x > 0
 
 
+def test_paste_text_routes_to_terminal_card():
+    assert "term_paste_text" in TERM_TOOLS
+
+
 @pytest.mark.parametrize("tool", sorted(TERM_TOOLS - {"term"}))
 async def test_every_session_term_tool_routes_to_term_card(tmp_path, tool):
     app = UrsaTextualApp(FakeHITL(tmp_path))

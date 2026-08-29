@@ -389,6 +389,36 @@ async def test_real_ghostty_mouse_events_use_negotiated_sgr_protocol():
     ghostty.PyGhosttyTerminal is None or os.name == "nt",
     reason="requires native pyghostty on Unix",
 )
+async def test_real_ghostty_paste_honors_bracketed_paste_mode():
+    terminal = ghostty.GhosttyTerm("realpaste", ["/bin/sh"])
+    sent = []
+
+    async def capture(data):
+        sent.append(data)
+
+    terminal.send_bytes = capture
+    text = "C:\\Users\\ursa/tmp/a folder/雪❄.txt"
+    try:
+        await terminal.paste_text(text)
+        terminal._terminal.feed(b"\x1b[?2004h")
+        await terminal.paste_text(text)
+        terminal._terminal.feed(b"\x1b[?2004l")
+        await terminal.paste_text(text)
+    finally:
+        await terminal.terminate()
+
+    encoded = text.encode("utf-8")
+    assert sent == [
+        encoded,
+        b"\x1b[200~" + encoded + b"\x1b[201~",
+        encoded,
+    ]
+
+
+@pytest.mark.skipif(
+    ghostty.PyGhosttyTerminal is None or os.name == "nt",
+    reason="requires native pyghostty on Unix",
+)
 async def test_real_ghostty_disabled_release_clears_held_drag_button():
     terminal = ghostty.GhosttyTerm("mousestate", ["/bin/sh"])
     sent = []

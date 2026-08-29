@@ -103,6 +103,7 @@ process environment; it does not replace the complete environment.
 | --- | --- |
 | `term_send_bytes(term_id, data)` | Send `bytes`, or a JSON-compatible list of integer byte values from 0 through 255. |
 | `term_send_text(term_id, text)` | Send UTF-8 text without a newline. |
+| `term_paste_text(term_id, text)` | Paste literal UTF-8 text using the Ghostty terminal's negotiated paste mode. |
 | `term_send_line(term_id, line)` | Send UTF-8 text followed by a newline. |
 | `term_send_key(term_id, key, modifiers=None)` | Send a printable or named key with optional modifiers. |
 | `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
@@ -134,6 +135,14 @@ F12. Modifier names are case-insensitive: `ctrl`/`control`, `alt`/`option`,
 xterm modifier parameters. Super-modified printable characters use Kitty's
 CSI-u keyboard encoding, so applications that do not understand that protocol
 may not recognize them.
+
+Use `term_paste_text` when entering literal text into a full-screen terminal
+application. Unlike `term_send_text`, characters such as `/` are delivered as
+one bracketed paste and do not individually trigger Textual or other application
+key bindings. Ghostty sends plain text when the application has not enabled
+bracketed paste. Paste does not submit the input; send Enter separately when
+needed. Escape and NUL characters are rejected so pasted text cannot break out
+of the bracketed-paste event. This tool is unavailable with ProcessTerm.
 
 `term_wait_for` uses Python regular-expression syntax and returns `Pattern not
 found` when its deadline expires. Terminal wait tools default to five times
