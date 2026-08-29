@@ -38,7 +38,9 @@ _STREAM_CAPABILITIES = frozenset({
     "wait_for",
 })
 _SCREEN_CAPABILITIES = frozenset({"cursor", "resize", "size", "wait_screen"})
-SCREEN_STABILITY_SECONDS = 5.0
+SCREEN_STABILITY_SECONDS = 1.0
+SCREEN_STABILITY_FRAMES = 10
+SCREEN_MIN_STABILITY_FRAMES = 2
 WAIT_DEFAULT_MULTIPLIER = 5
 WAIT_MAX_MULTIPLIER = 10
 
@@ -732,6 +734,7 @@ class TermManager:
             )
         previous = screen_comparison_key(initial, bounding_box, include_styling)
         stable_since = loop.time()
+        stable_frames = 1
         while True:
             now = loop.time()
             remaining = deadline - now
@@ -767,11 +770,15 @@ class TermManager:
                     return "Screen changed"
                 previous = current
                 stable_since = now
-            elif (
-                condition == "stable"
-                and now - stable_since >= SCREEN_STABILITY_SECONDS
-            ):
-                return "Screen stabilized"
+                stable_frames = 1
+            elif condition == "stable":
+                stable_frames += 1
+                enough_frames = stable_frames >= SCREEN_MIN_STABILITY_FRAMES
+                if enough_frames and (
+                    stable_frames >= SCREEN_STABILITY_FRAMES
+                    or now - stable_since >= SCREEN_STABILITY_SECONDS
+                ):
+                    return "Screen stabilized"
 
 
 def _last_overlapping_match(

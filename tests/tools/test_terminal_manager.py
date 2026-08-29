@@ -900,16 +900,73 @@ async def test_cancellable_dispatch_stops_owner_loop_polling(real_manager):
     assert await asyncio.to_thread(finished.wait, 1)
 
 
-async def test_wait_screen_stabilizes_after_five_seconds(manager, monkeypatch):
+async def test_wait_screen_stabilizes_after_elapsed_threshold(
+    manager, monkeypatch
+):
     terminal = ScreenFakeTerm("screen12", ["bash"], output="steady")
     manager.register(terminal)
     monkeypatch.setattr(
         "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 0.02
     )
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_FRAMES", 100
+    )
     assert (
         await manager.wait_screen(terminal.term_id, timeout=0.5)
         == "Screen stabilized"
     )
+
+
+async def test_wait_screen_stabilizes_after_unchanged_frame_threshold(
+    manager, monkeypatch
+):
+    class CountingTerm(ScreenFakeTerm):
+        captures = 0
+
+        async def render_snapshot(self):
+            self.captures += 1
+            return await super().render_snapshot()
+
+    terminal = CountingTerm("frames10", ["bash"], output="steady")
+    manager.register(terminal)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 100
+    )
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_FRAMES", 3
+    )
+
+    assert (
+        await manager.wait_screen(terminal.term_id, timeout=0.5)
+        == "Screen stabilized"
+    )
+    assert terminal.captures == 3
+
+
+async def test_wait_screen_elapsed_threshold_requires_two_frames(
+    manager, monkeypatch
+):
+    class CountingTerm(ScreenFakeTerm):
+        captures = 0
+
+        async def render_snapshot(self):
+            self.captures += 1
+            return await super().render_snapshot()
+
+    terminal = CountingTerm("minframe", ["bash"], output="steady")
+    manager.register(terminal)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 0
+    )
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_FRAMES", 100
+    )
+
+    assert (
+        await manager.wait_screen(terminal.term_id, timeout=0.5)
+        == "Screen stabilized"
+    )
+    assert terminal.captures == 2
 
 
 async def test_wait_screen_stability_restarts_after_change(
@@ -919,6 +976,9 @@ async def test_wait_screen_stability_restarts_after_change(
     manager.register(terminal)
     monkeypatch.setattr(
         "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 0.04
+    )
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_FRAMES", 100
     )
 
     async def update():
@@ -933,6 +993,35 @@ async def test_wait_screen_stability_restarts_after_change(
     )
     assert asyncio.get_running_loop().time() - started >= 0.06
     await task
+
+
+async def test_wait_screen_unchanged_frame_count_restarts_after_change(
+    manager, monkeypatch
+):
+    class SequencedTerm(ScreenFakeTerm):
+        captures = 0
+        outputs = ("first", "first", "second", "second", "second")
+
+        async def render_snapshot(self):
+            index = min(self.captures, len(self.outputs) - 1)
+            self.output = self.outputs[index]
+            self.captures += 1
+            return await super().render_snapshot()
+
+    terminal = SequencedTerm("resetfrm", ["bash"])
+    manager.register(terminal)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 100
+    )
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_FRAMES", 3
+    )
+
+    assert (
+        await manager.wait_screen(terminal.term_id, timeout=0.5)
+        == "Screen stabilized"
+    )
+    assert terminal.captures == 5
 
 
 async def test_wait_screen_validates_inputs(manager):
