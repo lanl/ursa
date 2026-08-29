@@ -117,65 +117,11 @@ def _baseagent_adapter_builder(
 def _planning_executor_workflow_builder() -> Callable[
     [Any, dict[str, Any]], AgentAdapter
 ]:
-    """Build adapter for PlanningExecutorWorkflow.
+    """Build the one-runtime planning/execution BaseAgent adapter."""
 
-    The workflow composes a PlanningAgent + ExecutionAgent. We create both using the
-    same LLM config and workspace.
-    """
-
-    def build_adapter(llm: Any, agent_init: dict[str, Any]) -> AgentAdapter:
-        if llm is None:
-            raise ValueError(
-                "PlanningExecutorWorkflow requires an enabled LLM configuration (llm.disabled=false)."
-            )
-
-        PlanningAgent = _lazy_class("ursa.agents.planning_agent.PlanningAgent")
-        ExecutionAgent = _lazy_class(
-            "ursa.agents.execution_agent.ExecutionAgent"
-        )
-
-        # User request had a typo (worksflows). The correct module is ursa.workflows.
-        try:
-            PlanningExecutorWorkflow = _lazy_class(
-                "ursa.workflows.planning_execution_workflow.PlanningExecutorWorkflow"
-            )
-        except Exception:
-            PlanningExecutorWorkflow = _lazy_class(
-                "ursa.worksflows.planning_execution_workflow.PlanningExecutorWorkflow"
-            )
-
-        def agent_factory(workspace_dir: Path, _inputs: Any):
-            planner_init = dict(agent_init)
-            executor_init = dict(agent_init)
-
-            # Split init kwargs between the two agents to avoid unexpected-kw errors.
-            for k in [
-                "tokens_before_summarize",
-                "messages_to_keep",
-                "safe_codes",
-                "log_state",
-                "use_web",
-            ]:
-                planner_init.pop(k, None)
-            executor_init.pop("max_reflection_steps", None)
-
-            planner = PlanningAgent(
-                llm=llm, workspace=str(workspace_dir), **planner_init
-            )
-            executor = ExecutionAgent(
-                llm=llm, workspace=str(workspace_dir), **executor_init
-            )
-            return PlanningExecutorWorkflow(
-                planner=planner,
-                executor=executor,
-                workspace=str(workspace_dir),
-            )
-
-        # IMPORTANT: do not redirect stdout/stderr inside the adapter; the dashboard
-        # runner captures worker stdout/stderr directly.
-        return DirectInvokeAdapter(agent_factory)
-
-    return build_adapter
+    return _baseagent_adapter_builder(
+        "ursa.workflows.planning_execution_workflow.PlanningExecutionAgent"
+    )
 
 
 def register(entry: AgentEntry) -> None:
@@ -361,7 +307,7 @@ register(
         spec=AgentSpec(
             agent_id="planning_executor_workflow",
             display_name="Planning + Execution Workflow",
-            description="Runs a PlanningAgent to break the task into steps, then an ExecutionAgent to execute each step. Best for longer, complex tasks. Executor web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
+            description="Uses one persistent planning/execution agent with native planner and executor subgraphs. Best for longer, complex tasks. Web/arXiv/OSTI tools are opt-in via --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -369,7 +315,7 @@ register(
             ),
             parameters=[
                 _prompt_param(title="Task"),
-                # Reuse common agent_init knobs (applies to both planner + executor)
+                # Planner and executor settings belong to the same agent runtime.
                 AgentParam(
                     name="max_reflection_steps",
                     title="Max reflection steps",

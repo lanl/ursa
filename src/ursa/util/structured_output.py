@@ -185,7 +185,19 @@ def _try_methods(
                 kwargs["method"] = method
             structured_llm = llm.with_structured_output(schema, **kwargs)
             invoke_kwargs = {"config": config} if config is not None else {}
-            output = structured_llm.invoke(input, **invoke_kwargs)
+            try:
+                output = structured_llm.invoke(input, **invoke_kwargs)
+            except TypeError as exc:
+                # Some lightweight model adapters expose a Runnable-like
+                # structured-output object but predate RunnableConfig support.
+                # Preserve config propagation for conforming implementations
+                # while retaining compatibility with those adapters.
+                if (
+                    not invoke_kwargs
+                    or "unexpected keyword argument 'config'" not in str(exc)
+                ):
+                    raise
+                output = structured_llm.invoke(input)
             parsed, raw, parsing_error = _extract_output(output, include_raw)
             parsed = _validate_parsed(schema, parsed, validator=validator)
             result = StructuredOutputResult(

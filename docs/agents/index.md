@@ -48,6 +48,11 @@ tools.
 
 ## Composing agents
 
+For a fixed child stage inside a custom LangGraph, use
+[`BaseAgent.add_agent_node`][composing-agents-as-graph-nodes]. It gives the
+child an explicit input/output state boundary and a parent-owned checkpoint
+namespace.
+
 For work that benefits from multiple roles, URSA environments compose agents
 behind one `invoke(...)` interface. Use an [Agent Team][agent-teams] when one PI
 should delegate to specialists and synthesize a coherent answer. Use an
