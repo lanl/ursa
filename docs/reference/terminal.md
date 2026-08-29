@@ -108,7 +108,7 @@ process environment; it does not replace the complete environment.
 | `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
 | `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
 | `term_wait_for(term_id, pattern, timeout=None)` | Search output emitted after the call begins, newest-first, and return the newest matching line and stream offset. |
-| `term_wait_screen(term_id, condition="stable", bounding_box=None, include_styling=true, timeout=None)` | Wait for a Ghostty screen to remain unchanged for five seconds or to change. |
+| `term_wait_screen(term_id, condition="stable", bounding_box=None, include_styling=true, timeout=None)` | Wait for a Ghostty screen to remain unchanged for one second or ten frames (minimum two frames), or to change. |
 | `term_resize(term_id, rows, cols)` | Resize a Ghostty-backed screen. |
 | `term_cursor(term_id)` | Return the Ghostty-backed cursor as `(row, column)`. |
 | `term_size(term_id)` | Return the Ghostty-backed size as `(rows, columns)`. |

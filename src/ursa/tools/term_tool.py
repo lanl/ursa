@@ -499,8 +499,9 @@ async def term_wait_screen(
 ) -> str:
     """Wait for a terminal screen to stabilize or change.
 
-    Stability means the selected screen region remains unchanged for five
-    seconds. ``bounding_box`` is ``(top, left, bottom, right)`` using
+    Stability means the selected screen region remains unchanged for one
+    second or ten frames, whichever comes first, with at least two frames.
+    ``bounding_box`` is ``(top, left, bottom, right)`` using
     zero-based, end-exclusive coordinates. Styling participates in comparison
     by default; set ``include_styling`` false to compare only displayed text.
     """
