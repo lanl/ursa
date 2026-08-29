@@ -27,6 +27,10 @@ def test_term_screenshot_is_publicly_exported():
     assert tools_package.term_screenshot is term_tool.term_screenshot
 
 
+def test_term_paste_text_is_publicly_exported():
+    assert tools_package.term_paste_text is term_tool.term_paste_text
+
+
 class WrapperTerm:
     term_id = "Ab12Cd34"
 
@@ -91,6 +95,9 @@ class WrapperManager:
 
     async def send_line(self, term_id, line):
         await self.get(term_id).send_line(line)
+
+    async def paste_text(self, term_id, text):
+        self.get(term_id).calls.append(("paste", text))
 
     async def read(self, term_id, **kwargs):
         return await self.get(term_id).read(**kwargs)
@@ -191,6 +198,7 @@ def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
     [
         (term_tool.term_send_bytes, {"data": [1]}),
         (term_tool.term_send_text, {"text": "x"}),
+        (term_tool.term_paste_text, {"text": "x"}),
         (term_tool.term_send_line, {"line": "x"}),
         (term_tool.term_send_key, {"key": "c", "modifiers": ["ctrl"]}),
         (term_tool.term_read, {}),
@@ -490,6 +498,75 @@ async def test_send_read_and_state_wrappers(monkeypatch):
         ("read", {"offset": 2, "lines": 4}),
         ("read", {"offset": 0, "lines": None}),
     ]
+
+
+async def test_paste_text_forwards_literal_unicode_text_to_manager(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+    text = "C:\\Users\\ursa/tmp/a folder/雪❄.txt"
+
+    assert await term_tool.term_paste_text.coroutine(
+        terminal.term_id, text
+    ) == ("Pasted text to terminal Ab12Cd34")
+    assert terminal.calls == [("paste", text)]
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("", "String should have at least 1 character"),
+        (
+            "has\x00nul",
+            "paste text must not contain NUL, Escape, or line-break characters",
+        ),
+        (
+            "has\x1bescape",
+            "paste text must not contain NUL, Escape, or line-break characters",
+        ),
+        (
+            "has\rreturn",
+            "paste text must not contain NUL, Escape, or line-break characters",
+        ),
+        (
+            "has\nnewline",
+            "paste text must not contain NUL, Escape, or line-break characters",
+        ),
+        ("\ud800", "Input should be a valid string"),
+    ],
+)
+async def test_paste_text_rejects_invalid_input_before_manager(text, message):
+    with pytest.raises(ValidationError, match=message):
+        await term_tool.term_paste_text.ainvoke({
+            "term_id": "Ab12Cd34",
+            "text": text,
+        })
+
+
+def test_paste_text_control_character_error_is_actionable():
+    with pytest.raises(ValueError) as error:
+        term_tool._validate_paste_text("has\nnewline")
+
+    assert str(error.value) == (
+        "paste text must not contain NUL, Escape, or line-break characters"
+    )
+
+
+async def test_paste_text_process_backend_error_is_retryable(monkeypatch):
+    class ProcessManager:
+        async def paste_text(self, term_id, text):
+            raise NotImplementedError(
+                "paste input requires a Ghostty-backed terminal"
+            )
+
+    monkeypatch.setattr(term_tool, "term_manager", ProcessManager())
+    with pytest.raises(
+        ToolException, match="paste input requires a Ghostty-backed terminal"
+    ):
+        await term_tool.term_paste_text.ainvoke({
+            "term_id": "Ab12Cd34",
+            "text": "literal",
+        })
 
 
 async def test_send_bytes_accepts_json_integer_array_and_rejects_bad_values(
@@ -1025,9 +1102,10 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("screen", "mouse", "expected_names"),
+    ("screen", "mouse", "paste", "expected_names"),
     [
         (
+            False,
             False,
             False,
             {
@@ -1044,10 +1122,12 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
         (
             True,
             True,
+            True,
             {
                 "term",
                 "term_send_bytes",
                 "term_send_text",
+                "term_paste_text",
                 "term_send_line",
                 "term_send_key",
                 "term_read",
@@ -1068,18 +1148,20 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
     ],
 )
 def test_get_supported_term_tools_filters_screen_capabilities(
-    monkeypatch, screen, mouse, expected_names
+    monkeypatch, screen, mouse, paste, expected_names
 ):
     monkeypatch.setattr(
         term_tool.term_manager, "supports_screen", lambda: screen
     )
     monkeypatch.setattr(term_tool.term_manager, "supports_mouse", lambda: mouse)
+    monkeypatch.setattr(term_tool.term_manager, "supports_paste", lambda: paste)
     first = term_tool.get_supported_term_tools()
     second = term_tool.get_supported_term_tools()
     assert {tool.name for tool in first} == expected_names
     assert first is not second
     assert first == second
     assert term_tool.term_send_key in term_tool.TERM_TOOLS
+    assert term_tool.term_paste_text in term_tool.TERM_TOOLS
     assert all(
         tool.name != "term_send_keycode" for tool in term_tool.TERM_TOOLS
     )

@@ -23,6 +23,7 @@ TERM_TOOLS = frozenset({
     "term",
     "term_send_bytes",
     "term_send_text",
+    "term_paste_text",
     "term_send_line",
     "term_send_key",
     "term_read",
