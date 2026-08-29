@@ -44,6 +44,7 @@ _SCREEN_CAPABILITIES = frozenset({
     "wait_screen",
 })
 _MOUSE_CAPABILITIES = frozenset({"mouse"})
+_PASTE_CAPABILITIES = frozenset({"paste"})
 SCREEN_STABILITY_SECONDS = 1.0
 SCREEN_STABILITY_FRAMES = 10
 SCREEN_MIN_STABILITY_FRAMES = 2
@@ -326,6 +327,8 @@ class TermManager:
             capabilities |= _SCREEN_CAPABILITIES
         if session_type.mouse_event is not TermSession.mouse_event:
             capabilities |= _MOUSE_CAPABILITIES
+        if session_type.paste_text is not TermSession.paste_text:
+            capabilities |= _PASTE_CAPABILITIES
         return capabilities
 
     @staticmethod
@@ -440,6 +443,8 @@ class TermManager:
             capabilities |= _SCREEN_CAPABILITIES
             if cls._factory_supports_mouse(factory):
                 capabilities |= _MOUSE_CAPABILITIES
+            if cls._factory_supports_paste(factory):
+                capabilities |= _PASTE_CAPABILITIES
         return capabilities
 
     @staticmethod
@@ -447,6 +452,13 @@ class TermManager:
         return (
             getattr(factory, "mouse_event", TermSession.mouse_event)
             is not TermSession.mouse_event
+        )
+
+    @staticmethod
+    def _factory_supports_paste(factory: SessionFactory) -> bool:
+        return (
+            getattr(factory, "paste_text", TermSession.paste_text)
+            is not TermSession.paste_text
         )
 
     @classmethod
@@ -459,6 +471,12 @@ class TermManager:
         """Return whether the default backend accepts mouse input."""
         factory, _ = cls._default_backend()
         return cls._factory_supports_mouse(factory)
+
+    @classmethod
+    def supports_paste(cls) -> bool:
+        """Return whether the default backend supports negotiated paste."""
+        factory, _ = cls._default_backend()
+        return cls._factory_supports_paste(factory)
 
     def register(self, terminal: TermSession) -> None:
         """Register an already-created session, primarily for integrations."""
@@ -556,6 +574,15 @@ class TermManager:
     async def size(self, term_id: str) -> tuple[int, int]:
         """Return a registered terminal's dimensions."""
         return await self._dispatch(self.get(term_id).size())
+
+    async def paste_text(self, term_id: str, text: str) -> None:
+        """Paste text using the session's negotiated terminal mode."""
+        terminal = self.get(term_id)
+        if "paste" not in self.terminal_info(term_id).capabilities:
+            raise NotImplementedError(
+                "paste input requires a Ghostty-backed terminal"
+            )
+        await self._dispatch(terminal.paste_text(text))
 
     async def mouse_input(
         self,

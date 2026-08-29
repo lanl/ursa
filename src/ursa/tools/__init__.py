@@ -17,6 +17,7 @@ from .term_tool import term_hover as term_hover
 from .term_tool import term_is_alive as term_is_alive
 from .term_tool import term_mouse_down as term_mouse_down
 from .term_tool import term_mouse_up as term_mouse_up
+from .term_tool import term_paste_text as term_paste_text
 from .term_tool import term_read as term_read
 from .term_tool import term_resize as term_resize
 from .term_tool import term_screenshot as term_screenshot
