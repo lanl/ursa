@@ -102,6 +102,8 @@ NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
 PositiveInt = Annotated[int, Field(gt=0, strict=True)]
 ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
 WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 10)]
+ScrollDelta = Annotated[int, Field(ge=-100, le=100, strict=True)]
+MouseButton = Literal["left", "middle", "right"]
 
 
 def _canonical_modifiers(
@@ -519,6 +521,120 @@ async def term_wait_screen(
         raise ToolException(str(error)) from error
 
 
+async def _send_mouse_events(
+    term_id: str,
+    row: int,
+    col: int,
+    events: tuple[tuple[str, str | None], ...],
+    modifiers: set[str] | list[str] | None,
+) -> None:
+    canonical = _canonical_modifiers(modifiers)
+    try:
+        await term_manager.mouse_input(
+            term_id, row, col, events, modifiers=canonical
+        )
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+    except (ValueError, NotImplementedError) as error:
+        raise ToolException(str(error)) from error
+
+
+@tool
+async def term_click(
+    term_id: TermId,
+    row: NonNegativeInt,
+    col: NonNegativeInt,
+    button: MouseButton = "left",
+    modifiers: TermModifiers = None,
+) -> str:
+    """Click a mouse button at a zero-based terminal cell."""
+    await _send_mouse_events(
+        term_id,
+        row,
+        col,
+        (("press", button), ("release", button)),
+        modifiers,
+    )
+    return f"Clicked {button} at ({row}, {col}) in terminal {term_id}"
+
+
+@tool
+async def term_mouse_down(
+    term_id: TermId,
+    row: NonNegativeInt,
+    col: NonNegativeInt,
+    button: MouseButton = "left",
+    modifiers: TermModifiers = None,
+) -> str:
+    """Press and hold a mouse button at a zero-based terminal cell."""
+    await _send_mouse_events(term_id, row, col, (("press", button),), modifiers)
+    return f"Pressed {button} at ({row}, {col}) in terminal {term_id}"
+
+
+@tool
+async def term_mouse_up(
+    term_id: TermId,
+    row: NonNegativeInt,
+    col: NonNegativeInt,
+    button: MouseButton = "left",
+    modifiers: TermModifiers = None,
+) -> str:
+    """Release a mouse button at a zero-based terminal cell."""
+    await _send_mouse_events(
+        term_id, row, col, (("release", button),), modifiers
+    )
+    return f"Released {button} at ({row}, {col}) in terminal {term_id}"
+
+
+@tool
+async def term_hover(
+    term_id: TermId,
+    row: NonNegativeInt,
+    col: NonNegativeInt,
+    modifiers: TermModifiers = None,
+) -> str:
+    """Move the pointer to a zero-based terminal cell."""
+    await _send_mouse_events(term_id, row, col, (("motion", None),), modifiers)
+    return f"Moved pointer to ({row}, {col}) in terminal {term_id}"
+
+
+@tool
+async def term_scroll(
+    term_id: TermId,
+    row: NonNegativeInt,
+    col: NonNegativeInt,
+    delta_y: ScrollDelta,
+    delta_x: ScrollDelta = 0,
+    modifiers: TermModifiers = None,
+) -> str:
+    """Scroll at a terminal cell; positive deltas move down and right."""
+    if delta_y == 0 and delta_x == 0:
+        error = ValueError("at least one scroll delta must be nonzero")
+        raise ValidationError.from_exception_data(
+            "term_scroll",
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("delta_y", "delta_x"),
+                    "input": {"delta_y": delta_y, "delta_x": delta_x},
+                    "ctx": {"error": error},
+                }
+            ],
+        )
+    events: list[tuple[str, str | None]] = []
+    if delta_y:
+        button = "wheel_down" if delta_y > 0 else "wheel_up"
+        events.extend(("press", button) for _ in range(abs(delta_y)))
+    if delta_x:
+        button = "wheel_right" if delta_x > 0 else "wheel_left"
+        events.extend(("press", button) for _ in range(abs(delta_x)))
+    await _send_mouse_events(term_id, row, col, tuple(events), modifiers)
+    return (
+        f"Scrolled ({delta_y}, {delta_x}) at ({row}, {col}) "
+        f"in terminal {term_id}"
+    )
+
+
 @tool
 async def term_resize(
     term_id: TermId, rows: PositiveInt, cols: PositiveInt
@@ -593,7 +709,15 @@ _SCREEN_TERM_TOOLS = [
     term_screenshot,
 ]
 
-TERM_TOOLS = [*_BASE_TERM_TOOLS, *_SCREEN_TERM_TOOLS]
+_MOUSE_TERM_TOOLS = [
+    term_click,
+    term_mouse_down,
+    term_mouse_up,
+    term_hover,
+    term_scroll,
+]
+
+TERM_TOOLS = [*_BASE_TERM_TOOLS, *_SCREEN_TERM_TOOLS, *_MOUSE_TERM_TOOLS]
 
 
 def get_supported_term_tools() -> list[BaseTool]:
@@ -601,4 +725,6 @@ def get_supported_term_tools() -> list[BaseTool]:
     tools = list(_BASE_TERM_TOOLS)
     if term_manager.supports_screen():
         tools.extend(_SCREEN_TERM_TOOLS)
+    if term_manager.supports_mouse():
+        tools.extend(_MOUSE_TERM_TOOLS)
     return tools

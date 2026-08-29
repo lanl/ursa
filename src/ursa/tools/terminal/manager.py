@@ -37,7 +37,13 @@ _STREAM_CAPABILITIES = frozenset({
     "wait",
     "wait_for",
 })
-_SCREEN_CAPABILITIES = frozenset({"cursor", "resize", "size", "wait_screen"})
+_SCREEN_CAPABILITIES = frozenset({
+    "cursor",
+    "resize",
+    "size",
+    "wait_screen",
+})
+_MOUSE_CAPABILITIES = frozenset({"mouse"})
 SCREEN_STABILITY_SECONDS = 1.0
 SCREEN_STABILITY_FRAMES = 10
 SCREEN_MIN_STABILITY_FRAMES = 2
@@ -318,6 +324,8 @@ class TermManager:
             for operation in ("cursor", "resize", "size")
         ):
             capabilities |= _SCREEN_CAPABILITIES
+        if session_type.mouse_event is not TermSession.mouse_event:
+            capabilities |= _MOUSE_CAPABILITIES
         return capabilities
 
     @staticmethod
@@ -427,15 +435,30 @@ class TermManager:
         constructing a session, including native ``pyghostty`` availability.
         """
         capabilities = _STREAM_CAPABILITIES
-        _, supports_screen = cls._default_backend()
+        factory, supports_screen = cls._default_backend()
         if supports_screen:
             capabilities |= _SCREEN_CAPABILITIES
+            if cls._factory_supports_mouse(factory):
+                capabilities |= _MOUSE_CAPABILITIES
         return capabilities
+
+    @staticmethod
+    def _factory_supports_mouse(factory: SessionFactory) -> bool:
+        return (
+            getattr(factory, "mouse_event", TermSession.mouse_event)
+            is not TermSession.mouse_event
+        )
 
     @classmethod
     def supports_screen(cls) -> bool:
         """Return whether the default backend provides screen semantics."""
         return _SCREEN_CAPABILITIES <= cls.supported_capabilities()
+
+    @classmethod
+    def supports_mouse(cls) -> bool:
+        """Return whether the default backend accepts mouse input."""
+        factory, _ = cls._default_backend()
+        return cls._factory_supports_mouse(factory)
 
     def register(self, terminal: TermSession) -> None:
         """Register an already-created session, primarily for integrations."""
@@ -533,6 +556,61 @@ class TermManager:
     async def size(self, term_id: str) -> tuple[int, int]:
         """Return a registered terminal's dimensions."""
         return await self._dispatch(self.get(term_id).size())
+
+    async def mouse_input(
+        self,
+        term_id: str,
+        row: int,
+        col: int,
+        events: tuple[tuple[str, str | None], ...],
+        *,
+        modifiers: frozenset[str] = frozenset(),
+    ) -> None:
+        """Send encoded mouse input to a screen-backed terminal cell."""
+        terminal = self.get(term_id)
+        if "mouse" not in self.terminal_info(term_id).capabilities:
+            raise NotImplementedError(
+                "mouse input requires a screen-backed terminal"
+            )
+        if row < 0 or col < 0:
+            raise ValueError("mouse row and col must be non-negative")
+        rows, cols = await self._dispatch(terminal.size())
+        if row >= rows or col >= cols:
+            raise ValueError(
+                f"mouse position ({row}, {col}) is outside the "
+                f"{rows} by {cols} terminal"
+            )
+        await self._dispatch(
+            self._mouse_input(terminal, row, col, events, modifiers=modifiers)
+        )
+
+    @staticmethod
+    async def _mouse_input(
+        terminal: TermSession,
+        row: int,
+        col: int,
+        events: tuple[tuple[str, str | None], ...],
+        *,
+        modifiers: frozenset[str],
+    ) -> None:
+        actions = {"press", "release", "motion"}
+        buttons = {
+            "left",
+            "middle",
+            "right",
+            "wheel_up",
+            "wheel_down",
+            "wheel_left",
+            "wheel_right",
+        }
+        for action, button in events:
+            if action not in actions:
+                raise ValueError(f"unsupported mouse action: {action}")
+            if button is not None and button not in buttons:
+                raise ValueError(f"unsupported mouse button: {button}")
+            if action != "motion" and button is None:
+                raise ValueError(f"mouse {action} requires a button")
+        await terminal.mouse_events(row, col, events, modifiers=modifiers)
 
     async def remove(self, term_id: str, *, terminate: bool = True) -> None:
         """Unregister a terminal and optionally terminate it."""
