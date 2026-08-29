@@ -438,12 +438,14 @@ class GhosttyTerm(TermSession):
                 col += 1
             if row != rows - 1:
                 spans.append(TerminalSpan("\n"))
+        cursor_col, cursor_row = self._terminal.cursor
         return TerminalRenderSnapshot(
             term_id=self.term_id,
             spans=tuple(spans),
             rows=rows,
             cols=cols,
             screen=True,
+            cursor=(cursor_row, cursor_col),
         )
 
     @staticmethod
