@@ -121,6 +121,119 @@ async def test_session_convenience_sends():
     assert terminal.writes == ["é".encode(), b"hello\n"]
 
 
+async def test_manager_mouse_input_checks_screen_bounds_and_forwards_bytes(
+    manager,
+):
+    class MouseTerm(FakeTerm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.recorded_mouse_events = []
+
+        async def resize(self, rows, cols):
+            pass
+
+        async def cursor(self):
+            return (0, 0)
+
+        async def size(self):
+            return (40, 120)
+
+        async def mouse_event(
+            self, action, row, col, *, button=None, modifiers=frozenset()
+        ):
+            self.recorded_mouse_events.append((
+                action,
+                row,
+                col,
+                button,
+                modifiers,
+            ))
+
+    terminal = MouseTerm("mouse123", ["bash"])
+    manager.register(terminal)
+
+    await manager.mouse_input(
+        terminal.term_id,
+        39,
+        119,
+        (("press", "left"), ("release", "left")),
+        modifiers=frozenset({"ctrl"}),
+    )
+
+    assert terminal.recorded_mouse_events == [
+        ("press", 39, 119, "left", frozenset({"ctrl"})),
+        ("release", 39, 119, "left", frozenset({"ctrl"})),
+    ]
+    with pytest.raises(ValueError, match="outside the 40 by 120 terminal"):
+        await manager.mouse_input(terminal.term_id, 40, 0, ())
+    with pytest.raises(ValueError, match="outside the 40 by 120 terminal"):
+        await manager.mouse_input(terminal.term_id, 0, 120, ())
+
+
+async def test_manager_mouse_input_rejects_stream_backend(manager):
+    terminal = FakeTerm("stream12", ["bash"])
+    manager.register(terminal)
+
+    with pytest.raises(NotImplementedError, match="screen-backed"):
+        await manager.mouse_input(terminal.term_id, 0, 0, ())
+
+
+@pytest.mark.parametrize(("row", "col"), [(-1, 0), (0, -1), (-1, -1)])
+async def test_manager_mouse_input_rejects_negative_positions(
+    manager, row, col
+):
+    class MouseTerm(FakeTerm):
+        async def resize(self, rows, cols):
+            pass
+
+        async def cursor(self):
+            return (0, 0)
+
+        async def size(self):
+            return (40, 120)
+
+        async def mouse_event(self, *args, **kwargs):
+            pass
+
+    terminal = MouseTerm("mousepos", ["bash"])
+    manager.register(terminal)
+
+    with pytest.raises(ValueError, match="row and col must be non-negative"):
+        await manager.mouse_input(terminal.term_id, row, col, ())
+
+
+@pytest.mark.parametrize(
+    ("events", "message"),
+    [
+        ((("drag", "left"),), "unsupported mouse action: drag"),
+        ((("press", "eighth"),), "unsupported mouse button: eighth"),
+        ((("press", None),), "mouse press requires a button"),
+        ((("release", None),), "mouse release requires a button"),
+    ],
+)
+async def test_manager_mouse_input_validates_event_batches(
+    manager, events, message
+):
+    class MouseTerm(FakeTerm):
+        async def resize(self, rows, cols):
+            pass
+
+        async def cursor(self):
+            return (0, 0)
+
+        async def size(self):
+            return (40, 120)
+
+        async def mouse_event(self, *args, **kwargs):
+            pass
+
+    terminal = MouseTerm("mouseevt", ["bash"])
+    manager.register(terminal)
+
+    with pytest.raises(ValueError, match=message):
+        await manager.mouse_input(terminal.term_id, 0, 0, events)
+
+
 def test_session_rejects_empty_shell():
     with pytest.raises(ValueError, match="shell"):
         FakeTerm("abcdefgh", [])
@@ -175,6 +288,27 @@ def test_terminal_metadata_detects_screen_backend_and_removal(manager):
     assert manager.terminals() == ()
     with pytest.raises(KeyError, match="unknown terminal"):
         manager.terminal_info(terminal.term_id)
+
+
+def test_real_backend_session_capabilities_report_mouse_only_for_ghostty(
+    manager, tmp_path
+):
+    from ursa.tools.terminal import ghostty
+    from ursa.tools.terminal.process import ProcessTerm
+
+    process = ProcessTerm("process1", ["/bin/sh"], cwd=tmp_path)
+    manager.register(process)
+    assert "mouse" not in manager.terminal_info("process1").capabilities
+
+    if ghostty.PyGhosttyTerminal is not None:
+        screen = ghostty.GhosttyTerm("ghostcap", ["/bin/sh"])
+        manager.register(screen)
+        try:
+            capabilities = manager.terminal_info("ghostcap").capabilities
+            assert "mouse" in capabilities
+            assert {"resize", "cursor", "size"} <= capabilities
+        finally:
+            asyncio.run(screen.terminate())
 
 
 def test_new_id_retries_registered_and_reserved_collisions(
@@ -1150,9 +1284,32 @@ def test_manager_capabilities_follow_selected_backend(monkeypatch, screen):
     }
     assert "send_keycode" not in capabilities
     assert TermManager.supports_screen() is screen
+    assert TermManager.supports_mouse() is False
+    assert "mouse" not in capabilities
     for capability in {"resize", "cursor", "size"}:
         assert (capability in capabilities) is screen
     assert TermManager._default_factory() is FakeTerm
+
+
+def test_supported_capabilities_report_real_backend_mouse_support(monkeypatch):
+    from ursa.tools.terminal.ghostty import GhosttyTerm
+    from ursa.tools.terminal.process import ProcessTerm
+
+    monkeypatch.setattr(
+        TermManager,
+        "_default_backend",
+        staticmethod(lambda: (GhosttyTerm, True)),
+    )
+    assert TermManager.supports_mouse() is True
+    assert "mouse" in TermManager.supported_capabilities()
+
+    monkeypatch.setattr(
+        TermManager,
+        "_default_backend",
+        staticmethod(lambda: (ProcessTerm, False)),
+    )
+    assert TermManager.supports_mouse() is False
+    assert "mouse" not in TermManager.supported_capabilities()
 
 
 def test_capabilities_follow_default_backend_screen_support(monkeypatch):

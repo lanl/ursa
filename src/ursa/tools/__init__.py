@@ -11,11 +11,16 @@ from .term_tool import TERM_TOOLS as TERM_TOOLS
 from .term_tool import encode_term_key as encode_term_key
 from .term_tool import get_supported_term_tools as get_supported_term_tools
 from .term_tool import term as term
+from .term_tool import term_click as term_click
 from .term_tool import term_cursor as term_cursor
+from .term_tool import term_hover as term_hover
 from .term_tool import term_is_alive as term_is_alive
+from .term_tool import term_mouse_down as term_mouse_down
+from .term_tool import term_mouse_up as term_mouse_up
 from .term_tool import term_read as term_read
 from .term_tool import term_resize as term_resize
 from .term_tool import term_screenshot as term_screenshot
+from .term_tool import term_scroll as term_scroll
 from .term_tool import term_send_bytes as term_send_bytes
 from .term_tool import term_send_key as term_send_key
 from .term_tool import term_send_line as term_send_line
