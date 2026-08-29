@@ -146,3 +146,30 @@ class TermSession(ABC):
     async def size(self) -> tuple[int, int]:
         """Return terminal rows and columns, if supported."""
         raise NotImplementedError("this terminal backend has no screen size")
+
+    async def mouse_event(
+        self,
+        action: str,
+        row: int,
+        col: int,
+        *,
+        button: str | None = None,
+        modifiers: frozenset[str] = frozenset(),
+    ) -> None:
+        """Send one mouse event, if supported by the terminal backend."""
+        del action, row, col, button, modifiers
+        raise NotImplementedError("this terminal backend has no mouse input")
+
+    async def mouse_events(
+        self,
+        row: int,
+        col: int,
+        events: tuple[tuple[str, str | None], ...],
+        *,
+        modifiers: frozenset[str] = frozenset(),
+    ) -> None:
+        """Send an ordered batch of mouse events."""
+        for action, button in events:
+            await self.mouse_event(
+                action, row, col, button=button, modifiers=modifiers
+            )
