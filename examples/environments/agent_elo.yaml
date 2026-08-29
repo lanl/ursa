@@ -1,68 +1,52 @@
-name: harmonic_oscillator_elo
+name: numerical_integration_elo
 group: default
 
 description: >
-  Evolutionary URSA environment for training neural-network variational
-  wavefunctions for the one-dimensional quantum harmonic oscillator.
+  A small evolutionary environment where competing agents develop and
+  improve numerical solutions to a simple scientific-computing problem.
 
 initial_rating: 1500
 k_factor: 32
 deaths_per_round: 1
 
+# Reproducible random pairing and Elo tie-breaking.
+seed: 12345
+
+# One env.invoke() runs both generations.
+generations: 2
+
+# Set this to a saved environment_state.json to resume a previous run.
+restart_from_json: null
+
 judge_prompt: >
-  You are judging two competing computational-physics agents solving
-  the one-dimensional quantum harmonic oscillator with a neural-network
-  variational wavefunction.
+  You are judging two computational-science agents solving the same
+  numerical-analysis problem.
 
-  The Hamiltonian is
+  Prefer work that is correct, executed, reproducible, and numerically
+  well validated.
 
-      H = -1/2 d^2/dx^2 + 1/2 x^2
+  Judge primarily on:
+  - correctness of the numerical method;
+  - accuracy relative to the reference result;
+  - evidence that code was actually executed;
+  - useful convergence or error checks;
+  - reproducibility of the saved work;
+  - substantive scientific or numerical progress.
 
-  in units with hbar = m = omega = 1, so the exact ground-state energy is
+  In later generations, reward useful improvements or stronger validation,
+  not change merely for novelty.
 
-      E0 = 0.5.
-
-  Prioritize:
-  - whether the candidate actually created and executed code;
-  - correctness of the Hamiltonian and variational-energy calculation;
-  - accuracy of the final ground-state energy relative to 0.5;
-  - numerical normalization of the wavefunction;
-  - evidence that optimization actually occurred;
-  - comparison of the learned wavefunction with the exact Gaussian
-    ground-state wavefunction;
-  - numerical stability and scientific correctness;
-  - reproducibility of code and results.
-
-  A candidate that only describes a method but does not execute the
-  calculation should lose to a candidate with a valid executed calculation,
-  unless the executed calculation is fundamentally incorrect.
-
-  Do not reward verbosity, stylistic polish, or unnecessary complexity.
-
-  Return DRAW only if the candidates are genuinely comparable in scientific
-  and computational quality.
+  Return DRAW only if the candidates are genuinely comparable in quality.
 
 members:
   - name: researcher_1
     role: >
-      Independent computational physicist developing and testing a neural
-      variational solution of the one-dimensional quantum harmonic oscillator.
+      Independent computational scientist developing and validating
+      numerical methods.
     agent: ExecutionAgent
 
   - name: researcher_2
     role: >
-      Independent computational physicist developing and testing a neural
-      variational solution of the one-dimensional quantum harmonic oscillator.
-    agent: ExecutionAgent
-
-  - name: researcher_3
-    role: >
-      Independent computational physicist developing and testing a neural
-      variational solution of the one-dimensional quantum harmonic oscillator.
-    agent: ExecutionAgent
-
-  - name: researcher_4
-    role: >
-      Independent computational physicist developing and testing a neural
-      variational solution of the one-dimensional quantum harmonic oscillator.
+      Independent computational scientist developing and validating
+      numerical methods.
     agent: ExecutionAgent

@@ -158,6 +158,8 @@ class AgentEloConfig:
     k_factor: float = 32.0
     deaths_per_round: int = 1
     seed: int | None = None
+    generations: int = 1
+    restart_from_json: str | None = None
     judge_prompt: str | None = None
 
     @classmethod

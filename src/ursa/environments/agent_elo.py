@@ -125,6 +125,8 @@ class AgentEloEnvironment(BaseEnvironment):
         k_factor: float | None = None,
         deaths_per_round: int | None = None,
         seed: int | None = None,
+        generations: int | None = None,
+        restart_from_json: str | Path | None = None,
         judge_prompt: str | None = None,
         persist_members: bool = True,
         **kwargs: Any,
@@ -139,6 +141,8 @@ class AgentEloEnvironment(BaseEnvironment):
             k_factor=k_factor,
             deaths_per_round=deaths_per_round,
             seed=seed,
+            generations=generations,
+            restart_from_json=restart_from_json,
             judge_prompt=judge_prompt,
         )
 
@@ -161,45 +165,79 @@ class AgentEloEnvironment(BaseEnvironment):
             elo_config.k_factor
         )
 
-        self.deaths_per_round = int(
-            elo_config.deaths_per_round
-        )
-
-        self.seed = elo_config.seed
-
-        self._rng = random.Random(self.seed)
-
-        if self.deaths_per_round < 0:
-            raise ValueError(
-                "deaths_per_round must be non-negative."
-            )
 
         if self.k_factor <= 0:
             raise ValueError(
                 "k_factor must be positive."
             )
 
-        self.member_configs = list(
-            self.config.members
+
+        self.deaths_per_round = int(
+            elo_config.deaths_per_round
         )
 
-        self.members = {
-            member.name: self.build_member(member)
-            for member in self.member_configs
-        }
-
-        self.players = {
-            member.name: EloPlayer(
-                name=member.name,
-                rating=self.initial_rating,
+        if self.deaths_per_round < 0:
+            raise ValueError(
+                "deaths_per_round must be non-negative."
             )
-            for member in self.member_configs
-        }
 
-        # Used to guarantee unique descendant names during
-        # the lifetime of this environment.
-        self._offspring_counts: dict[str, int] = {}
 
+        self.generations = int(
+            elo_config.generations
+        )
+        
+        if self.generations < 1:
+            raise ValueError(
+                "generations must be at least 1."
+            )
+
+        self.seed = elo_config.seed
+
+        self._rng = random.Random(self.seed)
+
+        self.generation_index = 0
+
+        self._offspring_counts: dict[str,int,] = {}
+        
+        if (
+            self.config.restart_from_json
+            is not None
+        ):
+            if not self.persist_members:
+                raise ValueError(
+                    "restart_from_json requires "
+                    "persist_members=True."
+                )
+        
+            state = self._load_environment_state(
+                self.config.restart_from_json
+            )
+        
+            self._restore_environment_state(
+                state
+            )
+        
+        else:
+            self.member_configs = list(
+                self.config.members
+            )
+        
+            self.members = {
+                member.name: self.build_member(
+                    member
+                )
+                for member in self.member_configs
+            }
+        
+            self.players = {
+                member.name: EloPlayer(
+                    name=member.name,
+                    rating=self.initial_rating,
+                )
+                for member in self.member_configs
+            }
+
+        
         default_judge_prompt = (
             "You are an impartial judge comparing two candidate solutions "
             "to the same task.\n\n"
@@ -246,6 +284,8 @@ class AgentEloEnvironment(BaseEnvironment):
         k_factor: float | None,
         deaths_per_round: int | None,
         seed: int | None,
+        generations: int | None,
+        restart_from_json: str | Path | None,
         judge_prompt: str | None,
     ) -> AgentEloConfig:
         if isinstance(config, (str, Path)):
@@ -290,6 +330,16 @@ class AgentEloEnvironment(BaseEnvironment):
                     else 1
                 ),
                 seed=seed,
+                generations=(
+                    generations
+                    if generations is not None
+                    else 1
+                ),
+                restart_from_json=(
+                    str(restart_from_json)
+                    if restart_from_json is not None
+                    else None
+                ),
                 judge_prompt=judge_prompt,
             )
 
@@ -340,6 +390,16 @@ class AgentEloEnvironment(BaseEnvironment):
                 if seed is not None
                 else base.seed
             ),
+            generations=(
+                generations
+                if generations is not None
+                else base.generations
+            ),
+            restart_from_json=(
+                str(restart_from_json)
+                if restart_from_json is not None
+                else base.restart_from_json
+            ),
             judge_prompt=(
                 judge_prompt
                 if judge_prompt is not None
@@ -373,8 +433,369 @@ class AgentEloEnvironment(BaseEnvironment):
         )
 
     # ------------------------------------------------------------------
+    # For lightweight environment level persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _member_config_to_mapping(
+        member: EnvironmentMemberConfig,
+    ) -> dict[str, Any]:
+        """Convert a member config into JSON-safe data."""
+    
+        model = None
+    
+        if member.model is not None:
+            model = member.model.model_dump(
+                mode="json",
+                exclude_none=True,
+            )
+    
+        return {
+            "name": member.name,
+            "role": member.role,
+            "agent": member.agent,
+            "model": model,
+            "config": member.config,
+            "prompt": member.prompt,
+            "reviewer": member.reviewer,
+        }
+
+    @staticmethod
+    def _rng_state_to_json(
+        value: Any,
+    ) -> Any:
+        if isinstance(value, tuple):
+            return [
+                AgentEloEnvironment._rng_state_to_json(
+                    item
+                )
+                for item in value
+            ]
+    
+        return value
+    
+    
+    @staticmethod
+    def _rng_state_from_json(
+        value: Any,
+    ) -> Any:
+        if isinstance(value, list):
+            return tuple(
+                AgentEloEnvironment._rng_state_from_json(
+                    item
+                )
+                for item in value
+            )
+    
+        return value
+
+
+    def _environment_state_path(
+        self,
+    ) -> Path:
+        return (
+            Path(self.workspace)
+            / "environment_state.json"
+        )
+
+
+
+    def _environment_state_payload(
+        self,
+    ) -> dict[str, Any]:
+        """Return lightweight resumable environment state."""
+    
+        config_by_name = {
+            member.name: member
+            for member in self.member_configs
+        }
+    
+        active_players = []
+    
+        # Use member_configs ordering so active population order
+        # is preserved exactly across restart.
+        for member in self.member_configs:
+            player = self.players[
+                member.name
+            ]
+    
+            active_players.append(
+                {
+                    "name": player.name,
+                    "rating": player.rating,
+                    "generation": player.generation,
+                    "parent": player.parent,
+                    "member_config": (
+                        self._member_config_to_mapping(
+                            config_by_name[
+                                player.name
+                            ]
+                        )
+                    ),
+                }
+            )
+    
+        return {
+            "schema_version": 1,
+            "environment_name": self.name,
+            "group": self.group,
+            "generation": self.generation_index,
+            "seed": self.seed,
+            "rng_state": self._rng_state_to_json(
+                self._rng.getstate()
+            ),
+            "active_players": active_players,
+        }
+
+
+    def _save_environment_state(
+        self,
+    ) -> Path:
+        """Atomically save lightweight environment restart state."""
+    
+        target = self._environment_state_path()
+    
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+    
+        temporary = target.with_suffix(
+            ".json.tmp"
+        )
+    
+        payload = self._environment_state_payload()
+    
+        temporary.write_text(
+            json.dumps(
+                payload,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    
+        temporary.replace(
+            target
+        )
+    
+        return target
+
+
+    @staticmethod
+    def _load_environment_state(
+        path: str | Path,
+    ) -> dict[str, Any]:
+        state_path = Path(
+            path
+        ).expanduser()
+    
+        if not state_path.exists():
+            raise FileNotFoundError(
+                "Elo environment restart file "
+                f"does not exist: {state_path}"
+            )
+    
+        state = json.loads(
+            state_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    
+        if not isinstance(state, dict):
+            raise ValueError(
+                "Elo environment restart file "
+                "must contain a JSON object."
+            )
+    
+        if state.get(
+            "schema_version"
+        ) != 1:
+            raise ValueError(
+                "Unsupported Elo environment "
+                "state schema version: "
+                f"{state.get('schema_version')!r}"
+            )
+    
+        return state
+
+
+
+    def _restore_environment_state(
+        self,
+        state: Mapping[str, Any],
+    ) -> None:
+        """Restore the active evolutionary population.
+    
+        This method restores only environment metadata.
+    
+        Individual URSA agents reopen their own persistence
+        independently when build_member() is called.
+        """
+    
+        saved_name = state.get(
+            "environment_name"
+        )
+    
+        saved_group = state.get(
+            "group"
+        )
+    
+        if saved_name != self.name:
+            raise ValueError(
+                "Restart environment name mismatch: "
+                f"snapshot={saved_name!r}, "
+                f"current={self.name!r}"
+            )
+    
+        if saved_group != self.group:
+            raise ValueError(
+                "Restart group mismatch: "
+                f"snapshot={saved_group!r}, "
+                f"current={self.group!r}"
+            )
+    
+        raw_players = state.get(
+            "active_players"
+        )
+    
+        if not isinstance(
+            raw_players,
+            list,
+        ):
+            raise ValueError(
+                "Restart state is missing "
+                "'active_players'."
+            )
+    
+        member_configs: list[
+            EnvironmentMemberConfig
+        ] = []
+    
+        players: dict[
+            str,
+            EloPlayer,
+        ] = {}
+    
+        for raw_player in raw_players:
+            if not isinstance(
+                raw_player,
+                Mapping,
+            ):
+                raise ValueError(
+                    "Each active player entry must "
+                    "be a mapping."
+                )
+    
+            raw_member_config = raw_player.get(
+                "member_config"
+            )
+    
+            if not isinstance(
+                raw_member_config,
+                Mapping,
+            ):
+                raise ValueError(
+                    "Restart player is missing "
+                    "'member_config'."
+                )
+    
+            member_config = (
+                EnvironmentMemberConfig.from_mapping(
+                    raw_member_config,
+                    group=self.group,
+                )
+            )
+    
+            name = str(
+                raw_player["name"]
+            )
+    
+            if member_config.name != name:
+                raise ValueError(
+                    "Restart player/member config "
+                    f"name mismatch: {name!r} vs "
+                    f"{member_config.name!r}"
+                )
+    
+            # A restart should resume an existing persistent
+            # URSA agent, never silently create a fresh one.
+            den = self._member_den(
+                name
+            )
+    
+            if not den.exists():
+                raise FileNotFoundError(
+                    "Persistent URSA agent den "
+                    "required for restart does not exist: "
+                    f"{den}"
+                )
+    
+            member_workspace = (
+                self._member_workspace(
+                    name
+                )
+            )
+    
+            if not member_workspace.exists():
+                raise FileNotFoundError(
+                    "Agent workspace required for "
+                    "restart does not exist: "
+                    f"{member_workspace}"
+                )
+    
+            member_configs.append(
+                member_config
+            )
+    
+            players[name] = EloPlayer(
+                name=name,
+                rating=float(
+                    raw_player["rating"]
+                ),
+                generation=int(
+                    raw_player["generation"]
+                ),
+                parent=raw_player.get(
+                    "parent"
+                ),
+            )
+    
+        self.member_configs = member_configs
+    
+        self.players = players
+    
+        # Constructing by the same names causes URSA to reopen
+        # the agents' existing persistent state.
+        self.members = {
+            member.name: self.build_member(
+                member
+            )
+            for member in self.member_configs
+        }
+    
+        self.generation_index = int(
+            state.get(
+                "generation",
+                0,
+            )
+        )
+    
+        rng_state = state.get(
+            "rng_state"
+        )
+    
+        if rng_state is not None:
+            self._rng.setstate(
+                self._rng_state_from_json(
+                    rng_state
+                )
+            )
+    # ------------------------------------------------------------------
     # Persistent URSA state
     # ------------------------------------------------------------------
+
+
 
     def _member_den(
         self,
@@ -615,22 +1036,69 @@ class AgentEloEnvironment(BaseEnvironment):
         member: EnvironmentMemberConfig,
         task: str,
     ) -> str:
+        player = self.players[
+            member.name
+        ]
+    
         extra = (
             f"\n\nMember-specific guidance:\n"
             f"{member.prompt}"
             if member.prompt
             else ""
         )
-
+    
+        lineage = (
+            "Evolutionary status:\n"
+            f"- Name: {player.name}\n"
+            f"- Lineage generation: {player.generation}\n"
+            f"- Parent: {player.parent or 'None'}\n"
+            f"- Environment generations already completed: "
+            f"{self.generation_index}\n"
+        )
+    
+        if self.generation_index == 0:
+            evolutionary_instruction = (
+                "This is the founding round of the evolutionary run.\n"
+                "Develop the strongest independent solution you can. "
+                "Explore the problem directly, execute the work required "
+                "by the task, and establish a strong research baseline."
+            )
+    
+        elif player.parent is not None:
+            evolutionary_instruction = (
+                "You are a descendant of a previously successful agent. "
+                "You inherited your parent's research state and workspace.\n\n"
+                "Do not merely repeat, rerun, or summarize the inherited work. "
+                "Treat it as a successful starting point.\n\n"
+                "Identify at least one substantive scientific, numerical, or "
+                "methodological limitation, uncertainty, weakness, or untested "
+                "assumption in the inherited work. Choose a scientifically "
+                "motivated modification or validation that addresses it, execute "
+                "that work, compare the result with the inherited result, and "
+                "determine whether the branch improved, worsened, or clarified "
+                "the research."
+            )
+    
+        else:
+            evolutionary_instruction = (
+                "You are a surviving founding agent from an earlier round. "
+                "Continue developing your existing research rather than starting "
+                "over or merely summarizing it.\n\n"
+                "Identify a substantive limitation, uncertainty, weakness, or "
+                "untested assumption in your current work. Make and execute a "
+                "scientifically motivated improvement, challenge, or validation, "
+                "compare it with your previous result, and determine what was "
+                "learned."
+            )
+    
         return (
             f"You are competitor '{member.name}'.\n"
             f"Your role is: {member.role}.\n\n"
-            "Work independently on the task below. "
-            "Produce your best complete solution. "
-            "Your response will be compared against "
-            "another competitor."
+            f"{lineage}\n"
+            f"Evolutionary instructions:\n"
+            f"{evolutionary_instruction}"
             f"{extra}\n\n"
-            f"Task:\n{task}"
+            f"Scientific task:\n{task}"
         )
 
     async def _run_member(
@@ -863,11 +1331,68 @@ class AgentEloEnvironment(BaseEnvironment):
     # Reproduction
     # ------------------------------------------------------------------
 
+
+    def _child_name_available(
+        self,
+        child_name: str,
+    ) -> bool:
+        """Return whether a name is safe to use for a new birth.
+    
+        A generated child name must not collide with:
+    
+        - an active player,
+        - an active member,
+        - an active member config,
+        - an existing environment workspace,
+        - an existing persistent URSA den.
+    
+        Existing persistent dens are checked only when member
+        persistence is enabled.
+        """
+    
+        if child_name in self.players:
+            return False
+    
+        if child_name in self.members:
+            return False
+    
+        if any(
+            member.name == child_name
+            for member in self.member_configs
+        ):
+            return False
+    
+        child_workspace = self._member_workspace(
+            child_name
+        )
+    
+        if child_workspace.exists():
+            return False
+    
+        if self.persist_members:
+            child_den = self._member_den(
+                child_name
+            )
+    
+            if child_den.exists():
+                return False
+    
+        return True
+
+
+
     def _next_child_name(
         self,
         parent: EloPlayer,
     ) -> str:
-        """Generate a unique descendant name."""
+        """Generate the next unused descendant identity.
+    
+        The search starts after the highest child count generated
+        by this environment instance, but also checks existing
+        workspaces and persistent agent dens so resumed runs cannot
+        accidentally reuse an older descendant.
+        """
+    
         count = (
             self._offspring_counts.get(
                 parent.name,
@@ -875,16 +1400,29 @@ class AgentEloEnvironment(BaseEnvironment):
             )
             + 1
         )
-
-        self._offspring_counts[
-            parent.name
-        ] = count
-
-        return (
-            f"{parent.name}_g"
-            f"{parent.generation + 1}_"
-            f"{count}"
+    
+        child_generation = (
+            parent.generation + 1
         )
+    
+        while True:
+            child_name = (
+                f"{parent.name}_g"
+                f"{child_generation}_"
+                f"{count}"
+            )
+    
+            if self._child_name_available(
+                child_name
+            ):
+                self._offspring_counts[
+                    parent.name
+                ] = count
+    
+                return child_name
+    
+            count += 1
+            
 
     def _copy_parent_workspace(
         self,
@@ -1080,35 +1618,37 @@ class AgentEloEnvironment(BaseEnvironment):
             **config,
         )
 
-    async def _ainvoke(
+    async def _run_generation(
         self,
-        inputs: Mapping[str, Any],
-        **config: Any,
+        task: str,
+        invoke_kwargs: Mapping[str, Any],
     ) -> dict[str, Any]:
-        task = str(
-            inputs.get("task")
-            or inputs.get("prompt")
-            or inputs
-        )
-
+        """Run one complete evolutionary generation."""
+    
         if len(self.member_configs) < 2:
             raise ValueError(
                 "AgentEloEnvironment requires "
                 "at least two active members."
             )
-
+    
+        generation_number = (
+            self.generation_index + 1
+        )
+    
         initial_population_size = len(
             self.players
         )
-
-        invoke_kwargs = (
-            invocation_kwargs(config)
-        )
-
-        # --------------------------------------------------------------
-        # Phase 1: independent agent work
-        # --------------------------------------------------------------
-
+    
+        # Capture ratings before competition for reporting.
+        ratings_before = {
+            name: player.rating
+            for name, player in self.players.items()
+        }
+    
+        # ----------------------------------------------------------
+        # Phase 1: independent research
+        # ----------------------------------------------------------
+    
         member_results = await asyncio.gather(
             *[
                 self._run_member(
@@ -1119,88 +1659,80 @@ class AgentEloEnvironment(BaseEnvironment):
                 for member in self.member_configs
             ]
         )
-
+    
         outputs = dict(
             member_results
         )
-
-        # --------------------------------------------------------------
-        # Phase 2: pairwise competition
-        # --------------------------------------------------------------
-
+    
+        # ----------------------------------------------------------
+        # Phase 2: randomized pairwise competition
+        # ----------------------------------------------------------
+    
         pairs = self._make_pairs(
             [
                 member.name
                 for member in self.member_configs
             ]
         )
-
+    
         match_results: list[
             MatchResult
         ] = []
-
+    
         for player_a, player_b in pairs:
             result = await self._judge_match(
                 task=task,
                 player_a=player_a,
-                output_a=outputs[
-                    player_a
-                ],
+                output_a=outputs[player_a],
                 player_b=player_b,
-                output_b=outputs[
-                    player_b
-                ],
+                output_b=outputs[player_b],
             )
-
+    
             self._apply_match_result(
                 result
             )
-
+    
             match_results.append(
                 result
             )
-
+    
         standings_after_matches = (
             self.standings()
         )
-
-        # --------------------------------------------------------------
+    
+        # ----------------------------------------------------------
         # Phase 3: elimination
-        # --------------------------------------------------------------
-
+        # ----------------------------------------------------------
+    
         eliminated = self._select_losers(
             match_results
         )
-
+    
         self._eliminate(
             eliminated
         )
-
-        # --------------------------------------------------------------
+    
+        # ----------------------------------------------------------
         # Phase 4: reproduction
-        #
-        # We reproduce exactly as many agents as were actually killed.
-        # Therefore draws can reduce turnover without changing the
-        # population size.
-        # --------------------------------------------------------------
-
+        # ----------------------------------------------------------
+    
         parents = self._top_survivors(
             len(eliminated)
         )
-
+    
         parent_names = [
             parent.name
             for parent in parents
         ]
-
+    
         children = self._reproduce(
             parents
         )
-
+    
         final_population_size = len(
             self.players
         )
-
+    
         if (
             final_population_size
             != initial_population_size
@@ -1210,30 +1742,37 @@ class AgentEloEnvironment(BaseEnvironment):
                 f"{initial_population_size} -> "
                 f"{final_population_size}"
             )
-
+    
+        # ----------------------------------------------------------
+        # Generation successfully completed.
+        #
+        # Increment BEFORE snapshotting so restart begins at the
+        # following generation.
+        # ----------------------------------------------------------
+    
+        self.generation_index += 1
+    
+        state_path = (
+            self._save_environment_state()
+        )
+    
         return {
+            "generation": generation_number,
             "task": task,
             "outputs": outputs,
+            "pairs": [
+                list(pair)
+                for pair in pairs
+            ],
+            "ratings_before": ratings_before,
             "matches": [
                 {
-                    "player_a": (
-                        result.player_a
-                    ),
-                    "player_b": (
-                        result.player_b
-                    ),
-                    "winner": (
-                        result.winner
-                    ),
-                    "loser": (
-                        result.loser
-                    ),
-                    "score_a": (
-                        result.score_a
-                    ),
-                    "reasoning": (
-                        result.reasoning
-                    ),
+                    "player_a": result.player_a,
+                    "player_b": result.player_b,
+                    "winner": result.winner,
+                    "loser": result.loser,
+                    "score_a": result.score_a,
+                    "reasoning": result.reasoning,
                 }
                 for result in match_results
             ],
@@ -1248,5 +1787,65 @@ class AgentEloEnvironment(BaseEnvironment):
             "standings": self.standings(),
             "population_size": (
                 final_population_size
+            ),
+            "environment_state": str(
+                state_path
+            ),
+        }
+
+
+    async def _ainvoke(
+        self,
+        inputs: Mapping[str, Any],
+        **config: Any,
+    ) -> dict[str, Any]:
+        task = str(
+            inputs.get("task")
+            or inputs.get("prompt")
+            or inputs
+        )
+    
+        invoke_kwargs = (
+            invocation_kwargs(config)
+        )
+    
+        generation_results = []
+    
+        starting_generation = (
+            self.generation_index
+        )
+    
+        for _ in range(
+            self.generations
+        ):
+            result = await self._run_generation(
+                task,
+                invoke_kwargs,
+            )
+    
+            generation_results.append(
+                result
+            )
+    
+        return {
+            "task": task,
+            "starting_generation": (
+                starting_generation
+            ),
+            "completed_generations": (
+                len(generation_results)
+            ),
+            "ending_generation": (
+                self.generation_index
+            ),
+            "generations": (
+                generation_results
+            ),
+            "standings": self.standings(),
+            "population_size": len(
+                self.players
+            ),
+            "environment_state": str(
+                self._environment_state_path()
             ),
         }
