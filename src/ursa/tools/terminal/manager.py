@@ -21,6 +21,7 @@ from .base import (
     TerminalRenderSnapshot,
     TermSession,
 )
+from .screenshot import screen_comparison_key
 
 SessionFactory = Callable[..., TermSession]
 TERM_BACKEND_ENV = "URSA_TERM_BACKEND"
@@ -36,7 +37,10 @@ _STREAM_CAPABILITIES = frozenset({
     "wait",
     "wait_for",
 })
-_SCREEN_CAPABILITIES = frozenset({"cursor", "resize", "size"})
+_SCREEN_CAPABILITIES = frozenset({"cursor", "resize", "size", "wait_screen"})
+SCREEN_STABILITY_SECONDS = 5.0
+WAIT_DEFAULT_MULTIPLIER = 5
+WAIT_MAX_MULTIPLIER = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +117,21 @@ class TermManager:
         # Caller cancellation must not strand a half-created or half-closed
         # session.  The owner loop completes lifecycle operations regardless.
         return await asyncio.shield(asyncio.wrap_future(future))
+
+    async def _dispatch_cancellable(self, coroutine):
+        """Run polling work while propagating caller cancellation."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is self._owner_loop:
+            return await coroutine
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._owner_loop)
+        try:
+            return await asyncio.wrap_future(future)
+        except asyncio.CancelledError:
+            future.cancel()
+            raise
 
     async def _dispatch_create(self, coroutine) -> TermSession:
         """Dispatch creation and reclaim a session abandoned by cancellation."""
@@ -579,7 +598,7 @@ class TermManager:
         timeout: float | None = None,
     ) -> str:
         """Wait for new output matching a regex, newest match first."""
-        return await self._dispatch(
+        return await self._dispatch_cancellable(
             self._wait_for(term_id, pattern, timeout=timeout)
         )
 
@@ -590,21 +609,43 @@ class TermManager:
         *,
         timeout: float | None,
     ) -> str:
-        wait_timeout = TERM_TIMEOUT if timeout is None else timeout
+        wait_timeout = (
+            WAIT_DEFAULT_MULTIPLIER * TERM_TIMEOUT
+            if timeout is None
+            else timeout
+        )
         if wait_timeout < 0:
             raise ValueError("timeout must not be negative")
-        if wait_timeout > 2 * TERM_TIMEOUT:
-            maximum = 2 * TERM_TIMEOUT
+        if wait_timeout > WAIT_MAX_MULTIPLIER * TERM_TIMEOUT:
+            maximum = WAIT_MAX_MULTIPLIER * TERM_TIMEOUT
             raise ValueError(f"timeout cannot exceed {maximum:g} seconds")
         regex = re.compile(pattern)
         terminal = self.get(term_id)
-        marker = await terminal.output_marker()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout
+        if wait_timeout <= 0:
+            return "Pattern not found"
+        try:
+            marker = await asyncio.wait_for(
+                terminal.output_marker(), timeout=wait_timeout
+            )
+        except TimeoutError:
+            return "Pattern not found"
         cursor = marker
         contents = ""
         content_offset = marker
-        deadline = asyncio.get_running_loop().time() + wait_timeout
         while True:
-            chunk = await terminal.output_since(cursor)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return "Pattern not found"
+            try:
+                chunk = await asyncio.wait_for(
+                    terminal.output_since(cursor), timeout=remaining
+                )
+            except TimeoutError:
+                return "Pattern not found"
+            if loop.time() >= deadline:
+                return "Pattern not found"
             match = None
             if chunk:
                 cursor += len(chunk)
@@ -621,10 +662,116 @@ class TermManager:
                     line_end = len(contents)
                 line = contents[line_start:line_end]
                 return f"{line}\nOffset: {content_offset + match.start()}"
-            remaining = deadline - asyncio.get_running_loop().time()
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 return "Pattern not found"
             await asyncio.sleep(min(0.05, remaining))
+
+    async def wait_screen(
+        self,
+        term_id: str,
+        *,
+        condition: str = "stable",
+        bounding_box: tuple[int, int, int, int] | None = None,
+        include_styling: bool = True,
+        timeout: float | None = None,
+    ) -> str:
+        """Wait until a terminal display changes or remains stable.
+
+        ``bounding_box`` is ``(top, left, bottom, right)`` in terminal cells,
+        with an exclusive bottom and right edge.
+        """
+        return await self._dispatch_cancellable(
+            self._wait_screen(
+                term_id,
+                condition=condition,
+                bounding_box=bounding_box,
+                include_styling=include_styling,
+                timeout=timeout,
+            )
+        )
+
+    async def _wait_screen(
+        self,
+        term_id: str,
+        *,
+        condition: str,
+        bounding_box: tuple[int, int, int, int] | None,
+        include_styling: bool,
+        timeout: float | None,
+    ) -> str:
+        if condition not in {"stable", "change"}:
+            raise ValueError("condition must be 'stable' or 'change'")
+        wait_timeout = (
+            WAIT_DEFAULT_MULTIPLIER * TERM_TIMEOUT
+            if timeout is None
+            else timeout
+        )
+        if wait_timeout < 0:
+            raise ValueError("timeout must not be negative")
+        maximum = WAIT_MAX_MULTIPLIER * TERM_TIMEOUT
+        if wait_timeout > maximum:
+            raise ValueError(f"timeout cannot exceed {maximum:g} seconds")
+        _validate_bounding_box(bounding_box)
+
+        terminal = self.get(term_id)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + wait_timeout
+        if wait_timeout <= 0:
+            return _screen_timeout_result(condition)
+        try:
+            initial = await asyncio.wait_for(
+                terminal.render_snapshot(), timeout=wait_timeout
+            )
+        except TimeoutError:
+            return _screen_timeout_result(condition)
+        if not initial.screen:
+            raise NotImplementedError(
+                "screen waiting requires a screen-backed terminal"
+            )
+        previous = screen_comparison_key(initial, bounding_box, include_styling)
+        stable_since = loop.time()
+        while True:
+            now = loop.time()
+            remaining = deadline - now
+            if remaining <= 0:
+                return _screen_timeout_result(condition)
+            sleep_for = min(0.05, remaining)
+            if condition == "stable":
+                sleep_for = min(
+                    sleep_for,
+                    max(0, SCREEN_STABILITY_SECONDS - (now - stable_since)),
+                )
+            await asyncio.sleep(sleep_for)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return _screen_timeout_result(condition)
+            try:
+                snapshot = await asyncio.wait_for(
+                    terminal.render_snapshot(), timeout=remaining
+                )
+            except TimeoutError:
+                return _screen_timeout_result(condition)
+            current = screen_comparison_key(
+                snapshot,
+                bounding_box,
+                include_styling,
+                allow_clipped_box=True,
+            )
+            now = loop.time()
+            if now >= deadline:
+                return _screen_timeout_result(condition)
+            if current != previous:
+                if condition == "change":
+                    return "Screen changed"
+                previous = current
+                stable_since = now
+            elif (
+                condition == "stable"
+                and now - stable_since >= SCREEN_STABILITY_SECONDS
+            ):
+                return "Screen stabilized"
 
 
 def _last_overlapping_match(
@@ -640,6 +787,26 @@ def _last_overlapping_match(
         match = candidate
         position = candidate.start() + 1
     return match
+
+
+def _validate_bounding_box(
+    bounding_box: tuple[int, int, int, int] | None,
+) -> None:
+    if bounding_box is None:
+        return
+    top, left, bottom, right = bounding_box
+    if min(bounding_box) < 0:
+        raise ValueError("bounding-box coordinates must not be negative")
+    if bottom <= top or right <= left:
+        raise ValueError("bounding box must have positive height and width")
+
+
+def _screen_timeout_result(condition: str) -> str:
+    return (
+        "Screen did not stabilize"
+        if condition == "stable"
+        else "Screen did not change"
+    )
 
 
 term_manager = TermManager()

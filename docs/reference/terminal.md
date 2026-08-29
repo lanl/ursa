@@ -108,6 +108,7 @@ process environment; it does not replace the complete environment.
 | `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
 | `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
 | `term_wait_for(term_id, pattern, timeout=None)` | Search output emitted after the call begins, newest-first, and return the newest matching line and stream offset. |
+| `term_wait_screen(term_id, condition="stable", bounding_box=None, include_styling=true, timeout=None)` | Wait for a Ghostty screen to remain unchanged for five seconds or to change. |
 | `term_resize(term_id, rows, cols)` | Resize a Ghostty-backed screen. |
 | `term_cursor(term_id)` | Return the Ghostty-backed cursor as `(row, column)`. |
 | `term_size(term_id)` | Return the Ghostty-backed size as `(rows, columns)`. |
@@ -129,9 +130,15 @@ xterm modifier parameters. Super-modified printable characters use Kitty's
 CSI-u keyboard encoding, so applications that do not understand that protocol
 may not recognize them.
 
-`term_wait_for` uses Python regular-expression syntax. Its default timeout is
-`URSA_TERM_TIMEOUT`; a requested timeout cannot exceed twice that value. It
-returns `Pattern not found` when the deadline expires.
+`term_wait_for` uses Python regular-expression syntax and returns `Pattern not
+found` when its deadline expires. Terminal wait tools default to five times
+`URSA_TERM_TIMEOUT`; a requested timeout cannot exceed ten times that value.
+
+`term_wait_screen` compares text and styling by default. Set
+`include_styling=false` to ignore color and other visual-style changes. Its
+optional bounding box is `(top, left, bottom, right)` in zero-based terminal
+cells, with exclusive bottom and right edges. It is available only with the
+Ghostty backend.
 
 ## Limits
 
