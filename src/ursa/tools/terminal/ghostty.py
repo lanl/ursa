@@ -768,6 +768,26 @@ class GhosttyTerm(TermSession):
                 action, row, col, button=button, modifiers=modifiers
             )
 
+    async def paste_text(self, text: str) -> None:
+        """Paste text, honoring the application's bracketed-paste mode."""
+        assert _ghostty_check is not None
+        assert _ghostty_ffi is not None
+        assert _ghostty_lib is not None
+        async with self._io_lock:
+            if self._terminal_closed:
+                raise RuntimeError("terminal session is closed")
+            enabled = _ghostty_ffi.new("bool*")
+            _ghostty_check(
+                _ghostty_lib.ghostty_terminal_mode_get(
+                    self._terminal._t[0], 2004, enabled
+                ),
+                "bracketed paste mode",
+            )
+        payload = text.encode()
+        if enabled[0]:
+            payload = b"\x1b[200~" + payload + b"\x1b[201~"
+        await self.send_bytes(payload)
+
     async def mouse_events(
         self,
         row: int,

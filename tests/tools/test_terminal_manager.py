@@ -77,6 +77,11 @@ class ScreenFakeTerm(FakeTerm):
         )
 
 
+class PasteFakeTerm(ScreenFakeTerm):
+    async def paste_text(self, text):
+        self.writes.append(("paste", text))
+
+
 @pytest.fixture
 def manager(monkeypatch):
     instance = TermManager()
@@ -487,6 +492,20 @@ async def test_manager_io_methods_forward_to_session(manager):
     assert terminal.writes == [b"x", b"y", b"z\n"]
     assert await manager.read(terminal.term_id) == "abc"
     assert await manager.is_alive(terminal.term_id) == {"is_alive": True}
+
+
+async def test_manager_paste_forwards_only_to_capable_backend(manager):
+    paste = PasteFakeTerm("paste123", ["bash"])
+    process = FakeTerm("process1", ["bash"])
+    manager.register(paste)
+    manager.register(process)
+
+    await manager.paste_text(paste.term_id, "literal /雪")
+    assert paste.writes == [("paste", "literal /雪")]
+    with pytest.raises(
+        NotImplementedError, match="requires a Ghostty-backed terminal"
+    ):
+        await manager.paste_text(process.term_id, "literal")
 
 
 def test_registry_access_is_safe_across_threads_and_event_loops(manager):
@@ -1302,6 +1321,8 @@ def test_supported_capabilities_report_real_backend_mouse_support(monkeypatch):
     )
     assert TermManager.supports_mouse() is True
     assert "mouse" in TermManager.supported_capabilities()
+    assert TermManager.supports_paste() is True
+    assert "paste" in TermManager.supported_capabilities()
 
     monkeypatch.setattr(
         TermManager,
@@ -1310,6 +1331,8 @@ def test_supported_capabilities_report_real_backend_mouse_support(monkeypatch):
     )
     assert TermManager.supports_mouse() is False
     assert "mouse" not in TermManager.supported_capabilities()
+    assert TermManager.supports_paste() is False
+    assert "paste" not in TermManager.supported_capabilities()
 
 
 def test_capabilities_follow_default_backend_screen_support(monkeypatch):
