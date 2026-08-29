@@ -160,6 +160,11 @@ class TermSession(ABC):
         del action, row, col, button, modifiers
         raise NotImplementedError("this terminal backend has no mouse input")
 
+    async def paste_text(self, text: str) -> None:
+        """Paste literal text according to the terminal's negotiated mode."""
+        del text
+        raise NotImplementedError("this terminal backend has no paste input")
+
     async def mouse_events(
         self,
         row: int,
