@@ -7,7 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from ursa.tools.terminal import TERM_ID_LENGTH, TermManager, TermSession
+from ursa.tools.terminal import (
+    TERM_ID_LENGTH,
+    TerminalRenderSnapshot,
+    TerminalSpan,
+    TerminalStyle,
+    TermManager,
+    TermSession,
+)
 
 
 class FakeTerm(TermSession):
@@ -55,6 +62,19 @@ class FakeTerm(TermSession):
     async def terminate(self):
         self.terminated = True
         self.running = False
+
+
+class ScreenFakeTerm(FakeTerm):
+    async def render_snapshot(self):
+        lines = self.output.splitlines() or [""]
+        cols = max(map(len, lines))
+        return TerminalRenderSnapshot(
+            self.term_id,
+            (TerminalSpan("\n".join(line.ljust(cols) for line in lines)),),
+            rows=len(lines),
+            cols=cols,
+            screen=True,
+        )
 
 
 @pytest.fixture
@@ -477,6 +497,512 @@ async def test_wait_for_timeout_and_timeout_validation(manager):
         await manager.wait_for(terminal.term_id, "x", -0.1)
     with pytest.raises(ValueError, match="cannot exceed"):
         await manager.wait_for(terminal.term_id, "x", 10**6)
+
+
+async def test_wait_screen_detects_change_in_bounding_box(manager):
+    terminal = ScreenFakeTerm("screen12", ["bash"], output="one\ntwo\n")
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.output = "one\ntXo\n"
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            bounding_box=(1, 1, 2, 2),
+            timeout=0.5,
+        )
+        == "Screen changed"
+    )
+    await task
+
+
+async def test_wait_screen_ignores_changes_outside_bounding_box(manager):
+    terminal = ScreenFakeTerm("screen12", ["bash"], output="one\ntwo\n")
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.output = "One\ntwo\n"
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            bounding_box=(1, 0, 2, 3),
+            timeout=0.05,
+        )
+        == "Screen did not change"
+    )
+    await task
+
+
+async def test_wait_screen_can_include_or_ignore_styling(manager):
+    class StyledTerm(FakeTerm):
+        style = TerminalStyle(foreground=(255, 0, 0))
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan("same", self.style),),
+                rows=1,
+                cols=4,
+                screen=True,
+            )
+
+    terminal = StyledTerm("screen12", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.style = TerminalStyle(foreground=(0, 255, 0))
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id, condition="change", timeout=0.5
+        )
+        == "Screen changed"
+    )
+    await task
+
+    terminal.style = TerminalStyle(foreground=(255, 0, 0))
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            include_styling=False,
+            timeout=0.05,
+        )
+        == "Screen did not change"
+    )
+    await task
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "box"),
+    [
+        ("界", "語", (0, 1, 1, 2)),
+        ("é", "è", (0, 0, 1, 1)),
+        ("👩‍💻", "👨‍💻", (0, 1, 1, 2)),
+    ],
+)
+async def test_wait_screen_bounding_box_tracks_unicode_cells(
+    manager, before, after, box
+):
+    class UnicodeTerm(FakeTerm):
+        text = before
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan(self.text, cells=2),),
+                rows=1,
+                cols=2,
+                screen=True,
+            )
+
+    terminal = UnicodeTerm("unicode1", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.text = after
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            bounding_box=box,
+            timeout=0.5,
+        )
+        == "Screen changed"
+    )
+    await task
+
+
+async def test_wait_screen_detects_cursor_movement_inside_region(manager):
+    class CursorTerm(FakeTerm):
+        cursor = (0, 0)
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan("  ", cells=2),),
+                rows=1,
+                cols=2,
+                screen=True,
+                cursor=self.cursor,
+            )
+
+    terminal = CursorTerm("cursor12", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.cursor = (0, 1)
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id, condition="change", timeout=0.5
+        )
+        == "Screen changed"
+    )
+    await task
+
+
+async def test_wait_screen_ignores_cursor_movement_outside_region(manager):
+    class CursorTerm(FakeTerm):
+        cursor = (0, 0)
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan("  ", cells=2),),
+                rows=1,
+                cols=2,
+                screen=True,
+                cursor=self.cursor,
+            )
+
+    terminal = CursorTerm("cursor34", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.cursor = (0, 1)
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            bounding_box=(0, 0, 1, 1),
+            timeout=0.05,
+        )
+        == "Screen did not change"
+    )
+    await task
+
+
+async def test_wait_screen_text_only_ignores_cursor_movement(manager):
+    class CursorTerm(FakeTerm):
+        cursor = (0, 0)
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan("  ", cells=2),),
+                rows=1,
+                cols=2,
+                screen=True,
+                cursor=self.cursor,
+            )
+
+    terminal = CursorTerm("cursor56", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.cursor = (0, 1)
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            include_styling=False,
+            timeout=0.05,
+        )
+        == "Screen did not change"
+    )
+    await task
+
+
+async def test_wait_screen_full_screen_detects_resize(manager):
+    class ResizedTerm(FakeTerm):
+        cols = 1
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan(" " * self.cols, cells=self.cols),),
+                rows=1,
+                cols=self.cols,
+                screen=True,
+            )
+
+    terminal = ResizedTerm("resize12", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.cols = 2
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id, condition="change", timeout=0.5
+        )
+        == "Screen changed"
+    )
+    await task
+
+
+async def test_wait_screen_bbox_invalidated_by_resize_counts_as_change(manager):
+    class ResizedTerm(FakeTerm):
+        cols = 2
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan(" " * self.cols, cells=self.cols),),
+                rows=1,
+                cols=self.cols,
+                screen=True,
+            )
+
+    terminal = ResizedTerm("resize34", ["bash"])
+    manager.register(terminal)
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.cols = 1
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            condition="change",
+            bounding_box=(0, 1, 1, 2),
+            timeout=0.5,
+        )
+        == "Screen changed"
+    )
+    await task
+
+
+async def test_wait_screen_bbox_stabilizes_after_resize(manager, monkeypatch):
+    class ResizedTerm(FakeTerm):
+        cols = 2
+
+        async def render_snapshot(self):
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan(" " * self.cols, cells=self.cols),),
+                rows=1,
+                cols=self.cols,
+                screen=True,
+            )
+
+    terminal = ResizedTerm("resize56", ["bash"])
+    manager.register(terminal)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 0.02
+    )
+
+    async def update():
+        await asyncio.sleep(0.01)
+        terminal.cols = 1
+
+    task = asyncio.create_task(update())
+    assert (
+        await manager.wait_screen(
+            terminal.term_id,
+            bounding_box=(0, 1, 1, 2),
+            timeout=0.2,
+        )
+        == "Screen stabilized"
+    )
+    await task
+
+
+async def test_wait_screen_timeout_wins_over_late_change(manager):
+    class SlowTerm(FakeTerm):
+        captures = 0
+
+        async def render_snapshot(self):
+            self.captures += 1
+            if self.captures > 1:
+                await asyncio.sleep(0.02)
+            return TerminalRenderSnapshot(
+                self.term_id,
+                (TerminalSpan(str(self.captures)),),
+                rows=1,
+                cols=1,
+                screen=True,
+            )
+
+    terminal = SlowTerm("slowwait", ["bash"])
+    manager.register(terminal)
+    started = asyncio.get_running_loop().time()
+    assert (
+        await manager.wait_screen(
+            terminal.term_id, condition="change", timeout=0.01
+        )
+        == "Screen did not change"
+    )
+    assert asyncio.get_running_loop().time() - started < 0.025
+
+
+async def test_wait_screen_bounds_initial_snapshot(manager):
+    class HungTerm(FakeTerm):
+        async def render_snapshot(self):
+            await asyncio.Event().wait()
+
+    terminal = HungTerm("hungwait", ["bash"])
+    manager.register(terminal)
+    started = asyncio.get_running_loop().time()
+    assert (
+        await manager.wait_screen(terminal.term_id, timeout=0.01)
+        == "Screen did not stabilize"
+    )
+    assert asyncio.get_running_loop().time() - started < 0.025
+
+
+async def test_wait_for_bounds_backend_capture(manager):
+    class HungTerm(FakeTerm):
+        async def output_marker(self):
+            await asyncio.Event().wait()
+
+    terminal = HungTerm("hungmark", ["bash"])
+    manager.register(terminal)
+    started = asyncio.get_running_loop().time()
+    assert await manager.wait_for(terminal.term_id, "x", 0.01) == (
+        "Pattern not found"
+    )
+    assert asyncio.get_running_loop().time() - started < 0.025
+
+
+async def test_cancellable_dispatch_stops_owner_loop_polling(real_manager):
+    started = threading.Event()
+    finished = threading.Event()
+
+    async def polling():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            finished.set()
+
+    task = asyncio.create_task(real_manager._dispatch_cancellable(polling()))
+    assert await asyncio.to_thread(started.wait, 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(finished.wait, 1)
+
+
+async def test_wait_screen_stabilizes_after_five_seconds(manager, monkeypatch):
+    terminal = ScreenFakeTerm("screen12", ["bash"], output="steady")
+    manager.register(terminal)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 0.02
+    )
+    assert (
+        await manager.wait_screen(terminal.term_id, timeout=0.5)
+        == "Screen stabilized"
+    )
+
+
+async def test_wait_screen_stability_restarts_after_change(
+    manager, monkeypatch
+):
+    terminal = ScreenFakeTerm("restart1", ["bash"], output="first")
+    manager.register(terminal)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 0.04
+    )
+
+    async def update():
+        await asyncio.sleep(0.025)
+        terminal.output = "second"
+
+    task = asyncio.create_task(update())
+    started = asyncio.get_running_loop().time()
+    assert (
+        await manager.wait_screen(terminal.term_id, timeout=0.2)
+        == "Screen stabilized"
+    )
+    assert asyncio.get_running_loop().time() - started >= 0.06
+    await task
+
+
+async def test_wait_screen_validates_inputs(manager):
+    terminal = FakeTerm("screen12", ["bash"])
+    manager.register(terminal)
+    with pytest.raises(ValueError, match="condition"):
+        await manager.wait_screen(terminal.term_id, condition="event")
+    with pytest.raises(ValueError, match="negative"):
+        await manager.wait_screen(terminal.term_id, bounding_box=(-1, 0, 1, 1))
+    with pytest.raises(ValueError, match="positive"):
+        await manager.wait_screen(terminal.term_id, bounding_box=(1, 0, 1, 1))
+    with pytest.raises(ValueError, match="cannot exceed"):
+        await manager.wait_screen(terminal.term_id, timeout=10**6)
+
+
+async def test_wait_screen_rejects_stream_terminal(manager):
+    terminal = FakeTerm("stream12", ["bash"], output="plain output")
+    manager.register(terminal)
+    with pytest.raises(NotImplementedError, match="screen-backed"):
+        await manager.wait_screen(terminal.term_id, timeout=0.1)
+
+
+async def test_wait_for_default_is_five_times_terminal_timeout(
+    manager, monkeypatch
+):
+    monkeypatch.setattr("ursa.tools.terminal.manager.TERM_TIMEOUT", 0.002)
+    terminal = FakeTerm("wait1234", ["bash"], output="no match")
+    manager.register(terminal)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    assert await manager.wait_for(terminal.term_id, "never") == (
+        "Pattern not found"
+    )
+    elapsed = loop.time() - started
+    assert elapsed >= 0.009
+    assert elapsed < 0.1
+
+
+async def test_wait_for_maximum_is_ten_times_terminal_timeout(
+    manager, monkeypatch
+):
+    monkeypatch.setattr("ursa.tools.terminal.manager.TERM_TIMEOUT", 0.001)
+    terminal = FakeTerm("wait1234", ["bash"], output="no match")
+    manager.register(terminal)
+
+    assert await manager.wait_for(terminal.term_id, "never", 0.01) == (
+        "Pattern not found"
+    )
+    with pytest.raises(ValueError, match="cannot exceed 0.01 seconds"):
+        await manager.wait_for(terminal.term_id, "never", 0.011)
+
+
+async def test_wait_screen_default_and_maximum_timeout(manager, monkeypatch):
+    monkeypatch.setattr("ursa.tools.terminal.manager.TERM_TIMEOUT", 0.002)
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.SCREEN_STABILITY_SECONDS", 1
+    )
+    terminal = ScreenFakeTerm("screentm", ["bash"], output="steady")
+    manager.register(terminal)
+    started = asyncio.get_running_loop().time()
+    assert await manager.wait_screen(terminal.term_id) == (
+        "Screen did not stabilize"
+    )
+    assert asyncio.get_running_loop().time() - started >= 0.009
+    assert await manager.wait_screen(terminal.term_id, timeout=0.02) == (
+        "Screen did not stabilize"
+    )
+    with pytest.raises(ValueError, match="cannot exceed 0.02 seconds"):
+        await manager.wait_screen(terminal.term_id, timeout=0.021)
 
 
 def test_default_shell_unix_and_windows_fallback(monkeypatch):

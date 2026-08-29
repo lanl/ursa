@@ -122,6 +122,25 @@ class WrapperManager:
     async def wait_for(self, term_id, pattern, timeout):
         return f"{term_id}:{pattern}:{timeout}"
 
+    async def wait_screen(
+        self,
+        term_id,
+        condition,
+        *,
+        bounding_box,
+        include_styling,
+        timeout,
+    ):
+        assert term_id == self.terminal.term_id
+        self.terminal.calls.append((
+            "wait_screen",
+            condition,
+            bounding_box,
+            include_styling,
+            timeout,
+        ))
+        return f"Screen {condition}"
+
 
 def runtime(tmp_path):
     return SimpleNamespace(context=SimpleNamespace(workspace=str(tmp_path)))
@@ -172,6 +191,7 @@ def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
         (term_tool.term_read, {}),
         (term_tool.term_is_alive, {}),
         (term_tool.term_wait_for, {"pattern": "ready"}),
+        (term_tool.term_wait_screen, {"condition": "stable"}),
         (term_tool.term_resize, {"rows": 24, "cols": 80}),
         (term_tool.term_cursor, {}),
         (term_tool.term_size, {}),
@@ -650,6 +670,122 @@ async def test_wait_for_invalid_regex_has_actionable_schema_error():
     assert "invalid regular expression" in str(error.value)
 
 
+async def test_wait_for_accepts_ten_times_terminal_timeout(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    timeout = 10 * term_tool.TERM_TIMEOUT
+    assert (
+        await term_tool.term_wait_for.ainvoke({
+            "term_id": terminal.term_id,
+            "pattern": "ready",
+            "timeout": timeout,
+        })
+        == f"{terminal.term_id}:ready:{timeout}"
+    )
+
+
+async def test_wait_for_rejects_more_than_ten_times_terminal_timeout():
+    with pytest.raises(ValidationError):
+        await term_tool.term_wait_for.ainvoke({
+            "term_id": "Ab12Cd34",
+            "pattern": "ready",
+            "timeout": 10 * term_tool.TERM_TIMEOUT + 0.01,
+        })
+
+
+async def test_wait_screen_forwards_full_screen_styled_defaults(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    assert (
+        await term_tool.term_wait_screen.ainvoke({
+            "term_id": terminal.term_id,
+            "condition": "stable",
+        })
+        == "Screen stable"
+    )
+    assert terminal.calls[-1] == (
+        "wait_screen",
+        "stable",
+        None,
+        True,
+        None,
+    )
+
+
+async def test_wait_screen_forwards_bbox_text_only_change(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    timeout = 10 * term_tool.TERM_TIMEOUT
+    assert (
+        await term_tool.term_wait_screen.ainvoke({
+            "term_id": terminal.term_id,
+            "condition": "change",
+            "bounding_box": [1, 2, 10, 20],
+            "include_styling": False,
+            "timeout": timeout,
+        })
+        == "Screen change"
+    )
+    assert terminal.calls[-1] == (
+        "wait_screen",
+        "change",
+        (1, 2, 10, 20),
+        False,
+        timeout,
+    )
+
+
+@pytest.mark.parametrize("condition", ["changed", "stabilize", ""])
+async def test_wait_screen_rejects_unknown_conditions(condition):
+    with pytest.raises(ValidationError):
+        await term_tool.term_wait_screen.ainvoke({
+            "term_id": "Ab12Cd34",
+            "condition": condition,
+        })
+
+
+@pytest.mark.parametrize(
+    "bounding_box",
+    [[0, 0, 1], [-1, 0, 1, 1], [1, 0, 1, 1], [0, 2, 1, 1]],
+)
+def test_wait_screen_rejects_invalid_bounding_boxes(bounding_box):
+    with pytest.raises(ValidationError):
+        term_tool.term_wait_screen.args_schema.model_validate({
+            "term_id": "Ab12Cd34",
+            "bounding_box": bounding_box,
+        })
+
+
+def test_wait_screen_bounding_box_error_is_actionable():
+    with pytest.raises(
+        ValidationError,
+        match="bounding box must have positive height and width",
+    ):
+        term_tool.term_wait_screen.args_schema.model_validate({
+            "term_id": "Ab12Cd34",
+            "bounding_box": [0, 1, 1, 1],
+        })
+    with pytest.raises(ValueError) as direct_error:
+        term_tool._validate_bounding_box((0, 1, 1, 1))
+    assert direct_error.value.args == (
+        "bounding box must have positive height and width",
+    )
+
+
+def test_wait_screen_rejects_timeout_above_ten_times_limit():
+    with pytest.raises(ValidationError):
+        term_tool.term_wait_screen.args_schema.model_validate({
+            "term_id": "Ab12Cd34",
+            "timeout": 10 * term_tool.TERM_TIMEOUT + 0.01,
+        })
+
+
 async def test_wait_resize_cursor_and_size_wrappers(monkeypatch):
     terminal = WrapperTerm()
     manager = WrapperManager(terminal)
@@ -805,6 +941,7 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
                 "term_cursor",
                 "term_size",
                 "term_screenshot",
+                "term_wait_screen",
             },
         ),
     ],

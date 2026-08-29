@@ -7,7 +7,7 @@ import base64
 import re
 import shlex
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from langchain.tools import ToolRuntime
 from langchain_core.messages.content import (
@@ -101,7 +101,7 @@ TermId = Annotated[str, Field(pattern=r"^[A-Za-z0-9]{8}$")]
 NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
 PositiveInt = Annotated[int, Field(gt=0, strict=True)]
 ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
-WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 2)]
+WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 10)]
 
 
 def _canonical_modifiers(
@@ -274,6 +274,30 @@ TermModifiers = Annotated[
     AfterValidator(_validate_modifiers),
 ]
 RegexPattern = Annotated[NonEmptyStr, AfterValidator(_validate_pattern)]
+
+
+def _validate_bounding_box(
+    box: tuple[int, int, int, int] | None,
+) -> tuple[int, int, int, int] | None:
+    """Validate a zero-based, end-exclusive screen rectangle."""
+    if box is None:
+        return None
+    top, left, bottom, right = box
+    if bottom <= top or right <= left:
+        raise ValueError("bounding box must have positive height and width")
+    return box
+
+
+ScreenBoundingBox = Annotated[
+    tuple[
+        NonNegativeInt,
+        NonNegativeInt,
+        NonNegativeInt,
+        NonNegativeInt,
+    ]
+    | None,
+    AfterValidator(_validate_bounding_box),
+]
 
 
 def _unknown_terminal(term_id: str) -> ToolException:
@@ -466,6 +490,35 @@ async def term_wait_for(
 
 
 @tool
+async def term_wait_screen(
+    term_id: TermId,
+    condition: Literal["stable", "change"] = "stable",
+    bounding_box: ScreenBoundingBox = None,
+    include_styling: bool = True,
+    timeout: WaitTimeout | None = None,
+) -> str:
+    """Wait for a terminal screen to stabilize or change.
+
+    Stability means the selected screen region remains unchanged for five
+    seconds. ``bounding_box`` is ``(top, left, bottom, right)`` using
+    zero-based, end-exclusive coordinates. Styling participates in comparison
+    by default; set ``include_styling`` false to compare only displayed text.
+    """
+    try:
+        return await term_manager.wait_screen(
+            term_id,
+            condition=condition,
+            bounding_box=bounding_box,
+            include_styling=include_styling,
+            timeout=timeout,
+        )
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+    except (ValueError, NotImplementedError) as error:
+        raise ToolException(str(error)) from error
+
+
+@tool
 async def term_resize(
     term_id: TermId, rows: PositiveInt, cols: PositiveInt
 ) -> str:
@@ -532,6 +585,7 @@ _BASE_TERM_TOOLS = [
 ]
 
 _SCREEN_TERM_TOOLS = [
+    term_wait_screen,
     term_resize,
     term_cursor,
     term_size,

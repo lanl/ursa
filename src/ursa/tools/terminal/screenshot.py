@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import unicodedata
+from collections.abc import Iterator
 from io import StringIO
 from typing import Protocol
 
@@ -61,6 +63,101 @@ def snapshot_text(snapshot: TerminalRenderSnapshot) -> Text:
             text += " " * max(0, span.cells - cell_len(text))
         output.append(text, rich_style(span.style))
     return output
+
+
+def screen_comparison_key(
+    snapshot: TerminalRenderSnapshot,
+    bounding_box: tuple[int, int, int, int] | None,
+    include_styling: bool,
+    *,
+    allow_clipped_box: bool = False,
+) -> tuple[object, ...]:
+    """Return comparable display cells for a styled screen region."""
+    if not snapshot.screen or snapshot.rows is None or snapshot.cols is None:
+        raise NotImplementedError(
+            "screen waiting requires a screen-backed terminal"
+        )
+    top, left, bottom, right = bounding_box or (
+        0,
+        0,
+        snapshot.rows,
+        snapshot.cols,
+    )
+    box_is_clipped = bottom > snapshot.rows or right > snapshot.cols
+    if box_is_clipped and not allow_clipped_box:
+        raise ValueError("bounding box exceeds the terminal screen dimensions")
+    cells: dict[tuple[int, int], tuple[str, object]] = {}
+    row = 0
+    col = 0
+    last_cells: tuple[tuple[int, int], ...] = ()
+    for span in snapshot.spans:
+        consumed = 0
+        for grapheme in _graphemes(span.text):
+            if grapheme == "\n":
+                row += 1
+                col = 0
+                last_cells = ()
+                continue
+            width = cell_len(grapheme)
+            if width == 0:
+                for position in last_cells:
+                    previous, style = cells[position]
+                    cells[position] = (previous + grapheme, style)
+                continue
+            last_cells = tuple((row, col + offset) for offset in range(width))
+            for position in last_cells:
+                cells[position] = (grapheme, span.style)
+            col += width
+            consumed += width
+        if span.cells is not None:
+            padding = max(0, span.cells - consumed)
+            for cell_col in range(col, col + padding):
+                cells[(row, cell_col)] = (" ", span.style)
+            col += padding
+    selected = tuple(
+        (row_index, col_index, text, style)
+        if include_styling
+        else (row_index, col_index, text)
+        for (row_index, col_index), (text, style) in sorted(cells.items())
+        if top <= row_index < bottom and left <= col_index < right
+    )
+    dimensions: tuple[object, ...] = (
+        (snapshot.rows, snapshot.cols)
+        if bounding_box is None or box_is_clipped
+        else ()
+    )
+    cursor: tuple[object, ...] = ()
+    if include_styling and snapshot.cursor is not None:
+        cursor_row, cursor_col = snapshot.cursor
+        if top <= cursor_row < bottom and left <= cursor_col < right:
+            cursor = (("cursor", cursor_row, cursor_col),)
+    return (*dimensions, *selected, *cursor)
+
+
+def _graphemes(text: str) -> Iterator[str]:
+    """Yield practical terminal grapheme clusters without splitting emoji."""
+    cluster = ""
+    regional_count = 0
+    for character in text:
+        codepoint = ord(character)
+        category = unicodedata.category(character)
+        is_regional = 0x1F1E6 <= codepoint <= 0x1F1FF
+        joins_previous = (
+            category in {"Mc", "Me", "Mn"}
+            or 0xFE00 <= codepoint <= 0xFE0F
+            or 0x1F3FB <= codepoint <= 0x1F3FF
+            or character == "\u200d"
+            or cluster.endswith("\u200d")
+            or (is_regional and regional_count % 2 == 1)
+        )
+        if cluster and not joins_previous:
+            yield cluster
+            cluster = ""
+            regional_count = 0
+        cluster += character
+        regional_count = regional_count + 1 if is_regional else 0
+    if cluster:
+        yield cluster
 
 
 def inline_svg_styles(svg: str) -> str:

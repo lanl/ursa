@@ -28,6 +28,7 @@ TERM_TOOLS = frozenset({
     "term_read",
     "term_is_alive",
     "term_wait_for",
+    "term_wait_screen",
     "term_resize",
     "term_cursor",
     "term_size",
