@@ -67,7 +67,9 @@ def _config_yaml_value(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _config_yaml_value(asdict(value))
     if isinstance(value, Mapping):
-        return {str(key): _config_yaml_value(item) for key, item in value.items()}
+        return {
+            str(key): _config_yaml_value(item) for key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set)):
         return [_config_yaml_value(item) for item in value]
     if isinstance(value, (Path, Enum)):
@@ -225,7 +227,13 @@ class UrsaTextualApp(App[None]):
         if agent_name := self.hitl.config.agent_name:
             items.append(f"agent {agent_name}")
         items.append(state)
-        self.query_one("#status", Static).update(Text("  •  ".join(items)))
+        # The agent worker's tail can run while teardown is pruning the
+        # tree; a bare query here crashes the worker and surfaces as
+        # WorkerFailed at run_test exit.
+        status = self.query("#status")
+        if not status:
+            return
+        status.first(Static).update(Text("  •  ".join(items)))
 
     def add_tokens(self, usage: TokenUsage) -> None:
         self.total_tokens += usage.total_tokens
@@ -558,7 +566,9 @@ class UrsaTextualApp(App[None]):
                 command.capitalize(),
                 content(),
                 config_yaml=(
-                    self._resolved_config_yaml() if command == "status" else None
+                    self._resolved_config_yaml()
+                    if command == "status"
+                    else None
                 ),
             ),
             callback=lambda _: self.query_one(PromptArea).focus(),

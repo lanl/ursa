@@ -230,7 +230,7 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert str(spinner.content) in ActivityIndicator.FRAMES
 
         release_agent.set()
-        await pilot.pause()
+        assert await wait_for(pilot, lambda: not app.workers)
         assert str(spinner.content) == ""
         assert str(label.content) == ""
         assert str(done_mark.content) == ""

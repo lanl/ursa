@@ -99,8 +99,9 @@ async def test_agent_hotlist_routes_selected_agent(tmp_path):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("#")
-        await pilot.pause()
-        assert isinstance(app.screen, HotlistScreen)
+        assert await wait_for(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
 
         options = app.screen.query_one("#hotlist-options")
         assert options.highlighted == 0
@@ -153,8 +154,10 @@ async def test_macro_selectors_close_with_escape(tmp_path):
         )
         await pilot.press("escape")
         assert await wait_for(
-            pilot, lambda: prompt.text == "Review# docs carefully"
+            pilot, lambda: not isinstance(app.screen, HotlistScreen)
         )
+
+        assert prompt.text == "Review# docs carefully"
         assert prompt.cursor_location == (0, 7)
         assert prompt.has_focus
 
@@ -171,7 +174,10 @@ async def test_macro_selectors_close_with_escape(tmp_path):
             pilot, lambda: isinstance(app.screen, HotlistScreen)
         )
         await pilot.press("escape")
-        assert await wait_for(pilot, lambda: prompt.text == "@")
+        assert await wait_for(
+            pilot, lambda: not isinstance(app.screen, HotlistScreen)
+        )
+        assert prompt.text == "@"
         assert prompt.has_focus
 
 
@@ -186,8 +192,9 @@ async def test_escaping_command_picker_preserves_multiline_draft_and_undo(
         prompt.move_cursor((0, 0))
 
         await pilot.press("/")
-        await pilot.pause()
-        assert isinstance(app.screen, HotlistScreen)
+        assert await wait_for(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
         await pilot.press("escape")
         await pilot.pause()
 
@@ -249,8 +256,9 @@ async def test_file_hotlist_uses_at_trigger(tmp_path):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("@")
-        await pilot.pause()
-        assert isinstance(app.screen, HotlistScreen)
+        assert await wait_for(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
         assert app.screen.candidates == [
             f"{Path('docs')}{os.sep}",
             str(Path("docs/guide.md")),
@@ -585,8 +593,9 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/")
-        await pilot.pause()
-        assert isinstance(app.screen, HotlistScreen)
+        assert await wait_for(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
         hotlist = app.screen.query_one("#hotlist")
         options = app.screen.query_one("#hotlist-options")
         assert hotlist.region.width == 80
@@ -2848,3 +2857,15 @@ def test_hotlist_mount_survives_absent_children():
     screen = HotlistScreen("pick", ["one"])
 
     screen.on_mount()
+
+
+async def test_hotlist_mount_race_with_teardown_does_not_crash(tmp_path):
+    # Real-machinery pin for the mount race: exiting right after the push
+    # makes mount_all skip composing children while Mount still
+    # dispatches, and the unguarded on_mount crashed the app (NoMatches
+    # raised at run_test exit).
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)):
+        app.push_screen(HotlistScreen("pick", ["one"]))
+        app.exit()
