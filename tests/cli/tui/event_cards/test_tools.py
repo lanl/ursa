@@ -2,7 +2,7 @@ from langchain_core.messages import ToolMessage
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL
+from tests.cli._app_fakes import FakeHITL, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import ToolCallCard
 from ursa.cli.tui.event_handler import TextualEventHandler
@@ -51,6 +51,7 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
         )
         await pilot.pause()
 
+        await wait_for(pilot, lambda: card.completed)
         assert card.completed
         assert card.query_one(".tool-call-state", Static).content == "✓"
         assert "polar" in str(

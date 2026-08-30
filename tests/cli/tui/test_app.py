@@ -47,6 +47,9 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
         await turn.add_response("Short response")
         await pilot.pause()
 
+        await wait_for(
+            pilot, lambda: banner.region.y == conversation.content_region.y
+        )
         assert banner.region.y == conversation.content_region.y
 
 
@@ -84,6 +87,7 @@ async def test_prompt_submission_events_and_history(tmp_path):
         await pilot.press("h", "e", "l", "l", "o", "enter")
         await pilot.pause()
 
+        await wait_for(pilot, lambda: hitl.calls == [("chat", "hello")])
         assert hitl.calls == [("chat", "hello")]
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
@@ -145,6 +149,7 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
 
         card.on_click(Click())
         await pilot.pause()
+        await wait_for(pilot, lambda: card.expanded)
         assert card.expanded
         rich_traceback = card.query_one(".exception-traceback", Static)
         assert not rich_traceback.has_class("hidden")
@@ -319,6 +324,7 @@ async def test_clear_conversation_is_refused_during_active_turn(
         await pilot.press("ctrl+l")
         await pilot.pause()
 
+        await wait_for(pilot, lambda: turn.is_mounted)
         assert turn.is_mounted
         assert "not allowed" in notifications[0][0]
         assert "Ctrl+D" in notifications[0][0]
@@ -364,6 +370,7 @@ async def test_quitting_waits_for_active_agent_then_exits(
         await finished.wait()
         await pilot.pause()
 
+    await wait_for(pilot, lambda: app._exit)
     assert app._exit
 
 
@@ -422,6 +429,10 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
 
         await pilot.press("alt+down")
         await pilot.pause()
+        await wait_for(
+            pilot,
+            lambda: app._turn_navigation_marker is app._turn_markers()[-1],
+        )
         assert app._turn_navigation_marker is app._turn_markers()[-1]
         assert conversation.scroll_y == conversation.max_scroll_y
         assert conversation.is_anchored
