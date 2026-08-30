@@ -28,7 +28,7 @@ from textual.widgets import (
 )
 
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL
+from tests.cli._app_fakes import FakeHITL, wait_for
 from ursa.agents.base import AgentWithTools
 from ursa.agents.execution_agent import ExecutionAgent
 from ursa.cli.config import (
@@ -148,12 +148,13 @@ async def test_macro_selectors_close_with_escape(tmp_path):
         prompt.move_cursor((0, 6))
 
         await pilot.press("#")
-        await pilot.pause()
-        assert isinstance(app.screen, HotlistScreen)
+        assert await wait_for(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
         await pilot.press("escape")
-        await pilot.pause()
-
-        assert prompt.text == "Review# docs carefully"
+        assert await wait_for(
+            pilot, lambda: prompt.text == "Review# docs carefully"
+        )
         assert prompt.cursor_location == (0, 7)
         assert prompt.has_focus
 
@@ -166,11 +167,11 @@ async def test_macro_selectors_close_with_escape(tmp_path):
 
         prompt.load_text("")
         await pilot.press("@")
-        await pilot.pause()
-        assert isinstance(app.screen, HotlistScreen)
+        assert await wait_for(
+            pilot, lambda: isinstance(app.screen, HotlistScreen)
+        )
         await pilot.press("escape")
-        await pilot.pause()
-        assert prompt.text == "@"
+        assert await wait_for(pilot, lambda: prompt.text == "@")
         assert prompt.has_focus
 
 
@@ -2636,9 +2637,9 @@ async def test_agents_remain_responsive_during_blocking_initialization(
     async def assert_ui_is_live(pilot, screen):
         loading = screen.query_one(".agent-tools-loading", Static)
         first_frame = str(loading.render())
-        await asyncio.sleep(0.35)
-        await pilot.pause()
-        assert str(loading.render()) != first_frame
+        assert await wait_for(
+            pilot, lambda: str(loading.render()) != first_frame
+        )
         await pilot.press("right")
         assert screen.query_one("#agents-tabs", TabbedContent).active == (
             "agent-tab-1"

@@ -86,3 +86,23 @@ async def emit_event(handler, payload=None, **details):
         DEFAULT_EVENT_NAME,
         details if payload is None else payload,
     )
+
+
+async def wait_for(pilot, condition, *, timeout=3.0, interval=0.05):
+    """Poll a condition instead of trusting one fixed pause.
+
+    Timer-driven UI (spinner frames, deferred screen pushes) advances on
+    wall-clock intervals that a loaded runner can easily miss inside a
+    single pause window; polling with a generous ceiling keeps the
+    assertion about behavior rather than scheduling.
+    """
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        await asyncio.sleep(interval)
+        await pilot.pause()
+    return bool(condition())

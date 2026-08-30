@@ -8,7 +8,7 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
@@ -224,10 +224,10 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert first_frame in ActivityIndicator.FRAMES
         assert str(label.content) == "Inspecting the request"
 
-        await asyncio.sleep(0.1)
-        await pilot.pause()
+        assert await wait_for(
+            pilot, lambda: str(spinner.content) != first_frame
+        )
         assert str(spinner.content) in ActivityIndicator.FRAMES
-        assert str(spinner.content) != first_frame
 
         release_agent.set()
         await pilot.pause()

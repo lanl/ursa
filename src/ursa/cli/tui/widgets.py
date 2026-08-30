@@ -255,7 +255,12 @@ class HotlistScreen(ModalScreen[str | None]):
             )
 
     def on_mount(self) -> None:
-        self.query_one(Input).focus()
+        # Mounting can race app teardown, leaving children absent; a bare
+        # query here would crash the app from inside the Mount dispatch.
+        inputs = self.query(Input)
+        if not inputs:
+            return
+        inputs.first().focus()
         self._highlight_first()
 
     def action_previous_choice(self) -> None:
@@ -284,8 +289,11 @@ class HotlistScreen(ModalScreen[str | None]):
         self._highlight_first()
 
     def _highlight_first(self) -> None:
-        options = self.query_one(OptionList)
-        options.highlighted = 0 if options.option_count else None
+        options = self.query(OptionList)
+        if not options:
+            return
+        option_list = options.first()
+        option_list.highlighted = 0 if option_list.option_count else None
 
     @on(OptionList.OptionSelected)
     def select_option(self, event: OptionList.OptionSelected) -> None:
