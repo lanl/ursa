@@ -629,3 +629,17 @@ async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
         for _ in range(8):
             await asyncio.sleep(0.03)
             assert conversation.scroll_y == 0
+
+
+async def test_update_status_survives_absent_status_widget(tmp_path):
+    # The agent worker's tail calls _update_status; when teardown has
+    # already pruned the status widget, the bare query crashed the
+    # worker and surfaced as WorkerFailed at run_test exit, after every
+    # test assertion had passed (the recurring Windows CI signature).
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.query_one("#status").remove()
+        await pilot.pause()
+
+        app._update_status("ready")
