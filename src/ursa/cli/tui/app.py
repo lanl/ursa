@@ -329,6 +329,11 @@ class UrsaTextualApp(App[None]):
                 exc, "".join(traceback.format_exception(exc))
             )
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
+        if self._exit:
+            # App-level workers survive widget pruning (only widget-bound
+            # workers are cancelled on removal); do not touch the tree
+            # mid-teardown.
+            return
         turn.finish_activity(succeeded=succeeded)
         await turn.add_response(response)
         self.call_after_refresh(self._anchor_conversation_if_overflowing)

@@ -277,18 +277,17 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         assert prompt.disabled
 
         await pilot.press("ctrl+c")
-        await pilot.pause()
+        assert await wait_for(pilot, lambda: len(notifications) == 1)
 
         assert prompt.disabled
         assert any(worker.group == "agent" for worker in app.workers)
-        assert len(notifications) == 1
         assert "not supported" in notifications[0][0]
         assert "Ctrl+D" in notifications[0][0]
         assert notifications[0][1]["severity"] == "warning"
 
         release.set()
         await app.workers.wait_for_complete()
-        assert not prompt.disabled
+        assert await wait_for(pilot, lambda: not prompt.disabled)
 
 
 async def test_clear_conversation_is_refused_during_active_turn(
@@ -454,7 +453,10 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
             )
             await pilot.pause()
 
-        assert conversation.scroll_y == conversation.max_scroll_y
+        assert await wait_for(
+            pilot,
+            lambda: conversation.scroll_y == conversation.max_scroll_y,
+        )
 
         conversation.scroll_to(
             y=max(0, conversation.scroll_y - 3),

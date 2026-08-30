@@ -718,7 +718,12 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                 values.pop(field, None)
 
     def on_mount(self) -> None:
-        self.query_one("#chat-model-name", Select).focus()
+        # Mounting can race app teardown, leaving children absent; see
+        # HotlistScreen.on_mount.
+        selects = self.query("#chat-model-name")
+        if not selects:
+            return
+        selects.first(Select).focus()
         chat_generation = self._next_model_load_generation("chat")
         embedding_generation = self._next_model_load_generation("embedding")
         self.run_worker(
