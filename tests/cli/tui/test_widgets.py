@@ -2837,3 +2837,13 @@ def test_keymap_omits_compatibility_warning_when_kitty_is_expected(
 
     assert "Kitty keyboard support expected" in keymap
     assert "may not work" not in keymap
+
+
+def test_hotlist_mount_survives_absent_children():
+    # The app can begin tearing down while this screen is still mounting;
+    # the Mount dispatch then runs with children absent, and a bare
+    # query_one crashed the whole app from inside the event handler,
+    # surfacing at run_test exit and masking the test's real failure.
+    screen = HotlistScreen("pick", ["one"])
+
+    screen.on_mount()
