@@ -1,0 +1,27 @@
+schema_version = "1.4"
+[task]
+name = "ursa/install-gpaw"
+version = "1.0.0"
+description = "Install GPAW and make it importable with Python."
+authors = [{ name = "URSA Developers" }]
+keywords = ["python", "package-installation", "scientific-computing"]
+
+[metadata]
+author_name = "URSA Developers"
+author_email = "ursa@lanl.gov"
+difficulty = "medium"
+category = "software_engineering"
+expert_time_estimate_min = 10.0
+junior_time_estimate_min = 30.0
+
+[verifier]
+timeout_sec = 1800.0
+
+[agent]
+timeout_sec = 3600.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 600.0
+os = "linux"
+workdir = "/"

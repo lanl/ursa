@@ -1,0 +1,27 @@
+schema_version = "1.4"
+[task]
+name = "ursa/install-pytorch"
+version = "1.0.0"
+description = "Install PyTorch and verify its basic tensor operations."
+authors = [{ name = "URSA Developers" }]
+keywords = ["python", "package-installation", "machine-learning"]
+
+[metadata]
+author_name = "URSA Developers"
+author_email = "ursa@lanl.gov"
+difficulty = "easy"
+category = "software_engineering"
+expert_time_estimate_min = 5.0
+junior_time_estimate_min = 15.0
+
+[verifier]
+timeout_sec = 1800.0
+
+[agent]
+timeout_sec = 3600.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 600.0
+os = "linux"
+workdir = "/"
