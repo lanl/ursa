@@ -118,6 +118,38 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     assert uploads == [(config_file, "/tmp/ursa-config.yaml")]
 
 
+@pytest.mark.asyncio
+async def test_cancelled_run_terminates_container_runner(tmp_path, monkeypatch):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+    )
+    agent._remote_config_file = "/tmp/ursa-config.yaml"
+    runner_started = asyncio.Event()
+    cleanup_commands = []
+
+    async def fake_exec_as_agent(*args, **kwargs):
+        runner_started.set()
+        await asyncio.Event().wait()
+
+    async def fake_exec_as_root(environment, command, **kwargs):
+        cleanup_commands.append(command)
+
+    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+    monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
+
+    task = asyncio.create_task(agent.run("task", object(), object()))
+    await runner_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(cleanup_commands) == 1
+    assert "kill -TERM" in cleanup_commands[0]
+    assert "kill -KILL" in cleanup_commands[0]
+
+
 def test_harbor_model_overrides_ursa_model():
     config = UrsaConfig.model_validate({
         "inference_providers": {
