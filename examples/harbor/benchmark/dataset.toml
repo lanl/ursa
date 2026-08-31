@@ -1,0 +1,15 @@
+# Dataset manifest for ursa/install-packages
+[dataset]
+name = "ursa/install-packages"
+version = "1.0.0"
+description = "Package installation tasks for URSA"
+keywords = ["package-installation", "hpc", "ursa"]
+[[dataset.authors]]
+name = "URSA Developers"
+
+
+tasks = [
+    "ursa/install-gpaw@1.0.0",
+    "ursa/install-parthenon@1.0.0",
+    "ursa/install-pytorch@1.0.0",
+]
