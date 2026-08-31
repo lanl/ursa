@@ -6,6 +6,7 @@ import asyncio
 import base64
 import importlib
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -87,9 +88,31 @@ async def _attach_mcp_tools(agent: Any, mcp_servers: dict[str, Any]) -> None:
     await agent.add_mcp_tools(start_mcp_client(mcp_servers))
 
 
+def _export_checkpoint(agent: Any, artifacts_dir: Path) -> Path:
+    """Snapshot the agent's live checkpoint database into Harbor artifacts."""
+    destination = artifacts_dir / "ursa" / "checkpointer.db"
+    checkpointer = getattr(agent, "checkpointer", None)
+    connection = getattr(checkpointer, "conn", None)
+    if connection is not None:
+        database = connection.execute("PRAGMA database_list").fetchone()
+        source = Path(database[2])
+    else:
+        source = agent.den / "db" / "checkpointer.db"
+    if source.resolve() == destination.resolve():
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        sqlite3.connect(source) as source_db,
+        sqlite3.connect(destination) as destination_db,
+    ):
+        source_db.backup(destination_db)
+    return destination
+
+
 def main(encoded: str) -> None:
     from ursa.agents import BaseAgent
     from ursa.cli.config import UrsaConfig, load_config_file
+    from ursa.util import Checkpointer
 
     config = json.loads(base64.urlsafe_b64decode(encoded).decode())
     agent_class = _import_symbol(config["agent_import_path"])
@@ -109,10 +132,14 @@ def main(encoded: str) -> None:
 
     metrics_path = Path(config["metrics_path"])
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    artifacts_dir = Path(config["artifacts_dir"])
+    checkpointer = Checkpointer.from_workspace(artifacts_dir, db_dir="ursa")
+    agent_options = _agent_config(ursa_config, agent_class)
+    agent_options["checkpointer"] = checkpointer
     agent = agent_class(
         llm=ursa_config.llm_model.init_chat_model(),
         workspace=ursa_config.workspace,
-        agent_name=ursa_config.agent_name,
+        agent_name=ursa_config.agent_name or "harbor",
         group=ursa_config.group,
         thread_id=ursa_config.thread_id,
         rag_tools=ursa_config.rag_tools,
@@ -121,12 +148,13 @@ def main(encoded: str) -> None:
             if ursa_config.emb_model
             else None
         ),
-        **_agent_config(ursa_config, agent_class),
+        **agent_options,
     )
     asyncio.run(_attach_mcp_tools(agent, ursa_config.mcp_servers))
     output = agent.invoke(
         config["instruction"], save_json=True, metrics_path=str(metrics_path)
     )
+    _export_checkpoint(agent, artifacts_dir)
     result = agent.format_result(output)
     sys.stdout.write(
         "URSA_HARBOR_RESULT="

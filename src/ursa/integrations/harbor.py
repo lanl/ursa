@@ -22,6 +22,7 @@ try:
     from harbor.agents.model_connection import ModelConnectionSpec
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
+    from harbor.models.trial.paths import EnvironmentPaths
 except ImportError as exc:  # pragma: no cover - exercised without the extra
     raise ImportError(
         "The Harbor integration requires `uv add 'ursa-ai[harbor]'`."
@@ -122,24 +123,35 @@ class UrsaHarborAgent(BaseInstalledAgent):
             return None
 
     async def install(self, environment: BaseEnvironment) -> None:
+        # uv's glibc build can crash under QEMU user-mode emulation (for
+        # example, amd64 Terminal-Bench images on an arm64 host). The musl
+        # release is statically linked and works both natively and under QEMU.
+        uv_version = "0.12.8"
         await self.exec_as_root(
             environment,
             command=(
-                "if ! command -v curl >/dev/null 2>&1; then "
+                "if ! command -v curl >/dev/null 2>&1 || "
+                "! command -v tar >/dev/null 2>&1; then "
                 "if command -v microdnf >/dev/null; then "
-                "microdnf install -y curl ca-certificates && microdnf clean all; "
+                "microdnf install -y curl ca-certificates tar && microdnf clean all; "
                 "elif command -v dnf >/dev/null; then "
-                "dnf install -y curl ca-certificates && dnf clean all; "
+                "dnf install -y curl ca-certificates tar && dnf clean all; "
                 "elif command -v yum >/dev/null; then "
-                "yum install -y curl ca-certificates && yum clean all; "
+                "yum install -y curl ca-certificates tar && yum clean all; "
                 "elif command -v apk >/dev/null; then "
-                "apk add --no-cache curl ca-certificates; "
+                "apk add --no-cache curl ca-certificates tar; "
                 "elif command -v apt-get >/dev/null; then "
-                "apt-get update && apt-get install -y curl ca-certificates; "
-                "else echo 'curl is required to install uv' >&2; exit 1; fi; fi; "
+                "apt-get update && apt-get install -y curl ca-certificates tar; "
+                "else echo 'curl and tar are required to install uv' >&2; exit 1; fi; fi; "
                 "if ! command -v /opt/uv/uv >/dev/null 2>&1; then "
-                "curl -LsSf https://astral.sh/uv/install.sh | "
-                "env UV_INSTALL_DIR=/opt/uv sh; fi; "
+                "case $(uname -m) in "
+                "x86_64|amd64) uv_arch=x86_64 ;; "
+                "aarch64|arm64) uv_arch=aarch64 ;; "
+                "*) echo 'unsupported architecture for uv: '$(uname -m) >&2; exit 1 ;; "
+                "esac; mkdir -p /opt/uv; "
+                f"curl -LsSf https://github.com/astral-sh/uv/releases/download/{uv_version}/"
+                'uv-${uv_arch}-unknown-linux-musl.tar.gz | '
+                "tar -xz --strip-components=1 -C /opt/uv; fi; "
                 "/opt/uv/uv python install 3.12"
             ),
             timeout_sec=600,
@@ -208,6 +220,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "mcp_servers": self._mcp_config(),
             "workspace": "/workspace",
             "metrics_path": f"{self.environment_logs_dir}/ursa-metrics.json",
+            "artifacts_dir": str(EnvironmentPaths.artifacts_dir),
         }
         encoded = base64.urlsafe_b64encode(
             json.dumps(payload).encode()
