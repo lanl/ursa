@@ -1,0 +1,15 @@
+workspace: /workspace
+use_web: false
+inference_providers:
+  openai:
+    model_provider: openai
+    base_url: https://api.openai.com/v1
+    api_key:
+      env: OPENAI_API_KEY
+llm_model:
+  model: gpt-4.1-nano
+  inference_provider: openai
+agent_config:
+  execute:
+    use_web: false
+    safe_codes: [python, uv, microdnf, dnf, git, cmake, make]
