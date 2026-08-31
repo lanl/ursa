@@ -5,7 +5,7 @@ URSA agents can be used directly from Python. This is useful when you want to bu
 ## Set up a Python project
 
 Install URSA in the project environment that will run your script. A separate
-`uv tool install ursa` installation provides the `ursa` command, but its
+`uv tool install ursa-ai` installation provides the `ursa` command, but its
 isolated environment is not importable by project scripts.
 
 === "uv project (recommended)"
