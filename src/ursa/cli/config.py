@@ -173,7 +173,11 @@ class ModelConfig(BaseModel):
 
         data = dict(data)
         model = data.get("model")
-        if isinstance(model, str) and ":" in model:
+        if (
+            isinstance(model, str)
+            and ":" in model
+            and data.get("inference_provider") is None
+        ):
             provider, model_name = model.split(":", 1)
             explicit_provider = data.get("model_provider")
             if explicit_provider is not None and explicit_provider != provider:

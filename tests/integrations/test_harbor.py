@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from ursa.integrations.harbor import (  # noqa: E402
 from ursa.integrations.harbor_runner import (  # noqa: E402
     _apply_harbor_overrides,
     _attach_mcp_tools,
+    _export_checkpoint,
 )
 from ursa.integrations.harbor_singularity import (  # noqa: E402
     DockerfileSingularityEnvironment,
@@ -101,6 +103,10 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
 
     await agent.install(FakeEnvironment())
 
+    assert "command -v tar" in commands[0]
+    assert "curl ca-certificates tar" in commands[0]
+    assert "unknown-linux-musl.tar.gz" in commands[0]
+    assert "case $(uname -m)" in commands[0]
     assert any("uv venv --python 3.12" in command for command in commands)
     assert any(
         "uv pip install" in command
@@ -213,6 +219,41 @@ async def test_mcp_servers_attach_to_tool_capable_agent(monkeypatch):
     assert received == [expected_client]
 
 
+def test_checkpoint_is_exported_to_harbor_artifacts(tmp_path):
+    class Agent:
+        den = tmp_path / "den"
+
+    checkpoint = Agent.den / "db" / "checkpointer.db"
+    checkpoint.parent.mkdir(parents=True)
+    with sqlite3.connect(checkpoint) as database:
+        database.execute("CREATE TABLE checkpoints (value TEXT)")
+        database.execute("INSERT INTO checkpoints VALUES ('saved')")
+
+    exported = _export_checkpoint(Agent(), tmp_path / "artifacts")
+
+    assert exported == tmp_path / "artifacts" / "ursa" / "checkpointer.db"
+    with sqlite3.connect(exported) as database:
+        assert database.execute("SELECT value FROM checkpoints").fetchone() == (
+            "saved",
+        )
+
+
+def test_checkpoint_already_in_artifacts_is_not_copied(tmp_path):
+    destination = tmp_path / "artifacts" / "ursa" / "checkpointer.db"
+    destination.parent.mkdir(parents=True)
+    connection = sqlite3.connect(destination)
+    connection.execute("CREATE TABLE checkpoints (value TEXT)")
+
+    class Checkpointer:
+        conn = connection
+
+    class Agent:
+        checkpointer = Checkpointer()
+
+    assert _export_checkpoint(Agent(), tmp_path / "artifacts") == destination
+    connection.close()
+
+
 @pytest.mark.asyncio
 async def test_singularity_builds_dockerfile_on_demand(tmp_path, monkeypatch):
     environment, commands = _singularity_env(tmp_path, monkeypatch)
@@ -264,6 +305,20 @@ async def test_singularity_falls_back_when_podman_export_fails(
     assert any(
         command[0:2] == ("/usr/bin/podman", "image") for command in commands
     )
+
+
+@pytest.mark.asyncio
+async def test_singularity_builds_with_buildah(tmp_path, monkeypatch):
+    environment, commands = _singularity_env(
+        tmp_path, monkeypatch, builders=("buildah",)
+    )
+
+    await environment._build_dockerfile_sif(force_build=True)
+
+    assert commands[0][0:3] == ("/usr/bin/buildah", "build", "--pull")
+    assert commands[1][0:2] == ("/usr/bin/buildah", "push")
+    assert commands[1][3].startswith("docker-archive:")
+    assert commands[-1][0:3] == ("/usr/bin/buildah", "rmi", "--force")
 
 
 @pytest.mark.asyncio
