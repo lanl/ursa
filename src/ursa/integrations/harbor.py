@@ -7,6 +7,7 @@ tools operate on the benchmark workspace rather than on the submit host.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -225,16 +226,39 @@ class UrsaHarborAgent(BaseInstalledAgent):
         encoded = base64.urlsafe_b64encode(
             json.dumps(payload).encode()
         ).decode()
-        result = await self.exec_as_agent(
-            environment,
-            command=(
-                f"{self.URSA_PYTHON} -m ursa.integrations.harbor_runner "
-                + shlex.quote(encoded)
-            ),
-            env=self.model_connection.env,
-            cwd="/workspace",
-            timeout_sec=self.command_timeout_sec,
-        )
+        runner_pid_file = "/tmp/ursa-harbor-runner.pid"
+        try:
+            result = await self.exec_as_agent(
+                environment,
+                command=(
+                    f"echo $$ > {runner_pid_file}; "
+                    f"exec {self.URSA_PYTHON} -m ursa.integrations.harbor_runner "
+                    + shlex.quote(encoded)
+                ),
+                env=self.model_connection.env,
+                cwd="/workspace",
+                timeout_sec=self.command_timeout_sec,
+            )
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(
+                    self.exec_as_root(
+                        environment,
+                        command=(
+                            f"if [ -s {runner_pid_file} ]; then "
+                            f"pid=$(cat {runner_pid_file}); "
+                            "kill -TERM \"$pid\" 2>/dev/null || true; "
+                            "i=0; while kill -0 \"$pid\" 2>/dev/null "
+                            "&& [ \"$i\" -lt 20 ]; do "
+                            "sleep 0.1; i=$((i + 1)); done; "
+                            "kill -KILL \"$pid\" 2>/dev/null || true; fi"
+                        ),
+                        timeout_sec=10,
+                    )
+                )
+            except Exception:
+                pass
+            raise
         marker = "URSA_HARBOR_RESULT="
         line = next(
             (
