@@ -17,7 +17,7 @@ set `ursa_install_spec` to another package/version specification.
 
 The custom environment builds `environment/Dockerfile` with Podman or Docker,
 converts it to a cached SIF, and requires no Apptainer definition file. Compute
-nodes need `singularity`, `uv`, and either `podman` or `docker`.
+nodes need `singularity`, `uv`, and one of `buildah`, `podman`, or `docker`.
 
 ```bash
 export OPENAI_API_KEY=...
