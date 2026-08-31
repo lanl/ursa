@@ -85,6 +85,15 @@ def test_model_config_model_parsing(cls):
     assert cfg.model_provider == "bar"
 
 
+def test_model_tag_is_preserved_with_inference_provider():
+    cfg = config_mod.ChatModelConfig(
+        model="gemma4:latest", inference_provider="ollama"
+    )
+
+    assert cfg.model == "gemma4:latest"
+    assert cfg.model_provider == "openai"
+
+
 def test_model_merge_keeps_provider_defaults_resolvable():
     config = config_mod.UrsaConfig().model_merge({
         "llm_model": {"model": "openai:gpt-5.4"}

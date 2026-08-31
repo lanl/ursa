@@ -64,6 +64,10 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         builder_name = Path(builder).name
         tag = f"ursa-harbor-{output.stem}-{builder_name}"
         pull_args = ["--pull"] if force_build else []
+        if builder_name == "buildah":
+            remove_command = (builder, "rmi", "--force", tag)
+        else:
+            remove_command = (builder, "image", "rm", "--force", tag)
         temporary.unlink(missing_ok=True)
         try:
             await self._run(
@@ -80,7 +84,12 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
                 prefix="ursa-harbor-oci-"
             ) as temp_dir:
                 archive = Path(temp_dir) / "image.tar"
-                await self._run(builder, "save", "-o", str(archive), tag)
+                if builder_name == "buildah":
+                    await self._run(
+                        builder, "push", tag, f"docker-archive:{archive}"
+                    )
+                else:
+                    await self._run(builder, "save", "-o", str(archive), tag)
                 await self._run(
                     "singularity",
                     "build",
@@ -90,7 +99,7 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
                 temporary.replace(output)
         finally:
             try:
-                await self._run(builder, "image", "rm", "--force", tag)
+                await self._run(*remove_command)
             except RuntimeError as exc:
                 self.logger.warning(
                     "Failed to remove build image %s: %s", tag, exc
@@ -149,12 +158,12 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
                 return output
             builders = [
                 builder
-                for name in ("podman", "docker")
+                for name in ("buildah", "podman", "docker")
                 if (builder := shutil.which(name)) is not None
             ]
             if not builders:
                 raise RuntimeError(
-                    "Building a Dockerfile for Singularity requires podman or docker"
+                    "Building a Dockerfile for Singularity requires buildah, podman, or docker"
                 )
             temporary = output.with_suffix(".tmp.sif")
             failures = []
