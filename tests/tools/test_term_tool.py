@@ -1102,11 +1102,9 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("screen", "mouse", "paste", "expected_names"),
+    ("screen", "expected_names"),
     [
         (
-            False,
-            False,
             False,
             {
                 "term",
@@ -1120,8 +1118,6 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
             },
         ),
         (
-            True,
-            True,
             True,
             {
                 "term",
@@ -1148,13 +1144,11 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
     ],
 )
 def test_get_supported_term_tools_filters_screen_capabilities(
-    monkeypatch, screen, mouse, paste, expected_names
+    monkeypatch, screen, expected_names
 ):
     monkeypatch.setattr(
         term_tool.term_manager, "supports_screen", lambda: screen
     )
-    monkeypatch.setattr(term_tool.term_manager, "supports_mouse", lambda: mouse)
-    monkeypatch.setattr(term_tool.term_manager, "supports_paste", lambda: paste)
     first = term_tool.get_supported_term_tools()
     second = term_tool.get_supported_term_tools()
     assert {tool.name for tool in first} == expected_names
