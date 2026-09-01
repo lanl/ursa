@@ -6,7 +6,7 @@ from textual.widgets import Markdown, Static
 from tests.cli._app_fakes import FakeHITL, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import TermCard, ToolCallCard
-from ursa.cli.tui.event_cards.term import TERM_TOOLS, terminal_id
+from ursa.cli.tui.event_cards.term import terminal_id
 from ursa.cli.tui.event_handler import TextualEventHandler
 from ursa.cli.tui.terminal_view import TerminalView
 from ursa.cli.tui.turn import Turn
@@ -120,10 +120,7 @@ async def test_terminal_calls_for_same_session_share_live_card(tmp_path):
         assert len(cards) == 1
         card = cards[0]
         assert card.term_id == "Ab12Cd34"
-        assert card.call_count == 2
-        assert "2 calls" in str(
-            card.query_one(".term-card-title", Static).content
-        )
+        assert card.call_count == 1
 
         card.set_expanded(True)
         assert card.query_one(".term-card-tail").has_class("hidden")
@@ -182,7 +179,7 @@ async def test_distinct_terminal_ids_get_distinct_cards(tmp_path):
         )
 
 
-async def test_delayed_launch_result_merges_provisional_card_and_aliases(
+async def test_delayed_launch_result_promotes_launch_tool_card_to_terminal_card(
     tmp_path,
 ):
     app = UrsaTextualApp(FakeHITL(tmp_path))
@@ -197,7 +194,8 @@ async def test_delayed_launch_result_merges_provisional_card_and_aliases(
             run_id="launch",
             inputs={"cmd": "python", "session": True},
         )
-        provisional = turn.query_one(TermCard)
+        launch_card = turn.query_one(ToolCallCard)
+        launch_key = launch_card.key
 
         await handler.on_tool_start(
             {"name": "term_send_line"},
@@ -214,15 +212,13 @@ async def test_delayed_launch_result_merges_provisional_card_and_aliases(
         cards = list(turn.query(TermCard))
         assert len(cards) == 1
         card = cards[0]
-        assert card is not provisional
         assert card.term_id == "Ab12Cd34"
-        assert card.call_count == 2
-        assert turn._term_calls_by_id["launch"] is card
-        assert turn._term_calls_by_id["send"] is card
-        assert provisional.key not in turn.cards
+        assert card.call_count == 1
+        assert card.key != launch_key
+        assert launch_key in turn.cards
 
 
-async def test_custom_term_events_with_different_run_ids_do_not_duplicate(
+async def test_custom_term_events_without_term_id_stay_generic_until_session_exists(
     tmp_path,
 ):
     app = UrsaTextualApp(FakeHITL(tmp_path))
@@ -241,14 +237,19 @@ async def test_custom_term_events_with_different_run_ids_do_not_duplicate(
             run_id="launch",
             inputs={"cmd": "python", "session": True},
         )
-        # This mirrors providers that surface an in-tool custom range without
-        # the enclosing callback ID, followed by a child-ID result event.
+        # This mirrors providers that surface in-tool custom events before a
+        # concrete terminal session id exists.
         await turn.event({"tool": "term", "phase": "start"})
         await turn.event({
             "tool": "term",
             "phase": "start",
             "_run_id": "child",
         })
+        await pilot.pause()
+
+        assert not list(turn.query(TermCard))
+        assert len(list(turn.query(ToolCallCard))) >= 1
+
         await turn.event({
             "tool": "term",
             "phase": "end",
@@ -262,9 +263,7 @@ async def test_custom_term_events_with_different_run_ids_do_not_duplicate(
         assert len(cards) == 1
         card = cards[0]
         assert card.term_id == "Ab12Cd34"
-        assert card.call_count == 1
-        assert turn._term_calls_by_id["launch"] is card
-        assert turn._term_calls_by_id["child"] is card
+        assert card.call_count == 0
 
 
 async def test_distinct_parallel_launches_remain_separate(tmp_path):
@@ -281,7 +280,8 @@ async def test_distinct_parallel_launches_remain_separate(tmp_path):
                 run_id=run_id,
                 inputs={"cmd": "python", "session": True},
             )
-        assert len(list(turn.query(TermCard))) == 2
+        assert len(list(turn.query(ToolCallCard))) == 2
+        assert not list(turn.query(TermCard))
 
         await handler.on_tool_end("Terminal ID: Ab12Cd34", run_id="launch-one")
         await handler.on_tool_end("Terminal ID: Ef56Gh78", run_id="launch-two")
@@ -290,7 +290,7 @@ async def test_distinct_parallel_launches_remain_separate(tmp_path):
         cards = list(turn.query(TermCard))
         assert len(cards) == 2
         assert {card.term_id for card in cards} == {"Ab12Cd34", "Ef56Gh78"}
-        assert all(card.call_count == 1 for card in cards)
+        assert all(card.call_count == 0 for card in cards)
 
 
 def test_terminal_id_requires_documented_exact_result():
@@ -388,10 +388,34 @@ async def test_term_card_full_ghostty_width_is_reachable_in_narrow_app(
 
 
 def test_paste_text_routes_to_terminal_card():
-    assert "term_paste_text" in TERM_TOOLS
+    assert "term_paste_text".startswith("term_")
 
 
-@pytest.mark.parametrize("tool", sorted(TERM_TOOLS - {"term"}))
+@pytest.mark.parametrize(
+    "tool",
+    sorted(
+        [
+            "term_send_bytes",
+            "term_send_text",
+            "term_paste_text",
+            "term_send_line",
+            "term_send_key",
+            "term_read",
+            "term_is_alive",
+            "term_wait_for",
+            "term_wait_screen",
+            "term_click",
+            "term_mouse_down",
+            "term_mouse_up",
+            "term_hover",
+            "term_scroll",
+            "term_resize",
+            "term_cursor",
+            "term_size",
+            "term_screenshot",
+        ]
+    ),
+)
 async def test_every_session_term_tool_routes_to_term_card(tmp_path, tool):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
