@@ -104,6 +104,7 @@ ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
 WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 10)]
 ScrollDelta = Annotated[int, Field(ge=-100, le=100, strict=True)]
 MouseButton = Literal["left", "middle", "right"]
+TermCommand = NonEmptyStr | CommandArgv | None
 
 
 def _validate_paste_text(text: str) -> str:
@@ -202,13 +203,15 @@ def encode_term_key(
 
 
 def _launch_safety_text(
-    cmd: str | list[str],
+    cmd: str | list[str] | None,
     env: dict[str, str] | None,
     shell: list[str] | None,
     cwd: Path,
 ) -> str:
     """Return an unambiguous representation of execution-affecting inputs."""
-    if isinstance(cmd, str):
+    if cmd is None:
+        command = "none (launch shell only)"
+    elif isinstance(cmd, str):
         command = f"text {cmd!r}"
     else:
         command = f"argv {shlex.join(cmd)!r}"
@@ -326,7 +329,7 @@ def _unknown_terminal(term_id: str) -> ToolException:
 
 @tool
 async def term(
-    cmd: NonEmptyStr | CommandArgv,
+    cmd: TermCommand,
     runtime: ToolRuntime[AgentContext],
     env: dict[str, str] | None = None,
     session: bool = False,
@@ -339,7 +342,7 @@ async def term(
     limits; otherwise they remain available through the other terminal tools.
 
     Args:
-        cmd: Command text, or an argument list to execute.
+        cmd: Command text, an argument list to execute, or None to launch just the shell.
         env: Environment variables to add to the shell environment.
         session: Return immediately with a persistent terminal ID.
         shell: Optional shell executable and arguments.
@@ -348,13 +351,14 @@ async def term(
     # performed this check through ``ShellArgv``'s Pydantic validator.
     _validate_shell(shell)
     workspace = Path(runtime.context.workspace)
-    launch_text = _launch_safety_text(cmd, env, shell, workspace)
-    safety_result = await assess_command_safety(launch_text, runtime)
-    if not safety_result.is_safe:
-        return (
-            "[UNSAFE] That terminal launch was deemed unsafe and "
-            f"cannot be run.\nFor reason: {safety_result.reason}"
-        )
+    if cmd is not None:
+        launch_text = _launch_safety_text(cmd, env, shell, workspace)
+        safety_result = await assess_command_safety(launch_text, runtime)
+        if not safety_result.is_safe:
+            return (
+                "[UNSAFE] That terminal launch was deemed unsafe and "
+                f"cannot be run.\nFor reason: {safety_result.reason}"
+            )
 
     terminal = await term_manager.create(
         cmd,
