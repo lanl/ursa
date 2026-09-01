@@ -60,7 +60,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         ursa_source_dir: str | Path | None = None,
         ursa_extras: str | Sequence[str] | None = None,
         extra_packages: str | Sequence[str] | None = None,
-        command_timeout_sec: int = 3600,
+        command_timeout_sec: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
