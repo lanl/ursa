@@ -19,27 +19,6 @@ from ursa.cli.tui.event_cards.base import EventCard
 from ursa.cli.tui.terminal_view import TerminalView
 from ursa.tools.terminal.manager import TermManager, term_manager
 
-TERM_TOOLS = frozenset({
-    "term",
-    "term_send_bytes",
-    "term_send_text",
-    "term_paste_text",
-    "term_send_line",
-    "term_send_key",
-    "term_read",
-    "term_is_alive",
-    "term_wait_for",
-    "term_wait_screen",
-    "term_click",
-    "term_mouse_down",
-    "term_mouse_up",
-    "term_hover",
-    "term_scroll",
-    "term_resize",
-    "term_cursor",
-    "term_size",
-    "term_screenshot",
-})
 _TERM_RESULT = re.compile(r"Terminal ID:\s*([A-Za-z0-9]{8})")
 
 
@@ -203,4 +182,4 @@ class TermCard(EventCard):
         self.set_expanded(not self.expanded)
 
 
-__all__ = ["TERM_TOOLS", "TermCard", "terminal_id"]
+__all__ = ["TermCard", "terminal_id"]
