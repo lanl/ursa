@@ -10,10 +10,11 @@ turn; a caller-supplied assistant-final history flows straight through
 
 Known-bug configurations are pinned as deterministic strict xfails
 rather than silently avoided: summarization with a plain ``BaseAgent``
-crashes on the missing ``tool_llm`` (upstream #295), and
-``messages_to_keep=0`` (or a summarized-away tool tail) leaves the
-conversation ending on the assistant summary (upstream #296). The
-properties therefore explore the remaining healthy space.
+crashes on the missing ``tool_llm`` (upstream #295). The
+``messages_to_keep=0`` and summarized-away tool-tail cases (upstream
+#296) are now fixed on main -- the summary lands as a human-role
+message -- so they are asserted as passing regression guards instead.
+The properties therefore explore the remaining healthy space.
 """
 
 import tempfile
@@ -118,16 +119,11 @@ async def test_pin_summarization_crashes_non_tool_agents(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "messages_to_keep=0 leaves post-summarization state as "
-        "[first message, assistant summary], so the next request ends "
-        "on an assistant turn; see upstream issue #296"
-    ),
-    strict=True,
-    raises=AssertionError,
-)
-async def test_pin_messages_to_keep_zero_assistant_final(tmp_path):
+async def test_messages_to_keep_zero_stays_provider_valid(tmp_path):
+    # Regression guard for upstream #296: the post-summarization state was
+    # [first message, assistant summary], ending on an assistant turn. The
+    # summary now lands as a human-role message, so the next request stays
+    # provider-valid even when messages_to_keep=0.
     llm = RecordingChatModel()
     agent = ChatAgent(
         llm=llm,
@@ -147,17 +143,11 @@ async def test_pin_messages_to_keep_zero_assistant_final(tmp_path):
     assert_requests_provider_valid(llm.calls)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "a kept tail of tool results whose calls were summarized away "
-        "is folded into the summary block, leaving the conversation "
-        "ending on the assistant summary despite nonzero "
-        "messages_to_keep; see upstream issue #296"
-    ),
-    strict=True,
-    raises=AssertionError,
-)
-async def test_pin_tool_tail_summarization_assistant_final(tmp_path):
+async def test_tool_tail_summarization_stays_provider_valid(tmp_path):
+    # Regression guard for upstream #296: a kept tool tail whose calls were
+    # summarized away used to be folded into the summary block, leaving the
+    # conversation ending on the assistant summary. The human-role summary
+    # keeps the request provider-valid even with a nonzero messages_to_keep.
     llm = RecordingChatModel()
     agent = ChatAgent(
         llm=llm,

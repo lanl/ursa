@@ -305,16 +305,6 @@ async def test_planning_agent_role_sequences(tmpdir):
     assert_requests_provider_valid(llm.calls)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "DeepReviewAgent appends a fresh SystemMessage per debate phase into "
-        "the accumulated history, so requests from the second phase onward "
-        "carry mid-conversation system messages, which langchain-anthropic "
-        "rejects; see upstream issue #294"
-    ),
-    strict=True,
-    raises=AssertionError,
-)
 async def test_deep_review_agent_role_sequences(tmpdir):
     llm = RecordingChatModel()
     agent = DeepReviewAgent(llm=llm, workspace=tmpdir, max_iterations=1)
