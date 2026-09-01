@@ -170,7 +170,7 @@ def show_status(_args=None) -> None:
         installed = "unknown"
     print(f"Version: {installed}")  # noqa: T201
     print(f"Python: {sys.version.split()[0]} ({sys.implementation.name})")  # noqa: T201
-    print(f"Python path: {Path(sys.executable).resolve()}")  # noqa: T201
+    print(f"Python path: {sys.executable}")  # noqa: T201
     print(f"Platform: {sys.platform}")  # noqa: T201
     receipt = _running_uv_receipt()
     if receipt is None:
@@ -284,6 +284,8 @@ def upgrade(
             "--force",
             "--reinstall",
             "--compile-bytecode",
+            "--python",
+            str(Path(sys.executable).resolve()),
         ]
         for package in packages:
             argv += ["--with", package]
