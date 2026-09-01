@@ -8819,6 +8819,8 @@ fm = [
 ]
 harbor = [
     { name = "harbor", marker = "python_full_version >= '3.12'" },
+    { name = "pathspec", version = "0.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "pathspec", version = "1.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 image = [
     { name = "pillow" },
@@ -8899,6 +8901,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.38.0" },
     { name = "ortools", marker = "extra == 'opt'", specifier = ">=9.14,<9.15" },
     { name = "pandas", marker = "extra == 'metric-plots'", specifier = ">=2.3.1,<3.0" },
+    { name = "pathspec", marker = "extra == 'harbor'", specifier = ">=0.12.1,<2" },
     { name = "pillow", specifier = ">=11.3.0,<12.0" },
     { name = "pillow", marker = "extra == 'image'", specifier = ">=11.3.0,<12.0.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0" },

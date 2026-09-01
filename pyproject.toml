@@ -108,6 +108,7 @@ metric_plots = [
 ]
 harbor = [
     "harbor>=0.22.0,<0.23; python_version >= '3.12'",
+    "pathspec>=0.12.1,<2",
 ]
 
 [build-system]
@@ -136,7 +137,11 @@ pycodestyle.max-doc-length = 80
 "examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
-ursa = ["cli/tui/*.tcss", "observability/pricing.json"]
+ursa = [
+    "cli/tui/*.tcss",
+    "integrations/*.sh",
+    "observability/pricing.json",
+]
 ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]

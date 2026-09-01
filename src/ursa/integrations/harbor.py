@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fnmatch
 import json
 import re
 import shlex
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -50,6 +52,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
     URSA_PYTHON = "/opt/ursa/bin/python3"
+    URSA_PYTHON_VERSION = "3.13"
 
     def __init__(
         self,
@@ -60,7 +63,6 @@ class UrsaHarborAgent(BaseInstalledAgent):
         ursa_source_dir: str | Path | None = None,
         ursa_extras: str | Sequence[str] | None = None,
         extra_packages: str | Sequence[str] | None = None,
-        command_timeout_sec: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -71,7 +73,6 @@ class UrsaHarborAgent(BaseInstalledAgent):
         self.ursa_install_spec = ursa_install_spec
         self.ursa_extras = self._parse_list(ursa_extras)
         self.extra_packages = self._parse_list(extra_packages)
-        self.command_timeout_sec = command_timeout_sec
         self.ursa_source_dir = (
             Path(ursa_source_dir).resolve() if ursa_source_dir else None
         )
@@ -112,6 +113,106 @@ class UrsaHarborAgent(BaseInstalledAgent):
         UrsaConfig.model_validate(load_config_file(self.config_file))
 
     @staticmethod
+    def _stage_source(source: Path, destination: Path) -> None:
+        """Stage package files, respecting Git ignores when available."""
+        if (source / ".git").exists():
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "ls-files",
+                    "-z",
+                    "--cached",
+                    "--others",
+                    "--exclude-standard",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            destination.mkdir()
+            for raw_path in result.stdout.split(b"\0"):
+                if not raw_path:
+                    continue
+                relative = Path(raw_path.decode())
+                if UrsaHarborAgent._is_sensitive_source_path(relative):
+                    continue
+                source_file = source / relative
+                destination_file = destination / relative
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                if source_file.is_symlink():
+                    destination_file.symlink_to(source_file.readlink())
+                elif source_file.is_file():
+                    shutil.copy2(source_file, destination_file)
+            return
+        shutil.copytree(
+            source,
+            destination,
+            ignore=shutil.ignore_patterns(
+                ".git",
+                ".venv",
+                ".env",
+                ".env.*",
+                ".netrc",
+                ".pypirc",
+                ".aws",
+                "gcloud",
+                "credentials",
+                "credentials.json",
+                "credentials.yaml",
+                "credentials.yml",
+                "*.key",
+                "*.pem",
+                ".pytest_cache",
+                ".ruff_cache",
+                "__pycache__",
+                "jobs",
+            ),
+        )
+
+    @staticmethod
+    def _is_sensitive_source_path(path: Path) -> bool:
+        excluded_names = {
+            ".git",
+            ".venv",
+            ".env",
+            ".netrc",
+            ".pypirc",
+            ".aws",
+            "gcloud",
+            "credentials",
+            "credentials.json",
+            "credentials.yaml",
+            "credentials.yml",
+            ".pytest_cache",
+            ".ruff_cache",
+            "__pycache__",
+            "jobs",
+        }
+        patterns = (".env.*", "*.key", "*.pem")
+        return any(
+            part in excluded_names
+            or any(fnmatch.fnmatch(part, pattern) for pattern in patterns)
+            for part in path.parts
+        )
+
+    @staticmethod
+    def _terminate_runner_command(pid_file: str) -> str:
+        return (
+            f"if [ -s {pid_file} ]; then "
+            f"pid=$(cat {pid_file}); "
+            "descendants() { for child in "
+            '$(cat "/proc/$1/task/$1/children" 2>/dev/null); '
+            'do descendants "$child"; echo "$child"; done; }; '
+            'children=$(descendants "$pid"); '
+            'kill -TERM $children "$pid" 2>/dev/null || true; '
+            'i=0; while kill -0 "$pid" 2>/dev/null '
+            '&& [ "$i" -lt 20 ]; do '
+            "sleep 0.1; i=$((i + 1)); done; "
+            'kill -KILL $children "$pid" 2>/dev/null || true; fi'
+        )
+
+    @staticmethod
     def name() -> str:
         return "ursa"
 
@@ -124,36 +225,49 @@ class UrsaHarborAgent(BaseInstalledAgent):
             return None
 
     async def install(self, environment: BaseEnvironment) -> None:
+        # Reject host-side configuration errors before doing any work in the
+        # benchmark container.
+        self._validate_config()
         # uv's glibc build can crash under QEMU user-mode emulation (for
         # example, amd64 Terminal-Bench images on an arm64 host). The musl
         # release is statically linked and works both natively and under QEMU.
         uv_version = "0.12.8"
+        python_version_info = tuple(
+            int(part) for part in self.URSA_PYTHON_VERSION.split(".")
+        )
         await self.exec_as_root(
             environment,
             command=(
-                "if ! command -v curl >/dev/null 2>&1 || "
-                "! command -v tar >/dev/null 2>&1; then "
+                "missing_packages=; "
+                'command -v curl >/dev/null 2>&1 || missing_packages="$missing_packages curl"; '
+                'command -v tar >/dev/null 2>&1 || missing_packages="$missing_packages tar"; '
+                'command -v sha256sum >/dev/null 2>&1 || missing_packages="$missing_packages coreutils"; '
+                'if [ -n "$missing_packages" ]; then '
                 "if command -v microdnf >/dev/null; then "
-                "microdnf install -y curl ca-certificates tar && microdnf clean all; "
+                "microdnf install -y ca-certificates $missing_packages && microdnf clean all; "
                 "elif command -v dnf >/dev/null; then "
-                "dnf install -y curl ca-certificates tar && dnf clean all; "
+                "dnf install -y ca-certificates $missing_packages && dnf clean all; "
                 "elif command -v yum >/dev/null; then "
-                "yum install -y curl ca-certificates tar && yum clean all; "
+                "yum install -y ca-certificates $missing_packages && yum clean all; "
                 "elif command -v apk >/dev/null; then "
-                "apk add --no-cache curl ca-certificates tar; "
+                "apk add --no-cache ca-certificates $missing_packages; "
                 "elif command -v apt-get >/dev/null; then "
-                "apt-get update && apt-get install -y curl ca-certificates tar; "
-                "else echo 'curl and tar are required to install uv' >&2; exit 1; fi; fi; "
+                "apt-get update && apt-get install -y ca-certificates $missing_packages; "
+                "else echo 'curl, tar, and sha256sum are required to install uv' >&2; exit 1; fi; fi; "
                 "if ! command -v /opt/uv/uv >/dev/null 2>&1; then "
                 "case $(uname -m) in "
-                "x86_64|amd64) uv_arch=x86_64 ;; "
-                "aarch64|arm64) uv_arch=aarch64 ;; "
+                "x86_64|amd64) uv_arch=x86_64; "
+                "uv_sha256=6ca4597639c97e921fb915e113061ce8e4a14ead9e42a1ead521dbb0a6763795 ;; "
+                "aarch64|arm64) uv_arch=aarch64; "
+                "uv_sha256=975917badc8370163989e5bbe5a7c69bf922d19f8e57cb2652531bbffc935f84 ;; "
                 "*) echo 'unsupported architecture for uv: '$(uname -m) >&2; exit 1 ;; "
-                "esac; mkdir -p /opt/uv; "
+                "esac; mkdir -p /opt/uv; uv_archive=/tmp/uv.tar.gz; "
                 f"curl -LsSf https://github.com/astral-sh/uv/releases/download/{uv_version}/"
-                'uv-${uv_arch}-unknown-linux-musl.tar.gz | '
-                "tar -xz --strip-components=1 -C /opt/uv; fi; "
-                "/opt/uv/uv python install 3.12"
+                'uv-${uv_arch}-unknown-linux-musl.tar.gz -o "$uv_archive"; '
+                'echo "$uv_sha256  $uv_archive" | sha256sum -c -; '
+                'tar -xzf "$uv_archive" --strip-components=1 -C /opt/uv; '
+                'rm -f "$uv_archive"; fi; '
+                f"/opt/uv/uv python install {self.URSA_PYTHON_VERSION}"
             ),
             timeout_sec=600,
         )
@@ -172,23 +286,17 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 prefix="ursa-harbor-source-"
             ) as temp_dir:
                 staged_source = Path(temp_dir) / "ursa"
-                shutil.copytree(
-                    self.ursa_source_dir,
-                    staged_source,
-                    ignore=shutil.ignore_patterns(
-                        ".git",
-                        ".venv",
-                        ".pytest_cache",
-                        ".ruff_cache",
-                        "__pycache__",
-                        "jobs",
-                    ),
-                )
+                self._stage_source(self.ursa_source_dir, staged_source)
                 await environment.upload_dir(staged_source, remote_source)
             install_target = remote_source
         await self.exec_as_root(
             environment,
-            command="/opt/uv/uv venv --python 3.12 /opt/ursa",
+            command=(
+                "/opt/uv/uv venv --managed-python --python "
+                f"{self.URSA_PYTHON_VERSION} /opt/ursa && "
+                f"{self.URSA_PYTHON} -c \"import sys; "
+                f"assert sys.version_info[:2] == {python_version_info!r}\""
+            ),
             timeout_sec=600,
         )
         packages = [self._install_target(install_target), *self.extra_packages]
@@ -201,7 +309,6 @@ class UrsaHarborAgent(BaseInstalledAgent):
             ),
             timeout_sec=900,
         )
-        self._validate_config()
         self._remote_config_file = f"/tmp/ursa-config{self.config_file.suffix}"
         await environment.upload_file(
             self.config_file, self._remote_config_file
@@ -237,22 +344,14 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 ),
                 env=self.model_connection.env,
                 cwd="/workspace",
-                timeout_sec=self.command_timeout_sec,
+                timeout_sec=None,
             )
         except asyncio.CancelledError:
             try:
                 await asyncio.shield(
                     self.exec_as_root(
                         environment,
-                        command=(
-                            f"if [ -s {runner_pid_file} ]; then "
-                            f"pid=$(cat {runner_pid_file}); "
-                            "kill -TERM \"$pid\" 2>/dev/null || true; "
-                            "i=0; while kill -0 \"$pid\" 2>/dev/null "
-                            "&& [ \"$i\" -lt 20 ]; do "
-                            "sleep 0.1; i=$((i + 1)); done; "
-                            "kill -KILL \"$pid\" 2>/dev/null || true; fi"
-                        ),
+                        command=self._terminate_runner_command(runner_pid_file),
                         timeout_sec=10,
                     )
                 )
@@ -263,7 +362,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         line = next(
             (
                 line
-                for line in reversed(result.stdout.splitlines())
+                for line in reversed((result.stdout or "").splitlines())
                 if line.startswith(marker)
             ),
             None,
@@ -276,7 +375,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
             context.cost_usd = data.get("cost_usd")
             return
         raise RuntimeError(
-            "URSA runner exited without an URSA_HARBOR_RESULT record"
+            "URSA runner exited without an URSA_HARBOR_RESULT record: "
+            + (result.stderr or "no output")
         )
 
 
