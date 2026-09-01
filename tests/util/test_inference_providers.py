@@ -6,7 +6,58 @@ from pydantic import SecretStr
 from ursa.cli.config import InferenceProviderConfig, ModelConfig
 from ursa.util import inference_providers
 from ursa.util.inference_providers import ProviderModel
-from ursa.util.secrets import SecretReference
+from ursa.util.secrets import (
+    SecretReference,
+    externalize_secret_references,
+)
+
+
+def test_externalize_secrets_resolves_provider_keyring_on_host(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "keyring.get_password",
+        lambda service, username: calls.append((service, username)) or "key",
+    )
+
+    projected, secret_env = externalize_secret_references({
+        "inference_providers": {"openai": {"api_key": {"keyring": True}}}
+    })
+
+    assert calls == [("ursa", "openai")]
+    assert projected["inference_providers"]["openai"]["api_key"] == {
+        "env": "URSA_HARBOR_SECRET_0"
+    }
+    assert secret_env == {"URSA_HARBOR_SECRET_0": "key"}
+
+
+def test_externalize_secrets_preserves_template_for_container(monkeypatch):
+    monkeypatch.setenv("MCP_TOKEN", "token")
+
+    projected, secret_env = externalize_secret_references({
+        "mcp_servers": {
+            "tools": {
+                "headers": {
+                    "Authorization": {
+                        "env": "MCP_TOKEN",
+                        "template": "Bearer %s",
+                    }
+                }
+            }
+        }
+    })
+
+    assert projected["mcp_servers"]["tools"]["headers"]["Authorization"] == {
+        "env": "URSA_HARBOR_SECRET_0",
+        "template": "Bearer %s",
+    }
+    assert secret_env == {"URSA_HARBOR_SECRET_0": "token"}
+
+
+def test_externalize_secrets_rejects_missing_host_environment(monkeypatch):
+    monkeypatch.delenv("MISSING_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match=r"api_key.*MISSING_TOKEN"):
+        externalize_secret_references({"api_key": {"env": "MISSING_TOKEN"}})
 
 
 @pytest.fixture(autouse=True)

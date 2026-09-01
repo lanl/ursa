@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sqlite3
 import subprocess
@@ -33,6 +34,11 @@ from ursa.integrations.harbor_singularity import (  # noqa: E402
 def _config(path: Path) -> Path:
     path.write_text("llm_model:\n  model: gpt-4.1-nano\n")
     return path
+
+
+@pytest.fixture(autouse=True)
+def _host_openai_key(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai-key")
 
 
 def test_usage_reads_current_metrics_schema(tmp_path):
@@ -241,6 +247,80 @@ def test_factory_accepts_arbitrary_ursa_subclass(tmp_path):
     assert bound.name() == "ursa"
 
 
+def test_runtime_config_does_not_require_unused_openai_secret(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  ollama:\n"
+        "    model_provider: ollama\n"
+        "    base_url: http://localhost:11434\n"
+        "llm_model:\n"
+        "  model: ignored\n"
+        "  inference_provider: ollama\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="ollama/gemma4:latest",
+        config_file=config_file,
+    )
+
+    runtime_config, secret_env = agent._runtime_config()
+
+    assert secret_env == {}
+    assert "api_key" not in runtime_config["inference_providers"]["openai"]
+
+
+def test_runtime_config_drops_model_secret_when_switching_provider(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("OLD_OPENAI_KEY", raising=False)
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  ollama:\n"
+        "    model_provider: ollama\n"
+        "    base_url: http://localhost:11434\n"
+        "llm_model:\n"
+        "  model: old-model\n"
+        "  model_provider: openai\n"
+        "  api_key:\n"
+        "    env: OLD_OPENAI_KEY\n"
+        "  azure_deployment: old-deployment\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="ollama/gemma4:latest",
+        config_file=config_file,
+    )
+
+    runtime_config, secret_env = agent._runtime_config()
+
+    assert secret_env == {}
+    assert "api_key" not in runtime_config["llm_model"]
+    assert runtime_config["llm_model"]["inference_provider"] == "ollama"
+    assert runtime_config["llm_model"].get("model_provider") is None
+    assert "azure_deployment" not in runtime_config["llm_model"]
+
+
+def test_runtime_config_rejects_generic_environment_interpolation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOKEN", "must-not-enter-runtime-json")
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text("agent_name: ${TOKEN}\n")
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=config_file,
+    )
+
+    with pytest.raises(ValueError, match="agent_name.*explicit.*env"):
+        agent._runtime_config()
+
+
 @pytest.mark.asyncio
 async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     config_file = _config(tmp_path / "ursa.yaml")
@@ -257,13 +337,22 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     async def fake_exec_as_root(environment, command, **kwargs):
         commands.append(command)
 
+    async def fake_exec_as_agent(environment, command, **kwargs):
+        assert command == "pwd"
+        return SimpleNamespace(stdout="/app\n")
+
     class FakeEnvironment:
         async def upload_file(self, source, destination):
-            uploads.append((source, destination))
+            uploads.append((
+                json.loads(source.read_text()),
+                destination,
+                source.stat().st_mode & 0o777,
+            ))
 
     uploads = []
 
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
+    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
 
     await agent.install(FakeEnvironment())
 
@@ -286,7 +375,14 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
         and "scipy" in command
         for command in commands
     )
-    assert uploads == [(config_file, "/tmp/ursa-config.yaml")]
+    runtime_config, destination, mode = uploads[0]
+    assert destination == "/tmp/ursa-config.json"
+    assert mode == 0o600
+    assert runtime_config["inference_providers"]["openai"]["api_key"] == {
+        "env": "URSA_HARBOR_SECRET_0"
+    }
+    assert agent._secret_env == {"URSA_HARBOR_SECRET_0": "host-openai-key"}
+    assert agent._workspace == "/app"
 
 
 @pytest.mark.asyncio
@@ -310,6 +406,9 @@ async def test_source_install_does_not_upload_secrets(tmp_path, monkeypatch):
     async def fake_exec_as_root(*args, **kwargs):
         pass
 
+    async def fake_exec_as_agent(*args, **kwargs):
+        return SimpleNamespace(stdout="/app\n")
+
     class FakeEnvironment:
         async def upload_dir(self, staged, destination):
             uploaded.extend(
@@ -321,6 +420,7 @@ async def test_source_install_does_not_upload_secrets(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
+    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
     await agent.install(FakeEnvironment())
 
     assert "module.py" in uploaded
@@ -435,11 +535,14 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
         config_file=_config(tmp_path / "ursa.yaml"),
     )
     agent._remote_config_file = "/tmp/ursa-config.yaml"
+    agent._secret_env = {"URSA_HARBOR_SECRET_0": "resolved-on-host"}
     observed_timeout = object()
+    observed_env = None
 
     async def fake_exec_as_agent(*args, **kwargs):
-        nonlocal observed_timeout
+        nonlocal observed_env, observed_timeout
         observed_timeout = kwargs["timeout_sec"]
+        observed_env = kwargs["env"]
         return SimpleNamespace(
             return_code=0,
             stdout='URSA_HARBOR_RESULT={"result": null}\n',
@@ -450,6 +553,7 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
     await agent.run("task", object(), SimpleNamespace())
 
     assert observed_timeout is None
+    assert observed_env["URSA_HARBOR_SECRET_0"] == "resolved-on-host"
 
 
 @pytest.mark.asyncio
