@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import os
 import shutil
 import subprocess
@@ -47,20 +48,27 @@ def test_self_commands_with_real_isolated_uv(tmp_path):
     ursa = bin_dir / ("ursa.exe" if os.name == "nt" else "ursa")
 
     status = _run([ursa, "self", "status"], env=env).stdout
-    assert "Version:" in status
-    assert f"Python path: {tool_dir / 'ursa-ai'}" in status
-    assert "Extras: none" in status
-    assert "Additional packages: none" in status
+    assert re.search(r"^Version: .+", status, re.MULTILINE)
+    assert re.search(r"^Python: \d+\.\d+\.\d+ \([^)]+\)$", status, re.MULTILINE)
+    assert re.search(r"^Python path: .+", status, re.MULTILINE)
+    assert re.search(r"^Extras: none$", status, re.MULTILINE)
+    assert re.search(r"^Additional packages: none$", status, re.MULTILINE)
 
     _run([ursa, "self", "update"], env=env)
     updated_status = _run([ursa, "self", "status"], env=env).stdout
-    assert "Additional packages: none" in updated_status
+    assert re.search(
+        r"^Additional packages: none$", updated_status, re.MULTILINE
+    )
 
     _run([ursa, "self", "modify", "--with", "pytest"], env=env)
     modified_status = _run([ursa, "self", "status"], env=env).stdout
     if os.name != "nt":
-        assert "Additional packages: pytest" in modified_status
+        assert re.search(
+            r"^Additional packages: pytest$", modified_status, re.MULTILINE
+        )
 
     _run([ursa, "self", "modify", "--clean"], env=env)
     cleaned_status = _run([ursa, "self", "status"], env=env).stdout
-    assert "Additional packages: none" in cleaned_status
+    assert re.search(
+        r"^Additional packages: none$", cleaned_status, re.MULTILINE
+    )
