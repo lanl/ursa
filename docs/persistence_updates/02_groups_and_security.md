@@ -103,7 +103,7 @@ For non-default groups, URSA enforces that the model base URL matches the group'
 This applies in main runtime paths including:
 
 - base agent construction
-- CLI/HITL model setup
+- TUI model setup
 - RAG agent model and embedding setup
 - RAG ingest/query commands
 
@@ -131,4 +131,4 @@ URSA copies that group config into the RAG group when creating the RAG group if 
 - Use named groups for projects that must stay on approved model endpoints.
 - Keep group names simple and descriptive.
 - Update group configs when endpoint policy changes.
-- Launch the dashboard with the same group you use from the CLI for a project.
+- Launch the dashboard with the same group you use in the TUI for a project.

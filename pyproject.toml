@@ -26,7 +26,7 @@ dependencies = [
     "pillow>=11.3.0,<12.0",
     "pymupdf>=1.28.0,<2.0",
     "pymupdf4llm>=0.3.4,<1.0",
-    "rich>=13.9.4,<14.0",
+    "rich>=14.2.0,<15.0",
     "ddgs>=9.14.4",
     "typer>=0.16.1",
     "truststore>=0.10.4,<1.0",
@@ -41,13 +41,15 @@ dependencies = [
     "langchain-google-genai>=4.2",
     "langchain-text-splitters>=1.0.0",
     "langchain-ollama>=1.0.0",
-    "langchain-mcp-adapters>=0.1.12,<0.2",
+    "langchain-mcp-adapters~=0.2.2",
     "pydantic>=2.12.0,<3.0",
     "mcp>=1.20.0,<2.0",
     "jsonargparse>=4.45.0",
     "fastmcp~=3.0",
     "pyyaml>=6.0.3",
     "justext>=3.0.2",
+    "textual[syntax]>=8.2.8,<9.0",
+    "keyring>=25.0.0,<26.0.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -70,7 +72,6 @@ Issues = "https://github.com/lanl/ursa/issues"
 [project.optional-dependencies]
 dashboard = [
     "fastapi>=0.120.0",
-    "keyring>=25.0.0,<26.0.0",
     "uvicorn>=0.37.0",
 ]
 fm = [
@@ -132,7 +133,7 @@ pycodestyle.max-doc-length = 80
 "examples/**/*.py" = ["T201", "TID251"]
 
 [tool.setuptools.package-data]
-ursa = ["observability/pricing.json"]
+ursa = ["cli/tui/*.tcss", "observability/pricing.json"]
 ursa_dashboard = ["logo/logo.png"]
 
 [tool.pytest.ini_options]

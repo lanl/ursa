@@ -183,13 +183,18 @@ A team member can inherit the default `llm` passed to the environment, or provid
 `model:` block to use a different model endpoint:
 
 ```yaml
+inference_providers:
+  openai:
+    api_key:
+      keyring: true
+
 members:
   - name: fast_researcher
     role: Drafts quick background summaries
     agent: ChatAgent
     model:
       model: openai:gpt-4o-mini
-      api_key_env: OPENAI_API_KEY
+      inference_provider: openai
 
   - name: local_checker
     role: Checks reasoning with a local model
@@ -197,6 +202,13 @@ members:
     model:
       model: ollama:llama3.1
       base_url: http://localhost:11434
+```
+
+Here `keyring: true` uses `openai`, the inference-provider name, as the
+username under the fixed `ursa` keyring service:
+
+```bash
+ursa auth login openai
 ```
 
 This is optional for teams, but it can be a good way to match model cost,

@@ -9,7 +9,6 @@ from typing import Annotated, Any, Literal, Mapping, TypedDict, cast
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool
 from langchain_core.messages import (
-    AIMessage,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -268,24 +267,37 @@ class DeepReviewAgent(AgentWithTools, BaseAgent[DeepReviewState]):
         new_phase_messages: list[BaseMessage] = []
         if state.get("active_phase") != phase:
             new_phase_messages = [
-                SystemMessage(content=self._role_system_prompt(phase)),
                 HumanMessage(content=self._phase_prompt(phase, state)),
             ]
             messages.extend(new_phase_messages)
 
+        # The phase's role prompt is prepended per request and never
+        # persisted: providers such as Anthropic require system messages
+        # to form a leading prefix, so the accumulated channel must stay
+        # system-free. Persisted systems from checkpoints created before
+        # this change are filtered from the outbound request only.
+        request_messages = [
+            SystemMessage(content=self._role_system_prompt(phase)),
+            *(
+                message
+                for message in messages
+                if not isinstance(message, SystemMessage)
+            ),
+        ]
+
         try:
             response = self.tool_llm.invoke(
-                messages,
+                request_messages,
                 self.build_config(tags=["deep_review", phase]),
             )
-        except Exception as exc:  # noqa: BLE001
-            response = AIMessage(content=f"Deep-review phase error: {exc}")
+        except Exception as exc:
             events.emit(
                 "Deep-review phase failed",
                 stage=f"{phase}_error",
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
+            raise
 
         update: dict[str, Any] = {
             "messages": [*new_phase_messages, response],
@@ -387,7 +399,13 @@ class DeepReviewAgent(AgentWithTools, BaseAgent[DeepReviewState]):
         state: DeepReviewState,
         config: RunnableConfig | None = None,
     ) -> DeepReviewState:
-        return state.copy()
+        # Return only this node's own update: langgraph applies a node's
+        # return value through each key's reducer, so returning the full
+        # accumulated state re-adds every operator.add key to itself.
+        return cast(
+            DeepReviewState,
+            {"visited_sites": self._collect_visited_sites(state)},
+        )
 
     @staticmethod
     def _escape_latex(text: Any) -> str:

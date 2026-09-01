@@ -97,7 +97,7 @@ By default, the agent writes artifacts under the agent den:
 - final direct-summarization file: `acq_summaries/final_summary.txt`
 - RAG workflow artifacts are managed by the shared RAG path when `rag_embedding` is provided.
 
-## CLI
+## TUI
 
 `OSTIAgent` is exported from `ursa.agents` for Python/API use:
 
@@ -105,4 +105,4 @@ By default, the agent writes artifacts under the agent den:
 from ursa.agents import OSTIAgent
 ```
 
-In the inspected source, it is not currently registered as an interactive CLI short name.
+In the inspected source, it is not currently registered as a TUI short name.

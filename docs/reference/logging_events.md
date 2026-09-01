@@ -11,7 +11,7 @@ of using `print(...)`, `console.print(...)`, or Rich directly in agents and
 tools.
 
 See the [Python scripts guide][getting-started-python-scripts] for running
-agents, the [CLI guide][getting-started-cli] for URSA's interactive interface,
+agents, the [TUI guide][getting-started-tui] for URSA's interactive interface,
 and the [dashboard guide][getting-started-web-dashboard] for the web interface.
 
 ## Event model
@@ -211,7 +211,7 @@ Use the same configuration with `await agent.ainvoke(...)`. Pass callbacks at
 the top-level invocation when possible so nested agents and tools share one
 event stream.
 
-The CLI uses
+The TUI uses
 [`HITLLogEventHandler`][ursa.cli.callbacks.HITLLogEventHandler]. The
 default
 [`EventLoggingHandler`][ursa.util.events.EventLoggingHandler]

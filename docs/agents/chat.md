@@ -21,7 +21,7 @@ state = agent.invoke("Summarize the files in this workspace.")
 print(agent.format_result(state))
 ```
 
-For conversational continuation, reuse the returned state through `format_query` or let the CLI maintain state for you.
+For conversational continuation, reuse the returned state through `format_query` or let the TUI maintain state for you.
 
 ```python
 state = agent.invoke("Remember that this project studies alloy phase stability.")
@@ -59,7 +59,7 @@ When `use_web=True`, it also binds:
 - `run_osti_search`
 - `run_arxiv_search`
 
-If persistent RAG tools are configured through `rag_tools`, `AgentWithTools` can expose those as additional tools. MCP tools can also be attached in the CLI when MCP servers are configured.
+If persistent RAG tools are configured through `rag_tools`, `AgentWithTools` can expose those as additional tools. MCP tools can also be attached in the TUI when MCP servers are configured.
 
 ## Graph behavior
 
@@ -75,11 +75,12 @@ This means `ChatAgent` can use multiple tools over multiple turns, but it does n
 
 ## BasicChatAgent
 
-The module also contains `BasicChatAgent`, a simple chat-only implementation with no tool loop. It is useful for minimal conversational behavior, but `ChatAgent` is the public, tool-capable chat agent exported by `ursa.agents` and used by the CLI `chat` behavior.
+The module also contains `BasicChatAgent`, a simple chat-only implementation with no tool loop. It is useful for minimal conversational behavior, but `ChatAgent` is the public, tool-capable chat agent exported by `ursa.agents` and used by the TUI `chat` behavior.
 
-## CLI usage
+## TUI usage
 
-In the interactive URSA CLI, use the `chat` agent. Web/search tools are opt-in:
+In the URSA TUI, use the `chat` agent. Web/search tools are opt-in through a CLI
+flag:
 
 ```bash
 ursa --use-web
