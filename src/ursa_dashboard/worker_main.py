@@ -75,6 +75,7 @@ def _api_key_from_config(
 
     env_name = str(config.get("api_key_env") or "").strip()
     if not env_name and api_key_reference is not None:
+        assert api_key_reference.keyring is None, "Keyring not currently supported here. Use API_KEY_ENV for setting the key."
         env_name = str(api_key_reference.env or "").strip()
     if not env_name:
         return None
