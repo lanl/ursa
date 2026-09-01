@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -148,6 +149,31 @@ async def test_cancelled_run_terminates_container_runner(tmp_path, monkeypatch):
     assert len(cleanup_commands) == 1
     assert "kill -TERM" in cleanup_commands[0]
     assert "kill -KILL" in cleanup_commands[0]
+
+
+@pytest.mark.asyncio
+async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+    )
+    agent._remote_config_file = "/tmp/ursa-config.yaml"
+    observed_timeout = object()
+
+    async def fake_exec_as_agent(*args, **kwargs):
+        nonlocal observed_timeout
+        observed_timeout = kwargs["timeout_sec"]
+        return SimpleNamespace(
+            return_code=0,
+            stdout='URSA_HARBOR_RESULT={"result": null}\n',
+        )
+
+    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+
+    await agent.run("task", object(), SimpleNamespace())
+
+    assert observed_timeout is None
 
 
 def test_harbor_model_overrides_ursa_model():
