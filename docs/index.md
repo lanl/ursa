@@ -24,7 +24,7 @@ Use URSA when you want to:
 We recommend installing with [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install 'ursa[dashboard]'
+uv tool install --python 3.13 'ursa-ai[dashboard]'
 ```
 
 See [Getting started][getting-started] for installation alternatives and a

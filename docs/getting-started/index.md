@@ -5,7 +5,7 @@ the terminal interface and browser dashboard. OpenAI models work without a confi
 file; configuration is only needed when you want to change a default or use a
 different endpoint.
 
-## 1. Install URSA
+## Install URSA
 
 URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
 
@@ -15,14 +15,10 @@ URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
     needed, then install URSA and the dashboard in an isolated tool environment:
 
     ```bash
-    uv tool install 'ursa[dashboard]'
+    uv tool install --python 3.13 'ursa-ai[dashboard]'
     ```
 
-    Upgrade it later with:
-
-    ```bash
-    uv tool upgrade ursa
-    ```
+    Update URSA with: `ursa self update` or `uv tool upgrade ursa-ai`
 
 === "venv + pip"
 
@@ -49,7 +45,7 @@ URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
 === "Conda + pip"
 
     ```bash
-    conda create -y -n ursa-env python=3.12
+    conda create -y -n ursa-env python=3.13
     conda activate ursa-env
     python -m pip install 'ursa-ai[dashboard]'
     ```
@@ -61,7 +57,7 @@ ursa --help
 ursa-dashboard --help
 ```
 
-## 2. Start with the built-in OpenAI configuration
+## Start with the built-in OpenAI configuration
 
 Set your OpenAI API key and launch URSA:
 
@@ -88,7 +84,7 @@ unnecessary.
     disposable exercise directory, or pass `--workspace` with a directory you
     are comfortable modifying.
 
-## 3. Optional: customize your user configuration
+## Optional: customize your user configuration
 
 Use a user config for defaults that should follow you across projects. Do not
 copy the same `config.yaml` into every project.
@@ -115,7 +111,7 @@ ursa --print-config=user,resolved
 
 See [Configuration][configuration] for other providers and precedence rules.
 
-## 4. Learn the TUI
+## Learn the TUI
 
 Run `ursa`. The welcome panel confirms the active model, workspace, and agent.
 
@@ -149,7 +145,7 @@ ursa --name tutorial
 The [TUI guide][getting-started-tui] covers commands, web-tool opt-in, and named
 agents in more detail.
 
-## 5. Use the dashboard
+## Use the dashboard
 
 Launch the browser interface:
 
@@ -171,7 +167,7 @@ managed in **Settings** and each dashboard session has an explicit workspace.
 See the [dashboard guide][getting-started-web-dashboard] for credential storage,
 remote-access safety, and environment runs.
 
-## 6. Run an example
+## Run an example
 
 Continue with the [examples gallery][examples]. The environment walkthrough is
 a good first exercise; the Nomad/MIST example shows how URSA can call a served

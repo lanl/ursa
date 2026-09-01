@@ -3,7 +3,7 @@
 You can install `ursa` as a command line app with `pip install`; or with [`uv`](https://docs.astral.sh/uv/) via
 
 ```bash
-uv tool install 'ursa[dashboard]'
+uv tool install --python 3.13 'ursa-ai[dashboard]'
 ```
 
 To use the command line app, run
@@ -43,3 +43,13 @@ You can get a list of available command line options via
 ```bash
 ursa --help
 ```
+
+Inspect the running URSA and Python installation with:
+
+```bash
+ursa self status
+```
+
+When installed with `uv tool install`, run `ursa self update` to update URSA
+or `ursa self modify --help` to change extras, additional packages, or the
+selected version/source revision.
