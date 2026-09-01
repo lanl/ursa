@@ -17,7 +17,14 @@ from types import MappingProxyType
 
 import pytest
 
-otel = pytest.importorskip("opentelemetry")
+# Skip on the actual requirement (the otel extra's OTLP/HTTP exporter), not on
+# opentelemetry-core, which can be present transitively (e.g. via chromadb)
+# without the extra installed. Guarding on core alone would let the hard import
+# below raise a collection ERROR instead of skipping cleanly.
+pytest.importorskip(
+    "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+    exc_type=ImportError,
+)
 
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: E402
     OTLPSpanExporter,
