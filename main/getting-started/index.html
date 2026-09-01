@@ -350,54 +350,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-install-ursa" class="md-nav__link">
+  <a href="#install-ursa" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Install URSA
+      Install URSA
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-start-with-the-built-in-openai-configuration" class="md-nav__link">
+  <a href="#start-with-the-built-in-openai-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Start with the built-in OpenAI configuration
+      Start with the built-in OpenAI configuration
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-optional-customize-your-user-configuration" class="md-nav__link">
+  <a href="#optional-customize-your-user-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Optional: customize your user configuration
+      Optional: customize your user configuration
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-learn-the-tui" class="md-nav__link">
+  <a href="#learn-the-tui" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Learn the TUI
+      Learn the TUI
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-use-the-dashboard" class="md-nav__link">
+  <a href="#use-the-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Use the dashboard
+      Use the dashboard
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-run-an-example" class="md-nav__link">
+  <a href="#run-an-example" class="md-nav__link">
     <span class="md-ellipsis">
-      6. Run an example
+      Run an example
     </span>
   </a>
   
@@ -1980,54 +1980,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-install-ursa" class="md-nav__link">
+  <a href="#install-ursa" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Install URSA
+      Install URSA
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-start-with-the-built-in-openai-configuration" class="md-nav__link">
+  <a href="#start-with-the-built-in-openai-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Start with the built-in OpenAI configuration
+      Start with the built-in OpenAI configuration
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-optional-customize-your-user-configuration" class="md-nav__link">
+  <a href="#optional-customize-your-user-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Optional: customize your user configuration
+      Optional: customize your user configuration
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-learn-the-tui" class="md-nav__link">
+  <a href="#learn-the-tui" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Learn the TUI
+      Learn the TUI
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-use-the-dashboard" class="md-nav__link">
+  <a href="#use-the-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Use the dashboard
+      Use the dashboard
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-run-an-example" class="md-nav__link">
+  <a href="#run-an-example" class="md-nav__link">
     <span class="md-ellipsis">
-      6. Run an example
+      Run an example
     </span>
   </a>
   
@@ -2057,64 +2057,62 @@
 the terminal interface and browser dashboard. OpenAI models work without a config
 file; configuration is only needed when you want to change a default or use a
 different endpoint.</p>
-<h2 id="1-install-ursa">1. Install URSA<a class="headerlink" href="#1-install-ursa" title="Permanent link">&para;</a></h2>
+<h2 id="install-ursa">Install URSA<a class="headerlink" href="#install-ursa" title="Permanent link">&para;</a></h2>
 <p>URSA requires Python 3.11 or newer. The <code>uv</code> tool installation is recommended:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">uv tool (recommended)</label><label for="__tabbed_1_2">venv + pip</label><label for="__tabbed_1_3">Conda + pip</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <p>Install <a href="https://docs.astral.sh/uv/getting-started/installation/"><code>uv</code></a> if
 needed, then install URSA and the dashboard in an isolated tool environment:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.13<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
 </code></pre></div>
-<p>Upgrade it later with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>upgrade<span class="w"> </span>ursa
-</code></pre></div>
+<p>Update URSA with: <code>ursa self update</code> or <code>uv tool upgrade ursa-ai</code></p>
 </div>
 <div class="tabbed-block">
 <p>Use this option when you already manage Python virtual environments:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">macOS/Linux</label><label for="__tabbed_2_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">py</span> <span class="p">-</span><span class="n">3</span> <span class="n">-m</span> <span class="n">venv</span> <span class="p">.</span><span class="n">venv</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-upgrade</span> <span class="n">pip</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">py</span> <span class="p">-</span><span class="n">3</span> <span class="n">-m</span> <span class="n">venv</span> <span class="p">.</span><span class="n">venv</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-upgrade</span> <span class="n">pip</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
 </code></pre></div>
 </div>
 </div>
 </div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>conda<span class="w"> </span>create<span class="w"> </span>-y<span class="w"> </span>-n<span class="w"> </span>ursa-env<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.12
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>conda<span class="w"> </span>activate<span class="w"> </span>ursa-env
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>conda<span class="w"> </span>create<span class="w"> </span>-y<span class="w"> </span>-n<span class="w"> </span>ursa-env<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.13
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>conda<span class="w"> </span>activate<span class="w"> </span>ursa-env
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
 </code></pre></div>
 </div>
 </div>
 </div>
 <p>Verify both applications:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>--help
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ursa-dashboard<span class="w"> </span>--help
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>--help
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>ursa-dashboard<span class="w"> </span>--help
 </code></pre></div>
-<h2 id="2-start-with-the-built-in-openai-configuration">2. Start with the built-in OpenAI configuration<a class="headerlink" href="#2-start-with-the-built-in-openai-configuration" title="Permanent link">&para;</a></h2>
+<h2 id="start-with-the-built-in-openai-configuration">Start with the built-in OpenAI configuration<a class="headerlink" href="#start-with-the-built-in-openai-configuration" title="Permanent link">&para;</a></h2>
 <p>Set your OpenAI API key and launch URSA:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">macOS/Linux</label><label for="__tabbed_3_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ursa
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;...&quot;</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ursa
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">ursa</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">$env:OPENAI_API_KEY</span> <span class="p">=</span> <span class="s2">&quot;...&quot;</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">ursa</span>
 </code></pre></div>
 </div>
 </div>
@@ -2128,7 +2126,7 @@ unnecessary.</p>
 disposable exercise directory, or pass <code>--workspace</code> with a directory you
 are comfortable modifying.</p>
 </div>
-<h2 id="3-optional-customize-your-user-configuration">3. Optional: customize your user configuration<a class="headerlink" href="#3-optional-customize-your-user-configuration" title="Permanent link">&para;</a></h2>
+<h2 id="optional-customize-your-user-configuration">Optional: customize your user configuration<a class="headerlink" href="#optional-customize-your-user-configuration" title="Permanent link">&para;</a></h2>
 <p>Use a user config for defaults that should follow you across projects. Do not
 copy the same <code>config.yaml</code> into every project.</p>
 <table>
@@ -2155,14 +2153,14 @@ copy the same <code>config.yaml</code> into every project.</p>
 </table>
 <p>For example, this changes only the embedding model and leaves the built-in
 OpenAI chat configuration intact:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">emb_model</span><span class="p">:</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:text-embedding-3-large</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">emb_model</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:text-embedding-3-large</span>
 </code></pre></div>
 <p>Inspect the merged user configuration with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ursa<span class="w"> </span>--print-config<span class="o">=</span>user,resolved
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ursa<span class="w"> </span>--print-config<span class="o">=</span>user,resolved
 </code></pre></div>
 <p>See <a class="autorefs autorefs-internal" href="../configuration/#configuration">Configuration</a> for other providers and precedence rules.</p>
-<h2 id="4-learn-the-tui">4. Learn the TUI<a class="headerlink" href="#4-learn-the-tui" title="Permanent link">&para;</a></h2>
+<h2 id="learn-the-tui">Learn the TUI<a class="headerlink" href="#learn-the-tui" title="Permanent link">&para;</a></h2>
 <p>Run <code>ursa</code>. The welcome panel confirms the active model, workspace, and agent.</p>
 <ul>
 <li>Enter ordinary text to chat.</li>
@@ -2172,21 +2170,21 @@ OpenAI chat configuration intact:</p>
 <li>Type <code>@</code> to find and insert a workspace file into a prompt.</li>
 </ul>
 <p>Try these in order:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Explain the difference between the chat, planning, and execution agents.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Explain the difference between the chat, planning, and execution agents.
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>#plan Plan a small parameter sweep and describe the outputs we should retain.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>#plan Plan a small parameter sweep and describe the outputs we should retain.
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>#execute Create hello_ursa.txt containing a one-sentence description of this workspace.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>#execute Create hello_ursa.txt containing a one-sentence description of this workspace.
 </code></pre></div>
 <p>Review proposed tool actions before approving them. Use a named agent when you
 want its state to persist between launches:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>tutorial
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>ursa<span class="w"> </span>--name<span class="w"> </span>tutorial
 </code></pre></div>
 <p>The <a class="autorefs autorefs-internal" title="Getting Started - TUI" href="tui/#getting-started-tui">TUI guide</a> covers commands, web-tool opt-in, and named
 agents in more detail.</p>
-<h2 id="5-use-the-dashboard">5. Use the dashboard<a class="headerlink" href="#5-use-the-dashboard" title="Permanent link">&para;</a></h2>
+<h2 id="use-the-dashboard">Use the dashboard<a class="headerlink" href="#use-the-dashboard" title="Permanent link">&para;</a></h2>
 <p>Launch the browser interface:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>ursa-dashboard
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>ursa-dashboard
 </code></pre></div>
 <p>It opens <code>http://127.0.0.1:8080</code>. Then:</p>
 <ol>
@@ -2201,7 +2199,7 @@ agents in more detail.</p>
 managed in <strong>Settings</strong> and each dashboard session has an explicit workspace.
 See the <a class="autorefs autorefs-internal" title="Getting Started - Web Dashboard" href="dashboard/#getting-started-web-dashboard">dashboard guide</a> for credential storage,
 remote-access safety, and environment runs.</p>
-<h2 id="6-run-an-example">6. Run an example<a class="headerlink" href="#6-run-an-example" title="Permanent link">&para;</a></h2>
+<h2 id="run-an-example">Run an example<a class="headerlink" href="#run-an-example" title="Permanent link">&para;</a></h2>
 <p>Continue with the <a class="autorefs autorefs-internal" title="Examples" href="../examples/#examples">examples gallery</a>. The environment walkthrough is
 a good first exercise; the Nomad/MIST example shows how URSA can call a served
 scientific model through MCP.</p>

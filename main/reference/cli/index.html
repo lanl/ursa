@@ -1534,6 +1534,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#self-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      Self management
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-callback-api" class="md-nav__link">
     <span class="md-ellipsis">
       Python callback API
@@ -1980,6 +1989,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#self-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      Self management
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-callback-api" class="md-nav__link">
     <span class="md-ellipsis">
       Python callback API
@@ -2025,6 +2043,7 @@
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>ursa<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--help
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>ursa<span class="w"> </span>rag-ingest<span class="w"> </span>--help
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>ursa<span class="w"> </span>rag-query<span class="w"> </span>--help
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>ursa<span class="w"> </span>self<span class="w"> </span>--help
 </code></pre></div>
 <h2 id="common-top-level-commands">Common top-level commands<a class="headerlink" href="#common-top-level-commands" title="Permanent link">&para;</a></h2>
 <p>URSA configs can be
@@ -2042,9 +2061,33 @@
 <li>managing persistent agents,</li>
 <li>sharing/importing agents,</li>
 <li>managing persistent RAG collections,</li>
+<li>inspecting and managing the URSA installation,</li>
 <li>non-interactive execution.</li>
 </ul>
 <p>Use <code>ursa --help</code> to confirm the exact set in your installed version.</p>
+<h2 id="self-management">Self management<a class="headerlink" href="#self-management" title="Permanent link">&para;</a></h2>
+<p>Installation status is available for every installation method:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>status
+</code></pre></div>
+<p>It reports the URSA version and the running Python version and executable.
+For uv tool installations, it also reports the selected URSA extras and any
+additional packages installed in the tool environment.</p>
+<p>When URSA was installed with <code>uv tool install</code>, it can update itself while
+preserving the installation recipe:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>update
+</code></pre></div>
+<p>Use <code>modify</code> to change the recipe. Options can add extras or additional
+packages, select an exact release or Git ref, and clear the existing extras
+and additional packages:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--extra<span class="w"> </span>dashboard
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--with<span class="w"> </span>some-package
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.2.3
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--ref<span class="w"> </span>main
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--clean<span class="w"> </span>--extra<span class="w"> </span>fm
+</code></pre></div>
+<p>Run <code>ursa self modify --help</code> for the complete option list. For pip, Conda,
+and other installations, use the same package manager that installed URSA;
+<code>self update</code> and <code>self modify</code> will reject installations not managed by uv.</p>
 <h2 id="python-callback-api">Python callback API<a class="headerlink" href="#python-callback-api" title="Permanent link">&para;</a></h2>
 
 

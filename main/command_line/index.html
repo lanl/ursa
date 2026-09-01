@@ -1907,7 +1907,7 @@
 
 <h2 id="command-line-usage">Command Line Usage<a class="headerlink" href="#command-line-usage" title="Permanent link">&para;</a></h2>
 <p>You can install <code>ursa</code> as a command line app with <code>pip install</code>; or with <a href="https://docs.astral.sh/uv/"><code>uv</code></a> via</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.13<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span>
 </code></pre></div>
 <p>To use the command line app, run</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ursa<span class="w"> </span>--llm_model.model<span class="w"> </span>openai:gpt-5.2
@@ -1932,6 +1932,12 @@
 <p>You can get a list of available command line options via
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>--help
 </code></pre></div></p>
+<p>Inspect the running URSA and Python installation with:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>status
+</code></pre></div>
+<p>When installed with <code>uv tool install</code>, run <code>ursa self update</code> to update URSA
+or <code>ursa self modify --help</code> to change extras, additional packages, or the
+selected version/source revision.</p>
 
 
 

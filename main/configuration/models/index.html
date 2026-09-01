@@ -2071,12 +2071,13 @@
 
 
 <h1 id="models-and-inference-providers">Models and inference providers<a class="headerlink" href="#models-and-inference-providers" title="Permanent link">&para;</a></h1>
-<p>URSA initializes chat and embedding models through LangChain. A model name
-normally uses <code>&lt;provider&gt;:&lt;model-name&gt;</code>. Connection settings belong in a named
-<code>inference_providers</code> entry; <code>llm_model</code> and <code>emb_model</code> select that entry with
-<code>inference_provider</code>.</p>
+<p>URSA initializes chat and embedding models through LangChain. Model names
+normally use the form <code>&lt;provider&gt;:&lt;model-name&gt;</code>. Connection settings belong in
+an <code>inference_providers</code> entry, and <code>llm_model</code> and <code>emb_model</code> select that
+entry with <code>inference_provider</code>.</p>
 <p>For the standard OpenAI service, no YAML is required. Set <code>OPENAI_API_KEY</code> and
-run <code>ursa</code>; URSA's built-in <code>openai</code> provider supplies the endpoint and defaults.</p>
+run <code>ursa</code>; URSA's built-in <code>openai</code> provider supplies the endpoint and
+defaults.</p>
 <h2 id="hosted-and-local-model-examples">Hosted and local model examples<a class="headerlink" href="#hosted-and-local-model-examples" title="Permanent link">&para;</a></h2>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:6"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><input id="__tabbed_1_6" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">OpenAI (built in)</label><label for="__tabbed_1_2">OpenAI-compatible</label><label for="__tabbed_1_3">Anthropic</label><label for="__tabbed_1_4">Google GenAI</label><label for="__tabbed_1_5">Ollama</label><label for="__tabbed_1_6">Azure OpenAI</label></div>
 <div class="tabbed-content">
@@ -2110,8 +2111,8 @@ run <code>ursa</code>; URSA's built-in <code>openai</code> provider supplies the
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:my-model-name</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">inference_provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">research_gateway</span>
 </code></pre></div>
-<p>Use the provider's actual model name and put the non-secret URL directly in
-the file.</p>
+<p>Use the provider's actual model name, and put the non-secret URL directly
+in the file.</p>
 </div>
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">inference_providers</span><span class="p">:</span>
@@ -2164,7 +2165,7 @@ URSA passes extra model settings through to the LangChain integration.</p>
 </div>
 <h2 id="use-one-provider-for-chat-and-embeddings">Use one provider for chat and embeddings<a class="headerlink" href="#use-one-provider-for-chat-and-embeddings" title="Permanent link">&para;</a></h2>
 <p>Models inherit endpoint and credential values from the selected provider. They
-can share one provider while retaining their own model names:</p>
+can share one provider while using different model names:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">inference_providers</span><span class="p">:</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">lab</span><span class="p">:</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://models.example.edu/v1</span>
@@ -2178,10 +2179,10 @@ can share one provider while retaining their own model names:</p>
 <a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">  </span><span class="nt">inference_provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lab</span>
 </code></pre></div>
 <p>A value set directly on a model overrides the provider value. Set a nullable
-model value to <code>null</code> to clear an inherited value.</p>
+model field to <code>null</code> to clear an inherited value.</p>
 <h2 id="temporary-cli-overrides">Temporary CLI overrides<a class="headerlink" href="#temporary-cli-overrides" title="Permanent link">&para;</a></h2>
-<p>Configuration files are preferable for reusable endpoint settings, but every
-model field can also be overridden for a single run. For example:</p>
+<p>Configuration files are preferable for reusable endpoint settings, but you can
+also override any model field for a single run. For example:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">macOS/Linux</label><label for="__tabbed_3_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -2204,7 +2205,7 @@ variables</a> for the
 complete precedence order.</p>
 <h2 id="tls-verification">TLS verification<a class="headerlink" href="#tls-verification" title="Permanent link">&para;</a></h2>
 <p>URSA verifies TLS certificates by default and loads the operating system trust
-store. For a temporary test endpoint only, verification can be disabled on the
+store. For a temporary test endpoint only, you can disable verification on the
 provider:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">inference_providers</span><span class="p">:</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">test_endpoint</span><span class="p">:</span>
@@ -2216,25 +2217,40 @@ the correct certificate authority instead whenever possible.</p>
 <h2 id="install-additional-integrations">Install additional integrations<a class="headerlink" href="#install-additional-integrations" title="Permanent link">&para;</a></h2>
 <p>URSA includes <code>langchain-openai</code>, <code>langchain-anthropic</code>,
 <code>langchain-google-genai</code>, and <code>langchain-ollama</code>. Other model integrations use
-their corresponding <code>langchain-*</code> package. LangGraph extensions such as durable
-checkpoint backends use <code>langgraph-*</code> packages.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="4:3"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><input id="__tabbed_4_3" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">uv tool installation</label><label for="__tabbed_4_2">uv virtual environment — macOS/Linux</label><label for="__tabbed_4_3">uv virtual environment — Windows PowerShell</label></div>
+the corresponding <code>langchain-*</code> package. LangGraph extensions, such as durable
+checkpoint backends, use <code>langgraph-*</code> packages.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="4:4"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><input id="__tabbed_4_3" name="__tabbed_4" type="radio" /><input id="__tabbed_4_4" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">ursa self</label><label for="__tabbed_4_2">uv tool installation</label><label for="__tabbed_4_3">uv virtual environment — macOS/Linux</label><label for="__tabbed_4_4">uv virtual environment — Windows PowerShell</label></div>
 <div class="tabbed-content">
+<div class="tabbed-block">
+<p>When URSA is installed with <code>uv tool install ursa-ai</code>, you can use
+<code>ursa self modify</code> to add or remove additional packages from your URSA
+installation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--with<span class="w"> </span>langgraph-checkpoint-postgres
+</code></pre></div>
+<p>For an additional model provider, replace the <code>langgraph-*</code> package with
+its integration package, for example <code>--with langchain-groq</code>.</p>
+<p>You can also enable URSA extras with the <code>--extra</code> flag. For example, to
+enable the LAMMPS agent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>ursa<span class="w"> </span>self<span class="w"> </span>modify<span class="w"> </span>--extra<span class="w"> </span>lammps
+</code></pre></div>
+</div>
 <div class="tabbed-block">
 <p>Recreate URSA's isolated tool environment and add the required package with
 <code>--with</code>. This example adds PostgreSQL checkpoint support:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="5:2"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><input id="__tabbed_5_2" name="__tabbed_5" type="radio" /><div class="tabbed-labels"><label for="__tabbed_5_1">macOS/Linux</label><label for="__tabbed_5_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--force<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span>--with<span class="w"> </span>langgraph-checkpoint-postgres<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="s1">&#39;ursa[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--force<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span>--python<span class="w"> </span><span class="m">3</span>.13<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>--with<span class="w"> </span>langgraph-checkpoint-postgres<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="s1">&#39;ursa[dashboard]&#39;</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">uv</span> <span class="n">tool</span> <span class="n">install</span> <span class="p">-</span><span class="n">-force</span> <span class="p">`</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>  <span class="p">-</span><span class="n">-with</span> <span class="n">langgraph-checkpoint-postgres</span> <span class="p">`</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>  <span class="s1">&#39;ursa[dashboard]&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">uv</span> <span class="n">tool</span> <span class="n">install</span> <span class="p">-</span><span class="n">-force</span> <span class="p">`</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>  <span class="p">-</span><span class="n">-python</span> <span class="n">3</span><span class="p">.</span><span class="n">13</span> <span class="p">`</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>  <span class="p">-</span><span class="n">-with</span> <span class="n">langgraph-checkpoint-postgres</span> <span class="p">`</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>  <span class="s1">&#39;ursa[dashboard]&#39;</span>
 </code></pre></div>
 </div>
 </div>
@@ -2243,15 +2259,15 @@ checkpoint backends use <code>langgraph-*</code> packages.</p>
 its integration package, for example <code>--with langchain-groq</code>.</p>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>uv<span class="w"> </span>venv
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span><span class="w"> </span>langgraph-checkpoint-postgres
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>uv<span class="w"> </span>venv
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;ursa-ai[dashboard]&#39;</span><span class="w"> </span>langgraph-checkpoint-postgres
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">uv</span> <span class="n">venv</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="s1">&#39;ursa-ai[dashboard]&#39;</span> <span class="n">langgraph-checkpoint-postgres</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">uv</span> <span class="n">venv</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="s1">&#39;ursa-ai[dashboard]&#39;</span> <span class="n">langgraph-checkpoint-postgres</span>
 </code></pre></div>
 </div>
 </div>
