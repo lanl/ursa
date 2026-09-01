@@ -25,7 +25,7 @@ from ursa.cli.tui.event_cards import (
     TermCard,
     ToolCallCard,
 )
-from ursa.cli.tui.event_cards.term import TERM_TOOLS, terminal_id
+from ursa.cli.tui.event_cards.term import terminal_id
 from ursa.cli.tui.helpers import (
     AGENT_LABELS,
     FILE_TOOLS,
@@ -49,7 +49,6 @@ class Turn(Static):
         self._commands_by_id: dict[str, RunCommandCard] = {}
         self._commands_overlapped = False
         self._tool_calls_by_id: dict[str, ToolCallCard] = {}
-        self._term_calls_by_id: dict[str, TermCard] = {}
         self._terms_by_id: dict[str, TermCard] = {}
         self._edits_by_id: dict[str, EditCard] = {}
         self._summary_count = 0
@@ -111,7 +110,7 @@ class Turn(Static):
         if tool == "run_command":
             await self._run_command_event(payload)
             return
-        if tool in TERM_TOOLS:
+        if tool == "term" or tool.startswith("term_"):
             await self._term_event(payload)
             return
         artifacts = event_artifacts(payload)
@@ -319,95 +318,29 @@ class Turn(Static):
             card.update_event(payload)
 
     async def _term_event(self, payload: Mapping[str, Any]) -> None:
-        """Fold all operations on one managed terminal into one live card."""
+        """Route terminal events by concrete session id only."""
         tool = str(payload.get("tool") or "term")
         run_id = str(payload.get("_run_id") or "")
         result = payload.get("tool_message", payload.get("result"))
         result_id = terminal_id(result)
         term_id = terminal_id(payload) or result_id
-        phase = str(payload.get("phase") or "")
-        card = self._term_calls_by_id.get(run_id) if run_id else None
-        if card is None and term_id is not None:
-            card = self._terms_by_id.get(term_id)
-        reused_provisional = False
-        if card is None and tool == "term" and (phase != "start" or not run_id):
-            # Custom events emitted within a tool may have no run ID (or a
-            # child run ID) even though the ordinary callback already mounted
-            # the launch card. Correlate the only pending launch instead of
-            # producing a second card for the same eventual session.
-            provisional = [
-                candidate
-                for candidate in self.cards.values()
-                if isinstance(candidate, TermCard) and candidate.term_id is None
-            ]
-            if len(provisional) == 1:
-                card = provisional[0]
-                reused_provisional = True
+
+        if term_id is None:
+            await self._default_tool_event(payload)
+            return
+
+        card = self._terms_by_id.get(term_id)
         if card is None:
-            key = self._next_summary_key("term")
+            pending = self._tool_calls_by_id.get(run_id) if run_id else None
+            key = (
+                pending.key
+                if pending is not None and pending.tool == "term"
+                else self._next_summary_key("term")
+            )
             card = TermCard(key, term_id)
             await self._replace_or_mount(key, card)
-            if term_id is not None:
-                self._terms_by_id[term_id] = card
-        if run_id:
-            self._term_calls_by_id[run_id] = card
-        if not (reused_provisional and phase == "start"):
-            card.record_call(tool, payload)
-
-        if tool == "term" and phase in {"end", "error"} and result_id is None:
-            # A short command never leaves a managed session behind. Preserve
-            # the ordinary input/output inspector presentation for it.
-            tool_input = {
-                key: value
-                for key, value in payload.items()
-                if key
-                not in {
-                    "tool",
-                    "phase",
-                    "result",
-                    "error",
-                    "status",
-                    "tool_message",
-                    "_run_id",
-                    "_received_at",
-                }
-            }
-            replacement = ToolCallCard(card.key, tool, tool_input)
-            await self._replace_or_mount(card.key, replacement)
-            for alias, candidate in list(self._term_calls_by_id.items()):
-                if candidate is card:
-                    self._tool_calls_by_id[alias] = replacement
-                    self._term_calls_by_id.pop(alias)
-            replacement.update_event(payload)
-            return
-        if result_id is not None:
-            card.associate(result_id)
-            card = await self._coalesce_term_cards(result_id, card)
-            self._terms_by_id[result_id] = card
-
-    async def _coalesce_term_cards(
-        self, term_id: str, preferred: TermCard
-    ) -> TermCard:
-        """Enforce one card for a known session across callback orderings."""
-        mapped = self._terms_by_id.get(term_id)
-        survivor = mapped if mapped is not None else preferred
-        duplicates = {
-            candidate
-            for candidate in self.cards.values()
-            if isinstance(candidate, TermCard)
-            and candidate.term_id == term_id
-            and candidate is not survivor
-        }
-        if preferred is not survivor:
-            duplicates.add(preferred)
-        for duplicate in duplicates:
-            survivor.absorb(duplicate)
-            for alias, candidate in self._term_calls_by_id.items():
-                if candidate is duplicate:
-                    self._term_calls_by_id[alias] = survivor
-            await duplicate.remove()
-            self.cards.pop(duplicate.key, None)
-        return survivor
+            self._terms_by_id[term_id] = card
+        card.record_call(tool, payload)
 
     def _latest_file_card(
         self, operation: str, path: str
