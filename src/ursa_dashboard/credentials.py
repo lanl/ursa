@@ -257,6 +257,11 @@ def resolve_api_key(
 
     expected_id = credential_id(group, kind)
     configured_id = str(config.get("credential_id") or "")
+    if not configured_id:
+        raise CredentialConfigurationError(
+            f"No {kind} API key has been saved yet. Save one in Settings "
+            "or switch the credential source."
+        )
     if configured_id != expected_id:
         raise CredentialConfigurationError(
             f"The stored {kind} credential reference is invalid."

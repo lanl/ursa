@@ -1,0 +1,350 @@
+from pathlib import Path
+
+import pytest
+from jsonargparse import Namespace
+from pydantic import SecretStr
+
+from ursa.cli import build_parser
+from ursa.cli.config import (
+    ChatModelConfig,
+    UrsaConfig,
+    merge_ursa_config,
+    resolve_ursa_config,
+)
+from ursa.cli.print_config import parse_print_config_spec
+from ursa.util import crossplatform
+from ursa.util.secrets import SecretReference, SecretTemplate
+
+
+def test_config_precedence_all_six_layers(tmp_path, monkeypatch):
+    system = tmp_path / "system.yaml"
+    user = tmp_path / "user.yaml"
+    explicit = tmp_path / "explicit.yaml"
+    system.write_text("llm_model:\n  model: system\n")
+    user.write_text("llm_model:\n  model: user\n")
+    explicit.write_text("llm_model:\n  model: explicit\n")
+    monkeypatch.setattr(
+        "ursa.cli.config.config_search_paths",
+        lambda cfg, level="final": [system, user, explicit],
+    )
+
+    assert UrsaConfig().llm_model.model == "gpt-5.4"
+    assert UrsaConfig().llm_model.model_provider == "openai"
+    namespace = Namespace(config=explicit)
+    config_flag = {"config": explicit}
+    assert (
+        merge_ursa_config(
+            namespace, env_overrides={}, cli_overrides=config_flag
+        ).llm_model.model
+        == "explicit"
+    )
+    assert (
+        merge_ursa_config(
+            namespace,
+            env_overrides={"llm_model": {"model": "env"}},
+            cli_overrides=config_flag,
+        ).llm_model.model
+        == "explicit"
+    )
+    assert (
+        merge_ursa_config(
+            namespace,
+            env_overrides={"llm_model": {"model": "env"}},
+            cli_overrides={
+                "config": explicit,
+                "llm_model": {"model": "cli"},
+            },
+        ).llm_model.model
+        == "cli"
+    )
+
+
+def test_model_merge_base_url_clears_inherited_inference_provider():
+    base = ChatModelConfig(
+        model="openai:gpt-5.4",
+        inference_provider="openai",
+    )
+
+    merged = base.model_merge({"base_url": "https://models.example/v1"})
+
+    assert merged.base_url == "https://models.example/v1"
+    assert merged.inference_provider is None
+
+
+def test_model_config_rejects_base_url_with_inference_provider():
+    with pytest.raises(
+        ValueError,
+        match="base_url and inference_provider cannot both be configured",
+    ):
+        ChatModelConfig(
+            base_url="https://models.example/v1",
+            inference_provider="hosted",
+        )
+
+
+def test_model_merge_inference_provider_clears_inherited_base_url():
+    base = ChatModelConfig(base_url="https://models.example/v1")
+
+    merged = base.model_merge({"inference_provider": "hosted"})
+
+    assert merged.base_url is None
+    assert merged.inference_provider == "hosted"
+
+
+def test_model_merge_only_applies_explicit_model_fields():
+    base = ChatModelConfig(
+        model="openai:gpt-5.4",
+        ssl_verify=False,
+        max_completion_tokens=100,
+    )
+
+    merged = base.model_merge(ChatModelConfig(max_completion_tokens=200))
+
+    assert merged.ssl_verify is False
+    assert merged.max_completion_tokens == 200
+
+
+def test_config_merge_base_url_clears_lower_priority_provider(
+    tmp_path, monkeypatch
+):
+    user = tmp_path / "user.yaml"
+    explicit = tmp_path / "explicit.yaml"
+    user.write_text("llm_model:\n  inference_provider: openai\n")
+    explicit.write_text("llm_model:\n  base_url: https://models.example/v1\n")
+    monkeypatch.setattr(
+        "ursa.cli.config.config_search_paths",
+        lambda cfg, level="final": [user, explicit],
+    )
+
+    config = merge_ursa_config(Namespace(), env_overrides={})
+
+    assert config.llm_model.base_url == "https://models.example/v1"
+    assert config.llm_model.inference_provider is None
+
+
+def test_api_key_direct_value_is_secret():
+    config = ChatModelConfig(model="provider:model", api_key="secret")
+
+    assert isinstance(config.api_key, SecretStr)
+    assert config.kwargs["api_key"] == "secret"
+    assert "secret" not in repr(config)
+
+
+def test_secret_reference_requires_exactly_one_source():
+    with pytest.raises(ValueError, match="exactly one source"):
+        SecretReference(env="TOKEN", keyring="account")
+
+
+def test_secret_reference_maybe_validate():
+    reference = SecretReference.maybe_validate({"env": "TOKEN"})
+
+    assert reference == SecretReference(env="TOKEN")
+    assert SecretReference.maybe_validate({"unrelated": True}) == {
+        "unrelated": True
+    }
+
+
+def test_secret_reference_get_secret_value(monkeypatch):
+    monkeypatch.setenv("MODEL_TOKEN", "secret")
+
+    assert SecretReference(env="MODEL_TOKEN").get_secret_value() == "secret"
+    assert (
+        SecretTemplate(
+            env="MODEL_TOKEN", template="Bearer %s"
+        ).get_secret_value()
+        == "Bearer secret"
+    )
+
+
+def test_loaded_config_exposes_typed_secret_references():
+    config = UrsaConfig.model_validate({
+        "inference_providers": {"hosted": {"api_key": {"keyring": True}}},
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {"Authorization": {"env": "MCP_TOKEN"}},
+            }
+        },
+    })
+
+    assert isinstance(
+        config.inference_providers["hosted"].api_key, SecretReference
+    )
+    assert isinstance(
+        config.mcp_servers["tools"].headers["Authorization"], SecretTemplate
+    )
+
+
+@pytest.mark.parametrize("template", ["Bearer", "%s:%s"])
+def test_secret_template_requires_one_placeholder(template):
+    with pytest.raises(ValueError, match="exactly one"):
+        SecretTemplate(env="MODEL_TOKEN", template=template)
+
+
+def test_api_key_env_reference_resolves(monkeypatch):
+    monkeypatch.setenv("MODEL_TOKEN", "secret")
+    config = ChatModelConfig(
+        model="provider:model", api_key={"env": "MODEL_TOKEN"}
+    )
+
+    assert config.kwargs["api_key"] == "secret"
+
+
+@pytest.mark.parametrize(
+    ("setting", "username"), [(True, "acme"), ("account", "account")]
+)
+def test_api_key_keyring_reference(monkeypatch, setting, username):
+    calls = []
+    monkeypatch.setattr(
+        "keyring.get_password",
+        lambda system, user: calls.append((system, user)) or "secret",
+    )
+    config = UrsaConfig(
+        inference_providers={"acme": {"api_key": {"keyring": setting}}},
+        llm_model={"model": "provider:model", "inference_provider": "acme"},
+    )
+
+    resolved = config.resolve().llm_model
+
+    assert isinstance(resolved.api_key, SecretReference)
+    assert resolved.api_key.keyring == username
+    assert calls == []
+    assert resolved.kwargs["api_key"] == "secret"
+    assert calls == [("ursa", username)]
+
+
+def test_resolution_populates_provider_keyring_username():
+    config = UrsaConfig(
+        inference_providers={"acme": {"api_key": {"keyring": True}}},
+        llm_model={"model": "provider:model", "inference_provider": "acme"},
+    )
+
+    resolved = config.resolve()
+
+    assert resolved.inference_providers["acme"].api_key == SecretReference(
+        keyring="acme"
+    )
+    assert config.inference_providers["acme"].api_key == SecretReference(
+        keyring=True
+    )
+
+
+def test_legacy_api_key_env_is_migrated_with_warning(monkeypatch):
+    monkeypatch.setenv("OLD_TOKEN", "secret")
+    with pytest.warns(
+        DeprecationWarning, match="api_key_env is deprecated in config files"
+    ):
+        config = ChatModelConfig(
+            model="provider:model", api_key_env="OLD_TOKEN"
+        )
+
+    assert config.kwargs["api_key"] == "secret"
+    assert "api_key_env" not in config.model_dump()
+
+
+def test_default_openai_provider_is_explicit():
+    config = UrsaConfig()
+
+    assert config.llm_model.inference_provider == "openai"
+    assert (
+        config.inference_providers["openai"].base_url
+        == "https://api.openai.com/v1"
+    )
+    assert config.inference_providers["openai"].api_key == SecretReference(
+        env="OPENAI_API_KEY"
+    )
+    resolved = resolve_ursa_config(config)
+    assert resolved.llm_model.base_url == "https://api.openai.com/v1"
+
+
+def test_ursa_config_resolve_delegates_to_canonical_function(monkeypatch):
+    config = UrsaConfig()
+    resolved = object()
+    calls = []
+    monkeypatch.setattr(
+        "ursa.cli.config.resolve_ursa_config",
+        lambda value: calls.append(value) or resolved,
+    )
+
+    assert config.resolve() is resolved
+    assert calls == [config]
+
+
+def test_print_config_level_gets_default_stage():
+    assert parse_print_config_spec("user") == ("user", "resolved")
+    assert parse_print_config_spec("system") == ("system", "resolved")
+    assert parse_print_config_spec("file+") == ("file+", "resolved")
+
+
+def test_invalid_print_config_shows_concise_error_without_function_repr(capsys):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--print-config=invalid"])
+
+    error = capsys.readouterr().err
+    assert "URSA: The Universal Research and Scientific Agent" not in error
+    assert "usage: ursa" in error
+    assert "_validate_print_config_spec" not in error
+    assert "Unknown print-config level or stage 'invalid'" in error
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("linux", Path("/etc/ursa/config.yaml")),
+        ("darwin", Path("/Library/Application Support/ursa/config.yaml")),
+        ("win32", Path("C:/ProgramData/ursa/config.yaml")),
+    ],
+)
+def test_system_config_path_is_platform_specific(
+    monkeypatch, platform, expected
+):
+    monkeypatch.setattr(crossplatform.sys, "platform", platform)
+    monkeypatch.delenv("PROGRAMDATA", raising=False)
+
+    assert crossplatform.system_config_path() == expected
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_portable_and_xdg_user_paths_override_platform_default(
+    tmp_path, monkeypatch, platform
+):
+    home = tmp_path / "home"
+    xdg_home = tmp_path / "xdg"
+    monkeypatch.setattr(crossplatform.sys, "platform", platform)
+    monkeypatch.setattr(crossplatform.Path, "home", lambda: home)
+    monkeypatch.setenv("APPDATA", str(home / "AppData/Roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
+
+    paths = crossplatform.user_config_paths()
+
+    assert paths[-2:] == [
+        home / ".config/ursa/config.yaml",
+        xdg_home / "ursa/config.yaml",
+    ]
+    if platform in {"darwin", "win32"}:
+        assert len(paths) == 3
+
+
+def test_user_config_precedence_is_platform_then_dot_config_then_xdg(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    xdg_home = tmp_path / "xdg"
+    monkeypatch.setattr(crossplatform.sys, "platform", "darwin")
+    monkeypatch.setattr(crossplatform.Path, "home", lambda: home)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
+    monkeypatch.delenv("XDG_CONFIG_DIRS", raising=False)
+
+    native, portable, xdg = crossplatform.user_config_paths()
+    for path, group in (
+        (native, "native"),
+        (portable, "portable"),
+        (xdg, "xdg"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"group: {group}\n", encoding="utf-8")
+
+    config = merge_ursa_config(Namespace(), env_overrides={})
+
+    assert config.group == "xdg"

@@ -7,6 +7,9 @@ theme:
   custom_dir: docs/overrides
   logo: assets/favicon.png
   favicon: assets/favicon.png
+  features:
+    - navigation.instant
+    - content.code.copy
 
 extra:
   version:
@@ -14,9 +17,26 @@ extra:
     default: latest
     alias: true
 
+extra_css:
+  - stylesheets/example-filter.css
+
+extra_javascript:
+  - javascripts/example-filter.js
+
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - .
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
@@ -25,6 +45,7 @@ markdown_extensions:
 
 plugins:
   - search
+  - tags
   - autorefs
   - mkdocstrings:
       handlers:
@@ -40,23 +61,23 @@ plugins:
 watch:
   - src
 
+hooks:
+  - docs/hooks.py
+
 nav:
   - Home: index.md
-  - Installation:
-      - Overview: installation/index.md
-      - Install with uv: installation/uv.md
-      - Install with pip: installation/pip.md
   - Getting Started:
-      - CLI: getting-started/cli.md
+      - Overview: getting-started/index.md
+      - TUI: getting-started/tui.md
       - Web Dashboard: getting-started/dashboard.md
       - Python Scripts: getting-started/python-scripts.md
       - Plan-Execute From YAML: getting-started/plan-execute-yaml.md
       - MCP Server: getting-started/mcp-server.md
+  - Examples: examples/index.md
   - Configuration:
       - Overview: configuration/index.md
-      - OpenAI-compatible endpoints: configuration/openai-compatible.md
-      - Ollama and local endpoints: configuration/ollama.md
-      - LangChain providers: configuration/langchain-providers.md
+      - Models and inference providers: configuration/models.md
+      - Secrets: configuration/secrets.md
       - Files, CLI flags, and environment variables: configuration/files-and-env.md
       - MCP server configuration: configuration/mcp.md
   - Persistence:
@@ -98,7 +119,6 @@ nav:
       - Plan-Execute checkpointing: reference/plan-execute-checkpointing.md
       - Tutorials and examples:
           - Combining arXiv agent and execution agent: reference/tutorials/arxiv-execution.md
-          - Human in the Loop: reference/tutorials/human-in-the-loop.md
           - Neutron Star: reference/tutorials/neutron-star.md
       - API Reference:
           - agents: reference/api/agents.md

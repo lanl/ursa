@@ -1,6 +1,6 @@
 # Persistent RAG Agents
 
-URSA supports persistent Retrieval-Augmented Generation (RAG) collections. A persistent RAG collection lets you ingest documents once, store the resulting vectorstore on disk, and query that collection later from the CLI or through another URSA agent as a tool.
+URSA supports persistent Retrieval-Augmented Generation (RAG) collections. A persistent RAG collection lets you ingest documents once, store the resulting vectorstore on disk, and query that collection later from the TUI or through another URSA agent as a tool.
 
 Persistent RAG collections are separate from regular persisted URSA agents. They are stored under:
 
@@ -239,7 +239,8 @@ If the regular agent group does not exist, URSA raises an error and asks you to 
 ursa create-group <group> <group_config_file>
 ```
 
-See the CLI guide for more information about creating and managing groups.
+See the TUI guide for interactive use and the CLI reference for commands that
+create and manage groups.
 
 ## Typical workflow
 
@@ -267,7 +268,7 @@ See the CLI guide for more information about creating and managing groups.
    ursa --name catalyst-assistant --group chemistry --rag-tools catalyst-papers
    ```
 
-5. Ask questions in the URSA CLI. If the agent calls the RAG tool, you will see output like:
+5. Ask questions in the URSA TUI. If the agent calls the RAG tool, you will see output like:
 
    ```text
    [Request to catalyst-papers]: Summarize the evidence for improved stability.
@@ -279,4 +280,4 @@ See the CLI guide for more information about creating and managing groups.
 - Re-running `rag-ingest` on the same source updates the persistent RAG collection by indexing documents not already present in the vectorstore.
 - RAG collection names use the same naming policy as persisted URSA agents.
 - RAG tools are available to URSA agents that support tools.
-- The RAG CLI uses URSA's configured language model and embedding model settings.
+- The TUI uses URSA's configured language model and embedding model settings.
