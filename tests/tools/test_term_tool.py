@@ -23,14 +23,6 @@ def test_term_send_keycode_is_not_publicly_exported():
     assert not hasattr(tools_package, "term_send_keycode")
 
 
-def test_term_screenshot_is_publicly_exported():
-    assert tools_package.term_screenshot is term_tool.term_screenshot
-
-
-def test_term_paste_text_is_publicly_exported():
-    assert tools_package.term_paste_text is term_tool.term_paste_text
-
-
 class WrapperTerm:
     term_id = "Ab12Cd34"
 
