@@ -160,6 +160,7 @@ class AgentEloConfig:
     seed: int | None = None
     generations: int = 1
     restart_from_json: str | None = None
+    member_timeout_seconds: float | None = None
     judge_prompt: str | None = None
 
     @classmethod

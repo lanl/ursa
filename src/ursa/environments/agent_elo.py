@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 import random
+from datetime import datetime, timedelta, timezone
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -64,6 +65,24 @@ class MatchResult:
             return self.player_a
 
         return None
+
+
+@dataclass
+class MemberRunResult:
+    """Result of one member's work during a generation."""
+
+    name: str
+    status: str
+    output: str | None
+    deadline: str | None = None
+
+    @property
+    def completed(self) -> bool:
+        return self.status == "completed"
+
+    @property
+    def timed_out(self) -> bool:
+        return self.status == "timed_out"
 
 
 class AgentEloEnvironment(BaseEnvironment):
@@ -126,6 +145,7 @@ class AgentEloEnvironment(BaseEnvironment):
         deaths_per_round: int | None = None,
         seed: int | None = None,
         generations: int | None = None,
+        member_timeout_seconds: float | None = None,
         restart_from_json: str | Path | None = None,
         judge_prompt: str | None = None,
         persist_members: bool = True,
@@ -142,6 +162,7 @@ class AgentEloEnvironment(BaseEnvironment):
             deaths_per_round=deaths_per_round,
             seed=seed,
             generations=generations,
+            member_timeout_seconds=member_timeout_seconds,
             restart_from_json=restart_from_json,
             judge_prompt=judge_prompt,
         )
@@ -189,6 +210,20 @@ class AgentEloEnvironment(BaseEnvironment):
         if self.generations < 1:
             raise ValueError(
                 "generations must be at least 1."
+            )
+
+        self.member_timeout_seconds = (
+            None
+            if elo_config.member_timeout_seconds is None
+            else float(elo_config.member_timeout_seconds)
+        )
+        
+        if (
+            self.member_timeout_seconds is not None
+            and self.member_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "member_timeout_seconds must be positive or None."
             )
 
         self.seed = elo_config.seed
@@ -285,6 +320,7 @@ class AgentEloEnvironment(BaseEnvironment):
         deaths_per_round: int | None,
         seed: int | None,
         generations: int | None,
+        member_timeout_seconds: float | None,
         restart_from_json: str | Path | None,
         judge_prompt: str | None,
     ) -> AgentEloConfig:
@@ -335,6 +371,7 @@ class AgentEloEnvironment(BaseEnvironment):
                     if generations is not None
                     else 1
                 ),
+                member_timeout_seconds=member_timeout_seconds,
                 restart_from_json=(
                     str(restart_from_json)
                     if restart_from_json is not None
@@ -394,6 +431,11 @@ class AgentEloEnvironment(BaseEnvironment):
                 generations
                 if generations is not None
                 else base.generations
+            ),
+            member_timeout_seconds=(
+                member_timeout_seconds
+                if member_timeout_seconds is not None
+                else base.member_timeout_seconds
             ),
             restart_from_json=(
                 str(restart_from_json)
@@ -1030,12 +1072,16 @@ class AgentEloEnvironment(BaseEnvironment):
                 2,
             )
         ]
+
     
     def _member_prompt(
         self,
         member: EnvironmentMemberConfig,
         task: str,
+        *,
+        deadline: datetime | None = None,
     ) -> str:
+
         player = self.players[
             member.name
         ]
@@ -1055,13 +1101,31 @@ class AgentEloEnvironment(BaseEnvironment):
             f"- Environment generations already completed: "
             f"{self.generation_index}\n"
         )
-    
+
+
+        if deadline is None:
+            execution_budget = ""
+        
+        else:
+            deadline_text = deadline.isoformat()
+        
+            execution_budget = (
+                "\n\nExecution budget:\n"
+                f"- Hard deadline: {deadline_text}\n"
+                "- The deadline is expressed in UTC.\n"
+                "- You may run `date -u` to check the current wall-clock time.\n"
+                "- Plan your work so that useful, judgeable results exist "
+                "before the deadline.\n"
+                "- If you do not finish working before the deadline, "
+                "you may automatically lose this round.\n"
+            )
+            
         if self.generation_index == 0:
             evolutionary_instruction = (
                 "This is the founding round of the evolutionary run.\n"
                 "Develop the strongest independent solution you can. "
-                "Explore the problem directly, execute the work required "
-                "by the task, and establish a strong research baseline."
+                "Explore the problem directly and execute the work required "
+                "by the task."
             )
     
         elif player.parent is not None:
@@ -1071,12 +1135,8 @@ class AgentEloEnvironment(BaseEnvironment):
                 "Do not merely repeat, rerun, or summarize the inherited work. "
                 "Treat it as a successful starting point.\n\n"
                 "Identify at least one substantive scientific, numerical, or "
-                "methodological limitation, uncertainty, weakness, or untested "
-                "assumption in the inherited work. Choose a scientifically "
-                "motivated modification or validation that addresses it, execute "
-                "that work, compare the result with the inherited result, and "
-                "determine whether the branch improved, worsened, or clarified "
-                "the research."
+                "methodological limitation in the inherited work."
+                "Choose a modification that addresses it and execute that work."
             )
     
         else:
@@ -1086,9 +1146,7 @@ class AgentEloEnvironment(BaseEnvironment):
                 "over or merely summarizing it.\n\n"
                 "Identify a substantive limitation, uncertainty, weakness, or "
                 "untested assumption in your current work. Make and execute a "
-                "scientifically motivated improvement, challenge, or validation, "
-                "compare it with your previous result, and determine what was "
-                "learned."
+                "scientifically motivated improvement."
             )
     
         return (
@@ -1097,6 +1155,7 @@ class AgentEloEnvironment(BaseEnvironment):
             f"{lineage}\n"
             f"Evolutionary instructions:\n"
             f"{evolutionary_instruction}"
+            f"{execution_budget}"
             f"{extra}\n\n"
             f"Scientific task:\n{task}"
         )
@@ -1106,21 +1165,65 @@ class AgentEloEnvironment(BaseEnvironment):
         member: EnvironmentMemberConfig,
         task: str,
         invoke_kwargs: Mapping[str, Any],
-    ) -> tuple[str, str]:
+        *,
+        deadline: datetime | None = None,
+    ) -> MemberRunResult:
         prompt = self._member_prompt(
             member,
             task,
+            deadline=deadline,
         )
-
-        result = await self._invoke_member_async(
-            self.members[member.name],
-            prompt,
-            **invoke_kwargs,
-        )
-
-        return (
-            member.name,
-            result_to_text(result),
+    
+        async def invoke() -> Any:
+            return await self._invoke_member_async(
+                self.members[member.name],
+                prompt,
+                **invoke_kwargs,
+            )
+    
+        # Unlimited execution preserves the old behavior.
+        if deadline is None:
+            result = await invoke()
+    
+            return MemberRunResult(
+                name=member.name,
+                status="completed",
+                output=result_to_text(result),
+                deadline=None,
+            )
+    
+        remaining_seconds = (
+            deadline
+            - datetime.now(timezone.utc)
+        ).total_seconds()
+    
+        if remaining_seconds <= 0:
+            return MemberRunResult(
+                name=member.name,
+                status="timed_out",
+                output=None,
+                deadline=deadline.isoformat(),
+            )
+    
+        try:
+            result = await asyncio.wait_for(
+                invoke(),
+                timeout=remaining_seconds,
+            )
+    
+        except TimeoutError:
+            return MemberRunResult(
+                name=member.name,
+                status="timed_out",
+                output=None,
+                deadline=deadline.isoformat(),
+            )
+    
+        return MemberRunResult(
+            name=member.name,
+            status="completed",
+            output=result_to_text(result),
+            deadline=deadline.isoformat(),
         )
 
     # ------------------------------------------------------------------
@@ -1152,6 +1255,63 @@ class AgentEloEnvironment(BaseEnvironment):
                 content=comparison
             ),
         ]
+
+    async def _resolve_match(
+        self,
+        *,
+        task: str,
+        player_a: str,
+        run_a: MemberRunResult,
+        player_b: str,
+        run_b: MemberRunResult,
+    ) -> MatchResult:
+        """Resolve a match, handling execution timeouts first."""
+    
+        if run_a.timed_out and run_b.timed_out:
+            return MatchResult(
+                player_a=player_a,
+                player_b=player_b,
+                score_a=0.5,
+                reasoning=(
+                    "Both competitors exceeded the generation "
+                    "execution deadline. Match recorded as a draw."
+                ),
+            )
+    
+        if run_a.timed_out:
+            return MatchResult(
+                player_a=player_a,
+                player_b=player_b,
+                score_a=0.0,
+                reasoning=(
+                    f"{player_a} exceeded the generation execution "
+                    f"deadline; {player_b} completed within the allowed "
+                    "time and therefore wins automatically."
+                ),
+            )
+    
+        if run_b.timed_out:
+            return MatchResult(
+                player_a=player_a,
+                player_b=player_b,
+                score_a=1.0,
+                reasoning=(
+                    f"{player_b} exceeded the generation execution "
+                    f"deadline; {player_a} completed within the allowed "
+                    "time and therefore wins automatically."
+                ),
+            )
+    
+        assert run_a.output is not None
+        assert run_b.output is not None
+    
+        return await self._judge_match(
+            task=task,
+            player_a=player_a,
+            output_a=run_a.output,
+            player_b=player_b,
+            output_b=run_b.output,
+        )
 
     async def _judge_match(
         self,
@@ -1644,26 +1804,56 @@ class AgentEloEnvironment(BaseEnvironment):
             name: player.rating
             for name, player in self.players.items()
         }
-    
+
+        generation_deadline: datetime | None = None
+        
+        if self.member_timeout_seconds is not None:
+            generation_deadline = (
+                datetime.now(timezone.utc)
+                + timedelta(
+                    seconds=self.member_timeout_seconds
+                )
+            )
+        
+                
         # ----------------------------------------------------------
         # Phase 1: independent research
         # ----------------------------------------------------------
-    
+        
         member_results = await asyncio.gather(
             *[
                 self._run_member(
                     member,
                     task,
                     invoke_kwargs,
+                    deadline=generation_deadline,
                 )
                 for member in self.member_configs
             ]
         )
-    
-        outputs = dict(
-            member_results
-        )
-    
+                
+        runs = {
+            result.name: result
+            for result in member_results
+        }
+
+
+        outputs = {
+            name: (
+                result.output
+                if result.completed
+                else None
+            )
+            for name, result in runs.items()
+        }
+
+
+        timed_out = [
+            name
+            for name, result in runs.items()
+            if result.timed_out
+        ]
+        
         # ----------------------------------------------------------
         # Phase 2: randomized pairwise competition
         # ----------------------------------------------------------
@@ -1680,14 +1870,14 @@ class AgentEloEnvironment(BaseEnvironment):
         ] = []
     
         for player_a, player_b in pairs:
-            result = await self._judge_match(
+            result = await self._resolve_match(
                 task=task,
                 player_a=player_a,
-                output_a=outputs[player_a],
+                run_a=runs[player_a],
                 player_b=player_b,
-                output_b=outputs[player_b],
+                run_b=runs[player_b],
             )
-    
+                
             self._apply_match_result(
                 result
             )
@@ -1790,6 +1980,19 @@ class AgentEloEnvironment(BaseEnvironment):
             ),
             "environment_state": str(
                 state_path
+            ),
+            "member_runs": {
+                name: {
+                    "status": run.status,
+                    "deadline": run.deadline,
+                }
+                for name, run in runs.items()
+            },
+            "timed_out": timed_out,
+            "generation_deadline": (
+                generation_deadline.isoformat()
+                if generation_deadline is not None
+                else None
             ),
         }
 
