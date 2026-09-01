@@ -195,7 +195,7 @@ def validate_agent_name(name: str) -> str:
         raise ValueError("Agent name must be a simple directory name")
     if not _AGENT_NAME_RE.fullmatch(name):
         raise ValueError(
-            "Agent name may only contain letters, numbers, dot, underscore, and hyphen"
+            "Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number"
         )
     return name
 
