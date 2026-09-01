@@ -34,6 +34,7 @@ from ursa.security import enforce_group_base_url_policy, validate_group_name
 from .credentials import (
     CredentialConfigurationError,
     CredentialStore,
+    _config_api_key_env,
     assert_no_credential_metadata,
     assert_no_raw_api_key,
     resolve_api_key,
@@ -143,7 +144,7 @@ def _validate_model(model: Any, *, group: str, label: str) -> None:
         str(raw.get("base_url")) if raw.get("base_url") else None,
         group,
     )
-    env_name = str(raw.get("api_key_env") or "").strip()
+    env_name = str(_config_api_key_env(raw) or "").strip()
     if env_name and not _ENV_VAR_RE.fullmatch(env_name):
         raise ValueError(f"{label} has an invalid api_key_env name.")
 
@@ -327,8 +328,9 @@ class EnvironmentRunManager:
 
         def collect(value: Any) -> None:
             if isinstance(value, Mapping):
-                if value.get("model") and value.get("api_key_env"):
-                    name = str(value["api_key_env"]).strip()
+                member_env = _config_api_key_env(value)
+                if value.get("model") and member_env:
+                    name = str(member_env).strip()
                     if not _ENV_VAR_RE.fullmatch(name):
                         raise CredentialConfigurationError(
                             f"Invalid member API-key environment variable {name!r}."
