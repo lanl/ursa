@@ -3,7 +3,7 @@ import asyncio
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import PlanCard
 from ursa.cli.tui.turn import Turn
@@ -190,7 +190,7 @@ async def test_agent_completion_stops_pending_plan_review_spinner(tmp_path):
         await pilot.pause()
 
         plan = app.query_one(PlanCard)
-        assert plan.state == "complete"
+        assert await wait_for(pilot, lambda: plan.state == "complete")
         frame = plan._frame
 
         await asyncio.sleep(0.7)
@@ -212,9 +212,7 @@ async def test_failed_agent_stops_drafting_plan_spinner(tmp_path):
         plan = turn.query_one(PlanCard)
 
         turn.finish_activity(succeeded=False)
-        await pilot.pause()
-
-        assert plan.state == "revision_needed"
+        assert await wait_for(pilot, lambda: plan.state == "revision_needed")
         assert "draft completed" in plan.review_reason
         source = str(plan.query_one(Markdown).source)
         assert "Plan drafting failed" in source
