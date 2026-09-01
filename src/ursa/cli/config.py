@@ -513,7 +513,9 @@ class UrsaConfig(BaseModel):
         }
 
 
-def load_config_file(path: Path) -> dict[str, Any]:
+def load_config_file(
+    path: Path, *, interpolate_environment: bool = True
+) -> dict[str, Any]:
     """Load raw config-file data for merging before validation."""
     loader = yaml.safe_load if path.suffix in [".yaml", ".yml"] else json.load
     with open(path, "r") as fid:
@@ -525,7 +527,7 @@ def load_config_file(path: Path) -> dict[str, Any]:
         raise ValueError(
             f"Configuration file '{path}' must contain a mapping at its root"
         )
-    return deep_interp_env(data)
+    return deep_interp_env(data) if interpolate_environment else data
 
 
 def config_path_from_namespace(cfg: Namespace) -> Path | None:
