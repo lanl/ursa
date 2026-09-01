@@ -728,17 +728,13 @@ _BASE_TERM_TOOLS = [
     term_wait_for,
 ]
 
-_PASTE_TERM_TOOLS = [term_paste_text]
-
 _SCREEN_TERM_TOOLS = [
+    term_paste_text,
     term_wait_screen,
     term_resize,
     term_cursor,
     term_size,
     term_screenshot,
-]
-
-_MOUSE_TERM_TOOLS = [
     term_click,
     term_mouse_down,
     term_mouse_up,
@@ -749,8 +745,6 @@ _MOUSE_TERM_TOOLS = [
 TERM_TOOLS = [
     *_BASE_TERM_TOOLS,
     *_SCREEN_TERM_TOOLS,
-    *_MOUSE_TERM_TOOLS,
-    *_PASTE_TERM_TOOLS,
 ]
 
 
@@ -759,8 +753,4 @@ def get_supported_term_tools() -> list[BaseTool]:
     tools = list(_BASE_TERM_TOOLS)
     if term_manager.supports_screen():
         tools.extend(_SCREEN_TERM_TOOLS)
-    if term_manager.supports_mouse():
-        tools.extend(_MOUSE_TERM_TOOLS)
-    if term_manager.supports_paste():
-        tools.extend(_PASTE_TERM_TOOLS)
     return tools
