@@ -6,8 +6,10 @@ import asyncio
 import base64
 import importlib
 import json
+import signal
 import sqlite3
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +28,27 @@ def _usage(metrics_path: Path) -> dict[str, Any]:
     if not metrics_path.is_file():
         return {}
     payload = json.loads(metrics_path.read_text())
-    totals = payload.get("totals", {})
+    events = payload.get("llm_events", [])
+    event_usage = [
+        usage
+        for event in events
+        if (usage := event.get("metrics", {}).get("usage_rollup"))
+    ]
+    totals = payload.get("usage_rollup", {})
+    if not totals and event_usage:
+        totals = {
+            key: sum(usage.get(key, 0) or 0 for usage in event_usage)
+            for key in ("input_tokens", "output_tokens")
+        }
     if not totals:
-        totals = payload.get("usage_rollup", {})
+        # Compatibility with metrics emitted before usage was separated from
+        # timing totals.
+        totals = payload.get("totals", {})
+    costs = payload.get("costs", {})
     return {
         "n_input_tokens": totals.get("input_tokens"),
         "n_output_tokens": totals.get("output_tokens"),
-        "cost_usd": totals.get("total_cost"),
+        "cost_usd": costs.get("total_usd", totals.get("total_cost")),
     }
 
 
@@ -109,6 +125,24 @@ def _export_checkpoint(agent: Any, artifacts_dir: Path) -> Path:
     return destination
 
 
+def _close_checkpoint(checkpointer: Any) -> None:
+    """Flush and close the artifact-backed SQLite checkpoint database."""
+    connection = checkpointer.conn
+    failure: BaseException | None = None
+    try:
+        connection.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except BaseException as exc:
+        failure = exc
+    try:
+        connection.close()
+    except BaseException as exc:
+        if failure is None:
+            failure = exc
+    if failure is not None:
+        raise failure
+
+
 def main(encoded: str) -> None:
     from ursa.agents import BaseAgent
     from ursa.cli.config import UrsaConfig, load_config_file
@@ -150,17 +184,39 @@ def main(encoded: str) -> None:
         ),
         **agent_options,
     )
-    asyncio.run(_attach_mcp_tools(agent, ursa_config.mcp_servers))
-    output = agent.invoke(
-        config["instruction"], save_json=True, metrics_path=str(metrics_path)
-    )
-    _export_checkpoint(agent, artifacts_dir)
-    result = agent.format_result(output)
-    sys.stdout.write(
-        "URSA_HARBOR_RESULT="
-        + json.dumps({"result": result, **_usage(metrics_path)}, default=str)
-        + "\n"
-    )
+
+    def terminate(_signum: int, _frame: Any) -> None:
+        raise SystemExit(143)
+
+    previous_sigterm = signal.signal(signal.SIGTERM, terminate)
+    failure: BaseException | None = None
+    try:
+        asyncio.run(_attach_mcp_tools(agent, ursa_config.mcp_servers))
+        output = agent.invoke(
+            config["instruction"],
+            save_json=True,
+            metrics_path=str(metrics_path),
+        )
+        _export_checkpoint(agent, artifacts_dir)
+        result = agent.format_result(output)
+        sys.stdout.write(
+            "URSA_HARBOR_RESULT="
+            + json.dumps(
+                {"result": result, **_usage(metrics_path)}, default=str
+            )
+            + "\n"
+        )
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        try:
+            _close_checkpoint(checkpointer)
+        except Exception:
+            if failure is None:
+                raise
+            traceback.print_exc(file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -15,9 +15,10 @@ set `ursa_install_spec` to another package/version specification.
 
 ## Singularity and SLURM
 
-The custom environment builds `environment/Dockerfile` with Podman or Docker,
-converts it to a cached SIF, and requires no Apptainer definition file. Compute
-nodes need `singularity`, `uv`, and one of `buildah`, `podman`, or `docker`.
+The custom environment builds `environment/Dockerfile` with Buildah, Podman,
+or Docker, converts it to a cached SIF, and requires no Apptainer definition
+file. Compute nodes need `apptainer` or `singularity`, plus one of `buildah`,
+`podman`, or `docker`.
 
 ```bash
 export OPENAI_API_KEY=...
@@ -31,6 +32,11 @@ For a direct run, add:
 ```bash
 --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment
 ```
+
+Set `[environment].workdir` in `task.toml` when a Dockerfile computes
+`WORKDIR` from an environment variable or inherits a non-root workdir from its
+base image. The task setting takes precedence over image metadata; the
+Singularity adapter rejects variable workdirs it cannot resolve before launch.
 
 ## Clean up
 
