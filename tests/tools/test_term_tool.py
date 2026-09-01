@@ -268,6 +268,32 @@ async def test_term_session_mode_returns_id_without_waiting(
     assert manager.removed == []
 
 
+async def test_term_session_mode_accepts_none_to_launch_shell(
+    monkeypatch, tmp_path
+):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("safety check should be skipped for cmd=None")
+
+    monkeypatch.setattr(term_tool, "assess_command_safety", should_not_run)
+    assert (
+        await term_tool.term.coroutine(
+            None, runtime=runtime(tmp_path), session=True
+        )
+        == "Terminal ID: Ab12Cd34"
+    )
+    assert manager.created == [
+        (
+            None,
+            {"env": None, "shell": None, "cwd": tmp_path},
+        )
+    ]
+    assert manager.removed == []
+
+
 async def test_term_falls_back_to_id_on_timeout(monkeypatch, tmp_path):
     async def slow_wait():
         await asyncio.sleep(1)
@@ -788,6 +814,32 @@ async def test_invalid_tool_inputs_raise_pydantic_errors_before_invocation(
 ):
     with pytest.raises(ValidationError):
         await tool.ainvoke(arguments)
+
+
+async def test_term_schema_accepts_none_cmd_to_launch_shell(
+    monkeypatch, tmp_path
+):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("safety check should be skipped for cmd=None")
+
+    monkeypatch.setattr(term_tool, "assess_command_safety", should_not_run)
+
+    result = await term_tool.term.ainvoke({
+        "cmd": None,
+        "session": True,
+    }, config={"runtime": runtime(tmp_path)})
+
+    assert result == f"Terminal ID: {terminal.term_id}"
+    assert manager.created == [
+        (
+            None,
+            {"env": None, "shell": None, "cwd": tmp_path},
+        )
+    ]
 
 
 async def test_cross_field_key_error_is_a_retryable_pydantic_error():
