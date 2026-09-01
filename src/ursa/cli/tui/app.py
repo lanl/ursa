@@ -401,6 +401,11 @@ class UrsaTextualApp(App[None]):
             max_content_height, max(1, prompt.virtual_size.height)
         )
         prompt.styles.height = content_height + 2
+        # TextArea scrolls the cursor when its selection changes, before the
+        # edit has updated its virtual size. Once the prompt is capped, that
+        # leaves its viewport one visual line behind each newly inserted line.
+        # Re-evaluate cursor visibility now that virtual_size is current.
+        prompt.scroll_cursor_visible(animate=False)
 
     def _open_hotlist(self, trigger: str) -> None:
         candidates = self._hotlist_candidates(trigger)
