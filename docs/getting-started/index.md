@@ -15,7 +15,7 @@ URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
     needed, then install URSA and the dashboard in an isolated tool environment:
 
     ```bash
-    uv tool install 'ursa-ai[dashboard]'
+    uv tool install --python 3.13 'ursa-ai[dashboard]'
     ```
 
     Update URSA with: `ursa self update` or `uv tool upgrade ursa-ai`
@@ -45,7 +45,7 @@ URSA requires Python 3.11 or newer. The `uv` tool installation is recommended:
 === "Conda + pip"
 
     ```bash
-    conda create -y -n ursa-env python=3.12
+    conda create -y -n ursa-env python=3.13
     conda activate ursa-env
     python -m pip install 'ursa-ai[dashboard]'
     ```

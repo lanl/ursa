@@ -36,7 +36,7 @@ The MkDocs documentation in `docs/` is organized around installation, getting st
 You can install `ursa` as a command line app with `pip install`; or with [`uv`](https://docs.astral.sh/uv/) via
 
 ```bash
-uv tool install 'ursa-ai[dashboard]'
+uv tool install --python 3.13 'ursa-ai[dashboard]'
 ```
 
 A standard OpenAI setup needs no configuration file:
@@ -85,7 +85,7 @@ The URSA web interface can be launched with:
 ursa-dashboard
 ```
 
-or with 
+or with
 ```
 ursa-dashboard --host 127.0.0.1 --port 8080
 ```
