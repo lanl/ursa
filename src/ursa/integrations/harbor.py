@@ -32,7 +32,8 @@ except ImportError as exc:  # pragma: no cover - exercised without the extra
     ) from exc
 
 from ursa.agents import BaseAgent as UrsaBaseAgent
-from ursa.cli.config import UrsaConfig, load_config_file
+from ursa.cli.config import ENV_SUB_REGEX, UrsaConfig, load_config_file
+from ursa.util.secrets import externalize_secret_references
 
 
 class UrsaHarborAgent(BaseInstalledAgent):
@@ -73,6 +74,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
         self.ursa_install_spec = ursa_install_spec
         self.ursa_extras = self._parse_list(ursa_extras)
         self.extra_packages = self._parse_list(extra_packages)
+        self._secret_env: dict[str, str] = {}
+        self._workspace = "/"
         self.ursa_source_dir = (
             Path(ursa_source_dir).resolve() if ursa_source_dir else None
         )
@@ -105,12 +108,72 @@ class UrsaHarborAgent(BaseInstalledAgent):
             for server in self.mcp_servers
         }
 
-    def _validate_config(self) -> None:
+    def _runtime_config(self) -> tuple[dict[str, Any], dict[str, str]]:
         if not self.config_file.is_file():
             raise FileNotFoundError(
                 f"URSA config file not found: {self.config_file}"
             )
-        UrsaConfig.model_validate(load_config_file(self.config_file))
+        raw_config = load_config_file(
+            self.config_file, interpolate_environment=False
+        )
+        self._reject_environment_interpolation(raw_config)
+        config = UrsaConfig.model_validate(raw_config)
+        config_data = config.model_dump(
+            mode="python", context={"include_defaults": True}
+        )
+        selected_provider = (
+            self.model_name.partition("/")[0]
+            if self.model_name and "/" in self.model_name
+            else config.llm_model.inference_provider
+        )
+        configured_provider = (
+            config.llm_model.inference_provider
+            or config.llm_model.model_provider
+        )
+        provider_switched = selected_provider != configured_provider
+        if provider_switched:
+            model_config = {
+                field: config_data["llm_model"][field]
+                for field in ("model", "max_completion_tokens")
+                if config_data["llm_model"].get(field) is not None
+            }
+            model_config["inference_provider"] = selected_provider
+            config_data["llm_model"] = model_config
+        required_providers = {selected_provider}
+        if config.emb_model and config.emb_model.inference_provider:
+            required_providers.add(config.emb_model.inference_provider)
+        for name, provider in config_data["inference_providers"].items():
+            if name not in required_providers:
+                provider.pop("api_key", None)
+        projected, secret_env = externalize_secret_references(config_data)
+        runtime_config = UrsaConfig.model_validate(projected).model_dump(
+            mode="json", context={"include_defaults": True}, exclude_none=True
+        )
+        if provider_switched:
+            runtime_config["llm_model"].pop("model_provider", None)
+            runtime_config["llm_model"].pop("ssl_verify", None)
+        return runtime_config, secret_env
+
+    @classmethod
+    def _reject_environment_interpolation(
+        cls, value: Any, path: tuple[str, ...] = ()
+    ) -> None:
+        if isinstance(value, dict):
+            for name, child in value.items():
+                cls._reject_environment_interpolation(
+                    child, (*path, str(name))
+                )
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                cls._reject_environment_interpolation(
+                    child, (*path, str(index))
+                )
+        elif isinstance(value, str) and ENV_SUB_REGEX.search(value):
+            location = ".".join(path) or "config"
+            raise ValueError(
+                f"Environment interpolation at {location} is not allowed in "
+                "Harbor configs; use an explicit {env: VARIABLE} secret reference"
+            )
 
     @staticmethod
     def _stage_source(source: Path, destination: Path) -> None:
@@ -227,7 +290,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
     async def install(self, environment: BaseEnvironment) -> None:
         # Reject host-side configuration errors before doing any work in the
         # benchmark container.
-        self._validate_config()
+        runtime_config, self._secret_env = self._runtime_config()
         # uv's glibc build can crash under QEMU user-mode emulation (for
         # example, amd64 Terminal-Bench images on an arm64 host). The musl
         # release is statically linked and works both natively and under QEMU.
@@ -271,10 +334,14 @@ class UrsaHarborAgent(BaseInstalledAgent):
             ),
             timeout_sec=600,
         )
-        await self.exec_as_root(
-            environment,
-            command="mkdir -p /workspace && chmod 777 /workspace",
+        working_directory = await self.exec_as_agent(
+            environment, command="pwd", timeout_sec=30
         )
+        self._workspace = (working_directory.stdout or "").strip()
+        if not self._workspace.startswith("/") or "\n" in self._workspace:
+            raise RuntimeError(
+                f"Invalid task working directory: {self._workspace!r}"
+            )
         install_target = self.ursa_install_spec
         if self.ursa_source_dir is not None:
             if not (self.ursa_source_dir / "pyproject.toml").is_file():
@@ -294,8 +361,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
             command=(
                 "/opt/uv/uv venv --managed-python --python "
                 f"{self.URSA_PYTHON_VERSION} /opt/ursa && "
-                f"{self.URSA_PYTHON} -c \"import sys; "
-                f"assert sys.version_info[:2] == {python_version_info!r}\""
+                f'{self.URSA_PYTHON} -c "import sys; '
+                f'assert sys.version_info[:2] == {python_version_info!r}"'
             ),
             timeout_sec=600,
         )
@@ -309,10 +376,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
             ),
             timeout_sec=900,
         )
-        self._remote_config_file = f"/tmp/ursa-config{self.config_file.suffix}"
-        await environment.upload_file(
-            self.config_file, self._remote_config_file
-        )
+        self._remote_config_file = "/tmp/ursa-config.json"
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", encoding="utf-8"
+        ) as runtime_config_file:
+            json.dump(runtime_config, runtime_config_file)
+            runtime_config_file.flush()
+            await environment.upload_file(
+                Path(runtime_config_file.name), self._remote_config_file
+            )
 
     async def run(
         self,
@@ -326,7 +398,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "instruction": instruction,
             "model": self.model_name,
             "mcp_servers": self._mcp_config(),
-            "workspace": "/workspace",
+            "workspace": self._workspace,
             "metrics_path": f"{self.environment_logs_dir}/ursa-metrics.json",
             "artifacts_dir": str(EnvironmentPaths.artifacts_dir),
         }
@@ -342,8 +414,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
                     f"exec {self.URSA_PYTHON} -m ursa.integrations.harbor_runner "
                     + shlex.quote(encoded)
                 ),
-                env=self.model_connection.env,
-                cwd="/workspace",
+                env={**(self.model_connection.env or {}), **self._secret_env},
+                cwd=self._workspace,
                 timeout_sec=None,
             )
         except asyncio.CancelledError:
