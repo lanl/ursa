@@ -332,3 +332,45 @@ async def test_slash_terms_opens_modal_and_restores_prompt_focus(
         await pilot.press("q")
         await pilot.pause()
         assert app.focused is app.query_one(PromptArea)
+
+
+async def test_terms_screen_refreshes_tabs_when_sessions_change(tmp_path):
+    info1 = terminal_info("process0", 1)
+    info2 = terminal_info("process1", 2)
+    infos = [info1]
+    manager = SnapshotManager({
+        "process0": snapshot("process0", "zero"),
+        "process1": snapshot("process1", "one"),
+    })
+    manager.terminals = lambda: tuple(infos)  # type: ignore[attr-defined]
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(TermsScreen(infos, manager=manager, refresh_interval=0.05))
+        await pilot.pause()
+        tabs = list(app.screen.query(Tab))
+        assert [str(tab.label) for tab in tabs] == ["process0"]
+
+        infos.append(info2)
+        await asyncio.sleep(0.08)
+        await pilot.pause()
+        tabs = list(app.screen.query(Tab))
+        assert [str(tab.label) for tab in tabs] == ["process0", "process1"]
+        assert app.screen.query_one("#terminal-tabs", TabbedContent).active == (
+            "terminal-tab-process1"
+        )
+
+        infos.pop(0)
+        await asyncio.sleep(0.08)
+        await pilot.pause()
+        tabs = list(app.screen.query(Tab))
+        assert [str(tab.label) for tab in tabs] == ["process1"]
+        assert app.screen.query_one("#terminal-tabs", TabbedContent).active == (
+            "terminal-tab-process1"
+        )
+
+        infos.clear()
+        await asyncio.sleep(0.08)
+        await pilot.pause()
+        tabs = list(app.screen.query(Tab))
+        assert [str(tab.label) for tab in tabs] == ["process1"]
