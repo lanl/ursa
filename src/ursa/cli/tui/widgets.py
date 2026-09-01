@@ -29,6 +29,7 @@ from textual.widgets import (
     OptionList,
     Select,
     Static,
+    Tab,
     TabbedContent,
     TabPane,
     TextArea,
@@ -1216,12 +1217,16 @@ class TermsScreen(ModalScreen[None]):
         terminals: Sequence[TermInfo],
         *,
         manager: TermManager = term_manager,
+        refresh_interval: float = 0.5,
     ) -> None:
         super().__init__()
         self.terminals = tuple(
             sorted(terminals, key=lambda term: term.creation_order)
         )
         self.manager = manager
+        self.refresh_interval = refresh_interval
+        self._refresh_timer: Timer | None = None
+        self._tabs: TabbedContent | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="terminals"):
@@ -1233,7 +1238,8 @@ class TermsScreen(ModalScreen[None]):
                 )
                 return
             newest_pane = f"terminal-tab-{self.terminals[-1].term_id}"
-            with TabbedContent(initial=newest_pane, id="terminal-tabs"):
+            with TabbedContent(initial=newest_pane, id="terminal-tabs") as tabs:
+                self._tabs = tabs
                 for terminal in self.terminals:
                     term_id = terminal.term_id
                     with TabPane(
@@ -1245,6 +1251,59 @@ class TermsScreen(ModalScreen[None]):
                             manager=self.manager,
                             id=f"terminal-view-{term_id}",
                         )
+
+    def on_mount(self) -> None:
+        if hasattr(self.manager, "terminals"):
+            self._refresh_timer = self.set_interval(
+                self.refresh_interval,
+                self._sync_terminals,
+            )
+
+    def on_unmount(self) -> None:
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()
+            self._refresh_timer = None
+
+    async def _sync_terminals(self) -> None:
+        manager_terminals = getattr(self.manager, "terminals", None)
+        if manager_terminals is None or self._tabs is None or not self.is_mounted:
+            return
+        latest = tuple(sorted(manager_terminals(), key=lambda term: term.creation_order))
+        if latest == self.terminals:
+            return
+        previous_ids = [terminal.term_id for terminal in self.terminals]
+        latest_ids = [terminal.term_id for terminal in latest]
+        if not latest_ids:
+            return
+
+        added = [term for term in latest if term.term_id not in previous_ids]
+        removed = [term_id for term_id in previous_ids if term_id not in latest_ids]
+
+        for term_id in removed:
+            await self._tabs.remove_pane(f"terminal-tab-{term_id}")
+
+        previous_active = self._tabs.active
+        for terminal in added:
+            term_id = terminal.term_id
+            await self._tabs.add_pane(
+                TabPane(
+                    term_id,
+                    TerminalView(
+                        term_id,
+                        manager=self.manager,
+                        id=f"terminal-view-{term_id}",
+                    ),
+                    id=f"terminal-tab-{term_id}",
+                )
+            )
+
+        self.terminals = latest
+        if added and previous_active == f"terminal-tab-{previous_ids[-1]}":
+            self._tabs.active = f"terminal-tab-{latest_ids[-1]}"
+        elif previous_active in {f"terminal-tab-{term_id}" for term_id in latest_ids}:
+            self._tabs.active = previous_active
+        else:
+            self._tabs.active = f"terminal-tab-{latest_ids[-1]}"
 
     def action_close(self) -> None:
         self.dismiss(None)
