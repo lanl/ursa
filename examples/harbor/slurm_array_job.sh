@@ -13,7 +13,7 @@ test -n "$task"
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cache_dir=${URSA_HARBOR_SIF_CACHE:-"$repo_root/.harbor-sif-cache"}
 jobs_dir=${URSA_HARBOR_JOBS_DIR:-"$repo_root/jobs"}
-model=${URSA_HARBOR_MODEL:-openai/gpt-4.1-nano}
+model=${URSA_HARBOR_MODEL:-openai/gpt-5.4-nano}
 config_file=${URSA_HARBOR_CONFIG:-"$repo_root/examples/harbor/ursa.yaml"}
 mkdir -p "$cache_dir" "$jobs_dir"
 uv run --project "$repo_root/examples/harbor" --python 3.12 harbor run \
