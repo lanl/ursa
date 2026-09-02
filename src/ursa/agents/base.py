@@ -154,6 +154,10 @@ def _to_snake(s: str) -> str:
     return s.lower()
 
 
+class UnregisteredAgentStateWarning(UserWarning):
+    """A BaseAgent subclass declares a typed state it never registers."""
+
+
 class BaseAgent(Generic[TState], ABC):
     """Abstract base class for all agent implementations in the Ursa framework.
 
@@ -221,7 +225,7 @@ class BaseAgent(Generic[TState], ABC):
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
-        otel_metrics: bool = False,
+        otel_metrics: Optional[bool] = None,
         thread_id: Optional[str] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
@@ -248,6 +252,16 @@ class BaseAgent(Generic[TState], ABC):
                 "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
             }
         )
+        if otel_metrics is not None:
+            import warnings
+
+            warnings.warn(
+                "The otel_metrics argument has never had an effect and is "
+                "deprecated; OpenTelemetry export is configured per invoke "
+                "via save_otel (see issue #259, Tier 2 will supersede it).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or ".")
         self.agent_name = agent_name
@@ -1327,6 +1341,8 @@ class BaseAgent(Generic[TState], ABC):
             )
             raise TypeError(err_msg)
 
+        cls._warn_if_state_unregistered()
+
         # Init graph after subclass has been fully constructed
         orig_init = cls.__init__
 
@@ -1335,6 +1351,50 @@ class BaseAgent(Generic[TState], ABC):
             self.__post_init__()
 
         cls.__init__ = __init__
+
+    @classmethod
+    def _warn_if_state_unregistered(cls):
+        """Warn when a subclass declares a typed state it never registers.
+
+        The graph compiles from ``state_type`` (default ``dict``), so a
+        TypedDict named only in the ``BaseAgent[X]`` generic parameter or
+        the legacy ``agent_state`` attribute contributes nothing and its
+        reducers silently never apply.
+        """
+        import warnings
+        from typing import TypeVar, get_args
+
+        declared = cls.__dict__.get("agent_state")
+        if declared is None:
+            for base in cls.__dict__.get("__orig_bases__", ()):
+                for arg in get_args(base):
+                    if isinstance(arg, TypeVar):
+                        continue
+                    if (
+                        isinstance(arg, type)
+                        and arg is not dict
+                        and issubclass(arg, dict)
+                        and hasattr(arg, "__annotations__")
+                    ):
+                        declared = arg
+                        break
+                if declared is not None:
+                    break
+        if declared is None:
+            return
+        registered = getattr(cls, "state_type", dict)
+        if registered is declared:
+            return
+        warnings.warn(
+            f"{cls.__name__} declares state "
+            f"{getattr(declared, '__name__', declared)} but its graph "
+            f"compiles with "
+            f"{getattr(registered, '__name__', registered)}; set "
+            f"`state_type = {getattr(declared, '__name__', declared)}` "
+            f"so its reducers apply.",
+            UnregisteredAgentStateWarning,
+            stacklevel=3,
+        )
 
     def __post_init__(self):
         self.build_graph()

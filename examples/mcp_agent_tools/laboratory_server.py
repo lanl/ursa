@@ -1,6 +1,5 @@
 from mcp.server.fastmcp import FastMCP
 
-
 mcp = FastMCP("Laboratory measurements", json_response=True)
 
 

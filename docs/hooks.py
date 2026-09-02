@@ -12,7 +12,6 @@ from mkdocs.structure.files import File, Files
 
 from ursa.util.http import inject_truststore_into_ssl
 
-
 # Inventory downloads happen while MkDocs plugins process their configuration,
 # before any URSA command-line entry point can initialize TLS.
 inject_truststore_into_ssl()
@@ -93,10 +92,10 @@ def _published_links(markdown: str, folder: Path) -> str:
             return match.group(0)
 
         source = (folder / unquote(parsed.path)).resolve()
-        if not source.is_file() or not source.is_relative_to(REPOSITORY_ROOT):
+        if not source.exists() or not source.is_relative_to(REPOSITORY_ROOT):
             return match.group(0)
 
-        if source.is_relative_to(DOCS_ROOT):
+        if source.is_file() and source.is_relative_to(DOCS_ROOT):
             docs_path = source.relative_to(DOCS_ROOT).as_posix()
             page_path = PurePosixPath("examples", _example_slug(folder))
             published_url = posixpath.relpath(docs_path, page_path.as_posix())
@@ -113,8 +112,9 @@ def _published_links(markdown: str, folder: Path) -> str:
                 f"{_github_ref()}/{quote(repository_path, safe='/')}"
             )
         else:
+            kind = "blob" if source.is_file() else "tree"
             github_url = (
-                f"https://github.com/lanl/ursa/blob/{_github_ref()}/"
+                f"https://github.com/lanl/ursa/{kind}/{_github_ref()}/"
                 f"{quote(repository_path, safe='/')}"
             )
         if parsed.query:
@@ -147,9 +147,7 @@ def _example_page(folder: Path, metadata: dict) -> str:
 
 def _examples_index(examples: list[tuple[Path, dict]]) -> str:
     """Insert the template-rendered card catalog into the root README."""
-    readme = (EXAMPLES_ROOT / "README.md").read_text(
-        encoding="utf-8"
-    ).rstrip()
+    readme = (EXAMPLES_ROOT / "README.md").read_text(encoding="utf-8").rstrip()
     marker = "<!-- example-catalog -->"
     if marker not in readme:
         raise ValueError(f"{EXAMPLES_ROOT / 'README.md'} is missing {marker}")
@@ -165,10 +163,14 @@ def _examples_index(examples: list[tuple[Path, dict]]) -> str:
         {tag for card in cards for tag in card["tags"]},
         key=str.casefold,
     )
-    catalog = TEMPLATES.get_template("example-catalog.md.jinja").render(
-        examples=cards,
-        all_tags=all_tags,
-    ).rstrip()
+    catalog = (
+        TEMPLATES.get_template("example-catalog.md.jinja")
+        .render(
+            examples=cards,
+            all_tags=all_tags,
+        )
+        .rstrip()
+    )
     return readme.replace(marker, catalog) + "\n"
 
 

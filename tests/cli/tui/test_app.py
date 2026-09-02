@@ -8,7 +8,7 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
@@ -47,6 +47,9 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
         await turn.add_response("Short response")
         await pilot.pause()
 
+        await wait_for(
+            pilot, lambda: banner.region.y == conversation.content_region.y
+        )
         assert banner.region.y == conversation.content_region.y
 
 
@@ -84,6 +87,7 @@ async def test_prompt_submission_events_and_history(tmp_path):
         await pilot.press("h", "e", "l", "l", "o", "enter")
         await pilot.pause()
 
+        await wait_for(pilot, lambda: hitl.calls == [("chat", "hello")])
         assert hitl.calls == [("chat", "hello")]
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
@@ -145,6 +149,7 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
 
         card.on_click(Click())
         await pilot.pause()
+        await wait_for(pilot, lambda: card.expanded)
         assert card.expanded
         rich_traceback = card.query_one(".exception-traceback", Static)
         assert not rich_traceback.has_class("hidden")
@@ -224,13 +229,13 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert first_frame in ActivityIndicator.FRAMES
         assert str(label.content) == "Inspecting the request"
 
-        await asyncio.sleep(0.1)
-        await pilot.pause()
+        assert await wait_for(
+            pilot, lambda: str(spinner.content) != first_frame
+        )
         assert str(spinner.content) in ActivityIndicator.FRAMES
-        assert str(spinner.content) != first_frame
 
         release_agent.set()
-        await pilot.pause()
+        assert await wait_for(pilot, lambda: not app.workers)
         assert str(spinner.content) == ""
         assert str(label.content) == ""
         assert str(done_mark.content) == ""
@@ -277,18 +282,17 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         assert prompt.disabled
 
         await pilot.press("ctrl+c")
-        await pilot.pause()
+        assert await wait_for(pilot, lambda: len(notifications) == 1)
 
         assert prompt.disabled
         assert any(worker.group == "agent" for worker in app.workers)
-        assert len(notifications) == 1
         assert "not supported" in notifications[0][0]
         assert "Ctrl+D" in notifications[0][0]
         assert notifications[0][1]["severity"] == "warning"
 
         release.set()
         await app.workers.wait_for_complete()
-        assert not prompt.disabled
+        assert await wait_for(pilot, lambda: not prompt.disabled)
 
 
 async def test_clear_conversation_is_refused_during_active_turn(
@@ -320,6 +324,7 @@ async def test_clear_conversation_is_refused_during_active_turn(
         await pilot.press("ctrl+l")
         await pilot.pause()
 
+        await wait_for(pilot, lambda: turn.is_mounted)
         assert turn.is_mounted
         assert "not allowed" in notifications[0][0]
         assert "Ctrl+D" in notifications[0][0]
@@ -365,6 +370,7 @@ async def test_quitting_waits_for_active_agent_then_exits(
         await finished.wait()
         await pilot.pause()
 
+    await wait_for(pilot, lambda: app._exit)
     assert app._exit
 
 
@@ -423,6 +429,10 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
 
         await pilot.press("alt+down")
         await pilot.pause()
+        await wait_for(
+            pilot,
+            lambda: app._turn_navigation_marker is app._turn_markers()[-1],
+        )
         assert app._turn_navigation_marker is app._turn_markers()[-1]
         assert conversation.scroll_y == conversation.max_scroll_y
         assert conversation.is_anchored
@@ -454,7 +464,10 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
             )
             await pilot.pause()
 
-        assert conversation.scroll_y == conversation.max_scroll_y
+        assert await wait_for(
+            pilot,
+            lambda: conversation.scroll_y == conversation.max_scroll_y,
+        )
 
         conversation.scroll_to(
             y=max(0, conversation.scroll_y - 3),
@@ -629,3 +642,17 @@ async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
         for _ in range(8):
             await asyncio.sleep(0.03)
             assert conversation.scroll_y == 0
+
+
+async def test_update_status_survives_absent_status_widget(tmp_path):
+    # The agent worker's tail calls _update_status; when teardown has
+    # already pruned the status widget, the bare query crashed the
+    # worker and surfaced as WorkerFailed at run_test exit, after every
+    # test assertion had passed (the recurring Windows CI signature).
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.query_one("#status").remove()
+        await pilot.pause()
+
+        app._update_status("ready")

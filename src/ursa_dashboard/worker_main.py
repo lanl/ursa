@@ -50,14 +50,33 @@ def _api_key_from_config(
     label: str,
     override: str | None | object = _UNSET,
 ) -> str | None:
-    if "api_key" in config:
-        raise ValueError(
-            f"Literal {label} API keys are not accepted in worker config"
-        )
+    from collections.abc import Mapping
+
+    from ursa.util.secrets import SecretReference
+
+    api_key = config.get("api_key")
+    # A safe ``{env|keyring: ...}`` reference is an indirection, not a literal
+    # secret; only reject literal (string) keys embedded in the config.
+    api_key_reference: SecretReference | None = None
+    if api_key is not None:
+        if isinstance(api_key, Mapping):
+            candidate = SecretReference.maybe_validate(dict(api_key))
+            if not isinstance(candidate, SecretReference):
+                raise ValueError(
+                    f"Literal {label} API keys are not accepted in worker config"
+                )
+            api_key_reference = candidate
+        else:
+            raise ValueError(
+                f"Literal {label} API keys are not accepted in worker config"
+            )
     if override is not _UNSET:
         return str(override) if override else None
 
     env_name = str(config.get("api_key_env") or "").strip()
+    if not env_name and api_key_reference is not None:
+        assert api_key_reference.keyring is None, "Keyring not currently supported here. Use API_KEY_ENV for setting the key."
+        env_name = str(api_key_reference.env or "").strip()
     if not env_name:
         return None
     env_val = os.environ.get(env_name)

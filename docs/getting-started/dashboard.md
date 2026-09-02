@@ -2,7 +2,7 @@
 
 The URSA web dashboard provides a browser-based interface for running URSA workflows.
 
-Install URSA first with `uv tool install 'ursa[dashboard]'` as described in the
+Install URSA first with `uv tool install --python 3.13 'ursa-ai[dashboard]'` as described in the
 [getting started guide][getting-started].
 
 ## Launch the dashboard
