@@ -15,7 +15,7 @@ uv run harbor run \
   --path benchmark/tasks/install-pytorch \
   --agent ursa.integrations.harbor:UrsaHarborAgent \
   --agent-kwarg config_file="$PWD/ursa.yaml" \
-  --model openai/gpt-4.1-nano
+  --model openai/gpt-5.4-nano
 ```
 
 A successful task reports reward `1`. Inspect the result with:

@@ -7,7 +7,7 @@ inference_providers:
     api_key:
       env: OPENAI_API_KEY
 llm_model:
-  model: gpt-4.1-nano
+  model: gpt-5.4-nano
   inference_provider: openai
 agent_config:
   execute:
