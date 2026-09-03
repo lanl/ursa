@@ -75,6 +75,7 @@ class MemberRunResult:
     status: str
     output: str | None
     deadline: str | None = None
+    error: str | None = None
 
     @property
     def completed(self) -> bool:
@@ -83,6 +84,10 @@ class MemberRunResult:
     @property
     def timed_out(self) -> bool:
         return self.status == "timed_out"
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "failed"
 
 
 class AgentEloEnvironment(BaseEnvironment):
@@ -256,7 +261,11 @@ class AgentEloEnvironment(BaseEnvironment):
             self.member_configs = list(
                 self.config.members
             )
-        
+
+            self._validate_population_size(
+                len(self.member_configs)
+            )
+                   
             self.members = {
                 member.name: self.build_member(
                     member
@@ -294,6 +303,24 @@ class AgentEloEnvironment(BaseEnvironment):
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
+
+
+    @staticmethod
+    def _validate_population_size(
+        population_size: int,
+    ) -> None:
+        """Validate the active Elo population size."""
+    
+        if population_size < 2:
+            raise ValueError(
+                "AgentEloEnvironment requires at least two active members."
+            )
+    
+        if population_size % 2 != 0:
+            raise ValueError(
+                "AgentEloEnvironment requires an even number of active members. "
+                f"Received {population_size}."
+            )
 
     def _coerce_config(
         self,
@@ -709,7 +736,11 @@ class AgentEloEnvironment(BaseEnvironment):
                 "Restart state is missing "
                 "'active_players'."
             )
-    
+
+        self._validate_population_size(
+            len(raw_players)
+        )
+            
         member_configs: list[
             EnvironmentMemberConfig
         ] = []
@@ -1048,13 +1079,16 @@ class AgentEloEnvironment(BaseEnvironment):
         self,
         names: list[str],
     ) -> list[tuple[str, str]]:
-        """Randomly pair active members.
+        """Randomly pair all active members.
     
-        The environment-local RNG makes pairings reproducible
-        when a seed is configured.
-    
-        For an odd population, one random member receives a bye.
+        AgentEloEnvironment requires an even population, so every
+        active member participates in exactly one match per generation.
         """
+    
+        self._validate_population_size(
+            len(names)
+        )
+    
         shuffled = list(names)
     
         self._rng.shuffle(
@@ -1068,7 +1102,7 @@ class AgentEloEnvironment(BaseEnvironment):
             )
             for index in range(
                 0,
-                len(shuffled) - 1,
+                len(shuffled),
                 2,
             )
         ]
@@ -1181,34 +1215,44 @@ class AgentEloEnvironment(BaseEnvironment):
                 **invoke_kwargs,
             )
     
-        # Unlimited execution preserves the old behavior.
-        if deadline is None:
-            result = await invoke()
+        deadline_text = (
+            deadline.isoformat()
+            if deadline is not None
+            else None
+        )
+    
+        try:
+            if deadline is None:
+                result = await invoke()
+    
+            else:
+                remaining_seconds = (
+                    deadline
+                    - datetime.now(timezone.utc)
+                ).total_seconds()
+    
+                if remaining_seconds <= 0:
+                    return MemberRunResult(
+                        name=member.name,
+                        status="timed_out",
+                        output=None,
+                        deadline=deadline_text,
+                    )
+    
+                # Cancellation stops the environment from awaiting this
+                # member. A blocking subprocess already running in an
+                # executor may continue until that subprocess exits or
+                # reaches its own timeout.
+                result = await asyncio.wait_for(
+                    invoke(),
+                    timeout=remaining_seconds,
+                )
     
             return MemberRunResult(
                 name=member.name,
                 status="completed",
                 output=result_to_text(result),
-                deadline=None,
-            )
-    
-        remaining_seconds = (
-            deadline
-            - datetime.now(timezone.utc)
-        ).total_seconds()
-    
-        if remaining_seconds <= 0:
-            return MemberRunResult(
-                name=member.name,
-                status="timed_out",
-                output=None,
-                deadline=deadline.isoformat(),
-            )
-    
-        try:
-            result = await asyncio.wait_for(
-                invoke(),
-                timeout=remaining_seconds,
+                deadline=deadline_text,
             )
     
         except TimeoutError:
@@ -1216,16 +1260,21 @@ class AgentEloEnvironment(BaseEnvironment):
                 name=member.name,
                 status="timed_out",
                 output=None,
-                deadline=deadline.isoformat(),
+                deadline=deadline_text,
             )
     
-        return MemberRunResult(
-            name=member.name,
-            status="completed",
-            output=result_to_text(result),
-            deadline=deadline.isoformat(),
-        )
-
+        except Exception as exc:
+            return MemberRunResult(
+                name=member.name,
+                status="failed",
+                output=None,
+                deadline=deadline_text,
+                error=(
+                    f"{type(exc).__name__}: "
+                    f"{exc}"
+                ),
+            )
+            
     # ------------------------------------------------------------------
     # Judging
     # ------------------------------------------------------------------
@@ -1265,52 +1314,60 @@ class AgentEloEnvironment(BaseEnvironment):
         player_b: str,
         run_b: MemberRunResult,
     ) -> MatchResult:
-        """Resolve a match, handling execution timeouts first."""
+        """Resolve a match using execution status before LLM judging."""
     
-        if run_a.timed_out and run_b.timed_out:
-            return MatchResult(
+        # Both produced valid completed outputs: use the normal judge.
+        if run_a.completed and run_b.completed:
+            assert run_a.output is not None
+            assert run_b.output is not None
+    
+            return await self._judge_match(
+                task=task,
                 player_a=player_a,
+                output_a=run_a.output,
                 player_b=player_b,
-                score_a=0.5,
-                reasoning=(
-                    "Both competitors exceeded the generation "
-                    "execution deadline. Match recorded as a draw."
-                ),
+                output_b=run_b.output,
             )
     
-        if run_a.timed_out:
-            return MatchResult(
-                player_a=player_a,
-                player_b=player_b,
-                score_a=0.0,
-                reasoning=(
-                    f"{player_a} exceeded the generation execution "
-                    f"deadline; {player_b} completed within the allowed "
-                    "time and therefore wins automatically."
-                ),
-            )
-    
-        if run_b.timed_out:
+        # A completed and B did not.
+        if run_a.completed:
             return MatchResult(
                 player_a=player_a,
                 player_b=player_b,
                 score_a=1.0,
                 reasoning=(
-                    f"{player_b} exceeded the generation execution "
-                    f"deadline; {player_a} completed within the allowed "
-                    "time and therefore wins automatically."
+                    f"{player_a} completed the generation successfully; "
+                    f"{player_b} did not complete successfully "
+                    f"(status={run_b.status}). "
+                    f"{player_a} therefore wins automatically."
                 ),
             )
     
-        assert run_a.output is not None
-        assert run_b.output is not None
+        # B completed and A did not.
+        if run_b.completed:
+            return MatchResult(
+                player_a=player_a,
+                player_b=player_b,
+                score_a=0.0,
+                reasoning=(
+                    f"{player_b} completed the generation successfully; "
+                    f"{player_a} did not complete successfully "
+                    f"(status={run_a.status}). "
+                    f"{player_b} therefore wins automatically."
+                ),
+            )
     
-        return await self._judge_match(
-            task=task,
+        # Neither completed.
+        return MatchResult(
             player_a=player_a,
-            output_a=run_a.output,
             player_b=player_b,
-            output_b=run_b.output,
+            score_a=0.5,
+            reasoning=(
+                "Neither competitor completed the generation successfully. "
+                f"{player_a} status={run_a.status}; "
+                f"{player_b} status={run_b.status}. "
+                "Match recorded as a draw."
+            ),
         )
 
     async def _judge_match(
@@ -1785,12 +1842,22 @@ class AgentEloEnvironment(BaseEnvironment):
     ) -> dict[str, Any]:
         """Run one complete evolutionary generation."""
     
-        if len(self.member_configs) < 2:
-            raise ValueError(
-                "AgentEloEnvironment requires "
-                "at least two active members."
+        self._validate_population_size(
+            len(self.member_configs)
+        )
+
+        if not (
+            len(self.member_configs)
+            == len(self.members)
+            == len(self.players)
+        ):
+            raise RuntimeError(
+                "AgentEloEnvironment active population state is inconsistent: "
+                f"member_configs={len(self.member_configs)}, "
+                f"members={len(self.members)}, "
+                f"players={len(self.players)}."
             )
-    
+
         generation_number = (
             self.generation_index + 1
         )
@@ -1852,6 +1919,12 @@ class AgentEloEnvironment(BaseEnvironment):
             name
             for name, result in runs.items()
             if result.timed_out
+        ]
+
+        failed = [
+            name
+            for name, result in runs.items()
+            if result.failed
         ]
         
         # ----------------------------------------------------------
@@ -1985,10 +2058,12 @@ class AgentEloEnvironment(BaseEnvironment):
                 name: {
                     "status": run.status,
                     "deadline": run.deadline,
+                    "error": run.error,
                 }
                 for name, run in runs.items()
             },
             "timed_out": timed_out,
+            "failed": failed,
             "generation_deadline": (
                 generation_deadline.isoformat()
                 if generation_deadline is not None
