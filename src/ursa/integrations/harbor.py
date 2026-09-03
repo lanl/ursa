@@ -20,9 +20,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from jsonargparse import Namespace
+from pydantic import SecretStr
+
 try:
     from harbor.agents.installed.base import BaseInstalledAgent
-    from harbor.agents.model_connection import ModelConnectionSpec
+    from harbor.agents.model_connection import PROVIDERS, ModelConnectionSpec
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
     from harbor.models.trial.paths import EnvironmentPaths
@@ -32,7 +35,12 @@ except ImportError as exc:  # pragma: no cover - exercised without the extra
     ) from exc
 
 from ursa.agents import BaseAgent as UrsaBaseAgent
-from ursa.cli.config import ENV_SUB_REGEX, UrsaConfig, load_config_file
+from ursa.cli.config import (
+    ENV_SUB_REGEX,
+    UrsaConfig,
+    config_search_paths,
+    load_config_file,
+)
 from ursa.util.secrets import externalize_secret_references
 
 
@@ -43,6 +51,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
         agent_import_path: ``module:Class`` path for the URSA agent. Defaults
             to :class:`ursa.agents.ExecutionAgent`.
         config_file: URSA YAML or JSON configuration file.
+        config_only: Merge only ``config_file`` before Harbor's settings. By
+            default, the system and user config layers are included first.
         ursa_install_spec: Package spec installed in each task container.
         ursa_source_dir: Development-only local source tree to upload and install.
         ursa_extras: URSA package extras to install, as a sequence or comma-separated
@@ -54,12 +64,18 @@ class UrsaHarborAgent(BaseInstalledAgent):
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
     URSA_PYTHON = "/opt/ursa/bin/python3"
     URSA_PYTHON_VERSION = "3.13"
+    ENV_AUTH_PROVIDERS = frozenset({
+        "amazon-bedrock",
+        "sagemaker",
+        "vertex_ai",
+    })
 
     def __init__(
         self,
         *args: Any,
         agent_import_path: str = "ursa.agents:ExecutionAgent",
         config_file: str | Path,
+        config_only: bool | str = False,
         ursa_install_spec: str = "ursa-ai",
         ursa_source_dir: str | Path | None = None,
         ursa_extras: str | Sequence[str] | None = None,
@@ -69,12 +85,14 @@ class UrsaHarborAgent(BaseInstalledAgent):
         super().__init__(*args, **kwargs)
         self.agent_import_path = agent_import_path
         self.config_file = Path(config_file).expanduser().resolve()
+        self.config_only = self._parse_bool(config_only, "config_only")
         if not ursa_install_spec:
             raise ValueError("ursa_install_spec cannot be empty")
         self.ursa_install_spec = ursa_install_spec
         self.ursa_extras = self._parse_list(ursa_extras)
         self.extra_packages = self._parse_list(extra_packages)
         self._secret_env: dict[str, str] = {}
+        self._model_env: dict[str, str] = {}
         self._workspace = "/"
         self.ursa_source_dir = (
             Path(ursa_source_dir).resolve() if ursa_source_dir else None
@@ -86,6 +104,17 @@ class UrsaHarborAgent(BaseInstalledAgent):
             return ()
         values = value.split(",") if isinstance(value, str) else value
         return tuple(item.strip() for item in values if item.strip())
+
+    @staticmethod
+    def _parse_bool(value: bool | str, name: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+        raise ValueError(f"{name} must be true or false")
 
     def _install_target(self, target: str) -> str:
         if not self.ursa_extras:
@@ -108,50 +137,98 @@ class UrsaHarborAgent(BaseInstalledAgent):
             for server in self.mcp_servers
         }
 
-    def _runtime_config(self) -> tuple[dict[str, Any], dict[str, str]]:
+    def _harbor_config(self, config: UrsaConfig) -> dict[str, Any]:
+        """Convert Harbor-owned model and MCP settings to an URSA layer."""
+        layer: dict[str, Any] = {}
+        if self.model_name:
+            provider, separator, model = self.model_name.partition("/")
+            if not separator or not provider or not model:
+                raise ValueError(
+                    "Harbor model must use inference_provider/model_name syntax"
+                )
+            layer["llm_model"] = {
+                "model": model,
+                "inference_provider": provider,
+            }
+            connection = self.model_connection
+            provider_config: dict[str, Any] = {}
+            configured_provider = config.inference_providers.get(provider)
+            if configured_provider is None:
+                raise ValueError(
+                    f"Harbor inference provider '{provider}' must be "
+                    "defined in the merged URSA config"
+                )
+            if provider != "openai" and not (
+                configured_provider.model_extra or {}
+            ).get("model_provider"):
+                raise ValueError(
+                    f"URSA inference provider '{provider}' must define "
+                    "model_provider for Harbor model selection"
+                )
+            env_authenticated = connection.provider in self.ENV_AUTH_PROVIDERS
+            if connection.api_key is not None and not env_authenticated:
+                provider_config["api_key"] = SecretStr(connection.api_key)
+            if connection.configured_base_url is not None:
+                provider_config["base_url"] = connection.configured_base_url
+            provider_access = PROVIDERS.get(connection.provider or "")
+            projected_names = (
+                set()
+                if env_authenticated or provider_access is None
+                else {
+                    *provider_access.api_key_envs,
+                    *provider_access.base_url_envs,
+                }
+            )
+            self._model_env = {
+                name: value
+                for name, value in connection.env.items()
+                if name not in projected_names
+            }
+            if provider_config:
+                layer["inference_providers"] = {provider: provider_config}
+        if mcp_servers := self._mcp_config():
+            layer["mcp_servers"] = mcp_servers
+        return layer
+
+    def _config_layers(self) -> list[dict[str, Any]]:
         if not self.config_file.is_file():
             raise FileNotFoundError(
                 f"URSA config file not found: {self.config_file}"
             )
-        raw_config = load_config_file(
-            self.config_file, interpolate_environment=False
+        paths = (
+            [self.config_file]
+            if self.config_only
+            else config_search_paths(
+                Namespace(config=self.config_file, subcommand=None), "final"
+            )
         )
-        self._reject_environment_interpolation(raw_config)
-        config = UrsaConfig.model_validate(raw_config)
-        config_data = config.model_dump(
-            mode="python", context={"include_defaults": True}
-        )
-        selected_provider = (
-            self.model_name.partition("/")[0]
-            if self.model_name and "/" in self.model_name
-            else config.llm_model.inference_provider
-        )
-        configured_provider = (
-            config.llm_model.inference_provider
-            or config.llm_model.model_provider
-        )
-        provider_switched = selected_provider != configured_provider
-        if provider_switched:
-            model_config = {
-                field: config_data["llm_model"][field]
-                for field in ("model", "max_completion_tokens")
-                if config_data["llm_model"].get(field) is not None
+        layers = [
+            load_config_file(path, interpolate_environment=False)
+            for path in paths
+        ]
+        for layer in layers:
+            self._reject_environment_interpolation(layer)
+        return layers
+
+    def _runtime_config(self) -> tuple[dict[str, Any], dict[str, str]]:
+        config = UrsaConfig().model_merge(*self._config_layers())
+        harbor_config = self._harbor_config(config)
+        harbor_mcp = harbor_config.pop("mcp_servers", {})
+        config = config.model_merge(harbor_config)
+
+        # A Harbor MCP entry describes the whole named server. Replacing that
+        # entry avoids retaining incompatible fields when its transport changes.
+        if harbor_mcp:
+            config.mcp_servers = {
+                **config.mcp_servers,
+                **harbor_mcp,
             }
-            model_config["inference_provider"] = selected_provider
-            config_data["llm_model"] = model_config
-        required_providers = {selected_provider}
-        if config.emb_model and config.emb_model.inference_provider:
-            required_providers.add(config.emb_model.inference_provider)
-        for name, provider in config_data["inference_providers"].items():
-            if name not in required_providers:
-                provider.pop("api_key", None)
+
+        config_data = config.model_dump(mode="python", exclude_unset=True)
         projected, secret_env = externalize_secret_references(config_data)
         runtime_config = UrsaConfig.model_validate(projected).model_dump(
-            mode="json", context={"include_defaults": True}, exclude_none=True
+            mode="json", exclude_none=True, exclude_unset=True
         )
-        if provider_switched:
-            runtime_config["llm_model"].pop("model_provider", None)
-            runtime_config["llm_model"].pop("ssl_verify", None)
         return runtime_config, secret_env
 
     @classmethod
@@ -160,9 +237,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
     ) -> None:
         if isinstance(value, dict):
             for name, child in value.items():
-                cls._reject_environment_interpolation(
-                    child, (*path, str(name))
-                )
+                cls._reject_environment_interpolation(child, (*path, str(name)))
         elif isinstance(value, list):
             for index, child in enumerate(value):
                 cls._reject_environment_interpolation(
@@ -396,8 +471,6 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "agent_import_path": self.agent_import_path,
             "config_file": self._remote_config_file,
             "instruction": instruction,
-            "model": self.model_name,
-            "mcp_servers": self._mcp_config(),
             "workspace": self._workspace,
             "metrics_path": f"{self.environment_logs_dir}/ursa-metrics.json",
             "artifacts_dir": str(EnvironmentPaths.artifacts_dir),
@@ -414,7 +487,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                     f"exec {self.URSA_PYTHON} -m ursa.integrations.harbor_runner "
                     + shlex.quote(encoded)
                 ),
-                env={**(self.model_connection.env or {}), **self._secret_env},
+                env={**self._model_env, **self._secret_env},
                 cwd=self._workspace,
                 timeout_sec=None,
             )

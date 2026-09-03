@@ -1,13 +1,13 @@
 {
-  "job_name": "base-ursa-apptainer",
-  "jobs_dir": "jobs/wave-validation-793a452a34138ea8",
+  "job_name": "base-ursa-docker",
+  "jobs_dir": "jobs/wave-validation-45a54c7a39d3249a",
   "agent_timeout_multiplier": 2.0,
   "agent_setup_timeout_multiplier": 3.0,
   "environment_build_timeout_multiplier": 3.0,
   "n_concurrent_trials": 4,
   "quiet": true,
   "environment": {
-    "import_path": "ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment",
+    "type": "docker",
     "force_build": true
   },
   "agents": [
@@ -15,7 +15,7 @@
       "name": "ursa.integrations.harbor:UrsaHarborAgent",
       "model_name": "openai/gpt-5.4-nano",
       "kwargs": {
-        "config_file": "jobs/wave-validation-793a452a34138ea8/ursa.yaml",
+        "config_file": "jobs/wave-validation-45a54c7a39d3249a/ursa.yaml",
         "config_only": true,
         "ursa_source_dir": "."
       },

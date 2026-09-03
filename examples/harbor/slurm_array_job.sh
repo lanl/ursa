@@ -19,6 +19,7 @@ mkdir -p "$cache_dir" "$jobs_dir"
 uv run --project "$repo_root/examples/harbor" --python 3.12 harbor run \
   --path "$task" --agent ursa.integrations.harbor:UrsaHarborAgent --model "$model" \
   --agent-kwarg "config_file=$config_file" \
+  --agent-kwarg config_only=true \
   --agent-kwarg "ursa_source_dir=$repo_root" \
   --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment \
   --environment-kwarg "singularity_image_cache_dir=$cache_dir" \

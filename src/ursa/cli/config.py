@@ -107,6 +107,23 @@ class InferenceProviderConfig(BaseModel):
             )
         return self.model_copy()
 
+    def model_merge(self, other: Self | dict[str, Any]) -> Self:
+        """Merge a higher-priority provider without merging secret internals."""
+        candidate = (
+            other
+            if isinstance(other, InferenceProviderConfig)
+            else type(self).model_validate(deepcopy(other))
+        )
+        updates = candidate.model_dump(mode="python", exclude_unset=True)
+        merged = type(self).model_validate({
+            **self.model_dump(mode="python"),
+            **updates,
+        })
+        merged.__pydantic_fields_set__ = (
+            self.model_fields_set | candidate.model_fields_set
+        )
+        return merged
+
 
 class ModelConfig(BaseModel):
     """Configuration manager for LangChain's `init_*` factories."""
@@ -148,19 +165,36 @@ class ModelConfig(BaseModel):
             })
         )
         updates = candidate.model_dump(mode="python", exclude_unset=True)
+        provider_changed = (
+            updates.get("inference_provider") is not None
+            and updates["inference_provider"] != self.inference_provider
+        )
+        if provider_changed:
+            retained = {
+                name: deepcopy(getattr(self, name))
+                for name in type(self).model_fields
+                if name not in ModelConfig.model_fields
+                and name in self.model_fields_set
+            }
+            current = type(self).model_validate({
+                "model": self.model,
+                **retained,
+            })
+        else:
+            current = self
         if updates.get("base_url") is not None:
             updates.setdefault("inference_provider", None)
         elif updates.get("inference_provider") is not None:
             updates.setdefault("base_url", None)
         merged = type(self).model_validate({
-            **self.model_dump(mode="python"),
+            **current.model_dump(mode="python"),
             **updates,
         })
         # Validating the complete merged mapping marks every default as explicit.
         # Preserve only fields supplied by either layer so provider defaults can
         # still fill values that merely appeared in the model dump.
         merged.__pydantic_fields_set__ = (
-            self.model_fields_set | candidate.model_fields_set
+            current.model_fields_set | candidate.model_fields_set
         )
         return merged
 
@@ -484,6 +518,22 @@ class UrsaConfig(BaseModel):
                 model_merge = getattr(current, "model_merge", None)
                 if callable(model_merge):
                     merged[key] = model_merge(value)
+                elif key == "inference_providers" and isinstance(value, dict):
+                    providers = dict(current)
+                    for name, provider in value.items():
+                        if name in providers:
+                            providers[name] = providers[name].model_merge(
+                                provider
+                            )
+                        else:
+                            providers[name] = (
+                                provider
+                                if isinstance(provider, InferenceProviderConfig)
+                                else InferenceProviderConfig.model_validate(
+                                    provider
+                                )
+                            )
+                    merged[key] = providers
                 elif isinstance(current, dict) and isinstance(value, dict):
                     merged[key] = deep_merge_dicts(current, value)
                 else:

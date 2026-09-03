@@ -1,5 +1,5 @@
 {
-  "seed": "793a452a34138ea8",
+  "seed": "45a54c7a39d3249a",
   "medium_eligibility": {
     "dataset": "terminal-bench@2.0",
     "git_commit": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
@@ -68,10 +68,10 @@
     "medium": {
       "dataset": "terminal-bench@2.0",
       "tasks": [
-        "log-summary-date-ranges",
-        "nginx-request-logging",
-        "db-wal-recovery",
-        "git-leak-recovery"
+        "build-pmars",
+        "tune-mjcf",
+        "raman-fitting",
+        "db-wal-recovery"
       ]
     }
   }

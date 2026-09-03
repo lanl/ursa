@@ -46,59 +46,64 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     except AsciiValidationError as exc:
         return ascii_validation_message("query", exc)
     workspace_dir = Path(runtime.context.workspace)
-    if runtime.store is not None:
-        search_results = runtime.store.search(
-            ("workspace", "file_edit"), limit=1000
-        )
-        edited_files = [item.key for item in search_results]
-    else:
-        edited_files = []
-
-    if runtime.store is not None:
-        search_results = runtime.store.search(
-            ("workspace", "safe_codes"), limit=1000
-        )
-        safe_codes = [item.key for item in search_results]
-    else:
-        safe_codes = []
-
-    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
-    llm = runtime.context.llm
     events = ToolEvents.from_runtime("run_command", runtime)
-    safety_result = invoke_structured(
-        llm,
-        SafetyAssessment,
-        get_safety_prompt(
-            query, safe_codes, edited_files, prompt_level=prompt_level
-        ),
-        context="run_command safety assessment",
-        fallback=SafetyAssessment(
-            is_safe=False,
-            reason=(
-                "Could not parse command safety assessment from the model. "
-                "Command blocked."
-            ),
-        ),
-        repair=1,
-    )
-
-    if not safety_result.is_safe:
-        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
+    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default").strip().lower()
+    if prompt_level in {"none", "yolo"}:
         events.emit(
-            "Command deemed unsafe",
+            "Command safety check bypassed",
             stage="safety_check",
             query=query,
-            safe=False,
+            safe=True,
+            reason=f"URSA_SAFETY_LEVEL={prompt_level}",
+        )
+    else:
+        if runtime.store is not None:
+            search_results = runtime.store.search(
+                ("workspace", "file_edit"), limit=1000
+            )
+            edited_files = [item.key for item in search_results]
+            search_results = runtime.store.search(
+                ("workspace", "safe_codes"), limit=1000
+            )
+            safe_codes = [item.key for item in search_results]
+        else:
+            edited_files = []
+            safe_codes = []
+
+        safety_result = invoke_structured(
+            runtime.context.llm,
+            SafetyAssessment,
+            get_safety_prompt(
+                query, safe_codes, edited_files, prompt_level=prompt_level
+            ),
+            context="run_command safety assessment",
+            fallback=SafetyAssessment(
+                is_safe=False,
+                reason=(
+                    "Could not parse command safety assessment from the model. "
+                    "Command blocked."
+                ),
+            ),
+            repair=1,
+        )
+
+        if not safety_result.is_safe:
+            tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
+            events.emit(
+                "Command deemed unsafe",
+                stage="safety_check",
+                query=query,
+                safe=False,
+                reason=safety_result.reason,
+            )
+            return tool_response
+        events.emit(
+            "Command passed safety check",
+            stage="safety_check",
+            query=query,
+            safe=True,
             reason=safety_result.reason,
         )
-        return tool_response
-    events.emit(
-        "Command passed safety check",
-        stage="safety_check",
-        query=query,
-        safe=True,
-        reason=safety_result.reason,
-    )
 
     try:
         with events.range(

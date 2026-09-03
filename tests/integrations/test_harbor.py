@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,17 +11,20 @@ import pytest
 
 harbor = pytest.importorskip("harbor")
 
+from harbor.environments.singularity import (  # noqa: E402
+    singularity as harbor_singularity,
+)
 from harbor.models.task.config import MCPServerConfig  # noqa: E402
 
 from ursa.agents import BaseAgent  # noqa: E402
 from ursa.agents.base import AgentWithTools  # noqa: E402
+from ursa.cli import config as config_module  # noqa: E402
 from ursa.cli.config import UrsaConfig  # noqa: E402
 from ursa.integrations.harbor import (  # noqa: E402
     UrsaHarborAgent,
     make_harbor_agent,
 )
 from ursa.integrations.harbor_runner import (  # noqa: E402
-    _apply_harbor_overrides,
     _attach_mcp_tools,
     _close_checkpoint,
     _export_checkpoint,
@@ -39,6 +43,10 @@ def _config(path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def _host_openai_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai-key")
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.config_search_paths",
+        lambda namespace, _level: [Path(namespace.config)],
+    )
 
 
 def test_usage_reads_current_metrics_schema(tmp_path):
@@ -247,36 +255,194 @@ def test_factory_accepts_arbitrary_ursa_subclass(tmp_path):
     assert bound.name() == "ursa"
 
 
-def test_runtime_config_does_not_require_unused_openai_secret(
+def test_runtime_config_uses_default_stack_with_harbor_last(
     tmp_path, monkeypatch
 ):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    system = tmp_path / "system.yaml"
+    user = tmp_path / "user.yaml"
     config_file = tmp_path / "ursa.yaml"
+    system.write_text(
+        "use_web: true\n"
+        "agent_name: system\n"
+        "mcp_servers:\n"
+        "  tools:\n"
+        "    transport: stdio\n"
+        "    command: old-command\n"
+    )
+    user.write_text("agent_name: user\n")
     config_file.write_text(
-        "inference_providers:\n"
-        "  ollama:\n"
-        "    model_provider: ollama\n"
-        "    base_url: http://localhost:11434\n"
+        "agent_name: file\n"
         "llm_model:\n"
-        "  model: ignored\n"
-        "  inference_provider: ollama\n"
+        "  model: file-model\n"
+        "  max_completion_tokens: 123\n"
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.config_search_paths",
+        lambda _namespace, _level: [system, user, config_file],
     )
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "logs",
-        model_name="ollama/gemma4:latest",
+        model_name="openai/gpt-5.4-nano",
+        config_file=config_file,
+        mcp_servers=[
+            MCPServerConfig(
+                name="tools",
+                transport="streamable-http",
+                url="http://tools:8000/mcp",
+            )
+        ],
+    )
+
+    runtime_config, _ = agent._runtime_config()
+
+    assert runtime_config["use_web"] is True
+    assert runtime_config["agent_name"] == "file"
+    assert runtime_config["llm_model"]["model"] == "gpt-5.4-nano"
+    assert runtime_config["llm_model"]["inference_provider"] == "openai"
+    assert runtime_config["llm_model"]["max_completion_tokens"] == 123
+    assert runtime_config["mcp_servers"]["tools"]["url"] == (
+        "http://tools:8000/mcp"
+    )
+    assert "command" not in runtime_config["mcp_servers"]["tools"]
+
+
+def test_runtime_config_uses_ursa_config_path_discovery(tmp_path, monkeypatch):
+    system = tmp_path / "system.yaml"
+    user = tmp_path / "user.yaml"
+    config_file = tmp_path / "ursa.yaml"
+    system.write_text("use_web: true\n")
+    user.write_text("agent_name: user\n")
+    config_file.write_text("agent_name: supplied\n")
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.config_search_paths",
+        config_module.config_search_paths,
+    )
+    monkeypatch.setattr("ursa.cli.config.system_config_paths", lambda: [system])
+    monkeypatch.setattr("ursa.cli.config.user_config_paths", lambda: [user])
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-5.4-nano",
+        config_file=config_file,
+    )
+
+    runtime_config, _ = agent._runtime_config()
+
+    assert runtime_config["use_web"] is True
+    assert runtime_config["agent_name"] == "supplied"
+
+
+def test_runtime_config_only_uses_supplied_file_before_harbor(
+    tmp_path, monkeypatch
+):
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "agent_name: supplied\n"
+        "llm_model:\n"
+        "  model: supplied-model\n"
+        "  max_completion_tokens: 321\n"
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.config_search_paths",
+        lambda *_args: pytest.fail("config search must be skipped"),
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-5.4-nano",
+        config_file=config_file,
+        config_only="true",
+    )
+
+    runtime_config, _ = agent._runtime_config()
+
+    assert runtime_config["agent_name"] == "supplied"
+    assert runtime_config["llm_model"]["model"] == "gpt-5.4-nano"
+    assert runtime_config["llm_model"]["max_completion_tokens"] == 321
+
+
+def test_runtime_config_externalizes_secrets_from_all_layers(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SYSTEM_TOKEN", "system-secret")
+    monkeypatch.setenv("EMBEDDING_TOKEN", "embedding-secret")
+    monkeypatch.setattr(
+        "keyring.get_password",
+        lambda service, username: (
+            "unused-secret"
+            if (service, username) == ("ursa", "unused")
+            else None
+        ),
+    )
+    system = tmp_path / "system.yaml"
+    config_file = tmp_path / "ursa.yaml"
+    system.write_text(
+        "mcp_servers:\n"
+        "  system:\n"
+        "    transport: streamable-http\n"
+        "    url: http://system.test/mcp\n"
+        "    headers:\n"
+        "      Authorization:\n"
+        "        env: SYSTEM_TOKEN\n"
+        "        template: Bearer %s\n"
+    )
+    config_file.write_text(
+        "inference_providers:\n"
+        "  unused:\n"
+        "    api_key:\n"
+        "      keyring: true\n"
+        "emb_model:\n"
+        "  model: text-embedding-3-small\n"
+        "  api_key:\n"
+        "    env: EMBEDDING_TOKEN\n"
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.config_search_paths",
+        lambda _namespace, _level: [system, config_file],
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-5.4-nano",
         config_file=config_file,
     )
 
     runtime_config, secret_env = agent._runtime_config()
 
-    assert secret_env == {}
-    assert "api_key" not in runtime_config["inference_providers"]["openai"]
+    assert set(secret_env.values()) == {
+        "host-openai-key",
+        "system-secret",
+        "embedding-secret",
+        "unused-secret",
+    }
+    serialized = json.dumps(runtime_config)
+    for original in (
+        "OPENAI_API_KEY",
+        "SYSTEM_TOKEN",
+        "EMBEDDING_TOKEN",
+        '"keyring": true',
+    ):
+        assert original not in serialized
+    assert "URSA_HARBOR_SECRET_" in serialized
 
 
-def test_runtime_config_drops_model_secret_when_switching_provider(
+def test_harbor_model_connection_is_an_ursa_provider_layer(
     tmp_path, monkeypatch
 ):
-    monkeypatch.delenv("OLD_OPENAI_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.test/v1")
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-5.4-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+    )
+
+    runtime_config, secret_env = agent._runtime_config()
+
+    assert runtime_config["inference_providers"]["openai"]["base_url"] == (
+        "https://proxy.test/v1"
+    )
+    assert set(secret_env.values()) == {"host-openai-key"}
+
+
+def test_harbor_model_switch_drops_old_provider_fields(tmp_path, monkeypatch):
+    monkeypatch.delenv("OLD_AZURE_KEY", raising=False)
     config_file = tmp_path / "ursa.yaml"
     config_file.write_text(
         "inference_providers:\n"
@@ -285,10 +451,12 @@ def test_runtime_config_drops_model_secret_when_switching_provider(
         "    base_url: http://localhost:11434\n"
         "llm_model:\n"
         "  model: old-model\n"
-        "  model_provider: openai\n"
+        "  model_provider: azure_openai\n"
         "  api_key:\n"
-        "    env: OLD_OPENAI_KEY\n"
+        "    env: OLD_AZURE_KEY\n"
+        "  ssl_verify: false\n"
         "  azure_deployment: old-deployment\n"
+        "  max_completion_tokens: 456\n"
     )
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "logs",
@@ -298,11 +466,42 @@ def test_runtime_config_drops_model_secret_when_switching_provider(
 
     runtime_config, secret_env = agent._runtime_config()
 
-    assert secret_env == {}
+    assert "OLD_AZURE_KEY" not in json.dumps(runtime_config)
     assert "api_key" not in runtime_config["llm_model"]
-    assert runtime_config["llm_model"]["inference_provider"] == "ollama"
-    assert runtime_config["llm_model"].get("model_provider") is None
     assert "azure_deployment" not in runtime_config["llm_model"]
+    assert "model_provider" not in runtime_config["llm_model"]
+    assert runtime_config["llm_model"]["max_completion_tokens"] == 456
+    monkeypatch.setenv(next(iter(secret_env)), next(iter(secret_env.values())))
+    resolved = UrsaConfig.model_validate(runtime_config).resolve()
+    assert resolved.llm_model.model_provider == "ollama"
+
+
+def test_harbor_model_requires_a_configured_inference_provider(tmp_path):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="anthropic/claude-test",
+        config_file=_config(tmp_path / "ursa.yaml"),
+    )
+
+    with pytest.raises(ValueError, match="anthropic.*defined.*merged"):
+        agent._runtime_config()
+
+
+def test_harbor_model_requires_a_backend_for_non_openai_provider(tmp_path):
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  ollama:\n"
+        "    base_url: http://localhost:11434\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="ollama/gemma4:latest",
+        config_file=config_file,
+    )
+
+    with pytest.raises(ValueError, match="ollama.*model_provider"):
+        agent._runtime_config()
 
 
 def test_runtime_config_rejects_generic_environment_interpolation(
@@ -557,6 +756,84 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_passes_provider_extra_env_only_to_runner(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "session-token")
+    monkeypatch.setenv("AWS_REGION", "us-test-1")
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  amazon-bedrock:\n"
+        "    model_provider: bedrock_converse\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="amazon-bedrock/test-model",
+        config_file=config_file,
+    )
+    runtime_config, agent._secret_env = agent._runtime_config()
+    agent._remote_config_file = "/tmp/ursa-config.json"
+    observed_env = None
+
+    async def fake_exec_as_agent(*args, **kwargs):
+        nonlocal observed_env
+        observed_env = kwargs["env"]
+        return SimpleNamespace(
+            return_code=0,
+            stdout='URSA_HARBOR_RESULT={"result": null}\n',
+        )
+
+    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+
+    await agent.run("task", object(), SimpleNamespace())
+
+    assert observed_env is not None
+    assert (
+        "api_key" not in runtime_config["inference_providers"]["amazon-bedrock"]
+    )
+    assert observed_env["AWS_ACCESS_KEY_ID"] == "access-key"
+    assert observed_env["AWS_SECRET_ACCESS_KEY"] == "secret-key"
+    assert observed_env["AWS_SESSION_TOKEN"] == "session-token"
+    assert observed_env["AWS_REGION"] == "us-test-1"
+    assert "OPENAI_API_KEY" not in observed_env
+    for name, value in agent._secret_env.items():
+        monkeypatch.setenv(name, value)
+    resolved = UrsaConfig.model_validate(runtime_config).resolve()
+    assert resolved.llm_model.model_provider == "bedrock_converse"
+
+
+def test_harbor_preserves_a_configured_custom_model_provider(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CUSTOM_TOKEN", "credential")
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  custom:\n"
+        "    model_provider: openai\n"
+        "    base_url: https://models.test/v1\n"
+        "    api_key:\n"
+        "      env: CUSTOM_TOKEN\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="custom/test-model",
+        config_file=config_file,
+    )
+
+    runtime_config, secret_env = agent._runtime_config()
+
+    for name, value in secret_env.items():
+        monkeypatch.setenv(name, value)
+    resolved = UrsaConfig.model_validate(runtime_config).resolve()
+    assert resolved.llm_model.model_provider == "openai"
+    assert resolved.llm_model.base_url == "https://models.test/v1"
+
+
+@pytest.mark.asyncio
 async def test_run_reports_stderr_when_runner_has_no_stdout(
     tmp_path, monkeypatch
 ):
@@ -574,24 +851,6 @@ async def test_run_reports_stderr_when_runner_has_no_stdout(
 
     with pytest.raises(RuntimeError, match="runner failed"):
         await agent.run("task", object(), SimpleNamespace())
-
-
-def test_harbor_model_overrides_ursa_model():
-    config = UrsaConfig.model_validate({
-        "inference_providers": {
-            "ollama": {
-                "model_provider": "ollama",
-                "base_url": "http://localhost:11434",
-            }
-        },
-        "llm_model": {"model": "old", "inference_provider": "openai"},
-    })
-
-    resolved = _apply_harbor_overrides(config, "ollama/gemma4", {}).resolve()
-
-    assert resolved.llm_model.model == "gemma4"
-    assert resolved.llm_model.inference_provider == "ollama"
-    assert resolved.llm_model.model_provider == "ollama"
 
 
 def test_harbor_mcp_servers_convert_to_ursa_mapping(tmp_path):
@@ -615,32 +874,6 @@ def test_harbor_mcp_servers_convert_to_ursa_mapping(tmp_path):
             "args": [],
         }
     }
-
-
-def test_harbor_mcp_servers_merge_and_override_config():
-    config = UrsaConfig.model_validate({
-        "mcp_servers": {
-            "replaced": {
-                "transport": "stdio",
-                "command": "old-command",
-            }
-        }
-    })
-    result = _apply_harbor_overrides(
-        config,
-        None,
-        {
-            "replaced": {
-                "transport": "stdio",
-                "command": "new-command",
-                "args": ["--serve"],
-            },
-            "events": {"transport": "sse", "url": "http://events/sse"},
-        },
-    )
-
-    assert result.mcp_servers["replaced"].command == "new-command"
-    assert set(result.mcp_servers) == {"replaced", "events"}
 
 
 @pytest.mark.asyncio
@@ -880,6 +1113,446 @@ async def test_apptainer_shim_is_used_for_harbor_server(tmp_path, monkeypatch):
     )
 
     await environment.start(force_build=False)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_singularity_rejects_invalid_startup_timeout(timeout):
+    with pytest.raises(ValueError, match="positive and finite"):
+        DockerfileSingularityEnvironment(
+            singularity_startup_timeout_sec=timeout
+        )
+
+
+def _startup_test_environment(tmp_path, timeout=300):
+    environment = DockerfileSingularityEnvironment.__new__(
+        DockerfileSingularityEnvironment
+    )
+    environment._startup_timeout_sec = timeout
+    environment._mounts = []
+    environment._singularity_no_mount = None
+    environment._workdir = "/app"
+    environment._sif_path = tmp_path / "image.sif"
+    environment.environment_dir = tmp_path
+    environment._server_process = None
+    environment._stream_task = None
+    environment._http_client = None
+    environment._memory_watchdog_task = None
+    environment._memory_limit_bytes = None
+    environment._staging_dir = None
+    environment.logger = SimpleNamespace(
+        debug=lambda *_args: None,
+        warning=lambda *_args: None,
+    )
+
+    class ReservedSocket:
+        def close(self):
+            pass
+
+    environment._reserve_port = lambda: (ReservedSocket(), 32123)
+
+    async def stream_output():
+        await asyncio.Event().wait()
+
+    environment._stream_server_output = stream_output
+    return environment
+
+
+@pytest.mark.asyncio
+async def test_singularity_startup_can_exceed_sixty_polls(
+    tmp_path, monkeypatch
+):
+    environment = _startup_test_environment(tmp_path)
+    launches = []
+
+    class Process:
+        pid = 12345
+        returncode = None
+
+    async def create_process(*command, **_kwargs):
+        launches.append(command)
+        return Process()
+
+    class Client:
+        calls = 0
+
+        async def get(self, _url):
+            self.calls += 1
+            if self.calls <= 61:
+                raise harbor_singularity.httpx.RequestError("not ready")
+            return SimpleNamespace(status_code=200)
+
+        async def aclose(self):
+            pass
+
+    client = Client()
+    original_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(
+        harbor_singularity.httpx, "AsyncClient", lambda **_kwargs: client
+    )
+    monkeypatch.setattr(asyncio, "sleep", lambda _delay: original_sleep(0))
+
+    await environment._start_server()
+
+    assert len(launches) == 1
+    assert client.calls == 62
+    assert "--no-mount" in launches[0]
+    assert launches[0].count(str(environment._sif_path)) == 1
+    environment._stream_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await environment._stream_task
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_startup_is_cleaned_before_retry(
+    tmp_path, monkeypatch
+):
+    environment = _startup_test_environment(tmp_path)
+    processes = []
+
+    class Process:
+        def __init__(self, pid, returncode):
+            self.pid = pid
+            self.returncode = returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def create_process(*_command, **_kwargs):
+        process = Process(20000 + len(processes), 1 if not processes else None)
+        processes.append(process)
+        return process
+
+    class Client:
+        def __init__(self, ready):
+            self.ready = ready
+            self.closed = False
+
+        async def get(self, _url):
+            if self.ready:
+                return SimpleNamespace(status_code=200)
+            raise harbor_singularity.httpx.RequestError("not ready")
+
+        async def aclose(self):
+            self.closed = True
+
+    clients = []
+
+    def make_client(**_kwargs):
+        client = Client(ready=bool(clients))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(harbor_singularity.httpx, "AsyncClient", make_client)
+    monkeypatch.setattr(environment, "_process_start_time", lambda _pid: None)
+
+    await environment._start_server()
+
+    assert len(processes) == 2
+    assert clients[0].closed
+    assert environment._server_process is processes[1]
+    environment._stream_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await environment._stream_task
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_attempt_reaps_real_descendant(tmp_path):
+    child_file = tmp_path / "startup-child.pid"
+    process = await asyncio.create_subprocess_exec(
+        "bash",
+        "-c",
+        f"sleep 30 & echo $! > {child_file}; wait",
+    )
+    for _ in range(100):
+        if child_file.is_file():
+            break
+        await asyncio.sleep(0.01)
+    child_pid = int(child_file.read_text())
+    environment = _startup_test_environment(tmp_path)
+    environment._server_process = process
+
+    await environment._cleanup_server_attempt(
+        process.pid, environment._process_start_time(process.pid)
+    )
+
+    assert process.returncode is not None
+    assert not Path(f"/proc/{child_pid}").exists()
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_attempt_does_not_signal_mismatched_process(
+    tmp_path, monkeypatch
+):
+    environment = _startup_test_environment(tmp_path)
+
+    class Process:
+        pid = 23457
+        returncode = None
+
+        def terminate(self):
+            pytest.fail("reused parent PID must not be terminated")
+
+    environment._server_process = Process()
+    await environment._cleanup_server_attempt(23456, "old-identity")
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_attempt_rejects_reused_same_pid(
+    tmp_path, monkeypatch
+):
+    environment = _startup_test_environment(tmp_path)
+
+    class Process:
+        pid = 23456
+        returncode = None
+
+        def terminate(self):
+            pytest.fail("reused same-number PID must not be terminated")
+
+    environment._server_process = Process()
+    monkeypatch.setattr(
+        environment, "_process_start_time", lambda _pid: "new-identity"
+    )
+    monkeypatch.setattr(
+        environment,
+        "_descendant_processes",
+        lambda _pid: pytest.fail("reused PID must not be traversed"),
+    )
+    monkeypatch.setattr(
+        "os.kill",
+        lambda *_args: pytest.fail("reused PID must not receive raw signals"),
+    )
+
+    await environment._cleanup_server_attempt(23456, "old-identity")
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_attempt_reaps_unidentified_parent(
+    tmp_path, monkeypatch
+):
+    environment = _startup_test_environment(tmp_path)
+
+    class Process:
+        pid = 23456
+        returncode = None
+        terminated = False
+        waited = False
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = Process()
+    environment._server_process = process
+    monkeypatch.setattr(
+        environment,
+        "_descendant_processes",
+        lambda _pid: pytest.fail(
+            "parent without a captured identity must not be traversed"
+        ),
+    )
+    monkeypatch.setattr(
+        "os.kill",
+        lambda *_args: pytest.fail(
+            "parent without a captured identity must not use raw PID signals"
+        ),
+    )
+
+    await environment._cleanup_server_attempt(23456, None)
+
+    assert process.terminated
+    assert process.waited
+
+
+@pytest.mark.asyncio
+async def test_singularity_cancelled_startup_runs_attempt_cleanup(
+    tmp_path, monkeypatch
+):
+    environment = _startup_test_environment(tmp_path)
+    request_started = asyncio.Event()
+    release_request = asyncio.Event()
+    cleaned = asyncio.Event()
+
+    class Process:
+        pid = 23456
+        returncode = None
+
+    async def create_process(*_command, **_kwargs):
+        return Process()
+
+    class Client:
+        async def get(self, _url):
+            request_started.set()
+            await release_request.wait()
+
+        async def aclose(self):
+            pass
+
+    async def cleanup(pid, start_time):
+        assert (pid, start_time) == (23456, "identity")
+        cleaned.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(
+        harbor_singularity.httpx,
+        "AsyncClient",
+        lambda **_kwargs: Client(),
+    )
+    monkeypatch.setattr(
+        environment, "_process_start_time", lambda _pid: "identity"
+    )
+    monkeypatch.setattr(environment, "_cleanup_server_attempt", cleanup)
+
+    startup = asyncio.create_task(environment._start_server())
+    await request_started.wait()
+    startup.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await startup
+    assert cleaned.is_set()
+    assert environment._staging_dir is None
+
+
+@pytest.mark.asyncio
+async def test_singularity_stop_reaps_orphaned_helpers(tmp_path):
+    child_file = tmp_path / "child.pid"
+    process = await asyncio.create_subprocess_exec(
+        "bash",
+        "-c",
+        f"sleep 30 & echo $! > {child_file}; wait",
+    )
+    for _ in range(100):
+        if child_file.is_file():
+            break
+        await asyncio.sleep(0.01)
+    child_pid = int(child_file.read_text())
+    environment = DockerfileSingularityEnvironment.__new__(
+        DockerfileSingularityEnvironment
+    )
+    environment._server_process = process
+    environment._http_client = None
+    environment._memory_watchdog_task = None
+    environment._stream_task = None
+    environment._staging_dir = None
+    environment._sif_path = tmp_path / "image.sif"
+    environment.logger = SimpleNamespace(
+        debug=lambda *_args: None,
+        warning=lambda *_args: None,
+    )
+
+    await environment.stop(delete=False)
+
+    assert process.returncode is not None
+    assert not Path(f"/proc/{child_pid}").exists()
+
+
+@pytest.mark.asyncio
+async def test_singularity_cleanup_does_not_signal_a_reused_pid(monkeypatch):
+    environment = DockerfileSingularityEnvironment.__new__(
+        DockerfileSingularityEnvironment
+    )
+    signals = []
+    monkeypatch.setattr(
+        environment,
+        "_process_start_time",
+        lambda _pid: "new-process",
+    )
+    monkeypatch.setattr("os.kill", lambda pid, sig: signals.append((pid, sig)))
+
+    await environment._terminate_processes({123: "old-process"})
+
+    assert signals == []
+
+
+@pytest.mark.asyncio
+async def test_singularity_stop_runs_upstream_cleanup_when_reap_is_cancelled(
+    monkeypatch,
+):
+    environment = DockerfileSingularityEnvironment.__new__(
+        DockerfileSingularityEnvironment
+    )
+    environment._server_process = SimpleNamespace(pid=123)
+    reaping = asyncio.Event()
+    upstream_stopped = asyncio.Event()
+    reap_calls = 0
+
+    monkeypatch.setattr(environment, "_process_start_time", lambda _pid: "1")
+    monkeypatch.setattr(environment, "_descendant_processes", lambda _pid: {})
+
+    async def fake_terminate(_processes):
+        nonlocal reap_calls
+        reap_calls += 1
+        if reap_calls == 1:
+            reaping.set()
+            await asyncio.Event().wait()
+
+    async def fake_upstream_stop(_self, _delete):
+        upstream_stopped.set()
+
+    monkeypatch.setattr(environment, "_terminate_processes", fake_terminate)
+    monkeypatch.setattr(
+        "harbor.environments.singularity.singularity.SingularityEnvironment.stop",
+        fake_upstream_stop,
+    )
+
+    task = asyncio.create_task(environment.stop(delete=False))
+    await reaping.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert upstream_stopped.is_set()
+
+
+@pytest.mark.asyncio
+async def test_singularity_stop_reaps_descendants_created_during_cleanup(
+    monkeypatch,
+):
+    environment = DockerfileSingularityEnvironment.__new__(
+        DockerfileSingularityEnvironment
+    )
+    environment._server_process = SimpleNamespace(pid=123)
+    snapshots = iter(({1: "first"}, {2: "late"}))
+    reaped = []
+
+    monkeypatch.setattr(environment, "_process_start_time", lambda _pid: "1")
+    monkeypatch.setattr(
+        environment,
+        "_descendant_processes",
+        lambda _pid: next(snapshots),
+    )
+
+    async def fake_terminate(processes):
+        reaped.append(dict(processes))
+
+    async def fake_upstream_stop(_self, _delete):
+        pass
+
+    monkeypatch.setattr(environment, "_terminate_processes", fake_terminate)
+    monkeypatch.setattr(
+        "harbor.environments.singularity.singularity.SingularityEnvironment.stop",
+        fake_upstream_stop,
+    )
+
+    await environment.stop(delete=False)
+
+    assert reaped == [
+        {1: "first"},
+        {1: "first", 2: "late"},
+        {1: "first", 2: "late"},
+    ]
 
 
 @pytest.mark.asyncio
