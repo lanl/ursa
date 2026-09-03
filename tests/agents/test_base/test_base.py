@@ -736,3 +736,20 @@ def test_disabled_metrics_render_is_silent_even_with_raw_debug(
 
     assert agent.telemetry.render() == ""
     assert buffer.getvalue() == ""
+
+
+def test_agent_short_id_survives_markup_in_the_report(
+    tmpdir: Path, monkeypatch
+):
+    # Rich reads a bracketed suffix such as "[abc123]" as a style tag and
+    # drops it, so a short id starting with a letter vanished from the
+    # header line and the panel title.
+    buffer = _capturing_console(monkeypatch)
+    agent = Agent(
+        llm=TinyCountingModel(), enable_metrics=True, workspace=tmpdir
+    )
+    agent.telemetry._short_id = "abc123"
+
+    agent.invoke("hello", raw_debug=True)
+
+    assert buffer.getvalue().count("[abc123]") == 2
