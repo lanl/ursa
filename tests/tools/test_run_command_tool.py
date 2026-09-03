@@ -78,6 +78,8 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert result == "STDOUT:\noutput\nSTDERR:\n"
     assert recorded["kwargs"]["cwd"] == tmp_path
     assert recorded["kwargs"]["shell"] is True
+    assert recorded["kwargs"]["encoding"] == "utf-8"
+    assert recorded["kwargs"]["errors"] == "replace"
     assert events[0] == (
         "ursa_agent_progress",
         {
@@ -125,6 +127,32 @@ def test_run_command_invokes_subprocess_in_workspace(
         }
     ]
     assert isinstance(payload["elapsed_ms"], float)
+
+
+def test_run_command_replaces_invalid_utf8_output(
+    monkeypatch, tmp_path: Path, chat_model: BaseChatModel
+):
+    monkeypatch.setenv("URSA_SAFETY_LEVEL", "yolo")
+
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
+        "printf '\\267'; printf '\\267' >&2",
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            tool_call_id="invalid-utf8",
+            thread_id="run-thread",
+        ),
+    )
+
+    assert result == "STDOUT:\n�\nSTDERR:\n�"
+    completed = recorder.events[-1][1]
+    assert completed["phase"] == "end"
+    assert completed["returncode"] == 0
+    assert [artifact["content"] for artifact in completed["artifacts"]] == [
+        "�",
+        "�",
+    ]
 
 
 @pytest.mark.parametrize("safety_level", ["yolo", "none", " YOLO "])

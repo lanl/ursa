@@ -1,0 +1,31 @@
+{
+  "job_name": "base-ursa-apptainer",
+  "jobs_dir": "jobs/wave-validation-26027050c9f34b52",
+  "agent_timeout_multiplier": 2.0,
+  "agent_setup_timeout_multiplier": 3.0,
+  "environment_build_timeout_multiplier": 3.0,
+  "n_concurrent_trials": 4,
+  "quiet": true,
+  "environment": {
+    "import_path": "ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment",
+    "force_build": true,
+    "kwargs": {
+      "singularity_startup_timeout_sec": 300
+    }
+  },
+  "agents": [
+    {
+      "name": "ursa.integrations.harbor:UrsaHarborAgent",
+      "model_name": "openai/gpt-5.4-nano",
+      "kwargs": {
+        "config_file": "jobs/wave-validation-26027050c9f34b52/ursa.yaml",
+        "config_only": true,
+        "ursa_source_dir": "."
+      },
+      "env": {
+        "URSA_SAFETY_LEVEL": "yolo",
+        "URSA_ALLOW_UNSAFE_WRITES": "1"
+      }
+    }
+  ]
+}
