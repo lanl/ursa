@@ -23,6 +23,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from rich import get_console
 from rich.box import HEAVY
 from rich.console import Group
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
@@ -1564,7 +1565,7 @@ class Telemetry:
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
         header_lines.append(
-            f"[bold magenta]{agent_label}[/] [dim]•[/] thread [bold]{thread_id}[/] [dim]•[/] run [bold]{run_id}[/]"
+            f"[bold magenta]{escape(agent_label)}[/] [dim]•[/] thread [bold]{thread_id}[/] [dim]•[/] run [bold]{run_id}[/]"
         )
         if start_dt and end_dt:
             header_lines.append(
@@ -1621,7 +1622,7 @@ class Telemetry:
 
         panel = Panel.fit(
             Group(*renderables),
-            title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
+            title=f"[bold white]Metrics[/] • [cyan]{escape(agent_label)}[/]",
             border_style="bright_magenta",
             padding=(1, 2),
             box=HEAVY,
