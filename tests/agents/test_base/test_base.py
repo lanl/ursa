@@ -655,3 +655,101 @@ def test_runtime_injection_preserved_for_nodes(tmp_path: Path):
     assert runtime is not None
     assert isinstance(runtime, Runtime)
     assert runtime.context.workspace == Path(tmp_path)
+
+
+def _capturing_console(monkeypatch):
+    import io
+
+    from rich.console import Console  # noqa: TID251
+
+    import ursa.observability.timing as timing
+
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=200)
+    monkeypatch.setattr(timing, "get_console", lambda: console)
+    return buffer
+
+
+def _rendered(renderable) -> str:
+    import io
+
+    from rich.console import Console  # noqa: TID251
+
+    buffer = io.StringIO()
+    Console(file=buffer, force_terminal=False, width=200).print(renderable)
+    return buffer.getvalue()
+
+
+def test_render_returns_the_per_run_panel(tmpdir: Path):
+    # Issue #304: render() assembled the per-run report and discarded it.
+    agent = Agent(
+        llm=TinyCountingModel(), enable_metrics=True, workspace=tmpdir
+    )
+    agent.invoke("hello")
+
+    # invoke() discards what render() returns, so call it again to look.
+    panel = agent.telemetry.render(save_json=False)
+
+    text = _rendered(panel)
+    assert "Metrics" in text
+    assert "Attribution" in text
+
+
+def test_raw_debug_displays_the_per_run_panel(tmpdir: Path, monkeypatch):
+    # raw_debug is documented as displaying telemetry for debugging; the
+    # display must include the save confirmation that was invisible.
+    buffer = _capturing_console(monkeypatch)
+    agent = Agent(
+        llm=TinyCountingModel(), enable_metrics=True, workspace=tmpdir
+    )
+
+    agent.invoke("hello", raw_debug=True)
+
+    text = buffer.getvalue()
+    assert "Metrics" in text
+    assert "Attribution" in text
+    assert "Saved metrics JSON to" in text
+
+
+def test_default_invoke_prints_no_telemetry(tmpdir: Path, monkeypatch):
+    # Guard: the TUI captures stdout and one-shot mode uses stdout as the
+    # response channel, so nothing may print unless asked.
+    buffer = _capturing_console(monkeypatch)
+    agent = Agent(
+        llm=TinyCountingModel(), enable_metrics=True, workspace=tmpdir
+    )
+
+    agent.invoke("hello")
+
+    assert buffer.getvalue() == ""
+
+
+def test_disabled_metrics_render_is_silent_even_with_raw_debug(
+    tmpdir: Path, monkeypatch
+):
+    buffer = _capturing_console(monkeypatch)
+    agent = Agent(
+        llm=TinyCountingModel(), enable_metrics=False, workspace=tmpdir
+    )
+
+    agent.invoke("hello", raw_debug=True)
+
+    assert agent.telemetry.render() == ""
+    assert buffer.getvalue() == ""
+
+
+def test_agent_short_id_survives_markup_in_the_report(
+    tmpdir: Path, monkeypatch
+):
+    # Rich reads a bracketed suffix such as "[abc123]" as a style tag and
+    # drops it, so a short id starting with a letter vanished from the
+    # header line and the panel title.
+    buffer = _capturing_console(monkeypatch)
+    agent = Agent(
+        llm=TinyCountingModel(), enable_metrics=True, workspace=tmpdir
+    )
+    agent.telemetry._short_id = "abc123"
+
+    agent.invoke("hello", raw_debug=True)
+
+    assert buffer.getvalue().count("[abc123]") == 2
