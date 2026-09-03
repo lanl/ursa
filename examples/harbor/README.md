@@ -15,6 +15,7 @@ uv run harbor run \
   --path benchmark/tasks/install-pytorch \
   --agent ursa.integrations.harbor:UrsaHarborAgent \
   --agent-kwarg config_file="$PWD/ursa.yaml" \
+  --agent-kwarg config_only=true \
   --model openai/gpt-5.4-nano
 ```
 
@@ -53,7 +54,9 @@ when the task is ready to share.
 ## Configuration
 
 Harbor models use `<inference-provider>/<model-name>`. The provider must exist
-in `ursa.yaml`; the adapter replaces its configured model with `--model`.
+in `ursa.yaml`; non-OpenAI providers must also set `model_provider` to the
+LangChain backend they use. The adapter replaces its configured model with
+`--model`.
 Harbor `[[environment.mcp_servers]]` entries are also attached automatically;
 see the [MCP task tutorial](https://www.harborframework.com/docs/tutorials/mcp-server-task).
 

@@ -127,6 +127,68 @@ def test_run_command_invokes_subprocess_in_workspace(
     assert isinstance(payload["elapsed_ms"], float)
 
 
+@pytest.mark.parametrize("safety_level", ["yolo", "none", " YOLO "])
+def test_run_command_bypasses_safety_check_when_disabled(
+    monkeypatch,
+    tmp_path: Path,
+    chat_model: BaseChatModel,
+    safety_level: str,
+):
+    recorded = {}
+    monkeypatch.setenv("URSA_SAFETY_LEVEL", safety_level)
+    monkeypatch.setattr(
+        "ursa.tools.run_command_tool.invoke_structured",
+        lambda *args, **kwargs: pytest.fail(
+            "disabled safety must not invoke the assessment model"
+        ),
+    )
+
+    store = InMemoryStore()
+    monkeypatch.setattr(
+        InMemoryStore,
+        "search",
+        lambda self, *args, **kwargs: pytest.fail(
+            "disabled safety must not inspect safety context"
+        ),
+    )
+
+    def fake_run(*args, **kwargs):
+        recorded["args"] = args
+        recorded["kwargs"] = kwargs
+        return SimpleNamespace(stdout="trusted output", stderr="", returncode=0)
+
+    monkeypatch.setattr("ursa.tools.run_command_tool.subprocess.run", fake_run)
+
+    result, recorder = invoke_with_event_recorder(
+        run_command.func,
+        "echo trusted",
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            store=store,
+            thread_id="run-thread",
+            tool_call_id="bypassed",
+        ),
+    )
+
+    normalized_level = safety_level.strip().lower()
+    assert result == "STDOUT:\ntrusted output\nSTDERR:\n"
+    assert recorded["args"] == ("echo trusted",)
+    assert recorder.events[0] == (
+        "ursa_agent_progress",
+        {
+            "tool": "run_command",
+            "tool_call_id": "bypassed",
+            "stage": "safety_check",
+            "message": "Command safety check bypassed",
+            "monotonic_timestamp_ns": FIXED_MONOTONIC_TIMESTAMP_NS,
+            "query": "echo trusted",
+            "safe": True,
+            "reason": f"URSA_SAFETY_LEVEL={normalized_level}",
+        },
+    )
+
+
 def test_run_command_truncates_output(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):

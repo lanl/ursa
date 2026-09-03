@@ -8,8 +8,33 @@ fi
 
 wave=$1
 configuration=$2
-config_dir=jobs/wave-validation-793a452a34138ea8
+config_dir=jobs/wave-validation-45a54c7a39d3249a
 config_file=$config_dir/$configuration.json
+
+account=$(id -un)
+account_gid=$(id -g "$account")
+account_group=$(id -gn "$account")
+current_gid=$(id -g)
+
+printf -v launcher '%q ' "$0" "$@"
+if [[ $current_gid != "$account_gid" ]]; then
+  if [[ ${URSA_HARBOR_GROUP_BOOTSTRAPPED:-} == 1 ]]; then
+    echo "could not restore primary group $account_group" >&2
+    exit 1
+  fi
+  export URSA_HARBOR_GROUP_BOOTSTRAPPED=1
+  exec sg "$account_group" -c "$launcher"
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  if [[ ${URSA_HARBOR_GROUP_BOOTSTRAPPED:-} == 1 ]]; then
+    echo "Docker is unavailable; start the daemon and refresh Docker-group membership" >&2
+    exit 1
+  fi
+  export URSA_HARBOR_GROUP_BOOTSTRAPPED=1
+  printf -v inner_launcher 'exec sg %q -c %q' "$account_group" "$launcher"
+  exec sg docker -c "$inner_launcher"
+fi
 
 if [[ ! -f $config_file ]]; then
   echo "unknown configuration: $configuration" >&2
@@ -30,7 +55,7 @@ case $wave in
   medium)
     wave_number=3
     task_source=(--dataset terminal-bench@2.0)
-    tasks=(log-summary-date-ranges nginx-request-logging db-wal-recovery git-leak-recovery)
+    tasks=(build-pmars tune-mjcf raman-fitting db-wal-recovery)
     ;;
   *)
     echo "unknown wave: $wave" >&2

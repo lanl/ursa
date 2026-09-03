@@ -361,7 +361,7 @@ llm_model:
         calls.append((reference.env, default_username))
         return None
 
-    monkeypatch.setattr("ursa.cli.auth.SecretReference.resolve", resolve)
+    monkeypatch.setattr("ursa.util.secrets.SecretReference.resolve", resolve)
 
     list_credentials(config)
 

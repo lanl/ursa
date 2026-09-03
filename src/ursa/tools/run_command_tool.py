@@ -46,30 +46,32 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     except AsciiValidationError as exc:
         return ascii_validation_message("query", exc)
     workspace_dir = Path(runtime.context.workspace)
-    if runtime.store is not None:
-        search_results = runtime.store.search(
-            ("workspace", "file_edit"), limit=1000
-        )
-        edited_files = [item.key for item in search_results]
-    else:
-        edited_files = []
-
-    if runtime.store is not None:
-        search_results = runtime.store.search(
-            ("workspace", "safe_codes"), limit=1000
-        )
-        safe_codes = [item.key for item in search_results]
-    else:
-        safe_codes = []
-
-    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
-    llm = runtime.context.llm
     events = ToolEvents.from_runtime("run_command", runtime)
-    if prompt_level.lower() in {"yolo", "none"}:
-        safety_result = SafetyAssessment(is_safe=True, reason=f"User set safety level to {prompt_level}")
+    prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default").strip().lower()
+    if prompt_level in {"none", "yolo"}:
+        events.emit(
+            "Command safety check bypassed",
+            stage="safety_check",
+            query=query,
+            safe=True,
+            reason=f"URSA_SAFETY_LEVEL={prompt_level}",
+        )
     else:
+        if runtime.store is not None:
+            search_results = runtime.store.search(
+                ("workspace", "file_edit"), limit=1000
+            )
+            edited_files = [item.key for item in search_results]
+            search_results = runtime.store.search(
+                ("workspace", "safe_codes"), limit=1000
+            )
+            safe_codes = [item.key for item in search_results]
+        else:
+            edited_files = []
+            safe_codes = []
+
         safety_result = invoke_structured(
-            llm,
+            runtime.context.llm,
             SafetyAssessment,
             get_safety_prompt(
                 query, safe_codes, edited_files, prompt_level=prompt_level
@@ -84,7 +86,7 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             ),
             repair=1,
         )
-    
+
         if not safety_result.is_safe:
             tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
             events.emit(

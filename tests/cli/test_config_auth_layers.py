@@ -104,6 +104,97 @@ def test_model_merge_only_applies_explicit_model_fields():
     assert merged.max_completion_tokens == 200
 
 
+def test_model_merge_clears_connection_fields_when_provider_changes():
+    base = ChatModelConfig(
+        model="old-model",
+        model_provider="azure_openai",
+        inference_provider="azure",
+        api_key="old-key",
+        ssl_verify=False,
+        max_completion_tokens=100,
+        azure_deployment="old-deployment",
+    )
+
+    merged = base.model_merge({
+        "model": "new-model",
+        "inference_provider": "ollama",
+    })
+
+    assert merged.model == "new-model"
+    assert merged.inference_provider == "ollama"
+    assert merged.model_provider == "openai"
+    assert merged.api_key is None
+    assert merged.ssl_verify is True
+    assert merged.max_completion_tokens == 100
+    assert merged.model_extra == {}
+
+
+def test_provider_merge_replaces_secret_reference_atomically():
+    lower = UrsaConfig().model_merge({
+        "inference_providers": {
+            "openai": {
+                "base_url": "https://lower.test/v1",
+                "api_key": {"keyring": True},
+            }
+        }
+    })
+
+    merged = lower.model_merge({
+        "inference_providers": {
+            "openai": {"api_key": {"env": "OPENAI_API_KEY"}}
+        }
+    })
+
+    provider = merged.inference_providers["openai"]
+    assert provider.base_url == "https://lower.test/v1"
+    assert isinstance(provider.api_key, SecretReference)
+    assert provider.api_key.env == "OPENAI_API_KEY"
+    assert provider.api_key.keyring is None
+
+
+def test_provider_merge_preserves_migrated_secret_in_sparse_round_trip():
+    lower = UrsaConfig().model_merge({
+        "inference_providers": {"openai": {"api_key": {"keyring": True}}}
+    })
+
+    merged = lower.model_merge({
+        "inference_providers": {"openai": {"api_key_env": "OPENAI_API_KEY"}}
+    })
+    sparse = merged.model_dump(mode="python", exclude_unset=True)
+    reloaded = UrsaConfig.model_validate(sparse)
+
+    provider = reloaded.inference_providers["openai"]
+    assert isinstance(provider.api_key, SecretReference)
+    assert provider.api_key.env == "OPENAI_API_KEY"
+    assert provider.api_key.keyring is None
+
+
+def test_provider_added_in_one_layer_can_be_overridden_by_the_next():
+    merged = UrsaConfig().model_merge(
+        {
+            "inference_providers": {
+                "custom": {
+                    "base_url": "https://models.test/v1",
+                    "model_provider": "openai",
+                    "api_key": {"keyring": True},
+                }
+            }
+        },
+        {
+            "inference_providers": {
+                "custom": {"api_key": {"env": "CUSTOM_TOKEN"}}
+            }
+        },
+    )
+
+    provider = merged.inference_providers["custom"]
+    assert provider.base_url == "https://models.test/v1"
+    assert provider.model_extra == {"model_provider": "openai"}
+    assert isinstance(provider.api_key, SecretReference)
+    assert provider.api_key.env == "CUSTOM_TOKEN"
+    assert provider.api_key.keyring is None
+
+
 def test_config_merge_base_url_clears_lower_priority_provider(
     tmp_path, monkeypatch
 ):
