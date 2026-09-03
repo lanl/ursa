@@ -1453,7 +1453,14 @@ class Telemetry:
         otel_headers: str | Mapping | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
-    ):
+    ) -> Panel | str:
+        """Finalize the run and return the per-run report as a Rich renderable.
+
+        Saves and exports as configured and feeds the session rollup. The
+        report is printed to the console only when ``raw`` is true; by
+        default nothing is printed, because the TUI captures stdout and the
+        one-shot CLI uses stdout as the response channel.
+        """
         if not self.enable:
             return ""
 
@@ -1612,4 +1619,14 @@ class Telemetry:
                 Text.from_markup(pricing_str),
             ]  # <- parse markup
 
+        panel = Panel.fit(
+            Group(*renderables),
+            title=f"[bold white]Metrics[/] • [cyan]{agent_label}[/]",
+            border_style="bright_magenta",
+            padding=(1, 2),
+            box=HEAVY,
+        )
+        if raw:
+            get_console().print(panel)
         _session_ingest(payload)
+        return panel
