@@ -1,0 +1,19 @@
+{
+  "job_name": "base-codex-apptainer",
+  "jobs_dir": "jobs/wave-validation-6f5d75c9149c42f0",
+  "agent_timeout_multiplier": 2.0,
+  "agent_setup_timeout_multiplier": 3.0,
+  "environment_build_timeout_multiplier": 3.0,
+  "n_concurrent_trials": 4,
+  "quiet": true,
+  "environment": {
+    "import_path": "ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment",
+    "force_build": true,
+    "kwargs": {"singularity_startup_timeout_sec": 300}
+  },
+  "agents": [{
+    "name": "codex",
+    "model_name": "openai/gpt-5.4-nano",
+    "kwargs": {"config": {"features": {"multi_agent": false}}}
+  }]
+}
