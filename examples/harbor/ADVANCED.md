@@ -13,12 +13,24 @@ Add URSA extras or other packages with agent kwargs:
 Use `ursa_source_dir=/path/to/checkout` while developing the integration, or
 set `ursa_install_spec` to another package/version specification.
 
+## Choose the URSA config stack
+
+By default the adapter merges URSA's system config, user config, and the file
+passed as `config_file`, then applies Harbor's model and MCP settings last. Add
+`--agent-kwarg config_only=true` to skip the system and user layers. The
+supplied file is still merged below Harbor's settings.
+
+Secret references are resolved on the host, including keyring references. The
+adapter passes generated environment references only to the URSA runner; it
+does not copy host config or keyring files into the task container.
+
 ## Singularity and SLURM
 
 The custom environment builds `environment/Dockerfile` with Buildah, Podman,
 or Docker, converts it to a cached SIF, and requires no Apptainer definition
 file. Compute nodes need `apptainer` or `singularity`, plus one of `buildah`,
-`podman`, or `docker`.
+`podman`, or `docker`. When using Docker, its daemon must be running and the
+invoking process must have socket access.
 
 ```bash
 export OPENAI_API_KEY=...

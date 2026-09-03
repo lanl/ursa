@@ -1,6 +1,6 @@
 {
   "job_name": "base-codex-docker",
-  "jobs_dir": "jobs/wave-validation-793a452a34138ea8",
+  "jobs_dir": "jobs/wave-validation-45a54c7a39d3249a",
   "agent_timeout_multiplier": 2.0,
   "agent_setup_timeout_multiplier": 3.0,
   "environment_build_timeout_multiplier": 3.0,

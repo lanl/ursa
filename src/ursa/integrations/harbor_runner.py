@@ -71,26 +71,6 @@ def _agent_config(config: Any, agent_class: type[Any]) -> dict[str, Any]:
     )
 
 
-def _apply_harbor_overrides(
-    config: Any, model: str | None, mcp_servers: dict[str, Any]
-) -> Any:
-    """Apply Harbor-owned model and MCP settings to an URSA config."""
-    if model:
-        provider, separator, model_name = model.partition("/")
-        if not separator or not provider or not model_name:
-            raise ValueError(
-                "Harbor model must use inference_provider/model_name syntax"
-            )
-        config = config.model_merge({
-            "llm_model": {
-                "model": model_name,
-                "inference_provider": provider,
-            }
-        })
-    config.mcp_servers = {**config.mcp_servers, **mcp_servers}
-    return config
-
-
 async def _attach_mcp_tools(agent: Any, mcp_servers: dict[str, Any]) -> None:
     if not mcp_servers:
         return
@@ -157,9 +137,6 @@ def main(encoded: str) -> None:
 
     ursa_config = UrsaConfig.model_validate(
         load_config_file(Path(config["config_file"]))
-    )
-    ursa_config = _apply_harbor_overrides(
-        ursa_config, config.get("model"), config.get("mcp_servers", {})
     )
     ursa_config.workspace = Path(config["workspace"])
     ursa_config = ursa_config.resolve()
