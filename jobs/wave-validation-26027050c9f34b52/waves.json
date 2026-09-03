@@ -1,0 +1,78 @@
+{
+  "seed": "26027050c9f34b52",
+  "medium_eligibility": {
+    "dataset": "terminal-bench@2.0",
+    "git_commit": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    "difficulty": "medium",
+    "base_agent_timeout_sec_lt": 1200,
+    "population_size": 35,
+    "population_hash_format": "SHA-256 of sorted UTF-8 task names joined by newline, including a trailing newline",
+    "population_sha256": "b23b036250b7e13cd3615e3f8a8ce58dc13c813cbb4a468f9eff15f5e8c3a235",
+    "algorithm": "python random.Random(seed).sample(sorted(population), 4)",
+    "population": [
+      "adaptive-rejection-sampler",
+      "build-cython-ext",
+      "build-pmars",
+      "chess-best-move",
+      "count-dataset-tokens",
+      "crack-7z-hash",
+      "db-wal-recovery",
+      "extract-elf",
+      "gcode-to-text",
+      "git-leak-recovery",
+      "git-multibranch",
+      "headless-terminal",
+      "hf-model-inference",
+      "kv-store-grpc",
+      "largest-eigenval",
+      "log-summary-date-ranges",
+      "merge-diff-arc-agi-task",
+      "modernize-scientific-stack",
+      "multi-source-data-merger",
+      "nginx-request-logging",
+      "openssl-selfsigned-cert",
+      "polyglot-c-py",
+      "pypi-server",
+      "pytorch-model-cli",
+      "pytorch-model-recovery",
+      "qemu-alpine-ssh",
+      "qemu-startup",
+      "query-optimize",
+      "raman-fitting",
+      "regex-log",
+      "sanitize-git-repo",
+      "sqlite-db-truncate",
+      "sqlite-with-gcov",
+      "tune-mjcf",
+      "vulnerable-secret"
+    ]
+  },
+  "waves": {
+    "easy": {
+      "dataset": "terminal-bench@2.0",
+      "tasks": [
+        "overfull-hbox",
+        "cobol-modernization",
+        "fix-git",
+        "prove-plus-comm"
+      ]
+    },
+    "examples": {
+      "path": "examples/harbor/benchmark/tasks",
+      "tasks": [
+        "install-gpaw",
+        "install-parthenon",
+        "install-pytorch"
+      ]
+    },
+    "medium": {
+      "dataset": "terminal-bench@2.0",
+      "tasks": [
+        "regex-log",
+        "qemu-startup",
+        "sqlite-db-truncate",
+        "extract-elf"
+      ]
+    }
+  }
+}

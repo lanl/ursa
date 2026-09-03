@@ -116,6 +116,8 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
             result = subprocess.run(
                 query,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 shell=True,
                 timeout=600000,
                 capture_output=True,
