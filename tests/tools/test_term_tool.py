@@ -828,10 +828,11 @@ async def test_term_schema_accepts_none_cmd_to_launch_shell(
 
     monkeypatch.setattr(term_tool, "assess_command_safety", should_not_run)
 
-    result = await term_tool.term.ainvoke({
-        "cmd": None,
-        "session": True,
-    }, config={"runtime": runtime(tmp_path)})
+    result = await term_tool.term.coroutine(
+        None,
+        runtime=runtime(tmp_path),
+        session=True,
+    )
 
     assert result == f"Terminal ID: {terminal.term_id}"
     assert manager.created == [

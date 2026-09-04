@@ -138,8 +138,8 @@ class GhosttyTerm(TermSession):
         *,
         env: dict[str, str] | None = None,
         cwd: str | os.PathLike[str] | None = None,
-        rows: int = 40,
-        cols: int = 120,
+        rows: int = 24,
+        cols: int = 80,
         scrollback: int = 10_000,
     ) -> None:
         super().__init__(term_id, shell, env=env, cwd=cwd)
