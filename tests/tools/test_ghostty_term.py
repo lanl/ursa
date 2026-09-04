@@ -1,5 +1,7 @@
 import asyncio
 import os
+import shlex
+import sys
 from io import BytesIO
 
 import pytest
@@ -68,10 +70,10 @@ def test_ghostty_requires_library_and_valid_dimensions(
         ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
 
 
-def test_ghostty_default_screen_is_120_columns_by_40_rows(fake_ghostty):
+def test_ghostty_default_screen_is_80_columns_by_24_rows(fake_ghostty):
     terminal = ghostty.GhosttyTerm("ghost123", ["/bin/sh"])
 
-    assert terminal._terminal.size == (120, 40)
+    assert terminal._terminal.size == (80, 24)
 
 
 def test_visible_output_decoder_strips_split_color_and_title_sequences():
@@ -497,7 +499,7 @@ async def test_real_ghostty_screenshot_settles_initial_python_output(
             return await terminal.render_snapshot()
 
     manager = Manager()
-    await terminal.start("python")
+    await terminal.start(shlex.quote(sys.executable))
     try:
         rendered = await settled_screen_snapshot(manager, "realshot")
         text = "".join(span.text for span in rendered.spans)
