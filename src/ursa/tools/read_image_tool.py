@@ -3,6 +3,7 @@ import logging
 import mimetypes
 from pathlib import Path
 
+import pymupdf
 from langchain.tools import ToolRuntime
 from langchain_core.messages.content import (
     ImageContentBlock,
@@ -51,7 +52,18 @@ def image_block_from_file(
 
     mime_type, _ = mimetypes.guess_type(filename)
     assert mime_type is not None
-    data = base64.b64encode(filename.read_bytes()).decode("utf-8")
+
+    if mime_type == "image/svg+xml":
+        with pymupdf.open(filename) as document:
+            page = document[0]
+            pixmap = page.get_pixmap()
+            image_bytes = pixmap.tobytes("png")
+
+        mime_type = "image/png"
+    else:
+        image_bytes = filename.read_bytes()
+
+    data = base64.b64encode(image_bytes).decode("utf-8")
 
     # If workspace is provided, try resolve a local path
     file_id = None
