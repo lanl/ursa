@@ -54,6 +54,7 @@ from ursa.cli.tui.widgets import (
 )
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
+from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
 
 
 def _config_yaml_value(value: Any) -> Any:
@@ -822,6 +823,11 @@ class UrsaTextualApp(App[None]):
 
 def run_textual(hitl: HITL) -> None:
     """Launch the experimental full-screen interface."""
+    # Must run before Textual redirects ``sys.stderr`` to a proxy whose
+    # ``fileno()`` is invalid; otherwise tqdm's default multiprocessing lock
+    # triggers ``bad value(s) in fds_to_keep`` (and a follow-on deadlock) the
+    # first time a progress bar is built (e.g. RAG document ingestion).
+    install_thread_only_tqdm_lock()
     try:
         UrsaTextualApp(hitl).run()
     finally:
@@ -830,6 +836,7 @@ def run_textual(hitl: HITL) -> None:
 
 def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
     """Run one routed prompt and render its event stream to standard output."""
+    install_thread_only_tqdm_lock()
     output = stdout or sys.stdout
     console = Console(file=output)
     handler = HITLLogEventHandler(console=console, workspace=hitl.workspace)
