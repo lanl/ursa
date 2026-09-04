@@ -1,13 +1,17 @@
+# ruff: noqa: TID251
+
 # ursa/observability/timing.py
 from __future__ import annotations
 
 import collections
 import importlib
 import json
+import logging as _logging
 import os
 import re
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
@@ -30,16 +34,27 @@ from ursa.observability.metrics_charts import (
     extract_time_breakdown,
 )
 
+_otel_logger = _logging.getLogger("ursa.observability.otel")
+
 opentelemetry_available = True
+_otel_import_error: str | None = None
 try:
-    from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
         OTLPSpanExporter,
     )
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-except Exception:
+    from opentelemetry.trace import (
+        SpanKind,
+        Status,
+        StatusCode,
+        set_span_in_context,
+    )
+    from opentelemetry.util.re import parse_env_headers
+except Exception as _exc:
     opentelemetry_available = False
+    _otel_import_error = repr(_exc)
 
 NAME_W, COUNT_W, TOTAL_W, AVG_W, MAX_W = 30, 7, 12, 12, 12
 COL_PAD = (0, 1)  # top/bottom, left/right padding in the Rich table cells
@@ -496,6 +511,58 @@ def _to_int(x, default=0):
     return default
 
 
+def _detail_dict(v) -> dict:
+    """Read a detail container defensively: raw side-channel dicts are not
+    schema-validated, and a malformed container must read as empty rather
+    than poison the whole event's usage parse."""
+    return v if isinstance(v, dict) else {}
+
+
+def _reasoning_from(d: dict) -> int:
+    """Strongest reasoning count among all known carriers in one dict.
+
+    Covers the raw provider namings (completion_tokens_details for Chat
+    Completions, output_tokens_details for the Responses API and for
+    Anthropic thinking counts) and langchain's standardized
+    output_token_details, including service-tier-prefixed keys.
+    """
+    candidates = [
+        d.get("reasoning_tokens"),
+        _detail_dict(d.get("completion_tokens_details")).get(
+            "reasoning_tokens"
+        ),
+        _detail_dict(d.get("output_tokens_details")).get("reasoning_tokens"),
+        _detail_dict(d.get("output_tokens_details")).get("thinking_tokens"),
+    ]
+    details = _detail_dict(d.get("output_token_details"))
+    for key, value in details.items():
+        if key == "reasoning" or key.endswith("_reasoning"):
+            candidates.append(value)
+    return max((_to_int(v) for v in candidates), default=0)
+
+
+def _cached_from(d: dict) -> int:
+    """Strongest cache-read count among all known carriers in one dict.
+
+    Cache-creation counts are intentionally excluded: pricing treats
+    cached_tokens as the cache-read discount, and cache writes bill
+    differently.
+    """
+    candidates = [
+        d.get("cached_tokens"),
+        d.get("cached_input_tokens"),
+        _detail_dict(d.get("prompt_tokens_details")).get("cached_tokens"),
+        d.get("prompt_cache_hits"),
+        d.get("cache_read_input_tokens"),
+        _detail_dict(d.get("input_tokens_details")).get("cached_tokens"),
+    ]
+    details = _detail_dict(d.get("input_token_details"))
+    for key, value in details.items():
+        if key == "cache_read" or key.endswith("_cache_read"):
+            candidates.append(value)
+    return max((_to_int(v) for v in candidates), default=0)
+
+
 def _acc_from(d: dict, roll: dict):
     # Map whatever keys exist into our canonical fields
     it = _to_int(d.get("input_tokens", d.get("prompt_tokens")))
@@ -511,19 +578,8 @@ def _acc_from(d: dict, roll: dict):
     roll["completion_tokens"] += _to_int(d.get("completion_tokens", ot))
 
     # extras / synonyms
-    # reasoning
-    roll["reasoning_tokens"] += _to_int(
-        d.get("reasoning_tokens")
-        or (d.get("completion_tokens_details") or {}).get("reasoning_tokens")
-    )
-    # cached
-    cached = (
-        d.get("cached_tokens")
-        or d.get("cached_input_tokens")
-        or (d.get("prompt_tokens_details") or {}).get("cached_tokens")
-        or d.get("prompt_cache_hits")
-    )
-    roll["cached_tokens"] += _to_int(cached)
+    roll["reasoning_tokens"] += _reasoning_from(d)
+    roll["cached_tokens"] += _cached_from(d)
 
     # costs if exposed (keep as floats)
     for k in ("input_cost", "output_cost", "total_cost"):
@@ -535,30 +591,12 @@ def _acc_from(d: dict, roll: dict):
                 pass
 
 
-def _maybe_add_extras(d: dict, roll: dict):
-    if not isinstance(d, dict):
-        return
-    # reasoning
-    rt = d.get("reasoning_tokens") or (
-        d.get("completion_tokens_details") or {}
-    ).get("reasoning_tokens")
-    roll["reasoning_tokens"] += _to_int(rt)
-    # cached
-    cached = (
-        d.get("cached_tokens")
-        or d.get("cached_input_tokens")
-        or (d.get("prompt_tokens_details") or {}).get("cached_tokens")
-        or d.get("prompt_cache_hits")
-    )
-    roll["cached_tokens"] += _to_int(cached)
-
-
 class PerLLMTimer(BaseCallbackHandler):
     """Times LLM calls (chat/completions) and captures usage/metrics."""
 
     def __init__(self, agg: _Agg | None = None, keep_max: int = 1000):
         self.agg = agg or _Agg()
-        self._starts: dict[Any, tuple[str, float, list, dict]] = {}
+        self._starts: dict[Any, tuple[str, float, list, dict, float]] = {}
         self.samples: collections.deque = collections.deque(maxlen=keep_max)
 
     def _name(self, serialized, metadata, tags) -> str:
@@ -681,29 +719,9 @@ class PerLLMTimer(BaseCallbackHandler):
             def _extract_extras(d: dict) -> dict:
                 if not isinstance(d, dict):
                     return {"reasoning_tokens": 0, "cached_tokens": 0}
-                # reasoning
-                rt = d.get("reasoning_tokens") or (
-                    d.get("completion_tokens_details") or {}
-                ).get("reasoning_tokens")
-                # cached
-                cached = (
-                    d.get("cached_tokens")
-                    or d.get("cached_input_tokens")
-                    or (d.get("prompt_tokens_details") or {}).get(
-                        "cached_tokens"
-                    )
-                    or d.get("prompt_cache_hits")
-                )
-
-                def _to_int(x):
-                    try:
-                        return int(float(x))
-                    except Exception:
-                        return 0
-
                 return {
-                    "reasoning_tokens": _to_int(rt),
-                    "cached_tokens": _to_int(cached),
+                    "reasoning_tokens": _reasoning_from(d),
+                    "cached_tokens": _cached_from(d),
                 }
 
             # Enrich from non-selected sources only (avoid double-counting the same info)
@@ -718,12 +736,16 @@ class PerLLMTimer(BaseCallbackHandler):
                     extras_candidates.append(_extract_extras(d or {}))
 
             if extras_candidates:
-                # choose the strongest signal present rather than summing duplicates
-                roll["reasoning_tokens"] += max(
-                    e["reasoning_tokens"] for e in extras_candidates
+                # The selected source can now carry these counts too, so
+                # take the strongest signal overall instead of adding the
+                # side-channel copy on top of it.
+                roll["reasoning_tokens"] = max(
+                    roll["reasoning_tokens"],
+                    max(e["reasoning_tokens"] for e in extras_candidates),
                 )
-                roll["cached_tokens"] += max(
-                    e["cached_tokens"] for e in extras_candidates
+                roll["cached_tokens"] = max(
+                    roll["cached_tokens"],
+                    max(e["cached_tokens"] for e in extras_candidates),
                 )
 
             # Final consistency guards
@@ -767,7 +789,7 @@ class PerLLMTimer(BaseCallbackHandler):
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         name, t0, tags, metadata, wall_t0 = self._starts.pop(
-            run_id, ("llm:unknown", time.perf_counter(), [], {})
+            run_id, ("llm:unknown", time.perf_counter(), [], {}, time.time())
         )
         ms = (time.perf_counter() - t0) * 1000.0
         wall_t1 = time.time()
@@ -1044,9 +1066,7 @@ class Telemetry:
     output_dir: str = "metrics"  # where to save JSON
     save_json_default: bool = True  # opt-in autosave
     save_otel_default: bool = False  # opt-out otel
-    otel_endpoint: str = (
-        "http://localhost:5000/v1/traces"  # where to push otel metrics
-    )
+    otel_endpoint: str | None = None  # explicit OTLP endpoint override
 
     tool: PerToolTimer = field(default_factory=PerToolTimer)
     runnable: PerRunnableTimer = field(default_factory=PerRunnableTimer)
@@ -1216,36 +1236,193 @@ class Telemetry:
             )
         return path
 
-    def _save_otel(self, payload: dict, endpoint: str, headers: str) -> str:
-        if not opentelemetry_available:
+    def _resolve_otlp_config(
+        self, endpoint: str | None, headers: str | Mapping | None
+    ) -> tuple[str | None, dict | None]:
+        """Resolve endpoint and headers for the OTLP exporter.
+
+        Endpoint precedence: explicit parameter, then the
+        ``otel_endpoint`` field, then ``None`` so the SDK applies its
+        own ``OTEL_EXPORTER_OTLP_*`` environment variables or default.
+        Headers accept a mapping or an env-style ``"k=v,k2=v2"`` string.
+        """
+        resolved_endpoint = endpoint or self.otel_endpoint or None
+        if headers is None:
+            resolved_headers = None
+        elif isinstance(headers, Mapping):
+            resolved_headers = dict(headers)
+        elif isinstance(headers, str):
+            resolved_headers = parse_env_headers(headers, liberal=True)
+        else:
+            raise ValueError(
+                "otel_headers must be a mapping or an env-style "
+                f"'k=v,k2=v2' string, got {type(headers).__name__}"
+            )
+        return resolved_endpoint, resolved_headers
+
+    def _llm_event_span(self, tracer, parent_ctx, event: dict):
+        """Emit one child span for a recorded LLM call, at its real times.
+
+        Span name and attribute names follow the OpenTelemetry GenAI
+        semantic conventions (Development status): "{operation} {model}",
+        gen_ai.operation.name, gen_ai.request.model, gen_ai.provider.name,
+        and gen_ai.usage.{input,output}_tokens.
+        https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md
+        """
+        t_start, t_end = event.get("t_start"), event.get("t_end")
+        if t_start is None or t_end is None:
             return None
+        metadata = event.get("metadata") or {}
+        metrics = event.get("metrics") or {}
+        model = metadata.get("model") or metadata.get("ls_model_name")
+        span = tracer.start_span(
+            f"chat {model}" if model else "chat",
+            context=parent_ctx,
+            kind=SpanKind.CLIENT,
+            start_time=int(t_start * 1_000_000_000),
+        )
+        attrs = {"gen_ai.operation.name": "chat"}
+        if model:
+            attrs["gen_ai.request.model"] = str(model)
+        provider_name = metadata.get("ls_provider")
+        if provider_name:
+            attrs["gen_ai.provider.name"] = str(provider_name)
+        node = (
+            metadata.get("langgraph_node")
+            or metadata.get("node_name")
+            or metadata.get("langgraph:node")
+        )
+        if node is not None:
+            attrs["ursa.langgraph.node"] = str(node)
+        step = metadata.get("langgraph_step")
+        if step is not None:
+            attrs["ursa.langgraph.step"] = (
+                step if isinstance(step, int) else str(step)
+            )
+        rollup = metrics.get("usage_rollup") or {}
+        for semconv_key, rollup_key in (
+            ("gen_ai.usage.input_tokens", "input_tokens"),
+            ("gen_ai.usage.output_tokens", "output_tokens"),
+        ):
+            value = rollup.get(rollup_key)
+            if value:
+                attrs[semconv_key] = int(value)
+        span.set_attributes(attrs)
+        if not event.get("ok", True):
+            error_text = metrics.get("error")
+            span.set_status(
+                Status(
+                    StatusCode.ERROR,
+                    str(error_text) if error_text else None,
+                )
+            )
+        span.end(end_time=int(t_end * 1_000_000_000))
+        return span
+
+    def _save_otel(self, payload: dict, endpoint, headers) -> dict:
+        if not opentelemetry_available:
+            _otel_logger.warning(
+                "OpenTelemetry export was requested but the OTLP exporter "
+                "is not installed; install it with "
+                'pip install "ursa-ai[otel]". Import error: %s',
+                _otel_import_error,
+            )
+            return {
+                "ok": False,
+                "endpoint": None,
+                "span_count": 0,
+                "reason": "otel-unavailable",
+            }
+        resolved_endpoint, resolved_headers = self._resolve_otlp_config(
+            endpoint, headers
+        )
         ctx = payload.get("context") or {}
         agent = str(ctx.get("agent") or "")
-        # thread_id = str(ctx.get("thread_id") or "")
         run_id = str(ctx.get("run_id") or "")
-        # s = _parse_iso(ctx.get("started_at"))
-        # e = _parse_iso(ctx.get("ended_at"))
 
-        provider = TracerProvider()
-        trace.set_tracer_provider(provider)
+        resource = Resource.create({
+            "service.name": "ursa",
+            "ursa.agent": agent,
+            "ursa.run_id": run_id,
+        })
         exporter = OTLPSpanExporter(
-            endpoint=endpoint,
-            headers=headers,
+            endpoint=resolved_endpoint,
+            headers=resolved_headers,
         )
+        provider = TracerProvider(resource=resource, shutdown_on_exit=False)
         provider.add_span_processor(BatchSpanProcessor(exporter))
-        tracer = trace.get_tracer(agent)
+        reported_endpoint = resolved_endpoint or str(
+            getattr(exporter, "_endpoint", "")
+        )
 
-        with tracer.start_as_current_span(run_id) as span:
-            total_i, parts_i = extract_time_breakdown(payload, group_llm=True)
-            [span.set_attribute(i[0], i[1]) for i in parts_i]
+        start_dt = _parse_iso(ctx.get("started_at"))
+        end_dt = _parse_iso(ctx.get("ended_at"))
+        start_ns = (
+            int(start_dt.timestamp() * 1_000_000_000) if start_dt else None
+        )
+        end_ns = int(end_dt.timestamp() * 1_000_000_000) if end_dt else None
 
-            att = compute_attribution(payload)
-            span.set_attributes(att)
+        span_count = 0
+        flushed = False
+        try:
+            tracer = provider.get_tracer(agent or "ursa")
+            root = tracer.start_span(run_id or "run", start_time=start_ns)
+            span_count = 1
+            # This runs inside the agent's finally: a malformed payload must
+            # never raise past here, and the root must always end so the
+            # trace exports (partially) rather than as orphaned children.
+            try:
+                total_i, parts_i = extract_time_breakdown(
+                    payload, group_llm=True
+                )
+                for key, value in parts_i:
+                    root.set_attribute(key, value)
+                root.set_attributes(compute_attribution(payload))
+                totals_run, _samples_run = extract_llm_token_stats(payload)
+                root.set_attributes(totals_run)
+                parent_ctx = set_span_in_context(root)
+                events = payload.get("llm_events") or []
+                for event in events:
+                    if (
+                        self._llm_event_span(tracer, parent_ctx, event)
+                        is not None
+                    ):
+                        span_count += 1
+                skipped = len(events) - (span_count - 1)
+                if skipped:
+                    _otel_logger.debug(
+                        "Skipped %d llm event(s) lacking timestamps", skipped
+                    )
+            except Exception:
+                _otel_logger.warning(
+                    "OTel span assembly failed part-way; exporting a "
+                    "partial trace",
+                    exc_info=True,
+                )
+            finally:
+                root.end(end_time=end_ns)
+            flushed = provider.force_flush(timeout_millis=10_000)
+        finally:
+            provider.shutdown()
 
-            totals_run, samples_run = extract_llm_token_stats(payload)
-            span.set_attributes(totals_run)
-
-        return endpoint
+        if flushed:
+            # force_flush confirms handoff to the exporter, not delivery;
+            # the SDK exposes no per-batch delivery status to callers.
+            _otel_logger.info(
+                "Flushed %d span(s) toward OTLP endpoint %s",
+                span_count,
+                reported_endpoint,
+            )
+        else:
+            _otel_logger.warning(
+                "OTLP export flush failed for endpoint %s", reported_endpoint
+            )
+        return {
+            "ok": bool(flushed),
+            "endpoint": reported_endpoint,
+            "span_count": span_count if flushed else 0,
+            "reason": None if flushed else "flush-failed",
+        }
 
     def to_json(
         self, *, include_raw_snapshot: bool, include_raw_records: bool
@@ -1273,7 +1450,7 @@ class Telemetry:
         save_otel: bool | None = None,
         filepath: str | None = None,
         otel_endpoint: str | None = None,
-        otel_headers: str | None = None,
+        otel_headers: str | Mapping | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
     ):
@@ -1402,9 +1579,10 @@ class Telemetry:
         )
         if saved_path:
             attrib_lines.append(f"[dim]Saved metrics JSON to:[/] {saved_path}")
-        if saved_otel:
+        if saved_otel and saved_otel.get("ok"):
             attrib_lines.append(
-                f"[dim]Saved metrics JSON to OTEL endpoint:[/] {saved_otel}"
+                "[dim]Flushed metrics span(s) to OTLP endpoint:[/] "
+                f"{saved_otel.get('endpoint')}"
             )
 
         header_str = "\n".join(

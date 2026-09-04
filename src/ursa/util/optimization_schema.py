@@ -1,37 +1,51 @@
-from typing import Any, Literal, Optional, TypedDict
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 
-class DecisionVariableType(TypedDict):
-    name: str  # decision variable name
+class DecisionVariableType(BaseModel):
+    name: str = Field(description="Decision variable name.")
     type: Literal[
         "continuous",
         "integer",
         "logical",
         "infinite-dimensional",
         "finite-dimensional",
-    ]  # decision variable type
-    domain: str  # allowable values of variable
-    description: str  # natural language description
+    ] = Field(description="Decision variable type.")
+    domain: str = Field(description="Allowable values of the variable.")
+    description: str = Field(description="Natural language description.")
 
 
-class ParameterType(TypedDict):
-    name: str  # parameter name
-    value: Optional[Any]  # parameter value; None
-    description: str  # natural language description
-    is_user_supplied: bool  # 1 if user supplied parameter
+class ParameterType(BaseModel):
+    name: str = Field(description="Parameter name.")
+    value: Any | None = Field(
+        default=None, description="Parameter value, or None if unspecified."
+    )
+    description: str = Field(description="Natural language description.")
+    is_user_supplied: bool = Field(
+        description="Whether the user supplied this parameter."
+    )
 
 
-class ObjectiveType(TypedDict):
-    sense: Literal["minimize", "maximize"]  # objective sense
-    expression_nl: str  # sympy-representable mathematical expression
+class ObjectiveType(BaseModel):
+    sense: Literal["minimize", "maximize"] = Field(
+        description="Objective sense."
+    )
+    expression_nl: str = Field(
+        description="Sympy-representable mathematical expression."
+    )
     tags: list[
         Literal["linear", "quadratic", "nonlinear", "convex", "nonconvex"]
-    ]  # objective type
+    ] = Field(description="Objective type tags.")
 
 
-class ConstraintType(TypedDict):
-    name: str  # constraint name
-    expression_nl: str  # sympy-representable mathematical expression
+class ConstraintType(BaseModel):
+    name: str = Field(description="Constraint name.")
+    expression_nl: str = Field(
+        description="Sympy-representable mathematical expression."
+    )
     tags: list[
         Literal[
             "linear",
@@ -42,37 +56,60 @@ class ConstraintType(TypedDict):
             "infinite-dimensional",
             "finite-dimensional",
         ]
-    ]  # constraint type
+    ] = Field(description="Constraint type tags.")
 
 
-class NotesType(TypedDict):
-    verifier: str  # problem verification status and explanation
-    feasibility: str  # problem feasibility status
-    user: str  # notes to user
-    assumptions: str  # assumptions made during formulation
+class NotesType(BaseModel):
+    verifier: str = Field(
+        description="Problem verification status and explanation."
+    )
+    feasibility: str = Field(description="Problem feasibility status.")
+    user: str = Field(description="Notes to user.")
+    assumptions: str = Field(description="Assumptions made during formulation.")
 
 
-class ProblemSpec(TypedDict):
-    title: str  # name of the problem
-    description_nl: str  # natural language description
-    decision_variables: list[
-        DecisionVariableType
-    ]  # list of all decision variables
-    parameters: list[ParameterType]  # list of all parameters
-    objective: ObjectiveType  # structred objective function details
-    constraints: list[ConstraintType]  # structured constraint details
-    problem_class: Optional[str]  # optimization problem class
-    latex: Optional[str]  # latex formulation of the problem
-    status: Literal["DRAFT", "VERIFIED", "ERROR"]  # problem status
-    notes: NotesType  # structured notes data
+class ProblemSpec(BaseModel):
+    title: str = Field(description="Name of the problem.")
+    description_nl: str = Field(description="Natural language description.")
+    decision_variables: list[DecisionVariableType] = Field(
+        description="List of all decision variables."
+    )
+    parameters: list[ParameterType] = Field(
+        description="List of all parameters."
+    )
+    objective: ObjectiveType = Field(
+        description="Structured objective function details."
+    )
+    constraints: list[ConstraintType] = Field(
+        description="Structured constraint details."
+    )
+    problem_class: str | None = Field(
+        default=None, description="Optimization problem class."
+    )
+    latex: str | None = Field(
+        default=None, description="LaTeX formulation of the problem."
+    )
+    status: Literal["DRAFT", "VERIFIED", "ERROR"] = Field(
+        description="Problem status."
+    )
+    notes: NotesType = Field(description="Structured notes data.")
 
 
-class SolverSpec(TypedDict):
-    solver: str  # name of the solver, replace with Literal["Gurobi","Ipopt",...] to restrict solvers
-    library: str  # library or relevant packages for the solver
-    algorithm: Optional[str]  # algorithm used to solve the problem
-    license: Optional[
-        str
-    ]  # License status of the solver (open-source, commercial,etc.)
-    parameters: Optional[list[dict]]  # other parameters relevant to the problem
-    notes: Optional[str]  # justifying the choice of solver
+class SolverSpec(BaseModel):
+    solver: str = Field(description="Name of the solver.")
+    library: str = Field(
+        description="Library or relevant packages for the solver."
+    )
+    algorithm: str | None = Field(
+        default=None, description="Algorithm used to solve the problem."
+    )
+    license: str | None = Field(
+        default=None,
+        description="License status of the solver, e.g. open-source/commercial.",
+    )
+    parameters: list[dict[str, Any]] | None = Field(
+        default=None, description="Other parameters relevant to the problem."
+    )
+    notes: str | None = Field(
+        default=None, description="Justification for the solver choice."
+    )

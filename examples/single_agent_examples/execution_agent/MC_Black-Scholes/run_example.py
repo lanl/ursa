@@ -38,6 +38,9 @@ from ux import UX, add_ux_args, resolve_ux_config, setup_file_logging
 
 from ursa.agents.execution_agent import ExecutionAgent
 from ursa.util import Checkpointer
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 # --- Ensure we import the *local* URSA package (ursa/src/ursa) when running from the repo.
 # This example directory may be nested under ./ursa/examples/..., so we search upwards.
@@ -305,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                     + "\n"
                 )
 
-            model_name = os.getenv("URSA_MODEL", "openai:gpt-5-mini")
+            model_name = os.getenv("URSA_MODEL", "openai:gpt-5.4-mini")
             with ux.status(f"Initializing model ({model_name})..."):
                 model = init_chat_model(
                     model=model_name,

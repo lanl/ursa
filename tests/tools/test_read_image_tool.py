@@ -136,6 +136,7 @@ def test_read_image_tool_reads_from_runtime_workspace(
     assert base64.b64decode(result[0]["base64"]).startswith(b"\x89PNG")
 
 
+@pytest.mark.real_llm
 def test_read_image_tool_output_can_be_read_by_attached_llm(
     tmp_path: Path, vision_chat_model: BaseChatModel
 ):
@@ -184,3 +185,51 @@ def test_read_image_tool_output_can_be_read_by_attached_llm(
     ])
 
     assert response.number == number
+
+
+def test_image_block_from_file_converts_svg_to_png(tmp_path: Path):
+    target = tmp_path / "circle.svg"
+
+    target.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg"
+             width="100"
+             height="100"
+             viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="40" fill="red"/>
+        </svg>
+        """,
+        encoding="utf-8",
+    )
+
+    result = image_block_from_file(target)
+
+    assert result["type"] == "image"
+    assert result["mime_type"] == "image/png"
+
+    decoded = base64.b64decode(result["base64"])
+    assert decoded.startswith(b"\x89PNG")
+
+
+def test_svg_conversion_preserves_original_file_id(tmp_path: Path):
+    target = tmp_path / "plot.svg"
+
+    target.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg"
+             width="20"
+             height="20">
+          <rect width="20" height="20" fill="blue"/>
+        </svg>
+        """,
+        encoding="utf-8",
+    )
+
+    result = image_block_from_file(
+        target,
+        workspace=tmp_path,
+    )
+
+    assert result["mime_type"] == "image/png"
+    assert result["file_id"] == "plot.svg"
+    assert base64.b64decode(result["base64"]).startswith(b"\x89PNG")

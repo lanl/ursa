@@ -14,6 +14,7 @@ Workflows built on this base class benefit from consistent behavior, observabili
 integration capabilities while only needing to implement the core _invoke method.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import (
     Any,
@@ -133,10 +134,33 @@ class BaseWorkflow(ABC):
             return inputs
         raise TypeError(f"Unsupported input type: {type(inputs)}")
 
+    @final
+    async def ainvoke(
+        self,
+        inputs: Optional[InputLike] = None,
+        /,
+        *,
+        config: Optional[dict] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Asynchronously execute the workflow with normalized inputs.
+
+        Subclasses can provide a native async implementation by overriding
+        ``_ainvoke``. The default ``_ainvoke`` implementation runs the sync
+        ``_invoke`` implementation in a worker thread.
+        """
+
+        normalized = self._normalize_inputs(inputs)
+        return await self._ainvoke(normalized, config=config, **kwargs)
+
     @abstractmethod
     def _invoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
-        """Subclasses implement the actual work against normalized inputs."""
+        """Subclasses implement the actual sync work against normalized inputs."""
         ...
+
+    async def _ainvoke(self, inputs: Mapping[str, Any], **config: Any) -> Any:
+        """Subclasses can override to implement native async work."""
+        return await asyncio.to_thread(self._invoke, inputs, **config)
 
     def __call__(self, inputs: InputLike, /, **kwargs: Any) -> Any:
         """Specify calling behavior for class instance."""

@@ -5,6 +5,9 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from ursa.agents import ArxivAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 tid = "run-" + __import__("uuid").uuid4().hex[:8]
 

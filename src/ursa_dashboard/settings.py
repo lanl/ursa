@@ -3,27 +3,38 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.security import enforce_group_base_url_policy
+
+from .credentials import assert_no_raw_api_key
 from .storage import read_json, utc_now, write_json
+
+
+def _qualified_model_name(model_config) -> str:
+    if model_config.model_provider is None:
+        return model_config.model
+    return f"{model_config.model_provider}:{model_config.model}"
 
 
 class LLMSettings(BaseModel):
     model: str = "openai:gpt-5.2"
     base_url: str | None = None
 
-    # Security: we intentionally do *not* store an API key in settings.json.
-    # Instead, we store the *name* of an environment variable that contains
-    # the key. The worker copies that value into OPENAI_API_KEY at runtime.
-    api_key_env_var: str | None = Field(
+    # Security: settings contain only a credential source/reference. Stored
+    # keys live in the OS credential store; environment variables remain an
+    # explicit compatibility option.
+    api_key_env: str | None = Field(
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
     )
+    credential_source: Literal["environment", "stored", "none"] = "stored"
+    credential_id: str | None = None
+    credential_target: str | None = None
 
-    max_tokens: int = 25000
-    temperature: float = 0.2
     model_kwargs: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional keyword arguments passed to langchain.chat_models.init_chat_model.",
@@ -36,11 +47,12 @@ class LLMSettings(BaseModel):
             return {}
         if not isinstance(v, dict):
             raise ValueError("llm.model_kwargs must be a JSON object")
+        assert_no_raw_api_key(v, context="llm.model_kwargs")
         return v
 
-    @field_validator("api_key_env_var")
+    @field_validator("api_key_env")
     @classmethod
-    def _validate_api_key_env_var(cls, v: str | None) -> str | None:
+    def _validate_api_key_env(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = str(v).strip()
@@ -49,7 +61,7 @@ class LLMSettings(BaseModel):
         # Conservative env-var name validation.
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
             raise ValueError(
-                "api_key_env_var must be a valid environment variable name"
+                "api_key_env must be a valid environment variable name"
             )
         return v
 
@@ -87,6 +99,62 @@ class MCPSettings(BaseModel):
         return v
 
 
+class EmbeddingSettings(BaseModel):
+    """Dashboard-level embedding model settings for RAG features."""
+
+    model: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = Field(
+        default="OPENAI_API_KEY",
+        description="Name of the environment variable that contains the embedding API key (the secret is not stored).",
+    )
+    credential_source: Literal["environment", "stored", "llm", "none"] = (
+        "stored"
+    )
+    credential_id: str | None = None
+    credential_target: str | None = None
+    model_kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("model_kwargs")
+    @classmethod
+    def _validate_model_kwargs(cls, v: Any) -> dict[str, Any]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("embedding.model_kwargs must be a JSON object")
+        assert_no_raw_api_key(v, context="embedding.model_kwargs")
+        return v
+
+    @field_validator("api_key_env")
+    @classmethod
+    def _validate_api_key_env(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = str(v).strip()
+        if v == "":
+            return None
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
+            raise ValueError(
+                "api_key_env must be a valid environment variable name"
+            )
+        return v
+
+
+class ToolSettings(BaseModel):
+    """Dashboard-level tools attached to new tool-capable agent runs."""
+
+    rag_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("rag_tools", mode="before")
+    @classmethod
+    def _normalize_rag_tools(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        from ursa.rag.persistence import normalize_rag_tool_names
+
+        return normalize_rag_tool_names(v)
+
+
 class UISettings(BaseModel):
     theme: str = "system"  # e.g. dark/light mode
     stdout_buffer_lines: int = Field(default=20_000, ge=5_000, le=100_000_000)
@@ -97,15 +165,200 @@ class GlobalSettings(BaseModel):
 
     updated_at: str | None = None
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     runner: RunnerSettings = Field(default_factory=RunnerSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
+    tools: ToolSettings = Field(default_factory=ToolSettings)
     ui: UISettings = Field(default_factory=UISettings)
 
 
+def dashboard_llm_patch_from_ursa_config(
+    path: str | Path,
+    *,
+    group: str,
+    current: GlobalSettings | None = None,
+) -> dict[str, Any]:
+    """Return a dashboard settings patch from a CLI-style URSA config.
+
+    The dashboard intentionally stores only non-secret LLM settings.
+    raw API keys are rejected so they are not persisted in settings.json.
+    Additional ``llm_model`` fields accepted by the CLI config are passed
+    through as dashboard ``llm.model_kwargs`` except for fields that have a
+    first-class dashboard setting.
+    """
+
+    cfg = UrsaConfig.from_file(Path(path))
+    llm_cfg = cfg.llm_model
+    if isinstance(llm_cfg.api_key, SecretStr):
+        raise ValueError(
+            "Dashboard config does not store raw llm_model.api_key; "
+            "use an environment or dashboard credential instead."
+        )
+    if (
+        current is not None
+        and llm_cfg.inference_provider is None
+        and "base_url" not in llm_cfg.model_fields_set
+    ):
+        llm_cfg = llm_cfg.model_copy(update={"base_url": current.llm.base_url})
+    emb_cfg = cfg.emb_model
+    if emb_cfg is not None and isinstance(emb_cfg.api_key, SecretStr):
+        raise ValueError(
+            "Dashboard config does not store raw emb_model.api_key; "
+            "use an environment or dashboard credential instead."
+        )
+    if (
+        current is not None
+        and emb_cfg is not None
+        and emb_cfg.inference_provider is None
+        and "base_url" not in emb_cfg.model_fields_set
+    ):
+        emb_cfg = emb_cfg.model_copy(
+            update={"base_url": current.embedding.base_url}
+        )
+    cfg = cfg.model_copy(
+        update={"group": group, "llm_model": llm_cfg, "emb_model": emb_cfg}
+    )
+    cfg = resolve_ursa_config(cfg)
+    llm_cfg = cfg.llm_model
+    llm_api_key_env = llm_cfg.api_key_env
+
+    patch: dict[str, Any] = {"model": _qualified_model_name(llm_cfg)}
+    if llm_cfg.base_url is not None:
+        patch["base_url"] = llm_cfg.base_url
+    if llm_api_key_env is not None:
+        patch["api_key_env"] = llm_api_key_env
+        patch["credential_source"] = "environment"
+    if llm_cfg.max_completion_tokens is not None:
+        patch["max_tokens"] = llm_cfg.max_completion_tokens
+
+    model_kwargs: dict[str, Any] = {}
+    for key, value in (llm_cfg.model_extra or {}).items():
+        if value is None:
+            continue
+        if key == "api_key":
+            raise ValueError(
+                "Dashboard config does not store raw llm_model.api_key; "
+                "use llm_model.api_key_env instead."
+            )
+        if key == "temperature":
+            patch["temperature"] = value
+            continue
+        if key == "model_kwargs":
+            if not isinstance(value, dict):
+                raise ValueError("llm_model.model_kwargs must be an object")
+            model_kwargs.update(value)
+            continue
+        # CLI configs may include provider-specific kwargs such as timeout,
+        # seed, or use_responses_api. The dashboard worker forwards these via
+        # init_chat_model(**model_kwargs).
+        model_kwargs[key] = value
+
+    if model_kwargs:
+        patch["model_kwargs"] = model_kwargs
+
+    # Validate against the dashboard settings schema before returning, so CLI
+    # errors fail early instead of being deferred until the first run.
+    LLMSettings.model_validate(patch)
+
+    out: dict[str, Any] = {"llm": patch}
+
+    emb_cfg = cfg.emb_model
+    if emb_cfg is not None:
+        emb_api_key_env = emb_cfg.api_key_env
+        emb_patch: dict[str, Any] = {"model": _qualified_model_name(emb_cfg)}
+        if emb_cfg.base_url is not None:
+            emb_patch["base_url"] = emb_cfg.base_url
+        if emb_api_key_env is not None:
+            emb_patch["api_key_env"] = emb_api_key_env
+            emb_patch["credential_source"] = "environment"
+
+        emb_model_kwargs: dict[str, Any] = {}
+        for key, value in (emb_cfg.model_extra or {}).items():
+            if value is None:
+                continue
+            if key == "api_key":
+                raise ValueError(
+                    "Dashboard config does not store raw emb_model.api_key; "
+                    "use emb_model.api_key_env instead."
+                )
+            if key == "model_kwargs":
+                if not isinstance(value, dict):
+                    raise ValueError("emb_model.model_kwargs must be an object")
+                emb_model_kwargs.update(value)
+                continue
+            emb_model_kwargs[key] = value
+
+        if emb_model_kwargs:
+            emb_patch["model_kwargs"] = emb_model_kwargs
+
+        EmbeddingSettings.model_validate(emb_patch)
+        out["embedding"] = emb_patch
+
+    return out
+
+
+def merge_global_settings_patch(
+    current: GlobalSettings, patch_obj: dict[str, Any]
+) -> GlobalSettings:
+    """Return settings with the dashboard PATCH deep-merge semantics."""
+
+    merged = current.model_dump(mode="json")
+
+    # Important: our PATCH endpoint uses deep-merge semantics so callers can
+    # update individual nested fields. However, for some objects we want
+    # *replace* semantics so deletions are respected.
+    REPLACE_PATHS = {
+        "mcp.servers",
+        "llm.model_kwargs",
+        "embedding.model_kwargs",
+    }
+
+    def deep_merge(
+        dst: dict[str, Any], src: dict[str, Any], path: str = ""
+    ) -> dict[str, Any]:
+        for k, v in src.items():
+            p = f"{path}.{k}" if path else str(k)
+
+            # Replace semantics for specific paths (e.g. mcp.servers).
+            if p in REPLACE_PATHS and isinstance(v, dict):
+                dst[k] = v
+                continue
+
+            if isinstance(v, dict) and isinstance(dst.get(k), dict):
+                dst[k] = deep_merge(dst[k], v, p)
+            else:
+                dst[k] = v
+        return dst
+
+    return GlobalSettings.model_validate(deep_merge(merged, patch_obj))
+
+
+def apply_dashboard_config(
+    settings_store: "SettingsStore", path: str | Path, *, group: str
+) -> GlobalSettings:
+    """Apply a CLI-style YAML/JSON config to dashboard global settings.
+
+    The resulting effective endpoint is validated against the selected group
+    before it is persisted, matching the startup check performed by the
+    dashboard app.
+    """
+
+    current = settings_store.load()
+    patch = dashboard_llm_patch_from_ursa_config(
+        path, group=group, current=current
+    )
+    settings = merge_global_settings_patch(current, patch)
+    enforce_group_base_url_policy(settings.llm.base_url, group)
+    if settings.embedding.model:
+        enforce_group_base_url_policy(settings.embedding.base_url, group)
+    settings_store.save(settings)
+    return settings
+
+
 class SettingsStore:
-    def __init__(self, workspace_root: Path):
-        self.workspace_root = workspace_root
-        self.path = self.workspace_root / "_meta" / "settings.json"
+    def __init__(self, dashboard_root: Path):
+        self.dashboard_root = dashboard_root
+        self.path = self.dashboard_root / "_meta" / "settings.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> GlobalSettings:
@@ -114,6 +367,18 @@ class SettingsStore:
             self.save(s)
             return s
         data = read_json(self.path)
+        # Settings created before secure storage existed used api_key_env.
+        # Preserve that behavior while letting fresh installs default to the
+        # operating system credential store.
+        for section in ("llm", "embedding"):
+            section_data = data.get(section)
+            if (
+                isinstance(section_data, dict)
+                and "credential_source" not in section_data
+            ):
+                section_data["credential_source"] = (
+                    "environment" if section_data.get("api_key_env") else "none"
+                )
         return GlobalSettings.model_validate(data)
 
     def save(self, settings: GlobalSettings) -> None:
@@ -121,36 +386,7 @@ class SettingsStore:
         write_json(self.path, settings.model_dump(mode="json"))
 
     def patch(self, patch_obj: dict[str, Any]) -> GlobalSettings:
-        current = self.load()
-        merged = current.model_dump(mode="json")
-
-        # Important: our PATCH endpoint uses deep-merge semantics so callers can
-        # update individual nested fields. However, for some objects we want
-        # *replace* semantics so deletions are respected.
-        #
-        # Example: the UI sends the full desired `mcp.servers` mapping.
-        # If we deep-merge, removed servers will never be deleted from disk.
-        REPLACE_PATHS = {"mcp.servers", "llm.model_kwargs"}
-
-        def deep_merge(
-            dst: dict[str, Any], src: dict[str, Any], path: str = ""
-        ) -> dict[str, Any]:
-            for k, v in src.items():
-                p = f"{path}.{k}" if path else str(k)
-
-                # Replace semantics for specific paths (e.g. mcp.servers).
-                if p in REPLACE_PATHS and isinstance(v, dict):
-                    dst[k] = v
-                    continue
-
-                if isinstance(v, dict) and isinstance(dst.get(k), dict):
-                    dst[k] = deep_merge(dst[k], v, p)
-                else:
-                    dst[k] = v
-            return dst
-
-        merged = deep_merge(merged, patch_obj)
-        new_settings = GlobalSettings.model_validate(merged)
+        new_settings = merge_global_settings_patch(self.load(), patch_obj)
         self.save(new_settings)
         return new_settings
 

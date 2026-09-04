@@ -16,6 +16,9 @@ from rich.panel import Panel
 
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 console = get_console()  # always returns the same instance
 
@@ -39,7 +42,7 @@ Compare the timing for all three methods on the first million integers, and chec
 ]
 
 # Init the model
-model = init_chat_model(model="openai:gpt-5-mini")
+model = init_chat_model(model="openai:gpt-5.4-mini")
 
 # Setup checkpointing
 db_path = Path(workspace) / "checkpoint.db"

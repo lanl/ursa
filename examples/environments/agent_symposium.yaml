@@ -1,0 +1,45 @@
+name: example_symposium
+group: default
+description: >
+  A symposium where one nested team and one independent execution agent solve a
+  problem, review each other's writeups, revise, and produce a final synthesis.
+revision_rounds: 1
+
+organizer:
+  name: organizer
+  role: Final synthesizer and judge of evidence quality
+  agent: ChatAgent
+  config:
+    use_web: false
+
+members:
+  - name: team_path
+    role: Nested team pursuing a coordinated solution
+    agent: AgentTeamEnvironment
+    config:
+      config:
+        name: nested_solution_team
+        description: A nested team used as one symposium participant.
+        pi:
+          name: pi
+          role: Nested-team PI
+          agent: ExecutionAgent
+          config:
+            use_web: false
+        members:
+          - name: implementer
+            role: Implements and tests a solution
+            agent: ExecutionAgent
+            config:
+              use_web: false
+          - name: critic
+            role: Reviews the nested team's reasoning and writeup
+            agent: ChatAgent
+            config:
+              use_web: false
+
+  - name: independent_path
+    role: Independent solver for comparison
+    agent: ExecutionAgent
+    config:
+      use_web: false

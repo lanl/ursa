@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -15,6 +16,7 @@ except ImportError:
 
 
 _NULL = io.StringIO()  # Hides DSI outout
+LOGGER = logging.getLogger(__name__)
 
 ########################################################################
 #### Utility functions
@@ -204,8 +206,6 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
             "error": "Optional dependency [dsi] not installed. Tool will not work."
         }
 
-    # print(f"query {query_str}, db_path: {db_path}")
-
     _store = None
     try:
         with redirect_stdout(_NULL), redirect_stderr(_NULL):
@@ -224,5 +224,5 @@ def query_dsi_tool(query_str: str, db_path: str) -> dict:
             try:
                 with redirect_stdout(_NULL), redirect_stderr(_NULL):
                     _store.close()
-            except Exception as e:  # noqa: BLE001
-                print(f"Error closing DSI store: {e}")
+            except Exception:
+                LOGGER.exception("Error closing DSI store")

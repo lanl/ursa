@@ -1,4 +1,7 @@
+import contextlib
+import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -11,10 +14,14 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import justext
+import pymupdf
 import requests
-import trafilatura
 from bs4 import BeautifulSoup
-from langchain_community.document_loaders import PyPDFLoader
+
+logger = logging.getLogger(__name__)
+
+with contextlib.redirect_stdout(io.StringIO()):
+    import pymupdf4llm
 
 # Check for optional dependencies
 docx_installed = False
@@ -314,11 +321,10 @@ def _find_pdf_on_landing(soup: BeautifulSoup, base_url: str) -> str | None:
 
 def _pdf_page_count(path: Path) -> int:
     try:
-        loader = PyPDFLoader(path)
-        pages = loader.load()
-        return len(pages)
-    except Exception as e:  # noqa: BLE001
-        print("[Error]: ", e)
+        with pymupdf.open(str(path)) as doc:
+            return len(doc)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to count document pages")
         return 0
 
 
@@ -502,31 +508,9 @@ def _dedupe_lines(text: str, min_len: int = 40) -> str:
 def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     """
     Returns plain text with navigation/ads/scripts removed.
-    Prefers trafilatura -> jusText -> BS4 paragraphs.
+    Prefers jusText -> BS4 paragraphs.
     """
-    # 1) Trafilatura
-    # You can tune config: with_metadata, include_comments, include_images, favor_recall, etc.
-    cfg = trafilatura.settings.use_config()
-    cfg.set("DEFAULT", "include_comments", "false")
-    cfg.set("DEFAULT", "include_tables", "false")
-    cfg.set("DEFAULT", "favor_recall", "false")  # be stricter; less noise
-    try:
-        # If you fetched HTML already, use extract() on string; otherwise, fetch_url(url)
-        txt = trafilatura.extract(
-            html,
-            config=cfg,
-            include_comments=False,
-            include_tables=False,
-            favor_recall=False,
-        )
-        if txt and txt.strip():
-            txt = _normalize_ws(txt)
-            txt = _dedupe_lines(txt)
-            return txt[:max_chars]
-    except Exception:  # noqa: BLE001, S110
-        pass
-
-    # 2) jusText
+    # 1) jusText
     try:
         paragraphs = justext.justext(html, justext.get_stoplist("English"))
         body_paras = [p.text for p in paragraphs if not p.is_boilerplate]
@@ -537,7 +521,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
     except Exception:  # noqa: BLE001, S110
         pass
 
-    # 4) last-resort: BS4 paragraphs/headings only
+    # 2) last-resort: BS4 paragraphs/headings only
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
@@ -563,9 +547,7 @@ def extract_main_text_only(html: str, *, max_chars: int = 250_000) -> str:
 
 
 def read_text_pdf(path: str | Path) -> str:
-    loader = PyPDFLoader(path)
-    pages = loader.load()
-    return "\n".join(p.page_content for p in pages)
+    return pymupdf4llm.to_markdown(str(path)) or ""
 
 
 def read_pdf(path: str | Path) -> str:
@@ -603,14 +585,14 @@ def read_pdf(path: str | Path) -> str:
                 if not os.path.exists(ocr_pdf) or os.path.getmtime(
                     ocr_pdf
                 ) < os.path.getmtime(full_filename):
-                    print(
+                    logger.info(
                         f"[OCR]: mode={first_mode} ({len(text)} chars, {pages} pages) -> {ocr_pdf}"
                     )
                     _ocr_to_searchable_pdf(
                         full_filename, ocr_pdf, mode=first_mode
                     )
                 else:
-                    print(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
+                    logger.info(f"[OCR]: using cached OCR PDF -> {ocr_pdf}")
 
                 text2 = read_text_pdf(ocr_pdf) or ""
                 if len(text2) > len(text):
@@ -628,14 +610,14 @@ def read_pdf(path: str | Path) -> str:
                     if not os.path.exists(force_pdf) or os.path.getmtime(
                         force_pdf
                     ) < os.path.getmtime(full_filename):
-                        print(
+                        logger.info(
                             f"[OCR]: still low after skip-text; retrying with force-ocr -> {force_pdf}"
                         )
                         _ocr_to_searchable_pdf(
                             full_filename, force_pdf, mode="force"
                         )
                     else:
-                        print(
+                        logger.info(
                             f"[OCR]: using cached force OCR PDF -> {force_pdf}"
                         )
 
@@ -645,20 +627,20 @@ def read_pdf(path: str | Path) -> str:
 
             except (FileNotFoundError, subprocess.CalledProcessError) as e:
                 # Missing ocrmypdf or OCR failed: keep original extraction
-                print(f"[OCR Error]: {e}")
+                logger.warning("OCR failed; using original extraction: %s", e)
             except Exception as e:  # noqa: BLE001
                 # Any other OCR-related failure: keep original extraction
-                print(f"[OCR Error]: {e}")
+                logger.warning("OCR failed; using original extraction: %s", e)
 
         return text  # noqa: TRY300
 
     except subprocess.CalledProcessError as e:
         # OCR failed; return whatever we got from normal extraction
         err = (e.stderr or "")[:500]
-        print(f"[OCR Error]: {err}")
+        logger.error("OCR failed: %s", err)
         return text if text else f"[Error]: OCR failed: {err}"
     except Exception as e:  # noqa: BLE001
-        print(f"[Error]: {e}")
+        logger.exception("Document parsing failed")
         return f"[Error]: {e}"
 
 

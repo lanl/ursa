@@ -3,12 +3,15 @@ from pathlib import Path
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import GitGoAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 
 def main():
     repo_root = Path.cwd()
     agent = GitGoAgent(
-        llm=init_chat_model("openai:gpt-5-mini"),
+        llm=init_chat_model("openai:gpt-5.4-mini"),
         workspace=repo_root,
     )
 

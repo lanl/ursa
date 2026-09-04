@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 """
 Shared utilities for plan_execute workflows.
 
@@ -75,10 +77,10 @@ def load_yaml_config(path: str) -> NS:
                 raise ValueError("Top-level YAML must be a mapping/object.")
             return NS(**raw_cfg)
     except FileNotFoundError:
-        print(f"Config file not found: {path}", file=sys.stderr)
+        print(f"Config file not found: {path}", file=sys.stderr)  # noqa: T201
         sys.exit(2)
     except Exception as exc:
-        print(f"Failed to load config {path}: {exc}", file=sys.stderr)
+        print(f"Failed to load config {path}: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(2)
 
 
@@ -405,7 +407,7 @@ def setup_llm(
 def setup_workspace(
     user_specified_workspace: str | None,
     project: str = "run",
-    model_name: str = "openai:gpt-5-mini",
+    model_name: str = "openai:gpt-5.4-mini",
 ) -> str:
     """
     Set up a workspace directory for a plan/execute run.
@@ -465,13 +467,13 @@ def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
         return None
 
     deadline = time.time() + timeout
-    print(prompt, end="", flush=True)
+    print(prompt, end="", flush=True)  # noqa: T201
 
     try:
         while True:
             remaining = int(deadline - time.time())
             if remaining <= 0:
-                print()
+                print()  # noqa: T201
                 return None
 
             # Poll stdin with a 1-second timeout
@@ -481,10 +483,10 @@ def timed_input_with_countdown(prompt: str, timeout: int) -> str | None:
                 return line.rstrip("\n") if line else None
 
             # Update countdown display (clear to EOL to avoid ghost text)
-            print(f"\r{prompt}({remaining}s) \x1b[K", end="", flush=True)
+            print(f"\r{prompt}({remaining}s) \x1b[K", end="", flush=True)  # noqa: T201
 
     except Exception:
-        print()
+        print()  # noqa: T201
         return None
 
 

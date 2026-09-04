@@ -1,11 +1,23 @@
 from pathlib import Path
 
+import pytest
+
 from ursa.agents import RAGAgent
 
 
 async def test_rag_agent_retrieves_contextual_documents(
-    chat_model, embedding_model, monkeypatch, tmpdir
+    chat_model, embedding_model, monkeypatch, capsys, tmpdir
 ):
+    events = []
+
+    def capture_event(event_name, payload, config=None):
+        events.append((event_name, payload))
+
+    monkeypatch.setattr(
+        "ursa.util.events.dispatch_custom_event",
+        capture_event,
+    )
+
     workspace = Path(tmpdir)
     database_dir = workspace / "database"
     summaries_dir = workspace / "summaries"
@@ -58,3 +70,29 @@ async def test_rag_agent_retrieves_contextual_documents(
 
     manifest_path = vectors_dir / "_ingested_ids.txt"
     assert manifest_path.exists()
+
+    payloads = [payload for _, payload in events]
+    stages = [payload["stage"] for payload in payloads]
+    assert "read_docs" in stages
+    assert "ingest_docs" in stages
+    assert "retrieve" in stages
+    assert "summarize" in stages
+    assert "retrieve_result" in stages
+    assert all(payload["agent"] == "RAGAgent" for payload in payloads)
+
+    stdout = capsys.readouterr().out
+    assert "[RAG Agent]" not in stdout
+    assert "RAG failed due to:" not in stdout
+
+
+def test_rag_agent_requires_explicit_embedding(chat_model, tmpdir):
+    with pytest.raises(
+        ValueError, match="requires an explicit embedding model"
+    ):
+        RAGAgent(
+            llm=chat_model,
+            workspace=tmpdir,
+            database_path="database",
+            summaries_path="summaries",
+            vectorstore_path="vectors",
+        )

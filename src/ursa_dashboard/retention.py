@@ -37,14 +37,14 @@ def _dir_size_bytes(p: Path) -> int:
 
 def enforce_retention(
     *,
-    workspace_root: Path,
+    dashboard_root: Path,
     policy: RetentionPolicy,
 ) -> dict:
     """Delete old terminal runs to satisfy retention policy.
 
     Returns stats about deletions.
     """
-    meta_dir = workspace_root / "_meta" / "runs"
+    meta_dir = dashboard_root / "_meta" / "runs"
     if not meta_dir.exists():
         return {"deleted": 0, "reason": "no_meta"}
 
@@ -72,7 +72,7 @@ def enforce_retention(
             continue
         run_rel = rec.get("run_dir")
         if run_rel:
-            run_dir = (workspace_root / run_rel).resolve()
+            run_dir = (dashboard_root / run_rel).resolve()
             if run_dir.exists():
                 shutil.rmtree(run_dir, ignore_errors=True)
         try:
@@ -94,7 +94,7 @@ def enforce_retention(
         for created, meta_path, rec in lst[policy.max_runs_per_agent :]:
             run_rel = rec.get("run_dir")
             if run_rel:
-                run_dir = (workspace_root / run_rel).resolve()
+                run_dir = (dashboard_root / run_rel).resolve()
                 if run_dir.exists():
                     shutil.rmtree(run_dir, ignore_errors=True)
             try:
@@ -111,8 +111,8 @@ def enforce_retention(
     runs_left.sort(key=lambda x: x[0])
 
     total_bytes = (
-        _dir_size_bytes(workspace_root / "runs")
-        if (workspace_root / "runs").exists()
+        _dir_size_bytes(dashboard_root / "runs")
+        if (dashboard_root / "runs").exists()
         else 0
     )
     idx = 0
@@ -121,7 +121,7 @@ def enforce_retention(
         idx += 1
         run_rel = rec.get("run_dir")
         if run_rel:
-            run_dir = (workspace_root / run_rel).resolve()
+            run_dir = (dashboard_root / run_rel).resolve()
             if run_dir.exists():
                 total_bytes -= _dir_size_bytes(run_dir)
                 shutil.rmtree(run_dir, ignore_errors=True)

@@ -18,6 +18,7 @@ from rich.text import Text
 
 from ursa.agents import WebSearchAgent, make_git_agent
 from ursa.prompt_library.planning_prompts import reflection_prompt
+from ursa.util.events import configure_event_logging
 from ursa.util.github_research import gather_github_context
 from ursa.util.plan_execute_utils import (
     fmt_elapsed,
@@ -29,6 +30,8 @@ from ursa.util.plan_execute_utils import (
     setup_llm,
     timed_input_with_countdown,
 )
+
+configure_event_logging()
 
 console = get_console()
 
@@ -1855,7 +1858,7 @@ def main():
 
     models_cfg = getattr(cfg, "models", {}) or {}
     default_model = (models_cfg.get("default") or None) or (
-        models_cfg.get("choices") or ["openai:gpt-5-mini"]
+        models_cfg.get("choices") or ["openai:gpt-5.4-mini"]
     )[0]
     planner_model = models_cfg.get("planner") or default_model
     executor_model = models_cfg.get("executor") or default_model

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class RunCreateRequest(BaseModel):
@@ -18,13 +18,44 @@ class RunCancelRequest(BaseModel):
     reason: str = "user_request"
 
 
+class EnvironmentRunCreateRequest(BaseModel):
+    environment_type: Literal["agent_team", "agent_symposium"]
+    config_yaml: str = Field(min_length=1, max_length=500_000)
+    prompt: str = Field(min_length=1, max_length=500_000)
+    run_id: str | None = Field(default=None, min_length=1, max_length=64)
+    replace_existing: bool = False
+
+
+class EnvironmentConfigValidateRequest(BaseModel):
+    environment_type: Literal["agent_team", "agent_symposium"]
+    config_yaml: str = Field(min_length=1, max_length=500_000)
+
+
+class EnvironmentRunCancelRequest(BaseModel):
+    reason: str = "user_request"
+
+
+class EnvironmentRunRecord(BaseModel):
+    run_id: str
+    group: str
+    environment_name: str
+    environment_type: str
+    status: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    task_preview: str | None = None
+    error: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class RunRecord(BaseModel):
     run_id: str
     agent_id: str
     status: str
-    created_at: Optional[str] = None
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     agent_init: dict[str, Any] = Field(default_factory=dict)
     llm: dict[str, Any] = Field(default_factory=dict)
@@ -86,6 +117,19 @@ class SettingsPatchRequest(BaseModel):
     patch: dict[str, Any] = Field(default_factory=dict)
 
 
+class CredentialSetRequest(BaseModel):
+    api_key: SecretStr
+
+
+class CredentialStatusResponse(BaseModel):
+    kind: Literal["llm", "embedding"]
+    source: Literal["environment", "stored", "llm", "none"]
+    configured: bool
+    usable: bool
+    needs_reentry: bool = False
+    target: str
+
+
 class ErrorResponse(BaseModel):
     detail: str
 
@@ -96,8 +140,11 @@ class ErrorResponse(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
-    agent_id: str
+    agent_id: str | None = None
+    agent_name: str | None = None
     title: str | None = None
+    workspace_path: str | None = None
+    workspace_mode: Literal["folder", "temporary"] | None = None
 
 
 class SessionPatchRequest(BaseModel):
@@ -108,6 +155,7 @@ class SessionPatchRequest(BaseModel):
 
 class SessionMessageRequest(BaseModel):
     text: str
+    agent_id: str | None = None
     # Optional per-message overrides (advanced)
     params: dict[str, Any] = Field(default_factory=dict)
     agent_init: dict[str, Any] = Field(default_factory=dict)
@@ -116,8 +164,9 @@ class SessionMessageRequest(BaseModel):
 
 
 class SessionWorkspaceSetRequest(BaseModel):
-    # Absolute path to use as this session's workspace. Pass null or an empty
-    # string to reset to the dashboard-managed default session workspace.
+    # ``folder`` requires an absolute path; ``temporary`` creates an OS-temp
+    # workspace; ``unset`` removes the selection without choosing a fallback.
+    mode: Literal["folder", "temporary", "unset"] = "folder"
     path: str | None = None
 
 
@@ -127,11 +176,14 @@ class SessionMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
     text: str
     run_id: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
 
 
 class SessionRecord(BaseModel):
     session_id: str
     agent_id: str
+    agent_name: str | None = None
     title: str
     created_at: str
     updated_at: str
@@ -158,11 +210,13 @@ class SessionMessageResponse(BaseModel):
 
 class SessionWorkspaceListResponse(BaseModel):
     session_id: str
-    agent_id: str
+    agent_id: str | None = None
     files: list[dict[str, Any]]
     workspace_path: str | None = None
     default_workspace_path: str | None = None
-    is_default_workspace: bool = True
+    is_default_workspace: bool = False
+    workspace_mode: Literal["folder", "temporary"] | None = None
+    configured: bool = False
 
 
 class SessionFileMetaResponse(BaseModel):

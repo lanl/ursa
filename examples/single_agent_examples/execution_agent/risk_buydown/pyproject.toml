@@ -1,0 +1,15 @@
+[project]
+name = "ursa-example-risk-buydown"
+version = "0.1.0"
+description = "Risk buy-down exercise used in the URSA documentation"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10",
+    "ursa-ai[dashboard]",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../../../..", editable = true }

@@ -1,17 +1,52 @@
 import logging
+import sys
+from argparse import SUPPRESS
+from os import getenv
 from pathlib import Path
+from warnings import filterwarnings, warn
 
 from jsonargparse import ArgumentParser, set_parsing_settings
 
 from ursa import __version__
+from ursa.cli.agent_management import (
+    add_agent_management_subcommands,
+    copy_agent,
+    delete_agent,
+    import_agent,
+    list_agents,
+    save_agent,
+    share_agent,
+    show_agent,
+)
+from ursa.cli.auth import add_auth_subcommands
 from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
+    merge_ursa_config,
 )
+from ursa.cli.groups import (
+    add_group_subcommands,
+    create_group,
+    delete_group,
+    list_groups,
+    show_group,
+    update_group,
+)
+from ursa.cli.print_config import add_print_config_argument, print_config
+from ursa.cli.rag_management import (
+    RAG_COMMANDS,
+    RAG_METADATA_COMMANDS,
+    add_rag_subcommands,
+    handle_rag_command,
+)
+from ursa.cli.self import add_self_subcommands
 from ursa.util.http import inject_truststore_into_ssl
 
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
+# NOTE [alui | 26 June, 2026]:
+# Pydantic warnings occured around v0.16.0. Suppress for now.
+filterwarnings("ignore", message="Pydantic serializer warnings:*")
 
 
 def build_parser() -> ArgumentParser:
@@ -29,18 +64,64 @@ def build_parser() -> ArgumentParser:
         "--config",
         default=None,
         type=Path,
-        help="Path to a YAML/JSON file with additional configuration. CLI Opts have priority",
+        help=(
+            "Path to a YAML/JSON file with additional configuration. "
+            "Higher-precedence configuration layers override lower-precedence ones."
+        ),
     )
     parser.add_argument("--log-level", default="error", type=LoggingLevel)
-    parser.add_argument(
-        "--print-config",
-        action="store_true",
-        help="Print the Ursa configuration and exit",
+    add_print_config_argument(parser)
+    parser.add_class_arguments(
+        UrsaConfig,
+        help="URSA configuration",
+        skip={"agent_name", "rag_tools"},
     )
-    parser.add_class_arguments(UrsaConfig, help="URSA configuration")
+    parser._option_string_actions["--llm_model"].container.add_argument(
+        "--llm_model.api_key_env",
+        dest="llm_model.api_key.env",
+        default=SUPPRESS,
+        help="Environment variable containing the chat model API key",
+    )
+    parser._option_string_actions["--emb_model"].container.add_argument(
+        "--emb_model.api_key_env",
+        dest="emb_model.api_key.env",
+        default=SUPPRESS,
+        help="Environment variable containing the embedding model API key",
+    )
+    parser.add_argument(
+        "--rag-tools",
+        dest="rag_tools",
+        default=None,
+        help="Comma-separated persisted RAG agent names to bind as tools.",
+    )
+    parser.add_argument(
+        "--use-web",
+        dest="use_web",
+        action="store_true",
+        default=False,
+        help="Enable web-search tools for ChatAgent and ExecutionAgent.",
+    )
+    parser.add_argument(
+        "--name",
+        dest="agent_name",
+        type=str,
+        default=None,
+        help="Name of the agent for persistence",
+    )
 
     # Run Ursa as an MCP Server
     mcp_parser = ArgumentParser()
+    mcp_parser.add_argument(
+        "--config",
+        default=None,
+        type=Path,
+        help=(
+            "Path to a YAML/JSON file with additional configuration "
+            "(LLM model, endpoint, embedding model, MCP servers, etc.) "
+            "for the URSA instance hosted by the MCP server. "
+            "Higher-precedence configuration layers override lower-precedence ones."
+        ),
+    )
     mcp_parser.add_class_arguments(MCPServerConfig, help="MCP server options")
     subparsers.add_subcommand(
         "mcp-server",
@@ -48,6 +129,20 @@ def build_parser() -> ArgumentParser:
         help="[Experimental] Run URSA as an MCP server",
         dest="subcommand",
     )
+
+    # Agent group management commands
+    add_group_subcommands(subparsers)
+
+    # Agent management commands
+    add_agent_management_subcommands(subparsers)
+
+    # Persistent RAG management commands
+    add_rag_subcommands(subparsers)
+
+    # Credential management commands
+    add_auth_subcommands(subparsers)
+
+    add_self_subcommands(subparsers)
 
     exec_parser = ArgumentParser()
     exec_parser.add_argument("prompt", type=str)
@@ -60,53 +155,175 @@ def build_parser() -> ArgumentParser:
     return parser
 
 
-def resolve_config(cfg) -> UrsaConfig:
-    """Produce the effective UrsaConfig from the parsed arguments."""
-    cli_config = UrsaConfig.from_namespace(cfg)
-    config = UrsaConfig()
-    config_path = getattr(cfg, "config", None)
-    if config_path:
-        config.update(UrsaConfig.from_file(config_path))
-    return config.update(cli_config)
+def _initialize_hitl(config: UrsaConfig):
+    """Create the runtime and report its contextual validation error cleanly."""
+    from ursa.cli.runtime import HITL
+
+    try:
+        return HITL(config)
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+        raise SystemExit(2) from None
+
+
+def _apply_legacy_name_env(cfg, overrides) -> None:
+    """Apply deprecated ``URSA_NAME`` when no modern name override is set."""
+    legacy_name = getenv("URSA_NAME")
+    if legacy_name is None:
+        return
+
+    warn(
+        "URSA_NAME is deprecated; use URSA_AGENT_NAME or --name instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
+    if overrides.get("agent_name", None) is None:
+        cfg["agent_name"] = legacy_name
+        overrides["agent_name"] = legacy_name
 
 
 def main(args=None):
     inject_truststore_into_ssl()
     parser = build_parser()
     cfg = parser.parse_args(args=args)
-    ursa_config = resolve_config(cfg)
+    env_overrides = parser.parse_args(args=[], defaults=False)
+    cli_overrides = parser.parse_args(args=args, defaults=False, env=False)
 
     subcommand = cfg.get("subcommand", None)
+    logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
+    _apply_legacy_name_env(cfg, env_overrides)
+
+    match subcommand:
+        case "self":
+            self_config = cfg.self
+            command_config = self_config[self_config.subcommand]
+            command_config.action(command_config)
+            return
+        case "auth":
+            auth_config = cfg.auth
+            command_config = auth_config[auth_config.subcommand]
+            command_values = command_config.as_dict()
+            handler = command_values.pop("handler")
+            handler(**command_values)
+            return
+        case "list-groups":
+            list_groups()
+            return
+        case "create-group":
+            cmd_config = cfg.get(subcommand, None)
+            create_group(cmd_config.group_name, cmd_config.config_file)
+            return
+        case "delete-group":
+            cmd_config = cfg.get(subcommand, None)
+            delete_group(cmd_config.group_name)
+            return
+        case "show-group":
+            cmd_config = cfg.get(subcommand, None)
+            show_group(cmd_config.group_name)
+            return
+        case "update-group":
+            cmd_config = cfg.get(subcommand, None)
+            update_group(cmd_config.group_name, cmd_config.config_file)
+            return
+        case "list-agents":
+            cmd_config = cfg.get(subcommand, None)
+            list_agents(cmd_config.group)
+            return
+        case "show-agent":
+            cmd_config = cfg.get(subcommand, None)
+            show_agent(cmd_config.name, cmd_config.group)
+            return
+        case "delete-agent":
+            cmd_config = cfg.get(subcommand, None)
+            delete_agent(cmd_config.name, cmd_config.group)
+            return
+        case "save-agent":
+            cmd_config = cfg.get(subcommand, None)
+            save_agent(cmd_config.name, cmd_config.group)
+            return
+        case "copy-agent":
+            cmd_config = cfg.get(subcommand, None)
+            copy_agent(
+                cmd_config.name,
+                cmd_config.source_agent,
+                cmd_config.group,
+                cmd_config.from_group,
+            )
+            return
+        case "share-agent":
+            cmd_config = cfg.get(subcommand, None)
+            share_agent(
+                cmd_config.name, cmd_config.group, cmd_config.no_checkpoint
+            )
+            return
+        case "import-agent":
+            cmd_config = cfg.get(subcommand, None)
+            import_agent(
+                cmd_config.archive_file, cmd_config.group, cmd_config.name
+            )
+            return
+
+    if subcommand in RAG_METADATA_COMMANDS:
+        if handle_rag_command(cfg):
+            return
+
+    if subcommand in RAG_COMMANDS:
+        cmd_config = cfg.get(subcommand, None)
+        merged = merge_ursa_config(
+            cfg, env_overrides=env_overrides, cli_overrides=cli_overrides
+        )
+        ursa_config = merged.model_copy(
+            update={"group": cmd_config.group}
+        ).resolve()
+        if handle_rag_command(cfg, ursa_config):
+            return
+
+    if print_config(cfg, env_overrides, cli_overrides):
+        exit(0)
+
+    ursa_config = merge_ursa_config(
+        cfg,
+        env_overrides=env_overrides,
+        cli_overrides=cli_overrides,
+    ).resolve()
     cmd_config = cfg.get(subcommand, None) if subcommand is not None else None
 
-    logging.basicConfig(level=getattr(cfg, "log_level", "error").upper())
-
-    if cfg["print_config"]:
-        import yaml
-
-        print(yaml.safe_dump(ursa_config.model_dump(), sort_keys=False))
-        exit(0)
+    legacy_checkpoint = ursa_config.workspace / "db" / "checkpointer.db"
+    if ursa_config.agent_name is None and legacy_checkpoint.is_file():
+        # Intentionally print so this warning is visible regardless of log level.
+        print(  # noqa: T201
+            "\nWarning: URSA no longer restarts unnamed CLI sessions from "
+            "db/checkpointer.db, and CLI checkpoint history is only persisted "
+            "when --name is used.\n\nTo continue this history, from the workspace "
+            "run 'ursa import-agent db/checkpointer.db --name <new agent name>', "
+            "\nThen use '--name <new agent name>' for future CLI sessions.\n",
+            file=sys.stderr,
+        )
 
     match subcommand:
         case None:
-            from ursa.cli.hitl import HITL, UrsaRepl
+            from ursa.cli.tui.app import run_textual
 
-            hitl = HITL(ursa_config)
-            UrsaRepl(hitl).run()
-
-        case "exec":
-            from ursa.cli.hitl import HITL, UrsaRepl
-
-            hitl = HITL(ursa_config)
-            UrsaRepl(hitl).run_prompt(cmd_config.prompt)
+            hitl = _initialize_hitl(ursa_config)
+            run_textual(hitl)
 
         case "mcp-server":
-            from ursa.cli.hitl import HITL
+            hitl = _initialize_hitl(ursa_config)
+            mcp = hitl.as_mcp_server()
 
-            hitl = HITL(ursa_config)
-            mcp = hitl.as_mcp_server(
-                host=cmd_config.host,
-                port=cmd_config.port,
-                log_level=cmd_config.log_level.upper(),
-            )
-            mcp.run(transport=cmd_config.transport)
+            run_kwargs = {
+                "transport": cmd_config.transport,
+                "log_level": cmd_config.log_level.upper(),
+            }
+            if cmd_config.transport != "stdio":
+                run_kwargs["host"] = cmd_config.host
+                run_kwargs["port"] = cmd_config.port
+            mcp.run(**run_kwargs)
+        case "exec":
+            from ursa.cli.tui.app import run_textual_once
+
+            hitl = _initialize_hitl(ursa_config)
+            run_textual_once(hitl, cmd_config.prompt)
+        case _:
+            logging.error(f"Unknown subcommand {subcommand}")
+            raise NotImplementedError

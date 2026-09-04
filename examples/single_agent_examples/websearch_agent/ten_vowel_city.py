@@ -3,6 +3,9 @@ import asyncio
 from langchain.chat_models import init_chat_model
 
 from ursa.agents import WebSearchAgent
+from ursa.util.events import configure_event_logging
+
+configure_event_logging()
 
 ##### Run a simple example of a WebSearch Agent.
 
@@ -10,7 +13,9 @@ from ursa.agents import WebSearchAgent
 problem = "Find a city with as least 10 vowels in its name."
 
 # Choose the LLM and
-model = init_chat_model(model="openai:gpt-5-mini", max_completion_tokens=20000)
+model = init_chat_model(
+    model="openai:gpt-5.4-mini", max_completion_tokens=20000
+)
 
 # Initialize the agent
 websearcher = WebSearchAgent(llm=model, enable_metrics=True)

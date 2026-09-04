@@ -11,7 +11,10 @@ from rich.text import Text
 
 from ursa.agents import ExecutionAgent
 from ursa.observability.timing import render_session_summary
+from ursa.util.events import configure_event_logging
 from ursa.util.logo_generator import kickoff_logo
+
+configure_event_logging()
 
 console = Console()  # global console object
 
@@ -136,8 +139,8 @@ def main(model_name: str):
 if __name__ == "__main__":
     # ── interactive model picker ───────────────────────────────────────
     DEFAULT_MODELS = (
-        "openai:gpt-5-mini",
-        "openai:gpt-5-mini",
+        "openai:gpt-5.4-mini",
+        "openai:gpt-5.4-mini",
     )
 
     try:

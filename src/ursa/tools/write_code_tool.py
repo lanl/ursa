@@ -1,19 +1,21 @@
+import difflib
 import os
 import time
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
-from rich import get_console
-from rich.panel import Panel
-from rich.syntax import Syntax
 
 from ursa.agents.base import AgentContext
-from ursa.util.diff_renderer import DiffRenderer
+from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_file
-from ursa.util.types import AsciiStr
-
-console = get_console()
+from ursa.util.rendering import event_artifact, file_artifact
+from ursa.util.types import (
+    AsciiStr,
+    AsciiValidationError,
+    ascii_validation_message,
+    validate_ascii,
+)
 
 
 def _resolve_repo_dir(
@@ -46,51 +48,47 @@ def _write_code_file(
     repo: Path | None = None,
 ) -> str:
     workspace_dir = runtime.context.workspace
-    console.print("[cyan]Writing file:[/]", filename)
+    events = ToolEvents.from_runtime("write_code", runtime)
 
     code_file, error = _validate_file_path(filename, workspace_dir, repo)
     if error:
-        console.print(
-            f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
+        events.emit(
+            "Failed to write file",
+            stage="write",
+            phase="error",
+            filename=filename,
+            error=error,
         )
         return f"Failed to write {filename}: {error}"
     if code_file is None:
+        events.emit(
+            "Failed to write file",
+            stage="write",
+            phase="error",
+            filename=filename,
+            error="Invalid file path.",
+        )
         return f"Failed to write {filename}: Invalid file path."
 
     try:
-        lexer_name = Syntax.guess_lexer(str(code_file), code)
-    except Exception:
-        lexer_name = "text"
-
-    console.print(
-        Panel(
-            Syntax(code, lexer_name, line_numbers=True),
-            title="File Preview",
-            border_style="cyan",
-        )
-    )
-
-    try:
-        code_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(code)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write file:[/]",
-            exc,
-        )
+        with events.range(
+            "write",
+            "Writing file",
+            done="File written",
+            error="Failed to write file",
+            filename=filename,
+            path=str(code_file),
+        ) as span:
+            code_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(code_file, "w", encoding="utf-8") as f:
+                f.write(code)
+            span.update(artifact=file_artifact(code_file, title="File written"))
+    except OSError as exc:
         return f"Failed to write {filename}: {exc}"
-
-    console.print(
-        f"[bold bright_white on green] :heavy_check_mark: [/] "
-        f"[green]File written:[/] {code_file}"
-    )
-
     if (store := runtime.store) is not None:
         store.put(
             ("workspace", "file_edit"),
-            filename,
+            str(filename),
             {
                 "modified": time.time(),
                 "tool_call_id": runtime.tool_call_id,
@@ -172,7 +170,7 @@ def _allow_unsafe_writes_enabled() -> bool:
 @tool(description="Write source code to a file")
 def write_code(
     code: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
 ) -> str:
     """Write source code to a file
@@ -184,13 +182,17 @@ def write_code(
         filename: Name of the target file (including its extension).
 
     """
+    try:
+        filename = validate_ascii(filename)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("filename", exc)
     return _write_code_file(code, filename, runtime)
 
 
 @tool(description="Write source code to a file within a repository boundary")
 def write_code_with_repo(
     code: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
     repo_path: AsciiStr,
 ) -> str:
@@ -201,6 +203,10 @@ def write_code_with_repo(
         filename: Name of the target file (including its extension).
         repo_path: Repo path - file must resolve within this directory.
     """
+    try:
+        filename = validate_ascii(filename)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("filename", exc)
     workspace_dir = runtime.context.workspace
     repo, error = _resolve_repo_dir(repo_path, workspace_dir, "write", filename)
     if error:
@@ -213,9 +219,9 @@ def write_code_with_repo(
 def edit_code(
     old_code: str,
     new_code: str,
-    filename: AsciiStr,
+    filename: str,
     runtime: ToolRuntime[AgentContext],
-    repo_path: AsciiStr | None = None,
+    repo_path: str | None = None,
 ) -> str:
     """Replace the **first** occurrence of *old_code* with *new_code* in *filename*.
 
@@ -228,8 +234,16 @@ def edit_code(
     Returns:
         Success / failure message.
     """
+    try:
+        filename = validate_ascii(filename)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("filename", exc)
+    try:
+        repo_path = validate_ascii(repo_path)
+    except AsciiValidationError as exc:
+        return ascii_validation_message("repo_path", exc)
     workspace_dir = runtime.context.workspace
-    console.print("[cyan]Editing file:[/cyan]", filename)
+    events = ToolEvents.from_runtime("edit_code", runtime)
 
     # Validate file path
     repo = None
@@ -241,6 +255,14 @@ def edit_code(
             filename,
         )
         if error:
+            events.emit(
+                "Failed to edit file",
+                stage="edit",
+                phase="error",
+                filename=filename,
+                repo_path=repo_path,
+                error=error,
+            )
             return error
 
     code_file, error = _validate_file_path(
@@ -249,24 +271,55 @@ def edit_code(
         repo,
     )
     if error:
-        console.print(
-            f"[bold bright_white on red] :heavy_multiplication_x: [/] [red]{error}[/]"
+        events.emit(
+            "Failed to edit file",
+            stage="edit",
+            phase="error",
+            filename=filename,
+            error=error,
         )
         return f"Failed to edit {filename}: {error}"
     if code_file is None:
+        events.emit(
+            "Failed to edit file",
+            stage="edit",
+            phase="error",
+            filename=filename,
+            error="Invalid file path.",
+        )
         return f"Failed to edit {filename}: Invalid file path."
 
     try:
         content = read_text_file(code_file)
     except FileNotFoundError:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]File not found:[/]",
+        events.emit(
+            "Failed to edit file",
+            stage="edit",
+            phase="error",
+            filename=filename,
+            path=str(code_file),
+            error="File not found.",
         )
         return f"Failed: {filename} not found."
     except ValueError as exc:
+        events.emit(
+            "Failed to edit file",
+            stage="edit",
+            phase="error",
+            filename=filename,
+            path=str(code_file),
+            error=str(exc),
+        )
         return f"Failed to edit {filename}: {exc}"
     except OSError as exc:
+        events.emit(
+            "Failed to edit file",
+            stage="edit",
+            phase="error",
+            filename=filename,
+            path=str(code_file),
+            error=str(exc),
+        )
         return f"Failed to edit {filename}: Could not read file: {exc}"
 
     # Clean up markdown fences
@@ -274,42 +327,57 @@ def edit_code(
     new_code_clean = new_code
 
     if old_code_clean not in content:
-        console.print(
-            "[yellow] ⚠️ 'old_code' not found in file'; no changes made.[/]"
+        events.emit(
+            "No changes made",
+            stage="edit",
+            filename=filename,
+            path=str(code_file),
+            reason="'old_code' not found in file.",
         )
         return f"No changes made to {filename}: 'old_code' not found in file."
 
     updated = content.replace(old_code_clean, new_code_clean, 1)
-
-    console.print(
-        Panel(
-            DiffRenderer(content, updated, filename),
-            title="Diff Preview",
-            border_style="cyan",
+    diff = "\n".join(
+        difflib.unified_diff(
+            content.splitlines(),
+            updated.splitlines(),
+            fromfile=f"{filename} (original)",
+            tofile=f"{filename} (modified)",
+            lineterm="",
         )
     )
 
     try:
-        with open(code_file, "w", encoding="utf-8") as f:
+        with (
+            events.range(
+                "edit",
+                "Editing file",
+                done="File updated",
+                error="Failed to edit file",
+                filename=filename,
+                path=str(code_file),
+            ) as span,
+            open(code_file, "w", encoding="utf-8") as f,
+        ):
             f.write(updated)
-    except Exception as exc:
-        console.print(
-            "[bold bright_white on red] :heavy_multiplication_x: [/] "
-            "[red]Failed to write file:[/]",
-            exc,
-        )
+            span.update(
+                artifact=event_artifact(
+                    diff,
+                    "text/x-diff",
+                    metadata={
+                        "title": "Edit diff",
+                        "path": str(code_file),
+                    },
+                )
+            )
+    except OSError as exc:
         return f"Failed to edit {filename}: {exc}"
-
-    console.print(
-        f"[bold bright_white on green] :heavy_check_mark: [/] "
-        f"[green]File updated:[/] {code_file}"
-    )
 
     # Record the edit operation
     if (store := runtime.store) is not None:
         store.put(
             ("workspace", "file_edit"),
-            filename,
+            str(filename),
             {
                 "modified": time.time(),
                 "tool_call_id": runtime.tool_call_id,

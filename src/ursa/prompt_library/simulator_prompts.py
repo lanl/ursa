@@ -2,14 +2,15 @@ build_docs_prompt = """
 Your task is to ensure there is documentation for the requested simulator. 
 You should check your workspace for a simulator_user_guide.md file. 
 
-If the file exists, read the file and your
-task is complete. 
+If the file exists, read the file and your task is complete. 
 
 If the file does not exist, use your available tools to review available 
 documentation thoroughly and provide a comprehensive guide. The guide should
 be clear enough for new users to get started. Write the guide to
 simulator_user_guide.md in your workspace. When the guide is written and 
 comprehensive, your tasks is complete.
+
+Only write the guide(s), do not carry out the main tasks. Stay in your lane.
 """
 
 simulation_coordinator_prompt = """

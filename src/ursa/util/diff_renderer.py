@@ -1,3 +1,5 @@
+# ruff: noqa: TID251
+
 import difflib
 import re
 from dataclasses import dataclass

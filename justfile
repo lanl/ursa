@@ -1,4 +1,3 @@
-ruff := "uvx ruff@0.12.10"
 name := "ursa"
 version := `uv run ursa --version`
 tag := version + "-" + `arch`
@@ -11,18 +10,18 @@ test:
     uv run pytest -s
 
 clean-workspaces:
-	rm -rf workspace
-	rm -rf workspace_*/
+    rm -rf workspace
+    rm -rf workspace_*/
 
 precommit:
     uv run pre-commit run --all-files
 
 lint:
-    {{ ruff }} check --fix
-    {{ ruff }} format
+    uv run ruff check --fix
+    uv run ruff format
 
 lint-check *flags:
-    {{ ruff }} check {{ flags }}
+    uv run ruff check {{ flags }}
 
 lint-diff:
     just lint-check --diff
@@ -33,14 +32,18 @@ lint-stats:
 lint-watch:
     just lint-check --watch
 
+# Serve the documentation with automatic rebuilds and live reload.
+docs *flags:
+    uv run --group docs mkdocs serve {{ flags }}
+
 test-rag-agent:
     uv run pytest -s tests/agents/test_rag_agent
 
 test-bayesopt:
-	uv run examples/single_agent_examples/execution_agent/bayesian_optimization.py
+    uv run examples/single_agent_examples/execution_agent/bayesian_optimization.py
 
 test-vowels:
-	uv run examples/single_agent_examples/websearch_agent/ten_vowel_city.py
+    uv run examples/single_agent_examples/websearch_agent/ten_vowel_city.py
 
 # Test neutron star example with uv.lock dependencies
 neutron *flags:
@@ -58,8 +61,8 @@ clean: clean-workspaces
     rm -rf arxiv_papers/ arxiv_generated_summaries/
     rm -rf ursa_metrics/ ursa_workspace/ workspace/
 
-test-cli:
-    uv run ursa run
+cli:
+    uv run ursa
 
 docker-build:
     docker buildx \

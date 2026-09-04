@@ -1,44 +1,128 @@
 site_name: URSA
+site_url: https://lanl.github.io/ursa/
 repo_url: https://github.com/lanl/ursa
 
 theme:
   name: material
+  custom_dir: docs/overrides
   logo: assets/favicon.png
   favicon: assets/favicon.png
+  features:
+    - navigation.instant
+    - content.code.copy
+
+extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true
+
+extra_css:
+  - stylesheets/example-filter.css
+
+extra_javascript:
+  - javascripts/example-filter.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - .
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
 
 plugins:
   - search
+  - tags
   - autorefs
   - mkdocstrings:
       handlers:
         python:
           paths: [src]
+          inventories:
+            - url: https://docs.python.org/3/objects.inv
+              domains: [py, std]
           options:
             show_source: true  # link back to your code
             show_submodules: true
-   
+
 watch:
   - src
 
+hooks:
+  - docs/hooks.py
+
 nav:
   - Home: index.md
-  - Setup: 
-      - chatOllama: chatollama_setup.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+      - TUI: getting-started/tui.md
+      - Web Dashboard: getting-started/dashboard.md
+      - Python Scripts: getting-started/python-scripts.md
+      - Plan-Execute From YAML: getting-started/plan-execute-yaml.md
+      - MCP Server: getting-started/mcp-server.md
+  - Examples: examples/index.md
+  - Configuration:
+      - Overview: configuration/index.md
+      - Models and inference providers: configuration/models.md
+      - Secrets: configuration/secrets.md
+      - Files, CLI flags, and environment variables: configuration/files-and-env.md
+      - MCP server configuration: configuration/mcp.md
+  - Persistence:
+      - Overview: persistence/index.md
+      - Named agents: persistence/named-agents.md
+      - Groups and endpoint security: persistence/groups-and-security.md
+      - RAG collections: persistence/rag.md
+      - Checkpoints and sharing: persistence/checkpoints-and-sharing.md
+      - Quick reference: persistence/quick-reference.md
   - Agents:
-      - arXiv Agent: arxiv_agent.md
-      - DSIAgent: dsi_agent.md
-      - Execution Agent: execution_agent.md
-      - Git Go Agent: git_go_agent.md
-      - Hypothesizer Agent: hypothesizer_agent.md
-      - Planning Agent: planning_agent.md
-      - Web Search Agent: web_search_agent.md
-  - Tutorials:
-     - Combining arXiv agent and execution agent: combining_arxiv_and_execution.md
-     - Human in the Loop: humanInTheLoop_example.md
-     - Neutron Star: combining_arxiv_and_execution_neutronStar.md
-  - API Reference: 
-    - agents: api_reference/agents.md
-    - prompt_library: api_reference/prompt_library.md
-    - tools: api_reference/tools.md
-    - util: api_reference/util.md
-
+      - Overview: agents/index.md
+      - Chat Agent: agents/chat.md
+      - Acquisition Agents:
+          - Overview: agents/acquisition/index.md
+          - arXiv Agent: agents/acquisition/arxiv.md
+          - OSTI Agent: agents/acquisition/osti.md
+          - Web Search Agent: agents/acquisition/web-search.md
+      - Deep Review Agent: agents/deep-review.md
+      - DSI Agent: agents/dsi.md
+      - Execution Agent: agents/execution.md
+      - Git Go Agent: agents/git-go.md
+      - Hypothesizer Agent: agents/hypothesizer.md
+      - LAMMPS Agent: agents/lammps.md
+      - Planning Agent: agents/planning.md
+  - Environments:
+      - Overview: environments/index.md
+      - Agent Teams: environments/agent-teams.md
+      - Agent Symposia: environments/agent-symposia.md
+      - Visualizing Environment Runs: environments/visualization.md
+  - Best Practices:
+      - Sandboxing and information control: best-practices/sandboxing.md
+      - Contributing: best-practices/contributing.md
+  - Reference:
+      - CLI reference: reference/cli.md
+      - MCP reference: reference/mcp.md
+      - Event logging: reference/logging_events.md
+      - Metrics: reference/metrics.md
+      - OpenTelemetry export: reference/otel.md
+      - Plan-Execute checkpointing: reference/plan-execute-checkpointing.md
+      - Tutorials and examples:
+          - Combining arXiv agent and execution agent: reference/tutorials/arxiv-execution.md
+          - Neutron Star: reference/tutorials/neutron-star.md
+      - API Reference:
+          - agents: reference/api/agents.md
+          - environments: reference/api/environments.md
+          - prompt_library: reference/api/prompt-library.md
+          - tools: reference/api/tools.md
+          - util: reference/api/util.md

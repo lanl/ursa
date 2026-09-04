@@ -1,14 +1,27 @@
 import ollama
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 from ursa.util.traced import TracedChatOllama, TracedChatOpenAI
 
 OLLAMA_TEST_MODEL = "nemotron-3-nano:4b"
 
 
-def test_traced_chat_openai():
+def test_traced_chat_openai(monkeypatch):
+    responses = iter([
+        AIMessage(content=[{"type": "text", "text": "ok"}]),
+        AIMessage(content=[{"type": "reasoning", "reasoning": "because"}]),
+    ])
+
+    def fake_generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(generations=[ChatGeneration(message=next(responses))])
+
+    monkeypatch.setattr(TracedChatOpenAI, "_generate", fake_generate)
+
     llm = TracedChatOpenAI(
         model="gpt-5.4-nano-2026-03-17",
+        api_key="test-api-key",
         reasoning={"effort": "medium", "summary": "auto"},
     )
     llm.invoke("Hi")  # reasoning not activated

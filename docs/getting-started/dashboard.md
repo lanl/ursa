@@ -1,0 +1,102 @@
+# Getting Started - Web Dashboard
+
+The URSA web dashboard provides a browser-based interface for running URSA workflows.
+
+Install URSA first with `uv tool install --python 3.13 'ursa-ai[dashboard]'` as described in the
+[getting started guide][getting-started].
+
+## Launch the dashboard
+
+```bash
+ursa-dashboard
+```
+
+By default this serves on `127.0.0.1:8080`.
+
+You can set the host, port, group, and initial config file:
+
+```bash
+ursa-dashboard \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --group default \
+  --config config.yaml
+```
+
+The optional config file initializes the dashboard LLM endpoint settings. It is
+not needed for the built-in OpenAI provider.
+
+## First session
+
+1. Open **Settings → LLM** and confirm the endpoint and credential source.
+2. Create a session.
+3. Select a folder you are comfortable modifying, or choose **Temporary
+   workspace** for disposable work.
+4. Choose an agent and submit a prompt.
+5. Follow the activity timeline and inspect generated files in the artifacts
+   panel.
+
+## Configure API credentials
+
+Open **Settings -> LLM** and choose an API-key source:
+
+- **Secure system storage** stores the key in macOS Keychain, Windows
+  Credential Manager, or the available Linux keyring service. The key field is
+  always blank when Settings opens; the dashboard reports only whether a usable
+  key is configured.
+- **Environment variable** retains the existing headless and automation
+  workflow. Enter the variable name, not its value.
+- **No API key** is appropriate for endpoints that do not require one.
+
+Embedding credentials are configured independently under
+**Settings -> Embedding/RAG**, or can explicitly reuse the saved LLM key when
+both configurations resolve to the same provider or endpoint origin. Saved keys
+are bound to the configured provider or endpoint origin. After changing the
+endpoint host, save the key again to approve its use with that host.
+
+The raw key is never written to dashboard settings, sessions, run records, or
+worker configuration files. In remote dashboard mode, credential changes must
+be served over HTTPS.
+
+## Choose a session workspace
+
+Every new dashboard session requires an explicit workspace choice. Select a
+folder you can find and reuse, or choose **Temporary workspace** for disposable
+work. Temporary mode behaves like `ursa --workspace tmp`: the dashboard creates
+the workspace in the operating system's temporary directory and removes it when
+the session is deleted or the dashboard stops.
+
+The dashboard no longer creates a hidden default session workspace under
+`~/.cache/ursa`. Older sessions without an explicit workspace remain available,
+but the dashboard prompts for a folder or temporary workspace before their next
+run. When an older session still has its former UUID-named cached workspace, the
+folder field is prefilled with that path so existing work remains easy to
+recover. A user-selected folder is never deleted when its dashboard session is
+deleted.
+
+## Launch an agent team or symposium
+
+Open **Environment runs** from the dashboard sidebar. The page provides **New
+team** and **New symposium** actions that let you edit a starter YAML definition,
+optionally choose a unique Run ID, enter the task prompt, validate the
+configuration, and launch it directly from the browser. Reuse the same
+environment name with a new Run ID for follow-on work that should retain the
+team or symposium workspace while creating a separate replay.
+
+The run is queued in the background and appears on the page immediately. Open it
+to follow the environment graph and work timeline live, inspect the final result,
+or cancel a dashboard-launched run. The dashboard uses the LLM, credential, and
+timeout settings configured under **Settings**. Member-specific model blocks may
+refer to API-key environment variable names, but literal API keys are rejected
+and never stored in YAML or run metadata.
+
+!!! note "Headless Linux"
+    Secure system storage requires an available desktop keyring service.
+    Headless deployments should continue to use environment variables or a
+    deployment-managed secret provider.
+
+## Where next?
+
+- [Configuration](../configuration/index.md)
+- [Persistence](../persistence/index.md)
+- [Sandboxing and information control][sandboxing-and-information-control]
