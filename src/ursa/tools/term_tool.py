@@ -104,7 +104,6 @@ ByteValue = Annotated[int, Field(ge=0, le=255, strict=True)]
 WaitTimeout = Annotated[float, Field(ge=0, le=TERM_TIMEOUT * 10)]
 ScrollDelta = Annotated[int, Field(ge=-100, le=100, strict=True)]
 MouseButton = Literal["left", "middle", "right"]
-TermCommand = NonEmptyStr | CommandArgv | None
 
 
 def _validate_paste_text(text: str) -> str:
@@ -288,6 +287,7 @@ ShellArgv = Annotated[
     AfterValidator(_validate_shell),
 ]
 CommandArgv = Annotated[list[NonEmptyStr], Field(min_length=1)]
+TermCommand = NonEmptyStr | CommandArgv | None
 TermKey = Annotated[NonEmptyStr, AfterValidator(_validate_key)]
 TermModifiers = Annotated[
     set[str] | list[str] | None,
