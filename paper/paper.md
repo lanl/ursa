@@ -80,13 +80,13 @@ Large language models (LLMs) [@zhao2026survey] are increasingly being integrated
 
 # Statement of need
 
-Scientific research increasingly requires AI systems that can integrate reasoning with external software, simulation codes, computational resources, and specialized literature. While existing agentic frameworks provide general-purpose planning and tool use, researchers often need specialized agents tailored to particular research questions.
+Scientific research increasingly requires AI systems that can integrate reasoning with external software, simulation codes, computational resources, and specialized literature [@boiko2023autonomous]. While existing agentic frameworks provide general-purpose planning and tool use, researchers often need specialized agents tailored to particular research questions.
 
 URSA addresses this need through a collection of reusable core agents that implement common research capabilities such as hypothesis generation, planning, and execution. Furthermore, building on these core agents, URSA includes several specialized agents that demonstrate how the framework can be extended to research applications by integrating scientific computational tools and domain knowledge. These agents support tasks such as molecular dynamics simulations, large-scale numerical simulations, and optimization. Beyond serving as end-user applications, they also act as reference implementations that illustrate how new scientific agents can be developed by composing URSA's core reusable components. Importantly, URSA further provides multiple ways to deploy and orchestrate these agents. Researchers can interact with the framework through a command-line interface, web dashboard, Model Context Protocol (MCP), or Python API, while execution environments such as Agent Teams and Agent Symposia enable agents to collaborate or independently evaluate scientific problems.
 
 # State of the field                                                                                                                  
 
-General-purpose agentic systems such as Claude Code [@claude_code] and Codex [@codex] have demonstrated the effectiveness of LLMs for software engineering tasks, including code generation and debugging. These systems excel at programming assistance but are not designed as extensible platforms for developing scientific agents. In parallel, several systems have also been proposed specifically for scientific research, including Sakana AI's AI Scientist [@lu2024ai], Google's Co-Scientist [@gottweis2026accelerating], SciAgents [@ghafarollahi2025sciagents], Agent Laboratory [@schmidgall2025agent], and OpenAI's Deep Research [@openai_deep_research_2025]. While these systems demonstrate the growing potential of AI-assisted research, many are designed as end-to-end research assistants.
+General-purpose agentic systems such as Claude Code [@claude_code] and Codex [@codex] have demonstrated the effectiveness of LLMs for software engineering tasks, including code generation and debugging. These systems excel at programming assistance but are not designed as extensible platforms for developing scientific agents. In parallel, several systems have also been proposed specifically for scientific research, including Sakana AI's AI Scientist [@lu2024ai], Google's Co-Scientist [@gottweis2026accelerating], SciAgents [@ghafarollahi2025sciagents], Agent Laboratory [@schmidgall2025agent],ChemCrow [@bran2024augmenting], and OpenAI's Deep Research [@openai_deep_research_2025]. While these systems demonstrate the growing potential of AI-assisted research, many are designed as end-to-end research assistants.
 
 In contrast, URSA is an open-source software framework for constructing scientific agents rather than a single predefined assistant. It provides reusable core agents for common research capabilities, example implementations that demonstrate how these components can be extended to specialized applications, multiple user interfaces for deploying workflows, and execution environments such as Agent Symposia that support collaborative and deliberative multi-agent reasoning. Together, these capabilities enable researchers to build, deploy, and orchestrate customized AI-assisted workflows across scientific disciplines.
 
@@ -102,7 +102,7 @@ The separation of the framework into (i) core and (ii) domain-specific agents en
 
 URSA's core agents include, but are not limited to, the following:
 
-* Planning Agent: This agent decomposes a user-specified scientific problem into a sequence of executable tasks. Implemented as a LangGraph workflow, it consists of three LLM-driven nodes: a planner node that generates an initial research plan, a reviewer node that evaluates and iteratively refines the plan, and a formalizer node that converts the approved plan into a structured JSON representation. This structured output can then be passed to downstream agents, such as the Execution Agent.
+* Planning Agent: This agent decomposes a user-specified scientific problem into a sequence of executable tasks. Implemented as a LangGraph workflow, it consists of three LLM-driven nodes: a planner node that generates an initial research plan, a reviewer node that evaluates and iteratively refines the plan, and a formalizer node that converts the approved plan into a structured JSON representation.
 
 * Execution Agent: This agent carries out research tasks specified either in natural language or in the structured JSON format produced by the Planning Agent. It interacts with tools through LangGraph tool calls and through the Model Context Protocol (MCP), allowing virtually any user-provided executable to be incorporated into agent workflows. The Execution Agent also includes built-in tools for code generation and execution, file reading and writing, and system command execution. To improve safety, proposed system commands are screened by an LLM-driven safety node before execution.
 
@@ -167,7 +167,7 @@ The Python interface is particularly useful for integration with existing simula
 
 ## Agent Execution Environments
 
-URSA provides execution environments for composing multiple agents into larger scientific workflows. These environments define how agents exchange information and coordinate their execution while reusing the same underlying agent implementations. 
+URSA provides execution environments for composing multiple agents into larger scientific workflows. 
 
 ### Agent Teams
 
@@ -180,7 +180,7 @@ This environment is particularly well suited for scientific tasks that benefit f
 
 # Research impact statement
 
-URSA is actively used in a growing number of scientific research applications, averaging ~2500 downloads a month on PyPI. While the framework was initially developed at Los Alamos National Laboratory, it is distributed as open-source software and is intended to support contributions and adoption by the broader scientific community.
+URSA is actively used in a growing number of scientific research applications, averaging ~2000 downloads a month on PyPI. While the framework was initially developed at Los Alamos National Laboratory, it is distributed as open-source software and is intended to support contributions and adoption by the broader scientific community.
 
 As one example, \autoref{fig:helios} shows the use of URSA in the design of inertial confinement fusion (ICF) capsules. In this workflow, URSA's planning and execution agents were used to autonomously explore candidate designs and optimize neutron yield. More details of this application can be found in @grosskopf2025ursa.
 
@@ -198,6 +198,6 @@ For the writing of this manuscript, LLMs were used only for minor polishing, suc
 
 # Acknowledgements
 
-This work was supported by the Laboratory Directed Research and Development program of Los Alamos National Laboratory under project number 20250638DI. This research used resources provided by the Los Alamos National Laboratory Institutional Computing Program, which is supported by the U.S. Department of Energy National Nuclear Security Administration under Contract No. 89233218CNA000001.
+This work was supported by the Laboratory Directed Research and Development program of Los Alamos National Laboratory under project number 20250638DI. This research used resources provided by the Los Alamos National Laboratory Institutional Computing Program, which is supported by the U.S. Department of Energy National Nuclear Security Administration under Contract No. 89233218CNA000001. This document has been approved for unlimited release, and was assigned LA-UR-26-27324.
 
 # References
