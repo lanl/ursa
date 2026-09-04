@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 import ursa.cli.config as config_mod
 
 
@@ -65,3 +69,45 @@ def test_deep_interp_env_recurses_nested_dictionaries(
     }
     # Confirm original structure is untouched
     assert data["layer1"]["with_env"] == "prefix ${URSA_DEEP_VALUE} suffix"
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        config_mod.ModelConfig,
+        config_mod.ChatModelConfig,
+        config_mod.EmbModelConfig,
+    ],
+)
+def test_model_config_model_parsing(cls):
+    cfg = cls(model="bar:gpt-5.4")
+    assert cfg.model == "gpt-5.4"
+    assert cfg.model_provider == "bar"
+
+
+def test_model_merge_keeps_provider_defaults_resolvable():
+    config = config_mod.UrsaConfig().model_merge({
+        "llm_model": {"model": "openai:gpt-5.4"}
+    })
+
+    resolved = config.resolve()
+
+    assert resolved.llm_model.inference_provider == "openai"
+    assert resolved.llm_model.base_url == "https://api.openai.com/v1"
+    assert resolved.llm_model.api_key.env == "OPENAI_API_KEY"
+
+
+def test_ursa_config_merge_preserves_explicit_fields():
+    merged = config_mod.UrsaConfig().model_merge({"group": "science"})
+
+    assert merged.model_fields_set == {"group"}
+
+
+def test_ursa_config_merge_can_be_reused_as_sparse_layer():
+    sparse = config_mod.UrsaConfig().model_merge({"group": "science"})
+    merged = config_mod.UrsaConfig(
+        workspace=Path("/tmp/custom-workspace")
+    ).model_merge(sparse)
+
+    assert merged.group == "science"
+    assert merged.workspace == Path("/tmp/custom-workspace")

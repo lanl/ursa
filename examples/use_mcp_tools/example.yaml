@@ -1,0 +1,7 @@
+title: SQLite tools through MCP
+summary: Run a local SQLite MCP server, verify its tools, and connect it to the URSA dashboard.
+tags:
+  - guided
+  - mcp
+  - dashboard
+  - beginner

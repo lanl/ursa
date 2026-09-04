@@ -8,8 +8,12 @@ from typing import Any, Mapping
 import yaml
 from langchain.chat_models import BaseChatModel, init_chat_model
 
-from ursa.cli.config import ModelConfig, deep_interp_env
-from ursa.security import group_environments_dir
+from ursa.cli.config import (
+    InferenceProviderConfig,
+    ModelConfig,
+    deep_interp_env,
+)
+from ursa.security import enforce_group_base_url_policy, group_environments_dir
 
 
 @dataclass(frozen=True)
@@ -35,12 +39,32 @@ class EnvironmentMemberConfig:
     reviewer: bool = True
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "EnvironmentMemberConfig":
+    def from_mapping(
+        cls,
+        data: Mapping[str, Any],
+        inference_providers: Mapping[str, InferenceProviderConfig]
+        | None = None,
+        group: str = "default",
+    ) -> "EnvironmentMemberConfig":
         raw = dict(data)
         model = raw.get("model")
         if isinstance(model, Mapping):
-            raw["model"] = ModelConfig.model_validate(model)
+            model_config = ModelConfig.model_validate(model)
+            model_config = model_config.resolve_inference_provider(
+                dict(inference_providers or {})
+            )
+            enforce_group_base_url_policy(model_config.base_url, group)
+            raw["model"] = model_config
         return cls(**raw)
+
+
+def _inference_providers(
+    data: Mapping[str, Any],
+) -> dict[str, InferenceProviderConfig]:
+    return {
+        name: InferenceProviderConfig.model_validate(config)
+        for name, config in data.items()
+    }
 
 
 @dataclass(frozen=True)
@@ -50,6 +74,9 @@ class AgentTeamConfig:
     name: str
     group: str = "default"
     description: str | None = None
+    inference_providers: dict[str, InferenceProviderConfig] = field(
+        default_factory=dict
+    )
     pi: EnvironmentMemberConfig = field(
         default_factory=lambda: EnvironmentMemberConfig(
             name="pi", role="Principal investigator", agent="ExecutionAgent"
@@ -62,11 +89,16 @@ class AgentTeamConfig:
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "AgentTeamConfig":
         raw = dict(data)
+        providers = _inference_providers(raw.get("inference_providers") or {})
+        raw["inference_providers"] = providers
+        group = str(raw.get("group") or "default")
         if "pi" in raw and isinstance(raw["pi"], Mapping):
-            raw["pi"] = EnvironmentMemberConfig.from_mapping(raw["pi"])
+            raw["pi"] = EnvironmentMemberConfig.from_mapping(
+                raw["pi"], providers, group
+            )
         if "members" in raw:
             raw["members"] = [
-                EnvironmentMemberConfig.from_mapping(member)
+                EnvironmentMemberConfig.from_mapping(member, providers, group)
                 for member in raw["members"]
             ]
         return cls(**raw)
@@ -79,6 +111,9 @@ class AgentSymposiumConfig:
     name: str
     group: str = "default"
     description: str | None = None
+    inference_providers: dict[str, InferenceProviderConfig] = field(
+        default_factory=dict
+    )
     organizer: EnvironmentMemberConfig = field(
         default_factory=lambda: EnvironmentMemberConfig(
             name="organizer", role="Symposium organizer", agent="ChatAgent"
@@ -92,13 +127,16 @@ class AgentSymposiumConfig:
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "AgentSymposiumConfig":
         raw = dict(data)
+        providers = _inference_providers(raw.get("inference_providers") or {})
+        raw["inference_providers"] = providers
+        group = str(raw.get("group") or "default")
         if "organizer" in raw and isinstance(raw["organizer"], Mapping):
             raw["organizer"] = EnvironmentMemberConfig.from_mapping(
-                raw["organizer"]
+                raw["organizer"], providers, group
             )
         if "members" in raw:
             raw["members"] = [
-                EnvironmentMemberConfig.from_mapping(member)
+                EnvironmentMemberConfig.from_mapping(member, providers, group)
                 for member in raw["members"]
             ]
         return cls(**raw)

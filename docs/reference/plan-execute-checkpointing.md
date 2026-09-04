@@ -66,7 +66,7 @@ All interactive prompts include a **countdown** and then pick a safe default. Us
 
 ## Files you’ll see in a workspace
 
-```
+```text
 <workspace>/
 ├── executor_checkpoint.db          # live executor DB (current run)
 ├── executor_checkpoint_1.db        # snapshot after step 1 (single mode)
@@ -102,7 +102,7 @@ You can resume from **any** of these snapshot files.
 - Without `--resume-from`, you’ll get an interactive chooser (with countdown). Default is `executor_checkpoint.db` (live).
 
 **Example tree (6 steps planned):**
-```
+```text
 workspace/
 ├── executor_checkpoint.db
 ├── executor_checkpoint_1.db
@@ -192,7 +192,7 @@ python examples/two_agent_examples/plan_execute/plan_execute_from_yaml.py \
 ```
 
 You’ll see messages like:
-```
+```text
 [checkpoint] saved step snapshot: executor_checkpoint_1.db
 [checkpoint] saved step snapshot: executor_checkpoint_2.db
 ...

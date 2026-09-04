@@ -1,0 +1,22 @@
+<div class="example-tag-filter" role="group" aria-label="Filter examples by tag">
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="" aria-pressed="true">All</button>
+{% for tag in all_tags %}
+  <button type="button" class="md-tag example-tag-filter__button" data-example-tag="{{ tag }}" aria-pressed="false">{{ tag }}</button>
+{% endfor %}
+</div>
+
+<p class="example-filter-status" aria-live="polite"></p>
+
+<div class="grid cards example-catalog" markdown>
+
+{% for example in examples %}
+-   **[{{ example.title }}]({{ example.url }})**
+
+    {{ example.summary }}
+
+    <span class="example-tags">
+    {% for tag in example.tags %}<span class="md-tag">{{ tag }}</span>{% endfor %}
+    </span>
+
+{% endfor %}
+</div>

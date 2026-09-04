@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from ursa.agents.deep_review_agent import DeepReviewAgent
 
@@ -147,6 +147,41 @@ def test_deep_review_agent_exposes_web_tools_only_when_enabled(
     assert "run_osti_search" in with_web.tools
 
 
+def _recording_model(log: list) -> ToolReadyFakeChatModel:
+    """Fake model that records every request's message list."""
+
+    class _Recorder(ToolReadyFakeChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            log.append(list(messages))
+            return super()._generate(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )
+
+    return _Recorder(messages=_message_stream("ok"))
+
+
+def _exploding_model(calls: list) -> ToolReadyFakeChatModel:
+    """Fake model that raises on every call and counts the calls."""
+
+    class _Exploder(ToolReadyFakeChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            calls.append(len(messages))
+            raise RuntimeError("provider exploded")
+
+    return _Exploder(messages=_message_stream("unused"))
+
+
+def _system_prefix_ok(messages) -> bool:
+    seen_non_system = False
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            if seen_non_system:
+                return False
+        else:
+            seen_non_system = True
+    return True
+
+
 def _distinct_stream() -> Iterator[AIMessage]:
     n = 0
     while True:
@@ -169,6 +204,78 @@ _DD_QUESTION = {
 
 
 @pytest.mark.asyncio
+async def test_phase_requests_keep_system_prompts_leading(tmpdir):
+    # Issue 294: from the second debate phase onward, requests carried
+    # mid-conversation system messages, which langchain-anthropic rejects.
+    log: list = []
+    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
+
+    await agent.ainvoke(dict(_DD_QUESTION))
+
+    assert log, "no model requests captured"
+    bad = [
+        [type(message).__name__ for message in request]
+        for request in log
+        if not _system_prefix_ok(request)
+    ]
+    assert not bad, f"requests with mid-conversation system messages: {bad}"
+
+
+@pytest.mark.asyncio
+async def test_phase_prompts_not_persisted_as_system_messages(tmpdir):
+    log: list = []
+    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
+
+    result = await agent.ainvoke(dict(_DD_QUESTION))
+
+    persisted_systems = [
+        message
+        for message in result.get("messages", [])
+        if isinstance(message, SystemMessage)
+    ]
+    assert persisted_systems == [], (
+        "phase role prompts must not accumulate in the message channel"
+    )
+
+
+@pytest.mark.asyncio
+async def test_each_phase_request_leads_with_its_own_role_prompt(tmpdir):
+    log: list = []
+    agent = DeepReviewAgent(llm=_recording_model(log), workspace=tmpdir)
+
+    await agent.ainvoke(dict(_DD_QUESTION))
+
+    leading_prompts = [
+        request[0].content
+        for request in log
+        if request and isinstance(request[0], SystemMessage)
+    ]
+    assert len(leading_prompts) >= 3, (
+        "each debate phase should lead its request with a system prompt"
+    )
+    assert len(set(leading_prompts)) >= 3, (
+        "phases received identical leading role prompts"
+    )
+
+
+@pytest.mark.asyncio
+async def test_phase_model_error_propagates_immediately(tmpdir):
+    # Issue 294: phase errors were swallowed into AIMessage critiques
+    # ("Deep-review phase error: ...") and fed to later phases, so a
+    # failing model still produced a normal-looking run. The first
+    # failure must propagate before any further model call happens.
+    calls: list = []
+    agent = DeepReviewAgent(llm=_exploding_model(calls), workspace=tmpdir)
+
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await agent.ainvoke(dict(_DD_QUESTION))
+
+    assert len(calls) == 1, (
+        "the first phase failure must propagate immediately, not be "
+        "swallowed into critique text while later phases keep calling "
+        f"the model (saw {len(calls)} calls)"
+    )
+
 async def test_output_lists_have_exactly_one_entry_per_iteration(tmpdir):
     # One real iteration must produce exactly one entry per output list;
     # the previous >= 1 assertions were green with every entry doubled.

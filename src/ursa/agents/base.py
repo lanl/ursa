@@ -87,6 +87,7 @@ from ursa.util.checkpoint_retention import (
     prune_sqlite_checkpoints,
 )
 from ursa.util.events import DEFAULT_EVENT_LOGGING_HANDLER, AgentEvents
+from ursa.util.mcp import load_mcp_tools_with_sources
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,10 @@ def _to_snake(s: str) -> str:
     return s.lower()
 
 
+class UnregisteredAgentStateWarning(UserWarning):
+    """A BaseAgent subclass declares a typed state it never registers."""
+
+
 class BaseAgent(Generic[TState], ABC):
     """Abstract base class for all agent implementations in the Ursa framework.
 
@@ -231,7 +236,7 @@ class BaseAgent(Generic[TState], ABC):
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
-        otel_metrics: bool = False,
+        otel_metrics: Optional[bool] = None,
         thread_id: Optional[str] = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
@@ -258,6 +263,16 @@ class BaseAgent(Generic[TState], ABC):
                 "x-ursa-user-agent": f"ursa/{URSA_VERSION}",
             }
         )
+        if otel_metrics is not None:
+            import warnings
+
+            warnings.warn(
+                "The otel_metrics argument has never had an effect and is "
+                "deprecated; OpenTelemetry export is configured per invoke "
+                "via save_otel (see issue #259, Tier 2 will supersede it).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.llm: BaseChatModel = llm
         self._agent_nodes: dict[str, BaseAgent[Any]] = {}
         self._agent_node_parents: weakref.WeakSet[BaseAgent[Any]] = (
@@ -1040,7 +1055,24 @@ class BaseAgent(Generic[TState], ABC):
         if system_prompt is not None:
             first_message = SystemMessage(content=system_prompt)
 
-        new_state["messages"] = [first_message, summary] + conversation_to_keep
+        # The summary lands as human-role context rather than as the raw
+        # assistant message: with messages_to_keep=0 (and in the absorbed
+        # tool-tail case) the summary is the final message, and a history
+        # ending on an assistant turn is a request shape Claude 4.6 and
+        # newer reject (issue 296).
+        summary_message = HumanMessage(
+            content="[Summary of the earlier conversation]\n"
+            + (
+                summary.text
+                if isinstance(summary.text, str)
+                else str(summary.content)
+            ),
+            id=summary.id,
+        )
+        new_state["messages"] = [
+            first_message,
+            summary_message,
+        ] + conversation_to_keep
         return new_state, True
 
     def prepare_messages_context(
@@ -1526,6 +1558,8 @@ class BaseAgent(Generic[TState], ABC):
             )
             raise TypeError(err_msg)
 
+        cls._warn_if_state_unregistered()
+
         # Init graph after subclass has been fully constructed
         orig_init = cls.__init__
 
@@ -1534,6 +1568,50 @@ class BaseAgent(Generic[TState], ABC):
             self.__post_init__()
 
         cls.__init__ = __init__
+
+    @classmethod
+    def _warn_if_state_unregistered(cls):
+        """Warn when a subclass declares a typed state it never registers.
+
+        The graph compiles from ``state_type`` (default ``dict``), so a
+        TypedDict named only in the ``BaseAgent[X]`` generic parameter or
+        the legacy ``agent_state`` attribute contributes nothing and its
+        reducers silently never apply.
+        """
+        import warnings
+        from typing import TypeVar, get_args
+
+        declared = cls.__dict__.get("agent_state")
+        if declared is None:
+            for base in cls.__dict__.get("__orig_bases__", ()):
+                for arg in get_args(base):
+                    if isinstance(arg, TypeVar):
+                        continue
+                    if (
+                        isinstance(arg, type)
+                        and arg is not dict
+                        and issubclass(arg, dict)
+                        and hasattr(arg, "__annotations__")
+                    ):
+                        declared = arg
+                        break
+                if declared is not None:
+                    break
+        if declared is None:
+            return
+        registered = getattr(cls, "state_type", dict)
+        if registered is declared:
+            return
+        warnings.warn(
+            f"{cls.__name__} declares state "
+            f"{getattr(declared, '__name__', declared)} but its graph "
+            f"compiles with "
+            f"{getattr(registered, '__name__', registered)}; set "
+            f"`state_type = {getattr(declared, '__name__', declared)}` "
+            f"so its reducers apply.",
+            UnregisteredAgentStateWarning,
+            stacklevel=3,
+        )
 
     def __post_init__(self):
         self.build_graph()
@@ -1838,20 +1916,42 @@ class AgentWithTools:
         self,
         client: MultiServerMCPClient,
         tool_name: None | str | list[str] = None,
-    ) -> None:
+    ) -> dict[str, str]:
         """Add tools from an MCP client to the agent
 
         Args:
            client: the MCP client to add tools from
            tool_name: if provided, only add named tools
+
+        Returns:
+            MCP server names keyed by the attached tool name. Clients that do
+            not expose named connections return an empty mapping.
         """
-        tools = await client.get_tools()
-        if tool_name is not None:
-            tool_name = (
-                tool_name if isinstance(tool_name, list) else [tool_name]
+
+        def discover_and_apply() -> dict[str, str]:
+            # MCP adapters perform synchronous session/schema setup around
+            # their async I/O, and applying tools rebuilds the graph. Own one
+            # worker boundary for the complete operation so every caller—not
+            # only Textual—keeps its event loop responsive.
+            tools, tool_sources = asyncio.run(
+                load_mcp_tools_with_sources(client)
             )
-            tools = [tool for tool in tools if tool.name in tool_name]
-        self.add_tool(tools)
+            selected = tool_name
+            if selected is not None:
+                selected = (
+                    selected if isinstance(selected, list) else [selected]
+                )
+                tools = [tool for tool in tools if tool.name in selected]
+                attached_names = {tool.name for tool in tools}
+                tool_sources = {
+                    name: server
+                    for name, server in tool_sources.items()
+                    if name in attached_names
+                }
+            self.add_tool(tools)
+            return tool_sources
+
+        return await asyncio.to_thread(discover_and_apply)
 
     def remove_tool(self, tool_names: str | list[str]) -> None:
         names = tool_names if isinstance(tool_names, list) else [tool_names]

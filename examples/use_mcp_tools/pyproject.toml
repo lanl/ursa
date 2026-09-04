@@ -1,0 +1,16 @@
+[project]
+name = "ursa-example-sqlite-mcp"
+version = "0.1.0"
+description = "Local SQLite MCP server and URSA dashboard example"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-mcp-adapters~=0.2.2",
+    "mcp>=1.20,<2",
+    "ursa-ai[dashboard]",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../..", editable = true }

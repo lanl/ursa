@@ -21,7 +21,8 @@ Create `config.yaml`:
 ```yaml
 llm_model:
   model: openai:gpt-5.4
-  api_key_env: OPENAI_API_KEY
+  api_key:
+    env: OPENAI_API_KEY
 workspace: ./ursa-mcp-workspace
 ```
 

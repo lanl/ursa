@@ -1,0 +1,15 @@
+[project]
+name = "ursa-example-mcp-agent-tools"
+version = "0.1.0"
+description = "Attach tools from a local MCP server to an URSA Python agent"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.20,<2",
+    "ursa-ai",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../..", editable = true }

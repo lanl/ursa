@@ -95,6 +95,8 @@ Acquired documents are stored under the configured `database_path` inside the ag
 
 Exact filenames and citations are determined by each concrete acquisition agent's `_id()` and `_citation()` methods.
 
-## CLI availability
+## TUI availability
 
-The interactive CLI currently registers `arxiv` and `web` acquisition agents. `OSTIAgent` is exported from `ursa.agents` for Python/API use; it is not currently registered as a CLI short name in the inspected source.
+The TUI currently registers `arxiv` and `web` acquisition agents. `OSTIAgent`
+is exported from `ursa.agents` for Python/API use; it is not currently
+registered as a TUI short name in the inspected source.

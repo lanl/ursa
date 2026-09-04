@@ -1,0 +1,14 @@
+[project]
+name = "ursa-example-bayesian-optimization"
+version = "0.1.0"
+description = "Use an execution agent to implement, checkpoint, and continue a Bayesian optimization workflow."
+requires-python = ">=3.11"
+dependencies = [
+    "ursa-ai",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../../../..", editable = true }

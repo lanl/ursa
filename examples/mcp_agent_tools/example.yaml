@@ -1,0 +1,7 @@
+title: Attach MCP tools to a Python agent
+summary: Start a local MCP server, discover its tools, and attach them to an URSA ChatAgent.
+tags:
+  - guided
+  - mcp
+  - python-api
+  - beginner

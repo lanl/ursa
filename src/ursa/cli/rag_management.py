@@ -5,9 +5,6 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
-from langchain.chat_models import init_chat_model
-from langchain.embeddings import init_embeddings
-
 from ursa.cli.config import ModelConfig, UrsaConfig
 from ursa.rag.persistence import (
     build_persistent_rag_agent,
@@ -25,14 +22,13 @@ from ursa.security import (
     enforce_model_group_policy,
 )
 
-RAG_COMMANDS = {
-    "rag-ingest",
-    "rag-query",
+RAG_METADATA_COMMANDS = {
     "list-rag-agents",
     "show-rag-agent",
     "delete-rag-agent",
     "save-rag-agent",
 }
+RAG_COMMANDS = {"rag-ingest", "rag-query", *RAG_METADATA_COMMANDS}
 
 
 def add_rag_subcommands(subparsers) -> None:
@@ -142,12 +138,12 @@ def _init_models(
     )
     group = getattr(cmd_args, "group", "default") or "default"
     enforce_group_base_url_policy(llm_model.base_url, group)
-    llm = init_chat_model(**llm_model.kwargs)
+    llm = llm_model.init_chat_model()
     enforce_model_group_policy(llm, group)
     embedding = None
-    if emb_model:
+    if emb_model is not None:
         enforce_group_base_url_policy(emb_model.base_url, group)
-        embedding = init_embeddings(**emb_model.kwargs)
+        embedding = emb_model.init_embedding()
         enforce_model_group_policy(embedding, group)
     return llm, embedding
 

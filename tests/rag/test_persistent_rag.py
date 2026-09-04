@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.tools import BaseTool
 
-from ursa.cli.config import UrsaConfig
+from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.rag import persistence
 from ursa.rag.persistence import (
     normalize_rag_tool_names,
@@ -31,25 +31,15 @@ def test_normalize_rag_tool_names_accepts_comma_separated_values():
 
 
 def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
-    from ursa.cli import build_parser, resolve_config
+    from ursa.cli import build_parser
 
     source = tmp_path / "docs"
     source.mkdir()
     config_file = tmp_path / "special_group_config.yaml"
-    config_file.write_text(
-        "\n".join([
-            "llm_model:",
-            "  model: openai:gpt-test",
-            "  base_url: https://models.example.test/v1",
-            "emb_model:",
-            "  model: openai:text-embedding-test",
-            "  base_url: https://embeddings.example.test/v1",
-        ]),
-        encoding="utf-8",
-    )
+    config_file.write_text("{}\n", encoding="utf-8")
 
     parser = build_parser()
-    cfg = parser.parse_args([
+    ingest_args = [
         "rag-ingest",
         str(source),
         "--name",
@@ -58,16 +48,13 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
         "special-group",
         "--config",
         str(config_file),
-    ])
-    resolved = resolve_config(cfg)
+    ]
+    cfg = parser.parse_args(ingest_args)
 
-    assert resolved.llm_model.model == "openai:gpt-test"
-    assert resolved.llm_model.base_url == "https://models.example.test/v1"
-    assert resolved.emb_model is not None
-    assert resolved.emb_model.model == "openai:text-embedding-test"
-    assert resolved.emb_model.base_url == "https://embeddings.example.test/v1"
+    assert cfg.subcommand == "rag-ingest"
+    assert cfg["rag-ingest"].config == config_file
 
-    cfg = parser.parse_args([
+    query_args = [
         "rag-query",
         "--name",
         "new-rag-agent",
@@ -78,12 +65,56 @@ def test_rag_subcommands_accept_config_after_subcommand(tmp_path: Path):
         "What",
         "is",
         "indexed?",
-    ])
-    resolved = resolve_config(cfg)
+    ]
+    cfg = parser.parse_args(query_args)
 
-    assert resolved.llm_model.model == "openai:gpt-test"
-    assert resolved.emb_model is not None
-    assert resolved.emb_model.model == "openai:text-embedding-test"
+    assert cfg.subcommand == "rag-query"
+    assert cfg["rag-query"].config == config_file
+
+
+def test_rag_models_check_group_policy_before_construction(monkeypatch):
+    from jsonargparse import Namespace
+
+    from ursa.cli.rag_management import _init_models
+
+    events = []
+    monkeypatch.setattr(
+        "ursa.cli.rag_management.enforce_group_base_url_policy",
+        lambda base_url, group: events.append(("url-policy", base_url, group)),
+    )
+    monkeypatch.setattr(
+        "ursa.cli.rag_management.enforce_model_group_policy",
+        lambda model, group: events.append(("model-policy", model, group)),
+    )
+    monkeypatch.setattr(
+        ChatModelConfig,
+        "init_chat_model",
+        lambda self: events.append(("init", "llm")) or "llm",
+    )
+    monkeypatch.setattr(
+        EmbModelConfig,
+        "init_embedding",
+        lambda self: events.append(("init", "embedding")) or "embedding",
+    )
+    config = UrsaConfig(
+        group="root-group",
+        llm_model={"base_url": "https://llm.example/v1"},
+        emb_model={
+            "model": "openai:text-embedding-test",
+            "base_url": "https://embedding.example/v1",
+        },
+    )
+
+    _init_models(Namespace(), Namespace(group="rag-group"), config=config)
+
+    assert events == [
+        ("url-policy", "https://llm.example/v1", "rag-group"),
+        ("init", "llm"),
+        ("model-policy", "llm", "rag-group"),
+        ("url-policy", "https://embedding.example/v1", "rag-group"),
+        ("init", "embedding"),
+        ("model-policy", "embedding", "rag-group"),
+    ]
 
 
 def test_resolve_ingest_source_validates_without_copying(tmp_path: Path):

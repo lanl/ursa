@@ -38,7 +38,7 @@ async def run_arxiv_search(
             summaries_path=Path("./arxiv_summaries"),
             download=True,
         )
-        events.emit(
+        await events.aemit(
             "Searching ArXiv",
             stage="search",
             query=query,
@@ -52,7 +52,7 @@ async def run_arxiv_search(
         )
         arxiv_result = arxiv_result["final_summary"]
 
-        events.emit(
+        await events.aemit(
             "ArXiv search complete",
             stage="search_result",
             query=query,
@@ -60,7 +60,7 @@ async def run_arxiv_search(
         )
         return f"[ArXiv Agent Output]:\n {arxiv_result}"
     except Exception as e:  # noqa: BLE001
-        events.emit(
+        await events.aemit(
             "ArXiv search failed",
             stage="search",
             phase="error",
@@ -106,7 +106,7 @@ async def run_web_search(
             summaries_path=Path("./web_summaries"),
             download=True,
         )
-        events.emit(
+        await events.aemit(
             "Searching Web",
             stage="search",
             query=query,
@@ -120,7 +120,7 @@ async def run_web_search(
         )
         web_result = web_result["final_summary"]
 
-        events.emit(
+        await events.aemit(
             "Web search complete",
             stage="search_result",
             query=query,
@@ -128,7 +128,7 @@ async def run_web_search(
         )
         return f"[Web Search Agent Output]:\n {web_result}"
     except Exception as e:  # noqa: BLE001
-        events.emit(
+        await events.aemit(
             "Web search failed",
             stage="search",
             phase="error",
@@ -175,7 +175,7 @@ async def run_osti_search(
             vectorstore_path=Path("./osti_vectorstores"),
             download=True,
         )
-        events.emit(
+        await events.aemit(
             "Searching OSTI.gov",
             stage="search",
             query=query,
@@ -189,7 +189,7 @@ async def run_osti_search(
         )
         osti_result = osti_result["final_summary"]
 
-        events.emit(
+        await events.aemit(
             "OSTI.gov search complete",
             stage="search_result",
             query=query,
@@ -197,7 +197,7 @@ async def run_osti_search(
         )
         return f"[OSTI Agent Output]:\n {osti_result}"
     except Exception as e:  # noqa: BLE001
-        events.emit(
+        await events.aemit(
             "OSTI.gov search failed",
             stage="search",
             phase="error",

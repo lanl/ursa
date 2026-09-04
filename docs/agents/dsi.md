@@ -43,7 +43,7 @@ When initializing `DSIAgent`, you can customize its behavior with these paramete
 
 ## Advanced Usage
 
-### From the URSA CLI
+### From the URSA TUI
 ```bash
 ursa % ursa
 

@@ -1,0 +1,7 @@
+title: Bayesian optimization
+summary: Use an execution agent to implement, checkpoint, and continue a Bayesian optimization workflow.
+tags:
+  - execution-agent
+  - optimization
+  - python-api
+  - guided

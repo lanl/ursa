@@ -1,0 +1,659 @@
+Screen {
+    layout: vertical;
+    background: $background;
+}
+
+HotlistScreen,
+ThemeScreen {
+    align: center bottom;
+    background: transparent;
+}
+
+#hotlist {
+    width: 100%;
+    height: 65%;
+    min-height: 10;
+    max-height: 16;
+    margin-bottom: 4;
+    padding: 0 1 1 1;
+    border: round $accent;
+    background: $surface;
+}
+
+#hotlist-header {
+    width: 100%;
+    height: 1;
+}
+
+#hotlist-title {
+    width: 1fr;
+}
+
+#hotlist-exit-hint {
+    width: auto;
+    content-align: right middle;
+    color: $text-muted;
+    text-style: italic;
+}
+
+#hotlist-query {
+    margin-bottom: 0;
+}
+
+#hotlist-options {
+    height: 1fr;
+    min-height: 3;
+}
+
+InformationScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
+ModelScreen {
+    align: center middle;
+    background: $background 50%;
+}
+
+.settings-dialog {
+    width: 70;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+ModelScreen .settings-dialog {
+    height: auto;
+    max-height: 100%;
+    overflow-y: auto;
+}
+
+ModelScreen TabbedContent,
+ModelScreen TabPane {
+    height: auto;
+}
+
+ModelScreen .model-advanced {
+    margin-top: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+ModelScreen .model-advanced > CollapsibleTitle {
+    height: 1;
+    padding: 0;
+    color: $text-muted;
+    background: transparent;
+}
+
+ModelScreen .model-yaml-editor {
+    height: 12;
+    margin-top: 1;
+    border: round $border;
+}
+
+ModelScreen .model-yaml-editor.yaml-valid {
+    border: round $success;
+}
+
+ModelScreen .model-yaml-editor.yaml-invalid {
+    border: round $error;
+}
+
+ModelScreen .model-yaml-error {
+    width: 1fr;
+    height: auto;
+    max-height: 6;
+    color: $error;
+    text-wrap: wrap;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+ModelScreen Input,
+ModelScreen Select,
+ModelScreen SelectCurrent {
+    height: 1;
+    border: none;
+}
+
+ModelScreen Input,
+ModelScreen SelectCurrent {
+    padding: 0 1;
+}
+
+.model-field-label {
+    width: 1fr;
+    height: 2;
+    padding-top: 1;
+}
+
+.model-field-label-text,
+.model-field-help-bracket,
+.model-field-help-mark {
+    width: auto;
+    height: 1;
+}
+
+.model-field-label-text {
+    margin-right: 1;
+}
+
+.model-field-help-mark {
+    color: $accent;
+}
+
+.settings-title {
+    height: 2;
+    text-style: bold;
+    color: $accent;
+}
+
+.settings-actions {
+    height: 2;
+    align-horizontal: right;
+    padding-top: 1;
+}
+
+.settings-actions Button {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+    margin-left: 1;
+}
+
+#information {
+    width: 90%;
+    height: 85%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+#information-title {
+    height: 2;
+    text-style: bold;
+    color: $accent;
+}
+
+#information-body {
+    height: 1fr;
+}
+
+#status-tabs, #status-summary-tab, #status-config-tab {
+    height: 1fr;
+}
+
+#status-config-readonly {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+}
+
+#status-config-yaml {
+    height: 1fr;
+    border: round $accent;
+}
+
+#agents-tabs {
+    height: 1fr;
+}
+
+.agent-details {
+    height: 1fr;
+    padding: 0 1;
+}
+
+.agent-tools-title {
+    height: 2;
+    padding-top: 1;
+    text-style: bold;
+    color: $accent;
+}
+
+.agent-tools {
+    height: auto;
+}
+
+.agent-tool {
+    height: auto;
+}
+
+.agent-tools-error {
+    height: auto;
+    color: $error;
+}
+
+.agent-tools-empty {
+    height: 1;
+    color: $text-muted;
+}
+
+.agent-tools-loading {
+    height: 1;
+    color: $text-muted;
+}
+
+#conversation {
+    height: 1fr;
+    padding: 1 2;
+    overflow-y: scroll;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $scrollbar;
+    scrollbar-color-hover: $scrollbar-hover;
+    scrollbar-color-active: $scrollbar-active;
+    scrollbar-background: $scrollbar-background;
+}
+
+#welcome {
+    height: auto;
+    margin-bottom: 0;
+}
+
+#welcome-top {
+    height: 8;
+}
+
+#welcome-logo {
+    width: 1fr;
+    height: 8;
+    padding: 0 3;
+    border: round $border;
+    color: $text;
+    align: center middle;
+}
+
+#welcome-logo-stack {
+    width: 100%;
+    height: 5;
+}
+
+#welcome-logo-art {
+    height: 4;
+    content-align: center middle;
+}
+
+#welcome-version {
+    height: 1;
+    content-align: right middle;
+    overflow: hidden hidden;
+}
+
+#welcome-config {
+    width: 1fr;
+    height: 8;
+    padding: 0 2;
+    border: round $border;
+    color: $text;
+}
+
+#welcome-workspace-row {
+    width: 100%;
+    margin-top: 1;
+}
+
+#welcome-workspace-row.workspace-inline {
+    layout: horizontal;
+    height: 1;
+}
+
+#welcome-workspace-row.workspace-stacked {
+    layout: vertical;
+    height: 2;
+}
+
+#welcome-workspace-row.workspace-inline > #welcome-workspace-label {
+    width: 11;
+}
+
+#welcome-workspace-row.workspace-inline > #welcome-workspace {
+    width: 1fr;
+    content-align: left middle;
+}
+
+#welcome-workspace-row.workspace-stacked > #welcome-workspace-label,
+#welcome-workspace-row.workspace-stacked > #welcome-workspace {
+    width: 100%;
+}
+
+#welcome-workspace-row.workspace-stacked > #welcome-workspace {
+    content-align: right middle;
+}
+
+#welcome-workspace-label {
+    height: 1;
+}
+
+#welcome-workspace {
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+#welcome-config-values {
+    height: 3;
+}
+
+#welcome-tip {
+    height: 3;
+    padding: 0 2;
+    border: round $border;
+    color: $text-muted;
+    content-align: left middle;
+}
+
+.turn {
+    height: auto;
+    margin-bottom: 0;
+}
+
+.turn-end-marker {
+    height: 0;
+}
+
+.message-card {
+    height: auto;
+    padding: 0 2;
+    margin-bottom: 0;
+}
+
+.message-card.user {
+    margin-top: 1;
+    margin-bottom: 0;
+    background: $primary-background;
+    border-left: thick $primary;
+}
+
+.message-card.assistant {
+    margin-top: 1;
+    background: $secondary-background;
+    border-left: thick $secondary;
+}
+
+.message-role {
+    height: 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.message-body {
+    height: auto;
+    background: transparent;
+}
+
+.events {
+    height: auto;
+    margin: 0;
+    padding-left: 1;
+    border-left: thick $warning-muted;
+    background: $panel;
+}
+
+.events.has-events {
+    margin-top: 1;
+}
+
+.event-card {
+    height: auto;
+    padding: 0;
+    margin-bottom: 0;
+    background: $surface;
+    color: $text;
+}
+
+.event-summary {
+    height: auto;
+    background: transparent;
+}
+
+.event-card-done {
+    display: none;
+    dock: right;
+    width: 2;
+    height: 100%;
+    content-align: right bottom;
+    color: $primary;
+}
+
+.event-card.summary-done > .event-card-done {
+    display: block;
+}
+
+.exception-traceback {
+    height: auto;
+    margin: 0 1;
+    border: round $border;
+    background: $surface;
+}
+
+.exception-card > .event-expand-hint {
+    dock: none;
+    width: 100%;
+    content-align: right middle;
+}
+
+.event-expand-hint {
+    dock: right;
+    width: 18;
+    height: 1;
+    content-align: right middle;
+    color: $text-muted;
+    text-style: italic;
+}
+
+.tool-call-title {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+.tool-call-summary {
+    height: 1;
+    padding: 0 1;
+}
+
+.tool-call-state {
+    width: 4;
+    color: $primary;
+}
+
+.tool-call-preview {
+    width: 1fr;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.tool-call-details {
+    height: auto;
+    padding: 0 1;
+}
+
+.tool-json-pane {
+    width: 1fr;
+    height: auto;
+    margin: 0 1 0 0;
+    border: round $border;
+}
+
+.tool-output-pane {
+    margin: 0 0 0 1;
+}
+
+.tool-json-title {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    text-style: bold;
+}
+
+.tool-json {
+    height: auto;
+    padding: 0 1;
+    background: $surface;
+}
+
+.tool-output-markdown {
+    height: auto;
+    padding: 0 1;
+    background: transparent;
+}
+
+.edit-group-title {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+.edit-header {
+    height: 1;
+    padding: 0 1;
+}
+
+.edit-title {
+    width: 1fr;
+    height: 1;
+    overflow: hidden hidden;
+    text-overflow: ellipsis;
+}
+
+.edit-counts {
+    width: auto;
+    height: 1;
+    margin-right: 1;
+}
+
+.edit-hint {
+    width: 18;
+    height: 1;
+    content-align: right middle;
+    color: $text-muted;
+    text-style: italic;
+}
+
+.edit-outcome {
+    height: 1;
+    padding: 0 1;
+}
+
+.edit-diff {
+    margin-left: 2;
+    border: round $border;
+    background: $surface;
+}
+
+.command-source,
+.command-output {
+    height: auto;
+    padding: 0 1;
+}
+
+.command-compact {
+    height: 1;
+    padding: 0 1;
+}
+
+.command-compact-state {
+    width: 3;
+    color: $primary;
+}
+
+.command-compact-text {
+    width: 1fr;
+}
+
+RunCommandCard > .activity {
+    margin: 0;
+    padding-left: 1;
+    border-left: none;
+    background: $surface;
+}
+
+RunCommandCard.command-expanded {
+    border: round $border;
+}
+
+RunCommandCard.command-expanded > .event-expand-hint {
+    dock: bottom;
+    width: 100%;
+    padding-right: 1;
+}
+
+.hidden {
+    display: none;
+}
+
+#prompt {
+    height: 3;
+    min-height: 3;
+    margin: 0 1;
+    border: tall $border-blurred;
+    background: $surface;
+}
+
+#prompt:focus {
+    border: tall $border;
+}
+
+.activity {
+    height: 1;
+    margin: 0;
+    padding-left: 1;
+    border-left: thick $warning-muted;
+    background: $panel;
+    color: $text-muted;
+}
+
+.tool-message {
+    height: 1;
+    margin: 1 2 0 2;
+    color: $text-muted;
+}
+
+.tool-message-mark {
+    width: 3;
+    color: $primary;
+}
+
+.tool-message-body {
+    width: 1fr;
+}
+
+.activity.activity-after-user {
+    margin-top: 1;
+}
+
+.activity-spinner {
+    width: 3;
+    color: $primary;
+}
+
+.activity-text {
+    width: 1fr;
+}
+
+.activity-done-mark {
+    display: none;
+    width: 1;
+    color: $primary;
+    content-align: right bottom;
+}
+
+.activity.done > .activity-text {
+    content-align: right middle;
+}
+
+.activity.done > .activity-done-mark {
+    display: block;
+}
+
+#status {
+    height: 1;
+    padding: 0 2;
+    background: $panel;
+    color: $text;
+}

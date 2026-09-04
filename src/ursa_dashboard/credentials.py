@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 from ursa.security import normalize_base_url, validate_group_name
+from ursa.util.secrets import SecretReference
 
 CredentialKind = Literal["llm", "embedding"]
 CredentialSource = Literal["environment", "stored", "llm", "none"]
@@ -169,12 +170,42 @@ def effective_credential_source(
     value = str(config.get("credential_source") or "").strip().lower()
     if not value:
         # Backward compatibility for settings created before credential_source.
-        return "environment" if config.get("api_key_env") else "none"
+        return "environment" if _config_api_key_env(config) else "none"
     if value not in {"environment", "stored", "llm", "none"}:
         raise CredentialConfigurationError(
             f"Unknown credential source: {value}"
         )
     return value  # type: ignore[return-value]
+
+
+def _secret_reference_env(value: object) -> str | None:
+    """Return the env name for a safe ``{env: VAR}`` reference, else ``None``.
+
+    A mapping that validates as a keyring-backed reference is safe but cannot be
+    resolved from the process environment, so it is treated as "no env name".
+    Literal values (strings) are not references and return ``None``.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    reference = SecretReference.maybe_validate(dict(value))
+    if isinstance(reference, SecretReference):
+        return reference.env
+    return None
+
+
+def _is_secret_reference(value: object) -> bool:
+    """True when ``value`` is a safe secret reference rather than a literal."""
+    return isinstance(value, Mapping) and isinstance(
+        SecretReference.maybe_validate(dict(value)), SecretReference
+    )
+
+
+def _config_api_key_env(config: Mapping[str, object]) -> str | None:
+    """Env name from either legacy ``api_key_env`` or ``api_key: {env: VAR}``."""
+    env_name = str(config.get("api_key_env") or "").strip()
+    if env_name:
+        return env_name
+    return _secret_reference_env(config.get("api_key"))
 
 
 def assert_no_raw_api_key(
@@ -183,10 +214,14 @@ def assert_no_raw_api_key(
     """Reject literal API keys in objects that will be persisted or returned."""
     for key, value in config.items():
         normalized = str(key).strip().lower()
-        if normalized in {"api_key", "apikey", "api-key"}:
+        if normalized in {"api_key", "api-key", "apikey"}:
+            # A safe ``{env|keyring: ...}`` reference is an indirection, not a
+            # literal secret, so allow it; reject only literal values.
+            if _is_secret_reference(value):
+                continue
             raise CredentialConfigurationError(
                 f"{context} must not contain a literal API key; use the "
-                "credential endpoint or api_key_env instead."
+                "credential endpoint or api_key_env instead"
             )
         if isinstance(value, Mapping):
             assert_no_raw_api_key(value, context=context)
@@ -221,7 +256,7 @@ def resolve_api_key(
         return None
 
     if source == "environment":
-        env_name = str(config.get("api_key_env") or "").strip()
+        env_name = _config_api_key_env(config) or ""
         if not env_name:
             return None
         if not _ENV_NAME_RE.fullmatch(env_name):

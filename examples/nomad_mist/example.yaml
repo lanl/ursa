@@ -1,0 +1,5 @@
+title: Querying a SciFM with URSA
+summary: Use URSA to query MIST, a molecular foundation model for property prediction, through Nomad's MCP server.
+tags:
+  - mcp
+  - guided

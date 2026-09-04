@@ -1,0 +1,14 @@
+[project]
+name = "ursa-example-environments"
+version = "0.1.0"
+description = "Launch reusable team and symposium environments from YAML definitions."
+requires-python = ">=3.11"
+dependencies = [
+    "ursa-ai",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../..", editable = true }

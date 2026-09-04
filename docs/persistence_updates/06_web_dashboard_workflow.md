@@ -1,6 +1,7 @@
 # Web Dashboard Workflow
 
-The dashboard provides a session-based UI over URSA agents while reusing the same persistent named-agent store as the CLI.
+The dashboard provides a session-based UI over URSA agents while reusing the
+same persistent named-agent store as the TUI.
 
 ## Launch
 

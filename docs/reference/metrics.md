@@ -235,7 +235,7 @@ python ursa/scripts/metrics_cli.py ./workspaces/t1/run_0007.json --chart tokens-
 ## Output naming & where to find things
 
 **Per run (single JSON):**
-```
+```text
 <path>/run_breakdown_lollipop.png
 <path>/run_breakdown_tokens_bar.png
 <path>/run_breakdown_tokens_kde.png
@@ -243,7 +243,7 @@ python ursa/scripts/metrics_cli.py ./workspaces/t1/run_0007.json --chart tokens-
 ```
 
 **Thread-level (in --dir):**
-```
+```text
 thread_<thread_id>_lollipop.png
 thread_<thread_id>_tokens_bar.png
 thread_<thread_id>_tokens_kde.png
@@ -254,7 +254,7 @@ thread_<thread_id>_agents_tps.png
 ```
 
 **SUPER (at the root --dir for all-recursive):**
-```
+```text
 super_lollipop.png
 super_tokens_bar.png
 super_tokens_kde.png

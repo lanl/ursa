@@ -1,5 +1,6 @@
 import importlib
 import inspect
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -218,6 +219,30 @@ async def test_agent_with_tools_add_mcp_tools_adds_all(chat_model, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agent_with_tools_applies_mcp_tools_off_event_loop(
+    chat_model, tmp_path, monkeypatch
+):
+    alpha = _make_tool("alpha")
+    client = AsyncMock()
+    client.get_tools.return_value = [alpha]
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+    event_loop_thread = threading.get_ident()
+    apply_threads = []
+    original_add_tool = agent.add_tool
+
+    def recording_add_tool(tools):
+        apply_threads.append(threading.get_ident())
+        original_add_tool(tools)
+
+    monkeypatch.setattr(agent, "add_tool", recording_add_tool)
+
+    await agent.add_mcp_tools(client)
+
+    assert apply_threads
+    assert apply_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
 async def test_agent_with_tools_add_mcp_tools_filters_by_name(
     chat_model, tmp_path
 ):
@@ -230,6 +255,28 @@ async def test_agent_with_tools_add_mcp_tools_filters_by_name(
     await agent.add_mcp_tools(client, tool_name="beta")
 
     assert agent.tools == {"beta": beta}
+
+
+@pytest.mark.asyncio
+async def test_agent_with_tools_returns_mcp_tool_provenance_without_mutation(
+    chat_model, tmp_path
+):
+    alpha = _make_tool("alpha")
+    beta = _make_tool("beta")
+    client = AsyncMock()
+    client.connections = {"laboratory": {}, "archive": {}}
+
+    async def get_tools(*, server_name):
+        return [alpha] if server_name == "laboratory" else [beta]
+
+    client.get_tools.side_effect = get_tools
+    agent = DummyAgentWithTools(llm=chat_model, workspace=tmp_path)
+
+    sources = await agent.add_mcp_tools(client)
+
+    assert sources == {"alpha": "laboratory", "beta": "archive"}
+    assert agent.tools["alpha"].metadata is None
+    assert agent.tools["beta"].metadata is None
 
 
 def test_tool_runtime_preserved_for_tool_node(chat_model, tmp_path: Path):

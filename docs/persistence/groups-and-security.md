@@ -51,7 +51,8 @@ If your model config uses a custom `base_url`:
 llm_model:
   model: openai:my-model
   base_url: https://my-approved-endpoint.example.com/v1
-  api_key_env: MY_ENDPOINT_API_KEY
+  api_key:
+    env: MY_ENDPOINT_API_KEY
 ```
 
 then the group allowlist should include the approved base URL domain.
