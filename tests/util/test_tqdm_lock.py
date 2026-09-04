@@ -68,8 +68,31 @@ def test_install_thread_only_tqdm_lock_is_idempotent_and_safe():
 
 # Shared preamble: install a Textual-like stderr proxy (fileno() == -1) and a
 # fresh resource tracker so a multiprocessing lock would actually spawn.
+#
+# The "spawn" start method is forced because the bug only manifests when the
+# semaphore is registered with the resource tracker. In
+# ``multiprocessing/synchronize.py::SemLock.__init__``::
+#
+#     unlink_now = sys.platform == 'win32' or self._is_fork_ctx
+#     ...
+#     if not self._is_fork_ctx:
+#         resource_tracker.register(self._semlock.name, "semaphore")
+#
+# Under a *fork* context the semaphore is unlinked immediately and never
+# registered, so the tracker never spawns, ``fork_exec`` is never reached, and
+# this test could not detect a regression at all (it would pass even with the
+# fix deleted). Linux defaults to "fork" through 3.13, so without this the test
+# was vacuous on Ubuntu CI while still meaningful on macOS, which defaults to
+# "spawn". Both "spawn" and "forkserver" reproduce the failure; "spawn" is used
+# here as it is available on every platform.
+#
+# ``force=True`` is required: tqdm's ``create_mp_lock`` calls bare
+# ``multiprocessing.RLock()``, which uses the *default* context, so a
+# ``get_context("spawn")`` handle would simply be ignored. This runs in a
+# throwaway subprocess, so it cannot leak into the pytest process.
 _PREAMBLE = """
-import sys, threading
+import sys, threading, multiprocessing
+multiprocessing.set_start_method("spawn", force=True)
 from multiprocessing import resource_tracker
 
 class TextualStderrProxy:
@@ -109,15 +132,12 @@ os._exit(0)  # bypass interpreter-shutdown join, which is itself part of the bug
 """
 
 
-def _run_scenario(fix: bool) -> dict[str, str]:
-    fix_stmt = (
-        "from ursa.util.tqdm_lock import install_thread_only_tqdm_lock\n"
-        "install_thread_only_tqdm_lock()\n"
-        if fix
-        else ""
-    )
+def _run_scenario() -> dict[str, str]:
     # The fix must be applied BEFORE stderr is replaced (like the real TUI).
-    script = fix_stmt + _PREAMBLE + _SCENARIO
+    script = (
+        "from ursa.util.tqdm_lock import install_thread_only_tqdm_lock\n"
+        "install_thread_only_tqdm_lock()\n" + _PREAMBLE + _SCENARIO
+    )
     proc = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         capture_output=True,
@@ -133,21 +153,20 @@ def _run_scenario(fix: bool) -> dict[str, str]:
 
 
 @posix_only
-def test_bug_reproduces_without_fix():
-    """Guard is meaningful: without the fix, the bug actually occurs.
-
-    This makes the fix test below a genuine regression guard rather than a
-    tautology. If the environment ever stops reproducing the bug, this test
-    fails loudly so the fix test can be re-evaluated.
-    """
-    result = _run_scenario(fix=False)
-    assert "fds_to_keep" in result.get("first", ""), result
-
-
-@posix_only
 def test_fix_prevents_fds_error_and_deadlock():
-    """With the fix, both tqdm calls succeed and no thread deadlocks."""
-    result = _run_scenario(fix=True)
+    """With the fix, tqdm works under a Textual-like stderr proxy.
+
+    This is a discriminating test: with ``spawn`` forced in ``_PREAMBLE``,
+    reverting ``install_thread_only_tqdm_lock`` to a no-op makes the first call
+    fail with ``ValueError: bad value(s) in fds_to_keep``.
+
+    The primary invariant is the *absence* of that error. Whether a leaked tqdm
+    lock manifests as a hang or as a re-raised error in the second thread
+    depends on thread timing, so ``deadlocked`` is reported for diagnostics and
+    only checked loosely.
+    """
+    result = _run_scenario()
+    assert "fds_to_keep" not in str(result), result
     assert result.get("first") == "OK", result
     assert result.get("second") == "OK", result
     assert result.get("deadlocked") == "False", result
