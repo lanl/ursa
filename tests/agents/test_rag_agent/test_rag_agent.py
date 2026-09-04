@@ -96,3 +96,65 @@ def test_rag_agent_requires_explicit_embedding(chat_model, tmpdir):
             summaries_path="summaries",
             vectorstore_path="vectors",
         )
+
+
+def test_maybe_tqdm_skips_progress_bar_for_empty_work():
+    """No progress bar is constructed when there is nothing to process.
+
+    Queries always traverse the read/ingest nodes (the RAG graph is a fixed
+    linear chain), so without this guard every query would emit a useless "0/0"
+    bar. Returning the iterable untouched also avoids constructing tqdm's global
+    write lock in the common query case.
+    """
+    from ursa.agents import rag_agent as rag_agent_module
+
+    calls = []
+
+    def fake_tqdm(*args, **kwargs):  # pragma: no cover - must not be called
+        calls.append(kwargs)
+        raise AssertionError("tqdm must not be constructed for empty work")
+
+    original = rag_agent_module.tqdm
+    rag_agent_module.tqdm = fake_tqdm
+    try:
+        result = rag_agent_module._maybe_tqdm([], total=0, desc="nothing")
+        assert list(result) == []
+        assert calls == []
+    finally:
+        rag_agent_module.tqdm = original
+
+
+def test_maybe_tqdm_wraps_progress_bar_when_work_exists():
+    """A progress bar IS used (with desc/total forwarded) when work exists."""
+    from ursa.agents import rag_agent as rag_agent_module
+
+    captured = {}
+
+    def fake_tqdm(iterable, **kwargs):
+        captured.update(kwargs)
+        return iterable
+
+    original = rag_agent_module.tqdm
+    rag_agent_module.tqdm = fake_tqdm
+    try:
+        items = [("a", "1"), ("b", "2")]
+        result = rag_agent_module._maybe_tqdm(
+            items, total=len(items), desc="RAG parsing text"
+        )
+        assert list(result) == items
+        assert captured["total"] == 2
+        assert captured["desc"] == "RAG parsing text"
+    finally:
+        rag_agent_module.tqdm = original
+
+
+def test_maybe_tqdm_preserves_all_items_when_wrapping():
+    """Gating must not drop or reorder work items (real tqdm, lazy zip)."""
+    from ursa.agents.rag_agent import _maybe_tqdm
+
+    texts = ["t0", "t1", "t2"]
+    ids = ["i0", "i1", "i2"]
+    wrapped = _maybe_tqdm(
+        zip(texts, ids), total=len(texts), desc="RAG Ingesting", disable=True
+    )
+    assert list(wrapped) == [("t0", "i0"), ("t1", "i1"), ("t2", "i2")]
