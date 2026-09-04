@@ -1,5 +1,8 @@
 # Harbor validation waves
 
+> **Invalid attempt:** the shared host `.venv` lost a Rich Unicode resource,
+> causing Harbor's final report to crash. No scores from this attempt count.
+
 This is a fresh, independent validation attempt with seed
 `6f5d75c9149c42f0`. Run from the repository root. Each wave uses four
 concurrent trials, a 2x agent-timeout multiplier, and
