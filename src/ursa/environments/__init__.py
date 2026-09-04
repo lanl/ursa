@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from .agent_symposium import AgentSymposiumEnvironment
 from .agent_team import AgentTeamEnvironment
+from .agent_elo import AgentEloEnvironment
 from .base import BaseEnvironment
 from .config import (
+    AgentEloConfig,
     AgentSymposiumConfig,
     AgentTeamConfig,
     EnvironmentMemberConfig,
+    elo_cache_dir,
+    load_elo_config,
     load_symposium_config,
     load_team_config,
+    save_elo_config,
     save_symposium_config,
     save_team_config,
     symposium_cache_dir,
@@ -50,4 +55,9 @@ __all__ = [
     "save_team_config",
     "symposium_cache_dir",
     "team_cache_dir",
+    "AgentEloConfig",
+    "AgentEloEnvironment",
+    "elo_cache_dir",
+    "load_elo_config",
+    "save_elo_config",
 ]

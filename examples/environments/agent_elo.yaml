@@ -1,0 +1,52 @@
+name: numerical_integration_elo
+group: default
+
+description: >
+  A small evolutionary environment where competing agents develop and
+  improve numerical solutions to a simple scientific-computing problem.
+
+initial_rating: 1500
+k_factor: 32
+deaths_per_round: 1
+
+# Reproducible random pairing and Elo tie-breaking.
+seed: 12345
+
+# One env.invoke() runs both generations.
+generations: 2
+
+# Set this to a saved environment_state.json to resume a previous run.
+restart_from_json: null
+
+judge_prompt: >
+  You are judging two computational-science agents solving the same
+  numerical-analysis problem.
+
+  Prefer work that is correct, executed, reproducible, and numerically
+  well validated.
+
+  Judge primarily on:
+  - correctness of the numerical method;
+  - accuracy relative to the reference result;
+  - evidence that code was actually executed;
+  - useful convergence or error checks;
+  - reproducibility of the saved work;
+  - substantive scientific or numerical progress.
+
+  In later generations, reward useful improvements or stronger validation,
+  not change merely for novelty.
+
+  Return DRAW only if the candidates are genuinely comparable in quality.
+
+members:
+  - name: researcher_1
+    role: >
+      Independent computational scientist developing and validating
+      numerical methods.
+    agent: ExecutionAgent
+
+  - name: researcher_2
+    role: >
+      Independent computational scientist developing and validating
+      numerical methods.
+    agent: ExecutionAgent
