@@ -11,7 +11,13 @@ from typing import Annotated, Any, Literal, Self
 import yaml
 from jsonargparse import Namespace
 from langchain.chat_models import BaseChatModel, init_chat_model
+from langchain.chat_models.base import (
+    _BUILTIN_PROVIDERS as CHAT_MODEL_PROVIDERS,
+)
 from langchain.embeddings import Embeddings, init_embeddings
+from langchain.embeddings.base import (
+    _BUILTIN_PROVIDERS as EMBEDDING_MODEL_PROVIDERS,
+)
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -54,6 +60,9 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
 
 
 APIKey = SecretReference | SecretStr
+BUILTIN_MODEL_PROVIDERS = (
+    CHAT_MODEL_PROVIDERS.keys() | EMBEDDING_MODEL_PROVIDERS.keys()
+)
 
 
 def _migrate_api_key_env(data: Any) -> Any:
@@ -173,15 +182,20 @@ class ModelConfig(BaseModel):
 
         data = dict(data)
         model = data.get("model")
-        if isinstance(model, str) and ":" in model:
+        explicit_provider = data.get("model_provider")
+        if (
+            isinstance(model, str)
+            and ":" in model
+            and explicit_provider is None
+        ):
             provider, model_name = model.split(":", 1)
-            explicit_provider = data.get("model_provider")
-            if explicit_provider is not None and explicit_provider != provider:
-                raise ValueError(
-                    f"model provider prefix ({provider}) conflicts with model_provider ({explicit_provider})"
-                )
-            data["model"] = model_name
-            data["model_provider"] = provider
+            is_provider_prefix = (
+                data.get("inference_provider") is None
+                or provider in BUILTIN_MODEL_PROVIDERS
+            )
+            if is_provider_prefix:
+                data["model"] = model_name
+                data["model_provider"] = provider
         if (
             data.get("base_url") is not None
             and data.get("inference_provider") is not None
