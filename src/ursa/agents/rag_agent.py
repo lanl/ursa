@@ -54,6 +54,25 @@ def _is_meaningful(text: str) -> bool:
     return len(text) >= MIN_CHARS
 
 
+def _maybe_tqdm(iterable, *, total: int, **tqdm_kwargs):
+    """Wrap ``iterable`` in a progress bar only when there is work to show.
+
+    A progress bar over zero items is pure noise: it renders a completed "0/0"
+    bar for work that never happens. Queries always traverse the read/ingest
+    nodes (the graph is a fixed linear chain), so with nothing new to index this
+    would print an empty bar on every single query.
+
+    Skipping construction also avoids building ``tqdm``'s global write lock in
+    that case. Note this is only a nicety, not a safety guarantee: ``tqdm``
+    creates that lock in ``__new__`` (so even ``disable=True`` would still build
+    it), and any non-empty ingest still constructs a bar. The process-wide
+    protection lives in ``ursa.util.tqdm_lock``.
+    """
+    if total <= 0:
+        return iterable
+    return tqdm(iterable, total=total, **tqdm_kwargs)
+
+
 class RAGAgent(BaseAgent[RAGState]):
     agent_state = RAGState
 
@@ -202,7 +221,9 @@ class RAGAgent(BaseAgent[RAGState]):
 
         papers: list[str] = []
         doc_ids: list[str] = []
-        for path, doc_id in tqdm(candidates, desc="RAG parsing text"):
+        for path, doc_id in _maybe_tqdm(
+            candidates, total=len(candidates), desc="RAG parsing text"
+        ):
             full_text = read_text_from_file(path)
             # skip files with very few characters to
             #    avoid parsing/rag ingestion problems
@@ -234,7 +255,7 @@ class RAGAgent(BaseAgent[RAGState]):
 
         batch_docs, batch_ids = [], []
 
-        for paper, id in tqdm(
+        for paper, id in _maybe_tqdm(
             zip(state["doc_texts"], state["doc_ids"]),
             total=len(state["doc_texts"]),
             desc="RAG Ingesting",

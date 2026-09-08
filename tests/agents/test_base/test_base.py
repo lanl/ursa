@@ -393,6 +393,63 @@ async def test_persistent_agent_ainvoke_uses_async_sqlite_resources(
 
 
 @pytest.mark.asyncio
+async def test_aclose_releases_and_joins_async_sqlite_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``aclose`` releases async SQLite resources and joins worker threads.
+
+    ``aiosqlite.Connection`` is a non-daemon ``threading.Thread``. ``close()``
+    finalizes queued queries and signals the worker to stop, but does not join
+    the thread. ``aclose`` explicitly joins after closing (mirroring the HITL
+    runtime's own teardown) so shutdown is deterministic and leaves no live
+    aiosqlite worker threads, and it resets the cached async resources so a
+    subsequent invoke rebuilds them and ``aclose`` is safely idempotent.
+    """
+    import threading
+
+    import aiosqlite
+
+    _use_temp_agent_groups(monkeypatch, tmp_path)
+    agent = Agent(
+        llm=TinyCountingModel(),
+        agent_name="aclose_join_agent",
+        enable_metrics=False,
+    )
+
+    baseline = {
+        t for t in threading.enumerate() if isinstance(t, aiosqlite.Connection)
+    }
+
+    # Provision the async SQLite-backed resources directly so we can assert on
+    # them before/after aclose (ainvoke would otherwise close them itself).
+    storage = await agent._aget_async_storage()
+    checkpointer = await agent._aget_async_checkpointer()
+    storage_conn = storage.conn
+    checkpointer_conn = checkpointer.conn
+
+    live_during = {
+        t for t in threading.enumerate() if isinstance(t, aiosqlite.Connection)
+    } - baseline
+    assert live_during, (
+        "expected async resources to open aiosqlite connection threads"
+    )
+
+    await agent.aclose()
+
+    # Cached async resources are released so the next invoke rebuilds them.
+    assert agent._async_storage is None
+    assert agent._async_checkpointer is None
+    # Threads were joined (not merely closed), so none remain alive.
+    assert not storage_conn.is_alive()
+    assert not checkpointer_conn.is_alive()
+
+    # aclose is idempotent: a second call with nothing to close is a no-op.
+    await agent.aclose()
+
+    agent.close()
+
+
+@pytest.mark.asyncio
 async def test_named_agent_restores_state_in_a_new_instance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

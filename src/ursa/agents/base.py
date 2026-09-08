@@ -1145,12 +1145,21 @@ class BaseAgent(Generic[TState], ABC):
     async def aclose(self) -> None:
         """Close async SQLite resources owned by this agent when possible."""
         if self._async_storage is not None:
+            storage_conn = self._async_storage.conn
             await self._async_storage.__aexit__(None, None, None)
-            await self._async_storage.conn.close()
+            await storage_conn.close()
+            # ``aiosqlite.Connection`` is a non-daemon ``threading.Thread``.
+            # ``close()`` only finalizes queued queries and signals the worker
+            # to stop; it does NOT join the thread, which stays alive. Without
+            # joining, each async invoke leaks a live non-daemon thread that
+            # ultimately blocks interpreter shutdown (the TUI "hangs" on quit).
+            await asyncio.to_thread(storage_conn.join)
             self._async_storage = None
             self._async_compiled_graph = None
         if isinstance(self._async_checkpointer, AsyncSqliteSaver):
-            await self._async_checkpointer.conn.close()
+            checkpointer_conn = self._async_checkpointer.conn
+            await checkpointer_conn.close()
+            await asyncio.to_thread(checkpointer_conn.join)
             self._async_checkpointer = None
             self._async_compiled_graph = None
 

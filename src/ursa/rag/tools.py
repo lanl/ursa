@@ -47,17 +47,35 @@ def build_rag_tool(
         return_k=return_k,
     )
 
-    def query_rag(query: str) -> str:
-        """Query the persisted RAG collection and return its summary."""
-        logger.info(f"[Request to {name}]: {query}")
-        result = rag_agent.invoke({"context": query, "query": query})
+    def _summarize(result: object) -> str:
         summary = result.get("summary") if isinstance(result, dict) else None
         if summary:
             return str(summary)
         return str(result)
 
+    def query_rag(query: str) -> str:
+        """Query the persisted RAG collection and return its summary."""
+        logger.info(f"[Request to {name}]: {query}")
+        result = rag_agent.invoke({"context": query, "query": query})
+        return _summarize(result)
+
+    async def aquery_rag(query: str) -> str:
+        """Async query the persisted RAG collection and return its summary.
+
+        Providing an async implementation lets LangGraph's ``ToolNode`` await the
+        RAG agent directly on the running event loop (via ``ainvoke``) instead of
+        dispatching the synchronous ``invoke`` into a worker thread. Running the
+        RAG agent's sync SQLite-backed graph from an executor thread while the
+        parent agent's event loop owns async SQLite/Chroma resources is what
+        triggers the ``bad value(s) in fds_to_keep`` and lock errors.
+        """
+        logger.info(f"[Request to {name}]: {query}")
+        result = await rag_agent.ainvoke({"context": query, "query": query})
+        return _summarize(result)
+
     return StructuredTool.from_function(
         func=query_rag,
+        coroutine=aquery_rag,
         name=rag_tool_name(name),
         description=(
             f"Query the persisted URSA RAG collection '{name}' in group "
