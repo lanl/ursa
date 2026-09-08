@@ -2061,12 +2061,11 @@ the shared acquire-then-summarize graph and cached outputs.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">macOS/Linux</label><label for="__tabbed_2_2">Windows PowerShell</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">URSA_DASHBOARD_USE_WEB</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>ursa-dashboard
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ursa-dashboard<span class="w"> </span>--use-web
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">$env:URSA_DASHBOARD_USE_WEB</span> <span class="p">=</span> <span class="s2">&quot;1&quot;</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">uv</span> <span class="n">run</span> <span class="n">ursa-dashboard</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">uv</span> <span class="n">run</span> <span class="n">ursa-dashboard</span> <span class="p">-</span><span class="n">-use-web</span>
 </code></pre></div>
 </div>
 </div>
@@ -2083,9 +2082,10 @@ the shared acquire-then-summarize graph and cached outputs.</p>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>possible applications to shock hydrodynamics, distinguish claims by source
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>collection, and include source links.
 </code></pre></div>
-<p>Setting <code>URSA_DASHBOARD_USE_WEB=1</code> is required: it opts supported dashboard
-agents into the arXiv, OSTI, and web-search tools. Follow the activity timeline
-to see which tool supplied each part of the answer.</p>
+<p>Starting the dashboard with <code>--use-web</code> is required: it opts supported dashboard
+agents into the arXiv, OSTI, and web-search tools. (<code>URSA_DASHBOARD_USE_WEB=1</code>
+does the same thing.) Follow the activity timeline to see which tool supplied
+each part of the answer.</p>
 <p>See the <a href="../../../getting-started/dashboard/">dashboard guide</a> for
 credential storage, workspace selection, and remote-access safety.</p>
 <h2 id="4-compare-all-three-agents-from-python">4. Compare all three agents from Python<a class="headerlink" href="#4-compare-all-three-agents-from-python" title="Permanent link">&para;</a></h2>
@@ -2138,8 +2138,8 @@ agent's parameters and outputs.</p>
 <ul>
 <li>If <code>uv run ursa</code> cannot find a key, run <code>uv run ursa --print-config</code> and
   review the <a href="../../../configuration/">configuration guide</a>.</li>
-<li>If the dashboard does not expose search activity, stop it, set
-  <code>URSA_DASHBOARD_USE_WEB=1</code>, and restart it as shown above.</li>
+<li>If the dashboard does not expose search activity, stop it and restart it with
+  <code>--use-web</code> as shown above.</li>
 <li>If a source returns no items, try a shorter query or rerun later; arXiv, OSTI,
   and DDGS are independent upstream services.</li>
 <li>If an earlier run affects the comparison, move or remove that source's cache

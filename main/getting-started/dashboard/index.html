@@ -405,6 +405,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enable-web-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enable web tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#first-session" class="md-nav__link">
     <span class="md-ellipsis">
       First session
@@ -1989,6 +1998,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enable-web-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enable web tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#first-session" class="md-nav__link">
     <span class="md-ellipsis">
       First session
@@ -2069,6 +2087,16 @@
 </code></pre></div>
 <p>The optional config file initializes the dashboard LLM endpoint settings. It is
 not needed for the built-in OpenAI provider.</p>
+<h2 id="enable-web-tools">Enable web tools<a class="headerlink" href="#enable-web-tools" title="Permanent link">&para;</a></h2>
+<p>Web, arXiv, and OSTI search tools are opt in, matching <code>ursa --use-web</code> in the
+CLI and TUI:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ursa-dashboard<span class="w"> </span>--use-web
+</code></pre></div>
+<p>Equivalently, set <code>URSA_DASHBOARD_USE_WEB=1</code> in the environment.</p>
+<p>This sets the default for agents that support web access (chat, execution,
+planning/execution workflow, prompt refinement, and deep review). Individual
+runs can still override it through the agent's advanced parameters, so you can
+launch with <code>--use-web</code> and disable it for a specific run.</p>
 <h2 id="first-session">First session<a class="headerlink" href="#first-session" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Open <strong>Settings → LLM</strong> and confirm the endpoint and credential source.</li>
