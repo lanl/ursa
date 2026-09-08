@@ -5825,7 +5825,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="row" style="justify-content:space-between; align-items:center; margin: 8px 0; gap: 8px; flex-wrap: wrap;">
             <div class="muted small">Ctrl/⌘ + Enter to send</div>
             <div class="row" style="gap:8px; justify-content:flex-end; align-items:center; margin-left:auto;">
-              <label class="muted small" for="composerAgentType">Agent type</label>
+              <label class="muted small" for="composerAgentType">Agent Behavior:</label>
               <select id="composerAgentType" style="min-width:220px"></select>
             </div>
           </div>

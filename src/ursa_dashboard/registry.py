@@ -114,6 +114,15 @@ def _baseagent_adapter_builder(
     return build_adapter
 
 
+def _think_plan_execute_workflow_builder() -> Callable[
+    [Any, dict[str, Any]], AgentAdapter
+]:
+    """Build the one-runtime planning/execution BaseAgent adapter."""
+
+    return _baseagent_adapter_builder(
+        "ursa.workflows.think_plan_execute_workflow.ThinkPlanningExecutionAgent"
+    )
+
 def _planning_executor_workflow_builder() -> Callable[
     [Any, dict[str, Any]], AgentAdapter
 ]:
@@ -139,7 +148,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="chat_agent",
-            display_name="Chat Agent",
+            display_name="Chat + Execute",
             description="General chat interface to an LLM.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -162,7 +171,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="planning_agent",
-            display_name="Planning Agent",
+            display_name="Plan",
             description="Creates a step-by-step plan using structured output and optional self-reflection.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -199,7 +208,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="prompting_agent",
-            display_name="Prompting Agent",
+            display_name="Prompt Refinement",
             description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -235,7 +244,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="execution_agent",
-            display_name="Execution Agent",
+            display_name="Execution + Reflect",
             description="Tool-using agent that can write/edit files and run shell commands. Web/arXiv/OSTI search tools are available only when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -306,7 +315,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="planning_executor_workflow",
-            display_name="Planning + Execution Workflow",
+            display_name="Plan -> Execute",
             description="Uses one persistent planning/execution agent with native planner and executor subgraphs. Best for longer, complex tasks. Web/arXiv/OSTI tools are opt-in via --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -384,274 +393,93 @@ register(
     )
 )
 
-### register(
-###     AgentEntry(
-###         spec=AgentSpec(
-###             agent_id="web_search_agent",
-###             display_name="Web Search Agent",
-###             description="Searches the web, downloads pages, and optionally summarizes/RAGs across results.",
-###             capabilities=AgentCapabilities(
-###                 supports_streaming=False,
-###                 supports_cancellation=False,
-###                 produces_artifacts=True,
-###             ),
-###             parameters=
-###                 [
-###                     _prompt_param(title="Query"),
-###                     AgentParam(
-###                         name="max_results",
-###                         title="Max results",
-###                         description="Maximum number of items to fetch.",
-###                         type="integer",
-###                         required=False,
-###                         default=5,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="max_results",
-###                         constraints=ParamConstraint(minimum=1, maximum=50),
-###                     ),
-###                     AgentParam(
-###                         name="download",
-###                         title="Download",
-###                         description="Download/scrape results (otherwise rely on cache).",
-###                         type="boolean",
-###                         required=False,
-###                         default=True,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="download",
-###                     ),
-###                     AgentParam(
-###                         name="summarize",
-###                         title="Summarize",
-###                         description="Generate summaries for each item.",
-###                         type="boolean",
-###                         required=False,
-###                         default=True,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="summarize",
-###                     ),
-###                     AgentParam(
-###                         name="process_images",
-###                         title="Process images (PDF)",
-###                         description="Extract and describe images from PDFs.",
-###                         type="boolean",
-###                         required=False,
-###                         default=True,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="process_images",
-###                     ),
-###                     AgentParam(
-###                         name="num_threads",
-###                         title="Threads",
-###                         description="Parallel download/summarization workers.",
-###                         type="integer",
-###                         required=False,
-###                         default=4,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="num_threads",
-###                         constraints=ParamConstraint(minimum=1, maximum=32),
-###                     ),
-###                     AgentParam(
-###                         name="user_agent",
-###                         title="HTTP User-Agent",
-###                         description="User-Agent string for requests.",
-###                         type="string",
-###                         required=False,
-###                         default="Mozilla/5.0",
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="user_agent",
-###                     ),
-###                 ]
-###                 + _common_llm_params()
-###                 + _runner_params(),
-###             tags=["search", "acquisition"],
-###         ),
-###         build_adapter=_baseagent_adapter_builder(
-###             "ursa.agents.acquisition_agents.WebSearchAgent"
-###         ),
-###         build_inputs=lambda p: p["prompt"],
-###     )
-### )
-
-### register(
-###     AgentEntry(
-###         spec=AgentSpec(
-###             agent_id="arxiv_agent",
-###             display_name="arXiv Agent",
-###             description="Searches arXiv, downloads PDFs, and summarizes across papers.",
-###             capabilities=AgentCapabilities(
-###                 supports_streaming=False,
-###                 supports_cancellation=False,
-###                 produces_artifacts=True,
-###             ),
-###             parameters=
-###                 [
-###                     _prompt_param(title="Query"),
-###                     AgentParam(
-###                         name="max_results",
-###                         title="Max results",
-###                         description="Maximum number of papers to fetch.",
-###                         type="integer",
-###                         required=False,
-###                         default=3,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="max_results",
-###                         constraints=ParamConstraint(minimum=1, maximum=50),
-###                     ),
-###                     AgentParam(
-###                         name="download",
-###                         title="Download",
-###                         description="Download PDFs (otherwise rely on cache).",
-###                         type="boolean",
-###                         required=False,
-###                         default=True,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="download",
-###                     ),
-###                     AgentParam(
-###                         name="process_images",
-###                         title="Process images (PDF)",
-###                         description="Extract and describe images from PDFs.",
-###                         type="boolean",
-###                         required=False,
-###                         default=True,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="process_images",
-###                     ),
-###                 ]
-###                 + _common_llm_params()
-###                 + _runner_params(),
-###             tags=["search", "papers"],
-###         ),
-###         build_adapter=_baseagent_adapter_builder(
-###             "ursa.agents.acquisition_agents.ArxivAgent"
-###         ),
-###         build_inputs=lambda p: p["prompt"],
-###     )
-### )
-
-### register(
-###     AgentEntry(
-###         spec=AgentSpec(
-###             agent_id="osti_agent",
-###             display_name="OSTI Agent",
-###             description="Searches OSTI.gov records, downloads reports when available, and summarizes.",
-###             capabilities=AgentCapabilities(
-###                 supports_streaming=False,
-###                 supports_cancellation=False,
-###                 produces_artifacts=True,
-###             ),
-###             parameters=
-###                 [
-###                     _prompt_param(title="Query"),
-###                     AgentParam(
-###                         name="max_results",
-###                         title="Max results",
-###                         description="Maximum number of records to fetch.",
-###                         type="integer",
-###                         required=False,
-###                         default=5,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="max_results",
-###                         constraints=ParamConstraint(minimum=1, maximum=50),
-###                     ),
-###                     AgentParam(
-###                         name="api_base",
-###                         title="OSTI API base",
-###                         description="Base URL for OSTI API.",
-###                         type="string",
-###                         required=False,
-###                         default="https://www.osti.gov/api/v1/records",
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="api_base",
-###                     ),
-###                 ]
-###                 + _common_llm_params()
-###                 + _runner_params(),
-###             tags=["search", "papers"],
-###         ),
-###         build_adapter=_baseagent_adapter_builder(
-###             "ursa.agents.acquisition_agents.OSTIAgent"
-###         ),
-###         build_inputs=lambda p: p["prompt"],
-###     )
-### )
-###
-### register(
-###     AgentEntry(
-###         spec=AgentSpec(
-###             agent_id="rag_agent",
-###             display_name="RAG Agent",
-###             description="Retrieval-Augmented Generation over ingested documents stored in a per-workspace vectorstore.",
-###             capabilities=AgentCapabilities(
-###                 supports_streaming=False,
-###                 supports_cancellation=False,
-###                 produces_artifacts=True,
-###             ),
-###             parameters=
-###                 [
-###                     _prompt_param(title="Question"),
-###                     AgentParam(
-###                         name="return_k",
-###                         title="Top-K",
-###                         description="How many chunks to retrieve.",
-###                         type="integer",
-###                         required=False,
-###                         default=10,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="return_k",
-###                         constraints=ParamConstraint(minimum=1, maximum=100),
-###                     ),
-###                     AgentParam(
-###                         name="chunk_size",
-###                         title="Chunk size",
-###                         description="Text chunk size for splitting.",
-###                         type="integer",
-###                         required=False,
-###                         default=1000,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="chunk_size",
-###                         constraints=ParamConstraint(minimum=100, maximum=5000),
-###                     ),
-###                     AgentParam(
-###                         name="chunk_overlap",
-###                         title="Chunk overlap",
-###                         description="Overlap between chunks.",
-###                         type="integer",
-###                         required=False,
-###                         default=200,
-###                         advanced=True,
-###                         source=ParamSource.agent_init,
-###                         target="chunk_overlap",
-###                         constraints=ParamConstraint(minimum=0, maximum=1000),
-###                     ),
-###                 ]
-###                 + _common_llm_params()
-###                 + _runner_params(),
-###             tags=["rag"],
-###         ),
-###         build_adapter=_baseagent_adapter_builder("ursa.agents.rag_agent.RAGAgent"),
-###         build_inputs=lambda p: p["prompt"],
-###     )
-### )
+register(
+    AgentEntry(
+        spec=AgentSpec(
+            agent_id="hypothesize-plan-execute",
+            display_name="Hypothesize -> Plan -> Execute",
+            description="Uses one persistent building a hypothesis space and then doing planning/execution with native planner and executor subgraphs. Best for longer, complex tasks. Web/arXiv/OSTI tools are opt-in via --use-web or agent_init.use_web=true.",
+            capabilities=AgentCapabilities(
+                supports_streaming=False,
+                supports_cancellation=False,
+                produces_artifacts=True,
+            ),
+            parameters=[
+                _prompt_param(title="Task"),
+                # Planner and executor settings belong to the same agent runtime.
+                AgentParam(
+                    name="max_reflection_steps",
+                    title="Max reflection steps",
+                    description="Number of reflection passes for the planner.",
+                    type="integer",
+                    required=False,
+                    default=1,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="max_reflection_steps",
+                    constraints=ParamConstraint(minimum=0, maximum=10),
+                ),
+                AgentParam(
+                    name="tokens_before_summarize",
+                    title="Tokens before summarize",
+                    description="Conversation token budget before context is summarized (executor).",
+                    type="integer",
+                    required=False,
+                    default=50000,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="tokens_before_summarize",
+                    constraints=ParamConstraint(minimum=1000),
+                ),
+                AgentParam(
+                    name="messages_to_keep",
+                    title="Messages to keep",
+                    description="How many recent messages to keep verbatim when summarizing (executor).",
+                    type="integer",
+                    required=False,
+                    default=20,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="messages_to_keep",
+                    constraints=ParamConstraint(minimum=0, maximum=200),
+                ),
+                AgentParam(
+                    name="safe_codes",
+                    title="Safe code types",
+                    description="Code languages that can be executed by the shell tool (executor).",
+                    type="array",
+                    required=False,
+                    default=["python", "julia"],
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="safe_codes",
+                ),
+                AgentParam(
+                    name="log_state",
+                    title="Log state",
+                    description="Emit extra internal state logs to stdout (executor).",
+                    type="boolean",
+                    required=False,
+                    default=False,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="log_state",
+                ),
+            ]
+            + _common_llm_params()
+            + _runner_params(),
+            tags=["workflow", "planning", "tools"],
+        ),
+        build_adapter=_think_plan_execute_workflow_builder(),
+        build_inputs=lambda p: p["prompt"],
+    )
+)
 
 register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="deep_review_agent",
-            display_name="Deep Review Agent",
+            display_name="Propose -> Critique -> Adversarial Review",
             description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via use_web.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -699,7 +527,7 @@ register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="hypothesizer_agent",
-            display_name="Hypothesizer Agent",
+            display_name="Hypothesize",
             description="Maintains a persistent hypothesis space in an experience artifact for reuse by other agents.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
@@ -718,92 +546,3 @@ register(
     )
 )
 
-
-# -----------------------------
-# Demo agents (internal / hidden by default)
-# -----------------------------
-
-# These are used for smoke-testing and troubleshooting the dashboard itself.
-# They are *not* listed in the UI unless URSA_DASHBOARD_INCLUDE_DEMO_AGENTS=1.
-
-
-def _demo_adapter_builder(class_path: str):
-    def build_adapter(_llm: Any, agent_init: dict[str, Any]) -> AgentAdapter:
-        cls = _lazy_class(class_path)
-
-        def agent_factory(workspace_dir: Path, _inputs: Any):
-            return cls(workspace=str(workspace_dir), **agent_init)
-
-        return DirectInvokeAdapter(agent_factory)
-
-    return build_adapter
-
-
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="demo_quick",
-            display_name="Demo: Quick",
-            description="Writes a couple of small artifacts and exits. Does not require any LLM credentials.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=True,
-            ),
-            parameters=[_prompt_param()] + _runner_params(),
-            tags=["demo"],
-        ),
-        build_adapter=_demo_adapter_builder(
-            "ursa_dashboard.demo_agents.DemoQuickAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
-
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="demo_slow",
-            display_name="Demo: Slow (cancel/stream)",
-            description="Prints progress and updates an artifact over time. Useful to demo streaming logs and cancellation.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=True,
-                produces_artifacts=True,
-            ),
-            parameters=[
-                _prompt_param(),
-                AgentParam(
-                    name="steps",
-                    title="Steps",
-                    description="How many progress steps to run.",
-                    type="integer",
-                    required=False,
-                    default=60,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="steps",
-                    constraints=ParamConstraint(minimum=1, maximum=600),
-                ),
-                AgentParam(
-                    name="sleep_s",
-                    title="Sleep per step (seconds)",
-                    description="Delay per step.",
-                    type="number",
-                    required=False,
-                    default=0.25,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="sleep_s",
-                    constraints=ParamConstraint(minimum=0.0, maximum=10.0),
-                ),
-            ]
-            + _runner_params(),
-            tags=["demo"],
-        ),
-        build_adapter=_demo_adapter_builder(
-            "ursa_dashboard.demo_agents.DemoSlowAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
