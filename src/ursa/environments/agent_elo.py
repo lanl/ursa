@@ -11,7 +11,6 @@ import random
 from datetime import datetime, timedelta, timezone
 
 from langchain.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 
 from ursa.security import group_agents_dir
 
@@ -26,6 +25,7 @@ from .config import (
     load_elo_config,
 )
 
+from .agent_elo_judge import AgentEloJudge
 
 @dataclass
 class EloPlayer:
@@ -112,17 +112,6 @@ class AgentEloEnvironment(BaseEnvironment):
 
     Parent and child subsequently evolve independently.
     """
-
-    JUDGE_OUTPUT_INSTRUCTIONS = (
-        "\n\n"
-        "After evaluating the candidates, you must return exactly one JSON "
-        "object with this schema:\n"
-        "{\n"
-        '  "winner": "A" | "B" | "DRAW",\n'
-        '  "reasoning": "brief explanation"\n'
-        "}\n"
-        "Do not include markdown fences or any text outside the JSON object."
-    )
 
     def __init__(
         self,
@@ -294,10 +283,16 @@ class AgentEloEnvironment(BaseEnvironment):
             self.config.judge_prompt
             or default_judge_prompt
         )
-
+        
         self.judge_prompt = (
             judge_instructions
-            + self.JUDGE_OUTPUT_INSTRUCTIONS
+        )
+        
+        self.judge = AgentEloJudge(
+            llm=self.llm,
+            workspace=self.workspace,
+            group=self.group,
+            judge_prompt=self.judge_prompt,
         )
 
     # ------------------------------------------------------------------
@@ -504,6 +499,21 @@ class AgentEloEnvironment(BaseEnvironment):
     # ------------------------------------------------------------------
     # For lightweight environment level persistence
     # ------------------------------------------------------------------
+
+    def _member_config(
+        self,
+        name: str,
+    ) -> EnvironmentMemberConfig:
+        """Return the active config for one Elo member."""
+    
+        for member in self.member_configs:
+            if member.name == name:
+                return member
+    
+        raise KeyError(
+            f"Unknown Elo member: {name}"
+        )
+    
 
     @staticmethod
     def _member_config_to_mapping(
@@ -1194,6 +1204,29 @@ class AgentEloEnvironment(BaseEnvironment):
             f"Scientific task:\n{task}"
         )
 
+    def _format_member_result(
+        self,
+        member_name: str,
+        result: Any,
+    ) -> str:
+        """Return the member agent's canonical user-facing result."""
+    
+        member = self.members[member_name]
+    
+        formatter = getattr(
+            member,
+            "format_result",
+            None,
+        )
+    
+        if callable(formatter):
+            formatted = formatter(result)
+    
+            if formatted is not None:
+                return str(formatted)
+    
+        return result_to_text(result)
+    
     async def _run_member(
         self,
         member: EnvironmentMemberConfig,
@@ -1251,7 +1284,10 @@ class AgentEloEnvironment(BaseEnvironment):
             return MemberRunResult(
                 name=member.name,
                 status="completed",
-                output=result_to_text(result),
+                output=self._format_member_result(
+                    member.name,
+                    result,
+                ),
                 deadline=deadline_text,
             )
     
@@ -1378,66 +1414,38 @@ class AgentEloEnvironment(BaseEnvironment):
         player_b: str,
         output_b: str,
     ) -> MatchResult:
-        response = await self.llm.ainvoke(
-            self._judge_messages(
-                task,
-                player_a,
-                output_a,
-                player_b,
-                output_b,
-            )
+        config_a = self._member_config(
+            player_a
         )
-
-        text = result_to_text(
-            response
+    
+        config_b = self._member_config(
+            player_b
         )
-
-        try:
-            judgment = json.loads(
-                text
-            )
-
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "Elo judge returned invalid JSON:\n"
-                f"{text}"
-            ) from exc
-
-        winner = str(
-            judgment.get(
-                "winner",
-                "",
-            )
-        ).strip().upper()
-
-        reasoning = str(
-            judgment.get(
-                "reasoning",
-                "",
-            )
-        ).strip()
-
-        if winner == "A":
+    
+        decision = await self.judge.judge_match(
+            task=task,
+            player_a=player_a,
+            agent_type_a=config_a.agent,
+            output_a=output_a,
+            player_b=player_b,
+            agent_type_b=config_b.agent,
+            output_b=output_b,
+        )
+    
+        if decision.winner == "A":
             score_a = 1.0
-
-        elif winner == "B":
+    
+        elif decision.winner == "B":
             score_a = 0.0
-
-        elif winner == "DRAW":
-            score_a = 0.5
-
+    
         else:
-            raise ValueError(
-                "Elo judge must return winner as "
-                "'A', 'B', or 'DRAW'. "
-                f"Received: {winner!r}"
-            )
-
+            score_a = 0.5
+    
         return MatchResult(
             player_a=player_a,
             player_b=player_b,
             score_a=score_a,
-            reasoning=reasoning,
+            reasoning=decision.reasoning,
         )
 
     # ------------------------------------------------------------------
