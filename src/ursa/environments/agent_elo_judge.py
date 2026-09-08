@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from langchain.chat_models import BaseChatModel
+from langchain_core.messages import (
+    HumanMessage,
+)
 
 from ursa.agents.chat_agent import ChatAgent
 
@@ -17,6 +20,7 @@ class JudgeDecision:
 
     winner: str
     reasoning: str
+    method: str = "chat_agent"
 
 
 class AgentEloJudge:
@@ -133,15 +137,8 @@ class AgentEloJudge:
         agent_type_b: str,
         output_b: str,
     ) -> JudgeDecision:
-        """Judge one match using a fresh ChatAgent."""
-
-        judge = ChatAgent(
-            llm=self.llm,
-            workspace=self.workspace,
-            group=self.group,
-            use_web=False,
-        )
-
+        """Judge one match with fault-tolerant fallback."""
+    
         prompt = self._judge_prompt(
             task=task,
             player_a=player_a,
@@ -151,29 +148,125 @@ class AgentEloJudge:
             agent_type_b=agent_type_b,
             output_b=output_b,
         )
-
+    
+        judge = ChatAgent(
+            llm=self.llm,
+            workspace=self.workspace,
+            group=self.group,
+            use_web=False,
+        )
+    
         try:
-            result = await judge.ainvoke(prompt)
-
-            formatter = getattr(
-                judge,
-                "format_result",
-                None,
-            )
-
-            if callable(formatter):
-                text = str(formatter(result))
-            else:
-                text = result_to_text(result)
-
-            return self._parse_decision(text)
-
+            try:
+                result = await judge.ainvoke(
+                    prompt
+                )
+    
+                formatter = getattr(
+                    judge,
+                    "format_result",
+                    None,
+                )
+    
+                if callable(formatter):
+                    text = str(
+                        formatter(result)
+                    )
+                else:
+                    text = result_to_text(
+                        result
+                    )
+    
+                decision = (
+                    self._parse_decision(
+                        text
+                    )
+                )
+    
+                return JudgeDecision(
+                    winner=decision.winner,
+                    reasoning=(
+                        decision.reasoning
+                    ),
+                    method="chat_agent",
+                )
+    
+            except Exception as agent_exc:
+                try:
+                    fallback = (
+                        await self._judge_with_llm(
+                            prompt
+                        )
+                    )
+    
+                    return JudgeDecision(
+                        winner=(
+                            fallback.winner
+                        ),
+                        reasoning=(
+                            "Agentic judge failed "
+                            f"({type(agent_exc).__name__}: "
+                            f"{agent_exc}). "
+                            "Decision obtained from "
+                            "raw-LLM fallback. "
+                            f"{fallback.reasoning}"
+                        ),
+                        method="llm_fallback",
+                    )
+    
+                except Exception as fallback_exc:
+                    return JudgeDecision(
+                        winner="DRAW",
+                        reasoning=(
+                            "Judging failed in both "
+                            "the ChatAgent judge and "
+                            "raw-LLM fallback. "
+                            "Match recorded as a draw. "
+                            "ChatAgent error: "
+                            f"{type(agent_exc).__name__}: "
+                            f"{agent_exc}. "
+                            "Fallback error: "
+                            f"{type(fallback_exc).__name__}: "
+                            f"{fallback_exc}."
+                        ),
+                        method="failed_draw",
+                    )
+    
         finally:
             close = getattr(
                 judge,
                 "close",
                 None,
             )
-
+    
             if callable(close):
                 close()
+
+    
+    async def _judge_with_llm(
+        self,
+        prompt: str,
+    ) -> JudgeDecision:
+        """Fallback to a single raw LLM judgment."""
+    
+        response = await self.llm.ainvoke(
+            [
+                HumanMessage(
+                    content=prompt
+                )
+            ]
+        )
+    
+        text = result_to_text(
+            response
+        )
+    
+        decision = self._parse_decision(
+            text
+        )
+    
+        return JudgeDecision(
+            winner=decision.winner,
+            reasoning=decision.reasoning,
+            method="llm_fallback",
+        )

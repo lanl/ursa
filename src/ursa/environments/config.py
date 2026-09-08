@@ -145,11 +145,21 @@ class AgentSymposiumConfig:
 @dataclass(frozen=True)
 class AgentEloConfig:
     """YAML-loadable configuration for an Agent Elo environment."""
-
     name: str
     group: str = "default"
     description: str | None = None
-    members: list[EnvironmentMemberConfig] = field(default_factory=list)
+    inference_providers: dict[
+        str,
+        InferenceProviderConfig,
+    ] = field(
+        default_factory=dict
+    )
+    members: list[
+        EnvironmentMemberConfig
+    ] = field(
+        default_factory=list
+    )
+    
     workspace: str | None = None
     defaults: dict[str, Any] = field(default_factory=dict)
 
@@ -168,13 +178,35 @@ class AgentEloConfig:
         data: Mapping[str, Any],
     ) -> "AgentEloConfig":
         raw = dict(data)
-
+    
+        providers = _inference_providers(
+            raw.get(
+                "inference_providers"
+            )
+            or {}
+        )
+    
+        raw[
+            "inference_providers"
+        ] = providers
+    
+        group = str(
+            raw.get("group")
+            or "default"
+        )
+    
         if "members" in raw:
             raw["members"] = [
-                EnvironmentMemberConfig.from_mapping(member)
-                for member in raw["members"]
+                EnvironmentMemberConfig.from_mapping(
+                    member,
+                    providers,
+                    group,
+                )
+                for member in raw[
+                    "members"
+                ]
             ]
-
+    
         return cls(**raw)
 
 

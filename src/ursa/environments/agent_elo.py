@@ -368,6 +368,9 @@ class AgentEloEnvironment(BaseEnvironment):
             judge_prompt=(
                 judge_prompt if judge_prompt is not None else base.judge_prompt
             ),
+            inference_providers=(
+                base.inference_providers
+            ),
         )
 
     @classmethod
@@ -672,11 +675,25 @@ class AgentEloEnvironment(BaseEnvironment):
                 0,
             )
         )
-
+        
+        # The restart snapshot is authoritative for the
+        # evolutionary RNG metadata.
+        self.seed = state.get("seed")
+        
         rng_state = state.get("rng_state")
-
+        
         if rng_state is not None:
-            self._rng.setstate(self._rng_state_from_json(rng_state))
+            self._rng.setstate(
+                self._rng_state_from_json(
+                    rng_state
+                )
+            )
+        else:
+            # Defensive support for snapshots that contain a seed
+            # but no serialized RNG state.
+            self._rng = random.Random(
+                self.seed
+            )
 
     # ------------------------------------------------------------------
     # Persistent URSA state
