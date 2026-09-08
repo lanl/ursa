@@ -37,6 +37,7 @@ from typing import (
     TypeVar,
     final,
 )
+from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
@@ -313,7 +314,14 @@ class BaseAgent(Generic[TState], ABC):
         else:
             # Keep current behavior if the user is not persisting.
             self.den = self.workspace
-        self.thread_id = thread_id or "ursa"
+        # A generated default, as the docstring above promises. A constant here
+        # means two agents that share a checkpoint store share one thread, so
+        # the second one's model request carries the first one's messages.
+        # langgraph would otherwise refuse to run a checkpointed graph with no
+        # thread selector at all; a constant turns that error into a silent
+        # merge. The CLI and the dashboard pin "ursa" themselves, so only
+        # library callers reach this. See issue #332.
+        self.thread_id = thread_id or uuid4().hex
         self.telemetry = Telemetry(
             enable=enable_metrics,
             output_dir=self.den.joinpath(metrics_dir),
