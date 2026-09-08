@@ -89,14 +89,13 @@ Launch the dashboard with external search tools enabled:
 === "macOS/Linux"
 
     ```bash
-    URSA_DASHBOARD_USE_WEB=1 uv run ursa-dashboard
+    uv run ursa-dashboard --use-web
     ```
 
 === "Windows PowerShell"
 
     ```powershell
-    $env:URSA_DASHBOARD_USE_WEB = "1"
-    uv run ursa-dashboard
+    uv run ursa-dashboard --use-web
     ```
 
 Open `http://127.0.0.1:8080`, then:
@@ -113,9 +112,10 @@ possible applications to shock hydrodynamics, distinguish claims by source
 collection, and include source links.
 ```
 
-Setting `URSA_DASHBOARD_USE_WEB=1` is required: it opts supported dashboard
-agents into the arXiv, OSTI, and web-search tools. Follow the activity timeline
-to see which tool supplied each part of the answer.
+Starting the dashboard with `--use-web` is required: it opts supported dashboard
+agents into the arXiv, OSTI, and web-search tools. (`URSA_DASHBOARD_USE_WEB=1`
+does the same thing.) Follow the activity timeline to see which tool supplied
+each part of the answer.
 
 See the [dashboard guide](../../../docs/getting-started/dashboard.md) for
 credential storage, workspace selection, and remote-access safety.
@@ -158,8 +158,8 @@ agent's parameters and outputs.
 
 - If `uv run ursa` cannot find a key, run `uv run ursa --print-config` and
   review the [configuration guide](../../../docs/configuration/index.md).
-- If the dashboard does not expose search activity, stop it, set
-  `URSA_DASHBOARD_USE_WEB=1`, and restart it as shown above.
+- If the dashboard does not expose search activity, stop it and restart it with
+  `--use-web` as shown above.
 - If a source returns no items, try a shorter query or rerun later; arXiv, OSTI,
   and DDGS are independent upstream services.
 - If an earlier run affects the comparison, move or remove that source's cache
