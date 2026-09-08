@@ -8,17 +8,20 @@ import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Mapping
 
 from langchain.chat_models import BaseChatModel
 
 from ursa.security import group_agents_dir
+from ursa.util.events import EnvironmentEvents
 
 from .agent_elo_judge import AgentEloJudge
 from .base import (
     BaseEnvironment,
     invocation_kwargs,
     result_to_text,
+    runnable_config_from_kwargs,
 )
 from .config import (
     AgentEloConfig,
@@ -368,9 +371,7 @@ class AgentEloEnvironment(BaseEnvironment):
             judge_prompt=(
                 judge_prompt if judge_prompt is not None else base.judge_prompt
             ),
-            inference_providers=(
-                base.inference_providers
-            ),
+            inference_providers=(base.inference_providers),
         )
 
     @classmethod
@@ -399,6 +400,166 @@ class AgentEloEnvironment(BaseEnvironment):
     # ------------------------------------------------------------------
     # For lightweight environment level persistence
     # ------------------------------------------------------------------
+
+    def _events(
+        self,
+        config: Mapping[str, Any] | None,
+    ) -> EnvironmentEvents:
+        return EnvironmentEvents(
+            environment=self.name,
+            config=config,
+            environment_type="agent_elo",
+            environment_id=self.name,
+            path=[self.name],
+        )
+
+    def _source(
+        self,
+        name: str,
+        *,
+        kind: str = "agent",
+    ) -> dict[str, Any]:
+        return {
+            "id": f"{self.name}.{name}",
+            "name": name,
+            "kind": kind,
+            "path": [
+                self.name,
+                name,
+            ],
+        }
+
+    def _member_runtime_config(
+        self,
+        base_config: Mapping[str, Any] | None,
+        member: EnvironmentMemberConfig,
+    ) -> dict[str, Any] | None:
+        """Attach stable Elo-member identity to nested agent/tool events."""
+
+        if base_config is None:
+            return None
+
+        member_id = f"{self.name}.{member.name}"
+
+        merged = dict(base_config)
+
+        base_metadata = merged.get("metadata")
+
+        metadata = (
+            dict(base_metadata)
+            if isinstance(
+                base_metadata,
+                Mapping,
+            )
+            else {}
+        )
+
+        metadata.update({
+            "environment_id": self.name,
+            "environment_member": (member.name),
+            "environment_member_id": (member_id),
+            "environment_member_role": (member.role),
+            "environment_member_path": [
+                self.name,
+                member.name,
+            ],
+            "agent": member.name,
+            "agent_id": member_id,
+        })
+
+        merged["metadata"] = metadata
+
+        base_tags = merged.get("tags")
+
+        if isinstance(base_tags, str):
+            tags = [base_tags]
+        else:
+            tags = list(base_tags) if base_tags else []
+
+        for tag in (
+            member.name,
+            member_id,
+            "environment_member",
+            "elo_member",
+        ):
+            if tag not in tags:
+                tags.append(tag)
+
+        merged["tags"] = tags
+
+        return merged
+
+    def _topology_payload(
+        self,
+        *,
+        generation: int | None = None,
+    ) -> dict[str, Any]:
+        active_names = {member.name for member in self.member_configs}
+
+        nodes: list[dict[str, Any]] = []
+
+        # Active population.
+        for member in self.member_configs:
+            player = self.players[member.name]
+
+            nodes.append({
+                "id": (f"{self.name}.{member.name}"),
+                "name": member.name,
+                "kind": "agent",
+                "role": member.role,
+                "agent_class": (member.agent),
+                "path": [
+                    self.name,
+                    member.name,
+                ],
+                "rating": player.rating,
+                "lineage_generation": (player.generation),
+                "parent": player.parent,
+                "active": True,
+            })
+
+        # A restart can contain a child whose parent is no
+        # longer active. Include a lightweight historical
+        # parent node so its lineage edge still has a source.
+        historical_parents = {
+            player.parent
+            for player in self.players.values()
+            if (player.parent and player.parent not in active_names)
+        }
+
+        for parent in sorted(historical_parents):
+            nodes.append({
+                "id": (f"{self.name}.{parent}"),
+                "name": parent,
+                "kind": "agent",
+                "role": ("Historical Elo parent"),
+                "path": [
+                    self.name,
+                    parent,
+                ],
+                "active": False,
+            })
+
+        edges = []
+
+        for player in self.players.values():
+            if player.parent:
+                edges.append({
+                    "source": (f"{self.name}.{player.parent}"),
+                    "target": (f"{self.name}.{player.name}"),
+                    "kind": "parent_of",
+                })
+
+        return {
+            "kind": "agent_elo",
+            "name": self.name,
+            "description": (self.config.description),
+            "generation": (
+                self.generation_index if generation is None else generation
+            ),
+            "nodes": nodes,
+            "edges": edges,
+        }
 
     def _member_config(
         self,
@@ -675,25 +836,19 @@ class AgentEloEnvironment(BaseEnvironment):
                 0,
             )
         )
-        
+
         # The restart snapshot is authoritative for the
         # evolutionary RNG metadata.
         self.seed = state.get("seed")
-        
+
         rng_state = state.get("rng_state")
-        
+
         if rng_state is not None:
-            self._rng.setstate(
-                self._rng_state_from_json(
-                    rng_state
-                )
-            )
+            self._rng.setstate(self._rng_state_from_json(rng_state))
         else:
             # Defensive support for snapshots that contain a seed
             # but no serialized RNG state.
-            self._rng = random.Random(
-                self.seed
-            )
+            self._rng = random.Random(self.seed)
 
     # ------------------------------------------------------------------
     # Persistent URSA state
@@ -935,7 +1090,7 @@ class AgentEloEnvironment(BaseEnvironment):
                 "Do not merely repeat, rerun, or summarize the inherited work. "
                 "Treat it as a successful starting point.\n\n"
                 "Identify at least one substantive scientific, numerical, or "
-                "methodological limitation in the inherited work."
+                "methodological limitation in the inherited work. "
                 "Choose a modification that addresses it and execute that work."
             )
 
@@ -1486,6 +1641,12 @@ class AgentEloEnvironment(BaseEnvironment):
         self,
         task: str,
         invoke_kwargs: Mapping[str, Any],
+        *,
+        runtime_config: Mapping[
+            str,
+            Any,
+        ]
+        | None = None,
     ) -> dict[str, Any]:
         """Run one complete evolutionary generation."""
 
@@ -1500,6 +1661,10 @@ class AgentEloEnvironment(BaseEnvironment):
                 f"members={len(self.members)}, "
                 f"players={len(self.players)}."
             )
+
+        events = self._events(runtime_config)
+
+        generation_start = perf_counter()
 
         generation_number = self.generation_index + 1
 
@@ -1517,18 +1682,94 @@ class AgentEloEnvironment(BaseEnvironment):
                 seconds=self.member_timeout_seconds
             )
 
+        await events.aemit(
+            (f"Elo generation {generation_number} started"),
+            stage="generation",
+            phase="start",
+            event_type="generation_started",
+            generation=generation_number,
+            population_size=len(self.players),
+            ratings={
+                name: player.rating for name, player in self.players.items()
+            },
+            deadline=(
+                generation_deadline.isoformat()
+                if generation_deadline is not None
+                else None
+            ),
+        )
+
+        async def run_member(
+            member: EnvironmentMemberConfig,
+        ) -> MemberRunResult:
+            source = self._source(member.name)
+
+            start = perf_counter()
+
+            await events.aemit(
+                (f"Elo member {member.name} started"),
+                stage="member",
+                phase="start",
+                event_type="member_started",
+                generation=generation_number,
+                source=source,
+            )
+
+            member_kwargs = dict(invoke_kwargs)
+
+            member_runtime_config = self._member_runtime_config(
+                runtime_config,
+                member,
+            )
+
+            if member_runtime_config is not None:
+                member_kwargs["config"] = member_runtime_config
+
+            result = await self._run_member(
+                member,
+                task,
+                member_kwargs,
+                deadline=generation_deadline,
+            )
+
+            if result.completed:
+                event_type = "member_completed"
+                phase = "end"
+                level = "info"
+
+            elif result.timed_out:
+                event_type = "member_timed_out"
+                phase = "error"
+                level = "warning"
+
+            else:
+                event_type = "member_failed"
+                phase = "error"
+                level = "error"
+
+            await events.aemit(
+                (f"Elo member {member.name} {result.status}"),
+                stage="member",
+                phase=phase,
+                event_type=event_type,
+                level=level,
+                generation=generation_number,
+                source=source,
+                status=result.status,
+                result=result.output,
+                error=result.error,
+                deadline=result.deadline,
+                elapsed_seconds=(perf_counter() - start),
+            )
+
+            return result
+
         # ----------------------------------------------------------
         # Phase 1: independent research
         # ----------------------------------------------------------
 
         member_results = await asyncio.gather(*[
-            self._run_member(
-                member,
-                task,
-                invoke_kwargs,
-                deadline=generation_deadline,
-            )
-            for member in self.member_configs
+            run_member(member) for member in self.member_configs
         ])
 
         runs = {result.name: result for result in member_results}
@@ -1550,9 +1791,32 @@ class AgentEloEnvironment(BaseEnvironment):
             member.name for member in self.member_configs
         ])
 
+        await events.aemit(
+            (f"Elo generation {generation_number} pairings created"),
+            stage="pairing",
+            phase="declared",
+            event_type="pairings_declared",
+            generation=generation_number,
+            pairs=[list(pair) for pair in pairs],
+        )
+
         match_results: list[MatchResult] = []
 
         for player_a, player_b in pairs:
+            rating_a_before = self.players[player_a].rating
+
+            rating_b_before = self.players[player_b].rating
+
+            await events.aemit(
+                (f"Elo match {player_a} vs {player_b} started"),
+                stage="match",
+                phase="start",
+                event_type="match_started",
+                generation=generation_number,
+                source=self._source(player_a),
+                target=self._source(player_b),
+            )
+
             result = await self._resolve_match(
                 task=task,
                 player_a=player_a,
@@ -1563,6 +1827,24 @@ class AgentEloEnvironment(BaseEnvironment):
 
             self._apply_match_result(result)
 
+            await events.aemit(
+                (f"Elo match {player_a} vs {player_b} completed"),
+                stage="match",
+                phase="end",
+                event_type="match_completed",
+                generation=generation_number,
+                source=self._source(player_a),
+                target=self._source(player_b),
+                winner=result.winner,
+                loser=result.loser,
+                score_a=result.score_a,
+                reasoning=result.reasoning,
+                rating_a_before=(rating_a_before),
+                rating_a_after=(self.players[player_a].rating),
+                rating_b_before=(rating_b_before),
+                rating_b_after=(self.players[player_b].rating),
+            )
+
             match_results.append(result)
 
         standings_after_matches = self.standings()
@@ -1572,6 +1854,17 @@ class AgentEloEnvironment(BaseEnvironment):
         # ----------------------------------------------------------
 
         eliminated = self._select_losers(match_results)
+
+        for name in eliminated:
+            await events.aemit(
+                (f"Elo member {name} eliminated"),
+                stage="selection",
+                phase="end",
+                event_type="member_eliminated",
+                generation=generation_number,
+                source=self._source(name),
+                rating=(self.players[name].rating),
+            )
 
         self._eliminate(eliminated)
 
@@ -1584,6 +1877,34 @@ class AgentEloEnvironment(BaseEnvironment):
         parent_names = [parent.name for parent in parents]
 
         children = self._reproduce(parents)
+
+        for child_name in children:
+            child = self.players[child_name]
+
+            await events.aemit(
+                (f"Elo child {child_name} created"),
+                stage="reproduction",
+                phase="end",
+                event_type="child_created",
+                generation=generation_number,
+                source=(self._source(child.parent) if child.parent else None),
+                target=self._source(child_name),
+                child=child_name,
+                parent=child.parent,
+                rating=child.rating,
+                lineage_generation=(child.generation),
+            )
+
+        await events.aemit(
+            (f"Elo generation {generation_number} topology updated"),
+            stage="elo",
+            phase="topology",
+            event_type="topology_declared",
+            generation=generation_number,
+            topology=self._topology_payload(
+                generation=generation_number,
+            ),
+        )
 
         final_population_size = len(self.players)
 
@@ -1604,6 +1925,18 @@ class AgentEloEnvironment(BaseEnvironment):
         self.generation_index += 1
 
         state_path = self._save_environment_state()
+
+        await events.aemit(
+            (f"Elo generation {generation_number} completed"),
+            stage="generation",
+            phase="end",
+            event_type="generation_completed",
+            generation=generation_number,
+            eliminated=eliminated,
+            children=children,
+            standings=self.standings(),
+            elapsed_seconds=(perf_counter() - generation_start),
+        )
 
         return {
             "generation": generation_number,
@@ -1653,21 +1986,62 @@ class AgentEloEnvironment(BaseEnvironment):
     ) -> dict[str, Any]:
         task = str(inputs.get("task") or inputs.get("prompt") or inputs)
 
+        runtime_config = runnable_config_from_kwargs(config)
+
+        events = self._events(runtime_config)
+
+        run_start = perf_counter()
+
         invoke_kwargs = invocation_kwargs(config)
 
         generation_results = []
 
         starting_generation = self.generation_index
 
-        for _ in range(self.generations):
-            result = await self._run_generation(
-                task,
-                invoke_kwargs,
+        await events.aemit(
+            f"Agent Elo {self.name} started",
+            stage="elo",
+            phase="start",
+            event_type="elo_started",
+            task=task,
+            starting_generation=(self.generation_index),
+            requested_generations=(self.generations),
+            topology=(self._topology_payload()),
+        )
+
+        await events.aemit(
+            (f"Agent Elo {self.name} topology declared"),
+            stage="elo",
+            phase="topology",
+            event_type="topology_declared",
+            topology=(self._topology_payload()),
+        )
+
+        try:
+            for _ in range(self.generations):
+                result = await self._run_generation(
+                    task,
+                    invoke_kwargs,
+                    runtime_config=(runtime_config),
+                )
+
+                generation_results.append(result)
+
+        except BaseException as exc:
+            await events.aemit(
+                f"Agent Elo {self.name} failed",
+                stage="elo",
+                phase="error",
+                event_type="elo_failed",
+                level="error",
+                task=task,
+                error=str(exc),
+                elapsed_seconds=(perf_counter() - run_start),
             )
 
-            generation_results.append(result)
+            raise
 
-        return {
+        final_result = {
             "task": task,
             "starting_generation": (starting_generation),
             "completed_generations": (len(generation_results)),
@@ -1677,3 +2051,21 @@ class AgentEloEnvironment(BaseEnvironment):
             "population_size": len(self.players),
             "environment_state": str(self._environment_state_path()),
         }
+
+        await events.aemit(
+            f"Agent Elo {self.name} completed",
+            stage="elo",
+            phase="end",
+            event_type="elo_completed",
+            task=task,
+            completed_generations=(len(generation_results)),
+            ending_generation=(self.generation_index),
+            standings=self.standings(),
+            result={
+                "ending_generation": (self.generation_index),
+                "standings": (self.standings()),
+            },
+            elapsed_seconds=(perf_counter() - run_start),
+        )
+
+        return final_result
