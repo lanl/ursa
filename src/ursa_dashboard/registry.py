@@ -120,7 +120,7 @@ def _think_plan_execute_workflow_builder() -> Callable[
     """Build the one-runtime planning/execution BaseAgent adapter."""
 
     return _baseagent_adapter_builder(
-        "ursa.workflows.think_plan_execute_workflow.ThinkPlanningExecutionAgent"
+        "ursa.workflows.think_plan_execute.ThinkPlanningExecutionAgent"
     )
 
 def _planning_executor_workflow_builder() -> Callable[
