@@ -142,7 +142,6 @@ class AgentSymposiumConfig:
         return cls(**raw)
 
 
-
 @dataclass(frozen=True)
 class AgentEloConfig:
     """YAML-loadable configuration for an Agent Elo environment."""
@@ -295,9 +294,7 @@ def make_llm(
 def load_elo_config(
     path: str | Path,
 ) -> AgentEloConfig:
-    return AgentEloConfig.from_mapping(
-        load_yaml_mapping(path)
-    )
+    return AgentEloConfig.from_mapping(load_yaml_mapping(path))
 
 
 def elo_cache_dir(
@@ -305,11 +302,7 @@ def elo_cache_dir(
     name: str,
 ) -> Path:
     """Return the persistent configuration directory for a named Elo environment."""
-    return (
-        group_environments_dir(group)
-        / "agent_elo"
-        / name
-    )
+    return group_environments_dir(group) / "agent_elo" / name
 
 
 def save_elo_config(

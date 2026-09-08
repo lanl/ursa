@@ -4,7 +4,6 @@ from langchain_openai import ChatOpenAI
 
 from ursa.environments import AgentEloEnvironment
 
-
 TASK = """
 Numerically evaluate
 
@@ -81,10 +80,7 @@ def main():
         print("-" * 50)
 
         for row in result["standings"]:
-            print(
-                f"{row['rank']}. {row['name']} "
-                f"Elo={row['rating']:.2f}"
-            )
+            print(f"{row['rank']}. {row['name']} Elo={row['rating']:.2f}")
 
         print(
             "\nRestart state:",

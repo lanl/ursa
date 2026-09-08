@@ -99,17 +99,12 @@ class AgentEloJudge:
 
         except json.JSONDecodeError as exc:
             raise ValueError(
-                "Elo ChatAgent judge returned invalid JSON:\n"
-                f"{text}"
+                f"Elo ChatAgent judge returned invalid JSON:\n{text}"
             ) from exc
 
-        winner = str(
-            judgment.get("winner", "")
-        ).strip().upper()
+        winner = str(judgment.get("winner", "")).strip().upper()
 
-        reasoning = str(
-            judgment.get("reasoning", "")
-        ).strip()
+        reasoning = str(judgment.get("reasoning", "")).strip()
 
         if winner not in {
             "A",
@@ -158,9 +153,7 @@ class AgentEloJudge:
         )
 
         try:
-            result = await judge.ainvoke(
-                prompt
-            )
+            result = await judge.ainvoke(prompt)
 
             formatter = getattr(
                 judge,
@@ -169,17 +162,11 @@ class AgentEloJudge:
             )
 
             if callable(formatter):
-                text = str(
-                    formatter(result)
-                )
+                text = str(formatter(result))
             else:
-                text = result_to_text(
-                    result
-                )
+                text = result_to_text(result)
 
-            return self._parse_decision(
-                text
-            )
+            return self._parse_decision(text)
 
         finally:
             close = getattr(

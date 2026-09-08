@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from .agent_elo import AgentEloEnvironment
 from .agent_symposium import AgentSymposiumEnvironment
 from .agent_team import AgentTeamEnvironment
-from .agent_elo import AgentEloEnvironment
 from .base import BaseEnvironment
 from .config import (
     AgentEloConfig,
