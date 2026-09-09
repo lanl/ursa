@@ -144,12 +144,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
             provider, separator, model = self.model_name.partition("/")
             if not separator or not provider or not model:
                 raise ValueError(
-                    "Harbor model must use inference_provider/model_name syntax"
+                    "Harbor model must use inference_provider/model syntax"
                 )
-            layer["llm_model"] = {
-                "model": model,
-                "inference_provider": provider,
-            }
             connection = self.model_connection
             provider_config: dict[str, Any] = {}
             configured_provider = config.inference_providers.get(provider)
@@ -158,13 +154,23 @@ class UrsaHarborAgent(BaseInstalledAgent):
                     f"Harbor inference provider '{provider}' must be "
                     "defined in the merged URSA config"
                 )
-            if provider != "openai" and not (
-                configured_provider.model_extra or {}
-            ).get("model_provider"):
+            model_provider = (configured_provider.model_extra or {}).get(
+                "model_provider"
+            )
+            if model_provider:
+                prefix = f"{model_provider}:"
+                if not model.startswith(prefix):
+                    model = f"{prefix}{model}"
+            elif provider != "openai" and ":" not in model:
                 raise ValueError(
-                    f"URSA inference provider '{provider}' must define "
-                    "model_provider for Harbor model selection"
+                    f"Harbor model for inference provider '{provider}' must "
+                    "include model_provider:model or the URSA inference "
+                    "provider must define model_provider"
                 )
+            layer["llm_model"] = {
+                "model": model,
+                "inference_provider": provider,
+            }
             env_authenticated = connection.provider in self.ENV_AUTH_PROVIDERS
             if connection.api_key is not None and not env_authenticated:
                 provider_config["api_key"] = SecretStr(connection.api_key)

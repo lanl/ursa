@@ -16,7 +16,7 @@ uv run harbor run \
   --agent ursa.integrations.harbor:UrsaHarborAgent \
   --agent-kwarg config_file="$PWD/ursa.yaml" \
   --agent-kwarg config_only=true \
-  --model openai/gpt-5.4-nano
+  --model openai/openai:gpt-5.4-nano
 ```
 
 A successful task reports reward `1`. Inspect the result with:
@@ -53,10 +53,11 @@ when the task is ready to share.
 
 ## Configuration
 
-Harbor models use `<inference-provider>/<model-name>`. The provider must exist
-in `ursa.yaml`; non-OpenAI providers must also set `model_provider` to the
-LangChain backend they use. The adapter replaces its configured model with
-`--model`.
+Harbor models use
+`<inference-provider>/<model-provider>:<model-name>`, for example
+`ollama/ollama:gemma4:latest`. The inference provider must exist in
+`ursa.yaml`. If it defines `model_provider`, the model-provider prefix may be
+omitted. The adapter replaces its configured model with `--model`.
 Harbor `[[environment.mcp_servers]]` entries are also attached automatically;
 see the [MCP task tutorial](https://www.harborframework.com/docs/tutorials/mcp-server-task).
 
