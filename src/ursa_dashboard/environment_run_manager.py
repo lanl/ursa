@@ -362,7 +362,7 @@ class EnvironmentRunManager:
             "disabled",
         }:
             raise CredentialConfigurationError(
-                "Agent teams and symposia require an enabled dashboard LLM."
+                "Agent environments require an enabled dashboard LLM."
             )
         main_key = resolve_api_key(
             llm,
