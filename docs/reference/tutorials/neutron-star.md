@@ -48,7 +48,7 @@ executor = ExecutionAgent(llm=model)
 
 # Create a task for the ExecutionAgent
 execution_plan = f"""
-The following is the summaries of research papers on the contraints on neutron
+The following is the summaries of research papers on the constraints on neutron
 star radius: 
 {research_results}
 
