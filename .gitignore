@@ -38,3 +38,6 @@ scratch/
 # Jupyter-generated files
 .ipynb_checkpoints
 Untitled.*
+.chainlit/
+chainlit.md
+.ursa-web/

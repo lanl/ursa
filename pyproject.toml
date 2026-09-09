@@ -50,6 +50,7 @@ dependencies = [
     "justext>=3.0.2",
     "textual[syntax]>=8.2.8,<9.0",
     "keyring>=25.0.0,<26.0.0",
+    "chainlit>=2.12.0,<3.0.0",
 ]
 classifiers = [
     "Operating System :: OS Independent",
@@ -62,6 +63,7 @@ classifiers = [
 [project.scripts]
 ursa = "ursa.cli:main"
 ursa-dashboard = "ursa_dashboard.main:app"
+ursa-web = "ursa_web.main:app"
 
 [project.urls]
 Homepage = "https://github.com/lanl/ursa"
