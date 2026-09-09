@@ -85,13 +85,13 @@ def test_model_config_model_parsing(cls):
     assert cfg.model_provider == "bar"
 
 
-def test_model_tag_is_preserved_with_inference_provider():
+def test_qualified_model_tag_is_parsed_with_inference_provider():
     cfg = config_mod.ChatModelConfig(
-        model="gemma4:latest", inference_provider="ollama"
+        model="ollama:gemma4:latest", inference_provider="ollama"
     )
 
     assert cfg.model == "gemma4:latest"
-    assert cfg.model_provider == "openai"
+    assert cfg.model_provider == "ollama"
 
 
 def test_model_merge_keeps_provider_defaults_resolvable():

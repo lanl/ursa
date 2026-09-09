@@ -469,11 +469,31 @@ def test_harbor_model_switch_drops_old_provider_fields(tmp_path, monkeypatch):
     assert "OLD_AZURE_KEY" not in json.dumps(runtime_config)
     assert "api_key" not in runtime_config["llm_model"]
     assert "azure_deployment" not in runtime_config["llm_model"]
-    assert "model_provider" not in runtime_config["llm_model"]
+    assert runtime_config["llm_model"]["model_provider"] == "ollama"
     assert runtime_config["llm_model"]["max_completion_tokens"] == 456
     monkeypatch.setenv(next(iter(secret_env)), next(iter(secret_env.values())))
     resolved = UrsaConfig.model_validate(runtime_config).resolve()
     assert resolved.llm_model.model_provider == "ollama"
+
+
+def test_harbor_model_accepts_an_explicit_model_provider(tmp_path):
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  ollama:\n"
+        "    base_url: http://localhost:11434\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="ollama/ollama:gemma4:latest",
+        config_file=config_file,
+    )
+
+    runtime_config, _ = agent._runtime_config()
+
+    assert runtime_config["llm_model"]["model"] == "gemma4:latest"
+    assert runtime_config["llm_model"]["model_provider"] == "ollama"
+    assert runtime_config["llm_model"]["inference_provider"] == "ollama"
 
 
 def test_harbor_model_requires_a_configured_inference_provider(tmp_path):
@@ -496,11 +516,13 @@ def test_harbor_model_requires_a_backend_for_non_openai_provider(tmp_path):
     )
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "logs",
-        model_name="ollama/gemma4:latest",
+        model_name="ollama/gemma4",
         config_file=config_file,
     )
 
-    with pytest.raises(ValueError, match="ollama.*model_provider"):
+    with pytest.raises(
+        ValueError, match="model_provider:model.*model_provider"
+    ):
         agent._runtime_config()
 
 
