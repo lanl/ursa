@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import operator
 import os
 import re
@@ -13,6 +14,8 @@ from typing import Annotated, Any, NotRequired, Optional, TypedDict
 from urllib.parse import quote, urlparse
 
 import feedparser
+
+logger = logging.getLogger(__name__)
 
 # PDF & Vision extras (match your existing stack)
 import pymupdf
@@ -585,30 +588,57 @@ class WebSearchAgent(BaseAcquisitionAgent):
     """
     Uses DuckDuckGo Search (ddgs) to find pages, downloads HTML or PDFs,
     extracts text, and then follows the same summarize/RAG path.
+
+    If the ``SERPBASE_API_KEY`` environment variable is set, search results
+    come from the SerpBase Google Search API instead of DuckDuckGo. When the
+    key is unset (or the API call fails), the agent falls back to DDGS, so
+    existing behavior is unchanged.
     """
 
     def __init__(self, *args, user_agent: str = "Mozilla/5.0", **kwargs):
         super().__init__(*args, **kwargs)
         self.user_agent = user_agent
+        self.serpbase_api_key = os.environ.get("SERPBASE_API_KEY", "")
         if DDGS is None:
             raise ImportError(
                 "duckduckgo-search (DDGS) is required for WebSearchAgentGeneric."
             )
 
-    def _id(self, hit_or_item: dict[str, Any]) -> str:
-        url = hit_or_item.get("href") or hit_or_item.get("url") or ""
-        return (
-            _hash(url)
-            if url
-            else hit_or_item.get("id", _hash(json.dumps(hit_or_item)))
-        )
-
-    def _citation(self, item: ItemMetadata) -> str:
-        t = item.get("title", "") or ""
-        u = item.get("url", "") or ""
-        return f"{t} ({u})" if t else (u or item.get("id", "Web result"))
+    def _serpbase_search(self, query: str) -> list[dict[str, Any]]:
+        """Search Google via the SerpBase API. Returns [] on any failure."""
+        try:
+            resp = requests.get(
+                "https://api.serpbase.dev/google/search",
+                params={
+                    "q": query,
+                    "api_key": self.serpbase_api_key,
+                    "num": self.max_results,
+                },
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.warning("SerpBase search failed (%s); falling back to DDGS.", e)
+            return []
+        results: list[dict[str, Any]] = []
+        for r in data.get("organic_results", []):
+            results.append(
+                {
+                    "title": r.get("title", ""),
+                    "href": r.get("link", ""),
+                    "body": r.get("snippet", ""),
+                    "position": r.get("position"),
+                }
+            )
+        return results
 
     def _search(self, query: str) -> list[dict[str, Any]]:
+        if self.serpbase_api_key:
+            results = self._serpbase_search(query)
+            if results:
+                return results
+            logger.info("SerpBase returned no results; falling back to DDGS.")
         results: list[dict[str, Any]] = []
         with DDGS() as ddgs:
             for r in ddgs.text(

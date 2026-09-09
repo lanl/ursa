@@ -6,7 +6,8 @@ acquisition agent for open-web research. It subclasses
 so it uses the same acquire-then-summarize/RAG graph as ArxivAgent and
 OSTIAgent.
 
-`WebSearchAgent` uses DDGS search, retrieves HTML or PDF content from result URLs, extracts readable text, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.
+`WebSearchAgent` uses DDGS search (or the SerpBase Google Search API when
+`SERPBASE_API_KEY` is set), retrieves HTML or PDF content from result URLs, extracts readable text, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.
 
 See also: [Acquisition Agents][acquisition-agents].
 
@@ -42,6 +43,7 @@ print(agent.format_result(state))
 |-----------|------|---------|-------------|
 | `llm` | `BaseChatModel` | required | Language model used for query generation and summarization. |
 | `user_agent` | `str` | `"Mozilla/5.0"` | User-Agent header used when retrieving web pages. |
+| `SERPBASE_API_KEY` | env var | unset | When set, `_search` queries Google via the [SerpBase API](https://serpbase.dev) (`https://api.serpbase.dev/google/search`) instead of DDGS. Unset or API failure → transparent DDGS fallback. |
 | `summarize` | `bool` | `True` | Whether to summarize/RAG over acquired web items. If `False`, acquisition stops after `items` are populated. |
 | `rag_embedding` | optional embedding object | `None` | If provided, use the RAG path instead of direct per-result summarization. |
 | `process_images` | `bool` | `True` | For PDF results, optionally append image interpretations when image-description support is available. |
@@ -53,13 +55,13 @@ print(agent.format_result(state))
 | `download` | `bool` | `True` | If `True`, search and retrieve web results. If `False`, read cached `.pdf`, `.txt`, or `.html` files from `database_path`. |
 | `**kwargs` | `dict` | `{}` | Passed to `BaseAgent` / `BaseAcquisitionAgent`, including workspace/den and persistence options. |
 
-`WebSearchAgent` requires the DDGS dependency imported as `ddgs.DDGS`. If it is unavailable, initialization raises `ImportError`.
+`WebSearchAgent` requires the DDGS dependency imported as `ddgs.DDGS`. If it is unavailable, initialization raises `ImportError`. The SerpBase path uses only the `requests` library already used throughout the codebase — no extra dependency.
 
 ## How it works
 
 `WebSearchAgent` implements the acquisition hooks required by `BaseAcquisitionAgent`:
 
-- `_search(query)` — uses DDGS text search with `max_results` and `backend="auto"`.
+- `_search(query)` — uses DDGS text search with `max_results` and `backend="auto"`, or the SerpBase Google Search API when `SERPBASE_API_KEY` is set (falling back to DDGS if the API is unreachable or returns nothing).
 - `_id(hit_or_item)` — hashes the result URL to create a stable cache ID.
 - `_materialize(hit)` — retrieves each result URL:
   - PDF-looking URLs are downloaded and parsed as PDFs.
