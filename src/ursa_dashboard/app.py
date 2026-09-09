@@ -238,11 +238,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         "yes",
         "on",
     }
+    # Agents whose `use_web` default follows the dashboard-wide opt-in
+    # (`--use-web` / URSA_DASHBOARD_USE_WEB). Kept in sync with the CLI fan-out
+    # in `ursa.cli.config` ("chat", "execute", "deep_review", "prompt") plus the
+    # dashboard-only planning/execution workflow.
     web_opt_in_agent_ids = {
         "chat_agent",
         "execution_agent",
         "planning_executor_workflow",
         "prompting_agent",
+        "deep_review_agent",
     }
     rag_tool_agent_ids = {
         "chat_agent",
