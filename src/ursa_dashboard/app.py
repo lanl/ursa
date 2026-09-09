@@ -105,6 +105,7 @@ from .credentials import (
     store_api_key,
 )
 from .environment_run_manager import (
+    ELO_STARTER_YAML,
     SYMPOSIUM_STARTER_YAML,
     TEAM_STARTER_YAML,
     EnvironmentDefinitionExistsError,
@@ -5676,6 +5677,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 runs=runs,
                 team_starter_yaml=TEAM_STARTER_YAML,
                 symposium_starter_yaml=SYMPOSIUM_STARTER_YAML,
+                elo_starter_yaml=ELO_STARTER_YAML,
             )
         )
 
