@@ -6,6 +6,7 @@ import logging
 import random
 import shutil
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -912,8 +913,10 @@ class AgentEloEnvironment(BaseEnvironment):
                 f"SQLite destination already exists: {destination}"
             )
 
-        with sqlite3.connect(source) as source_conn:
-            with sqlite3.connect(destination) as destination_conn:
+        # SQLite's connection context manager only manages transactions.
+        # Close both handles so rollback can remove child databases on Windows.
+        with closing(sqlite3.connect(source)) as source_conn:
+            with closing(sqlite3.connect(destination)) as destination_conn:
                 source_conn.backup(destination_conn)
 
     def _fork_parent_persistence(

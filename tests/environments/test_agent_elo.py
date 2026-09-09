@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,7 +22,7 @@ class LocalMember:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.database = env._member_den(config.name) / "db" / "checkpointer.db"
         self.database.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS work (prompt TEXT)")
         self.closed = False
         self.fail = False
@@ -29,7 +30,7 @@ class LocalMember:
     async def ainvoke(self, prompt, **kwargs):
         if self.fail:
             raise RuntimeError("worker failed")
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute("INSERT INTO work VALUES (?)", (prompt,))
         artifact = self.workspace / "research.txt"
         with artifact.open("a") as stream:
@@ -129,13 +130,63 @@ def test_children_inherit_independent_files_and_persistence(elo_factory):
         artifact = child.workspace / "research.txt"
         parent_artifact = parent.workspace / "research.txt"
         assert artifact.read_text() == parent_artifact.read_text()
-        with sqlite3.connect(child.database) as db:
+        with closing(sqlite3.connect(child.database)) as db, db:
             assert db.execute("SELECT count(*) FROM work").fetchone() == (1,)
             db.execute("INSERT INTO work VALUES ('child-only work')")
-        with sqlite3.connect(parent.database) as db:
+        with closing(sqlite3.connect(parent.database)) as db, db:
             assert db.execute("SELECT count(*) FROM work").fetchone() == (1,)
         artifact.write_text("child-only work")
         assert parent_artifact.read_text() != artifact.read_text()
+
+
+@pytest.mark.parametrize("backup_fails", [False, True])
+def test_persistence_backup_releases_database_handles(
+    monkeypatch, tmp_path, backup_fails
+):
+    source = tmp_path / "parent.db"
+    destination = tmp_path / "child.db"
+    with closing(sqlite3.connect(source)) as db, db:
+        db.execute("CREATE TABLE research (value TEXT)")
+        db.execute("INSERT INTO research VALUES ('inherited work')")
+
+    class Connection(sqlite3.Connection):
+        def backup(self, target, **kwargs):
+            if backup_fails:
+                raise sqlite3.OperationalError("backup failed")
+            return super().backup(target, **kwargs)
+
+    connect = sqlite3.connect
+    connections = []
+
+    def tracked_connect(*args, **kwargs):
+        connection = connect(*args, factory=Connection, **kwargs)
+        # Retain references so garbage collection cannot hide leaked handles.
+        connections.append(connection)
+        return connection
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", tracked_connect)
+        if backup_fails:
+            with pytest.raises(sqlite3.OperationalError, match="backup failed"):
+                AgentEloEnvironment._backup_sqlite_database(source, destination)
+        else:
+            AgentEloEnvironment._backup_sqlite_database(source, destination)
+
+    try:
+        assert len(connections) == 2
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+        if not backup_fails:
+            with closing(connect(destination)) as db:
+                assert db.execute("SELECT value FROM research").fetchone() == (
+                    "inherited work",
+                )
+        destination.unlink()
+        source.unlink()
+    finally:
+        for connection in connections:
+            connection.close()
 
 
 @pytest.mark.parametrize("legacy_snapshot", [False, True])
