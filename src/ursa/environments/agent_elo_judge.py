@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -149,15 +150,16 @@ class AgentEloJudge:
             output_b=output_b,
         )
     
-        judge = ChatAgent(
-            llm=self.llm,
-            workspace=self.workspace,
-            group=self.group,
-            use_web=False,
-        )
+        judge = None
     
         try:
             try:
+                judge = ChatAgent(
+                    llm=self.llm,
+                    workspace=self.workspace,
+                    group=self.group,
+                    use_web=False,
+                )
                 result = await judge.ainvoke(
                     prompt
                 )
@@ -240,7 +242,12 @@ class AgentEloJudge:
             )
     
             if callable(close):
-                close()
+                try:
+                    close()
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Failed to close Elo judge", exc_info=True,
+                    )
 
     
     async def _judge_with_llm(

@@ -172,6 +172,34 @@ class AgentEloConfig:
     member_timeout_seconds: float | None = None
     judge_prompt: str | None = None
 
+    def __post_init__(self) -> None:
+        seen: set[str] = set()
+        for member in self.members:
+            self.validate_member_config(member)
+            if member.name in seen:
+                raise ValueError(
+                    f"Elo member name {member.name!r} is duplicated. "
+                    "Each member must have a unique name."
+                )
+            seen.add(member.name)
+
+    @staticmethod
+    def validate_member_config(member: EnvironmentMemberConfig) -> None:
+        """Validate member settings for both new and restored populations."""
+        if "workspace" in (member.config or {}):
+            raise ValueError(
+                f"Member {member.name!r} sets config.workspace. "
+                "AgentEloEnvironment manages member workspaces automatically. "
+                "Set the top-level workspace instead."
+            )
+        if "agent_name" in (member.config or {}):
+            raise ValueError(
+                f"Member {member.name!r} sets config.agent_name. "
+                "AgentEloEnvironment generates persistent agent identities "
+                "automatically. Remove config.agent_name and use the "
+                "member's name field instead."
+            )
+
     @classmethod
     def from_mapping(
         cls,

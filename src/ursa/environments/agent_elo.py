@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 import shutil
 import sqlite3
@@ -585,6 +586,9 @@ class AgentEloEnvironment(BaseEnvironment):
             model = member.model.model_dump(
                 mode="json",
                 exclude_none=True,
+                # Persist resolved settings without requiring the original
+                # provider registry (or conflicting with its resolved URL).
+                exclude={"inference_provider"},
             )
 
         return {
@@ -776,12 +780,28 @@ class AgentEloEnvironment(BaseEnvironment):
             ):
                 raise ValueError("Restart player is missing 'member_config'.")
 
+            restored_member_config = dict(raw_member_config)
+            saved_model = restored_member_config.get("model")
+            if isinstance(saved_model, Mapping):
+                # Older snapshots retained the provider name alongside the
+                # resolved settings. They too must load without a registry.
+                saved_model = dict(saved_model)
+                saved_model.pop("inference_provider", None)
+                restored_member_config["model"] = saved_model
+
             member_config = EnvironmentMemberConfig.from_mapping(
-                raw_member_config,
+                restored_member_config,
                 group=self.group,
             )
+            AgentEloConfig.validate_member_config(member_config)
 
             name = str(raw_player["name"])
+
+            if name in players:
+                raise ValueError(
+                    f"Elo member name {name!r} is duplicated in restart state. "
+                    "Each member must have a unique name."
+                )
 
             if member_config.name != name:
                 raise ValueError(
@@ -1374,7 +1394,13 @@ class AgentEloEnvironment(BaseEnvironment):
                 )
 
                 if callable(close):
-                    close()
+                    try:
+                        close()
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "Failed to close eliminated Elo member %s", name,
+                            exc_info=True,
+                        )
 
             self.players.pop(
                 name,
@@ -1390,13 +1416,19 @@ class AgentEloEnvironment(BaseEnvironment):
     def _top_survivors(
         self,
         count: int,
+        *,
+        excluded: list[str] | None = None,
     ) -> list[EloPlayer]:
         """Return the highest-rated surviving agents.
 
         Equal-rated survivors are ordered randomly using
         the environment RNG.
         """
-        candidates = list(self.players.values())
+        excluded_names = set(excluded or [])
+        candidates = [
+            player for player in self.players.values()
+            if player.name not in excluded_names
+        ]
 
         self._rng.shuffle(candidates)
 
@@ -1548,51 +1580,51 @@ class AgentEloEnvironment(BaseEnvironment):
         - LangGraph persistent store.
         """
         children: list[str] = []
-
+        prepared: list[tuple[EnvironmentMemberConfig, Any, EloPlayer]] = []
+        offspring_counts_before = dict(self._offspring_counts)
         config_by_name = {member.name: member for member in self.member_configs}
 
-        for parent in parents:
-            parent_config = config_by_name[parent.name]
+        try:
+            for parent in parents:
+                parent_config = config_by_name[parent.name]
+                child_name = self._next_child_name(parent)
+                children.append(child_name)
+                child_config = replace(parent_config, name=child_name)
 
-            child_name = self._next_child_name(parent)
-
-            child_config = replace(
-                parent_config,
-                name=child_name,
-            )
-
-            try:
-                # The child filesystem and persistent state must
-                # exist before build_member() constructs the agent.
-                self._copy_parent_workspace(
-                    parent.name,
-                    child_name,
-                )
-
+                # Prepare every child before changing the active population.
+                self._copy_parent_workspace(parent.name, child_name)
                 if self.persist_members:
-                    self._fork_parent_persistence(
-                        parent.name,
-                        child_name,
-                    )
-
+                    self._fork_parent_persistence(parent.name, child_name)
                 child = self.build_member(child_config)
-
-            except Exception:
+                prepared.append((
+                    child_config,
+                    child,
+                    EloPlayer(
+                        name=child_name,
+                        rating=parent.rating,
+                        generation=parent.generation + 1,
+                        parent=parent.name,
+                    ),
+                ))
+        except BaseException:
+            # Close constructed children before deleting their persistence.
+            # A cleanup error must not prevent rollback of the other children.
+            for _, child, _ in prepared:
+                try:
+                    close = getattr(child, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
+            for child_name in children:
                 self._cleanup_failed_child(child_name)
-                raise
+            self._offspring_counts = offspring_counts_before
+            raise
 
-            self.members[child_name] = child
-
+        for child_config, child, player in prepared:
+            self.members[player.name] = child
             self.member_configs.append(child_config)
-
-            self.players[child_name] = EloPlayer(
-                name=child_name,
-                rating=parent.rating,
-                generation=(parent.generation + 1),
-                parent=parent.name,
-            )
-
-            children.append(child_name)
+            self.players[player.name] = player
 
         return children
 
@@ -1669,6 +1701,7 @@ class AgentEloEnvironment(BaseEnvironment):
         generation_number = self.generation_index + 1
 
         initial_population_size = len(self.players)
+        rng_state_before = self._rng.getstate()
 
         # Capture ratings before competition for reporting.
         ratings_before = {
@@ -1850,10 +1883,26 @@ class AgentEloEnvironment(BaseEnvironment):
         standings_after_matches = self.standings()
 
         # ----------------------------------------------------------
-        # Phase 3: elimination
+        # Phase 3: prepare replacement children, then eliminate losers
         # ----------------------------------------------------------
 
         eliminated = self._select_losers(match_results)
+        parents = self._top_survivors(len(eliminated), excluded=eliminated)
+        parent_names = [parent.name for parent in parents]
+
+        try:
+            children = self._reproduce(parents)
+        except BaseException:
+            # Keep failed generations retryable without applying Elo twice.
+            for name, rating in ratings_before.items():
+                self.players[name].rating = rating
+            self._rng.setstate(rng_state_before)
+            raise
+
+        eliminated_ratings = {
+            name: self.players[name].rating for name in eliminated
+        }
+        self._eliminate(eliminated)
 
         for name in eliminated:
             await events.aemit(
@@ -1863,20 +1912,8 @@ class AgentEloEnvironment(BaseEnvironment):
                 event_type="member_eliminated",
                 generation=generation_number,
                 source=self._source(name),
-                rating=(self.players[name].rating),
+                rating=eliminated_ratings[name],
             )
-
-        self._eliminate(eliminated)
-
-        # ----------------------------------------------------------
-        # Phase 4: reproduction
-        # ----------------------------------------------------------
-
-        parents = self._top_survivors(len(eliminated))
-
-        parent_names = [parent.name for parent in parents]
-
-        children = self._reproduce(parents)
 
         for child_name in children:
             child = self.players[child_name]
