@@ -9,9 +9,12 @@ from typing import Any
 
 import chainlit as cl
 from chainlit.input_widget import Select, Switch, TextInput
+from chainlit.user import User
+from langchain_core.messages import AIMessage
 
 from ursa.cli.config import ChatModelConfig, EmbModelConfig, UrsaConfig
 from ursa.cli.runtime import HITL
+from ursa_web.data import JsonDataLayer
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
@@ -31,6 +34,13 @@ def _saved_settings() -> dict[str, Any]:
         configured / ".ursa-data" / "web-settings.json",
         Path.cwd() / ".ursa-data" / "web-settings.json",
         Path.cwd() / ".ursa-web" / ".ursa-data" / "web-settings.json",
+        Path(__file__).resolve().parents[2]
+        / ".ursa-data"
+        / "web-settings.json",
+        Path(__file__).resolve().parents[2]
+        / ".ursa-web"
+        / ".ursa-data"
+        / "web-settings.json",
     ]
     for path in dict.fromkeys(candidates):
         try:
@@ -44,6 +54,21 @@ def _save_settings(settings: dict[str, Any], workspace: Path) -> None:
     path = workspace / ".ursa-data" / "web-settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+@cl.data_layer
+def data_layer() -> JsonDataLayer:
+    """Persist Chainlit threads without an external database dependency."""
+    workspace = _initial_config().workspace
+    data_dir = workspace / ".ursa-data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return JsonDataLayer(data_dir / "chainlit-threads.json")
+
+
+@cl.header_auth_callback
+async def local_user(_headers) -> User:
+    """Identify local dashboard sessions for persisted thread history."""
+    return User(identifier="local", display_name="Local user")
 
 
 class _WebHITL(HITL):
@@ -90,7 +115,7 @@ def _initial_config() -> UrsaConfig:
     providers: dict[str, dict[str, Any]] = {
         "openai": {
             "base_url": llm_endpoint or "https://api.openai.com/v1",
-            "api_key": {"env": "OPENAI_API_KEY"},
+            "api_key": {"env": llm_api_key_env},
             "ssl_verify": llm_ssl_verify,
         }
     }
@@ -138,11 +163,21 @@ def _settings(runtime: HITL | None) -> list[Any]:
     config = runtime.config if runtime else _initial_config()
     llm = config.llm_model
     embedding = config.emb_model
+    agent_names = list(runtime.agents) if runtime else ["chat"]
+    saved_agent = _saved_settings().get("agent", "chat")
+    if saved_agent not in agent_names:
+        saved_agent = "chat"
     return [
         TextInput(
             id="workspace",
             label="Workspace directory",
             initial=str(config.workspace),
+        ),
+        Select(
+            id="agent",
+            label="URSA agent",
+            values=agent_names,
+            initial_value=saved_agent,
         ),
         TextInput(id="llm_model", label="LLM model", initial=llm.model),
         Select(
@@ -200,6 +235,10 @@ def _settings(runtime: HITL | None) -> list[Any]:
 async def start() -> None:
     runtime = _WebHITL(_initial_config())
     cl.user_session.set("runtime", runtime)
+    saved_agent = _saved_settings().get("agent", "chat")
+    cl.user_session.set(
+        "agent", saved_agent if saved_agent in runtime.agents else "chat"
+    )
     await cl.ChatSettings(_settings(runtime)).send()
     await cl.Message(
         content=(
@@ -209,11 +248,40 @@ async def start() -> None:
     ).send()
 
 
+@cl.on_chat_resume
+async def resume(thread: dict[str, Any]) -> None:
+    """Recreate the runtime when a persisted conversation is selected."""
+    runtime = _WebHITL(_initial_config())
+    cl.user_session.set("runtime", runtime)
+    saved_agent = _saved_settings().get("agent", "chat")
+    cl.user_session.set(
+        "agent", saved_agent if saved_agent in runtime.agents else "chat"
+    )
+    if cl.user_session.get("agent") != "chat":
+        return
+
+    async with runtime.use_agent("chat") as wrapper:
+        agent = wrapper._agent
+        if agent is None:
+            return
+        state = None
+        for step in thread.get("steps", []):
+            content = str(step.get("output") or step.get("input") or "")
+            if not content:
+                continue
+            if step.get("type") == "user_message":
+                state = agent.format_query(content, state)
+            elif step.get("type") == "assistant_message" and state is not None:
+                state["messages"].append(AIMessage(content=content))
+        wrapper.state = state
+
+
 @cl.on_settings_update
 async def settings_update(settings: dict[str, Any]) -> None:
     runtime = cl.user_session.get("runtime")
     if not isinstance(runtime, HITL):
         return
+    cl.user_session.set("agent", str(settings.get("agent", "chat")))
     llm_endpoint = str(settings.get("llm_endpoint", "")).strip() or None
     embedding_endpoint = (
         str(settings.get("embedding_endpoint", "")).strip() or None
@@ -251,6 +319,7 @@ async def settings_update(settings: dict[str, Any]) -> None:
     workspace = Path(
         str(settings.get("workspace", runtime.workspace))
     ).expanduser()
+    agent_name = str(settings.get("agent", "chat"))
     try:
         await runtime.reconfigure_models(llm, embedding)
         workspace.mkdir(parents=True, exist_ok=True)
@@ -259,6 +328,7 @@ async def settings_update(settings: dict[str, Any]) -> None:
         _save_settings(
             {
                 "workspace": str(workspace),
+                "agent": agent_name,
                 "llm_model": llm.model,
                 "llm_provider": llm.model_provider,
                 "llm_endpoint": llm_endpoint,
@@ -293,7 +363,8 @@ async def message(message: cl.Message) -> None:
         await cl.Message(content="The URSA runtime is not initialized.").send()
         return
     try:
-        result = await runtime.run_agent("chat", message.content)
+        agent_name = cl.user_session.get("agent", "chat")
+        result = await runtime.run_agent(agent_name, message.content)
     except (RuntimeError, ValueError) as exc:
         await cl.Message(content=f"URSA failed: `{exc}`").send()
         return

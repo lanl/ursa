@@ -41,3 +41,5 @@ Untitled.*
 .chainlit/
 chainlit.md
 .ursa-web/
+.playwright-cli/
+.ursa-data/
