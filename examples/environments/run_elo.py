@@ -24,6 +24,15 @@ Requirements:
 
 Keep the calculation small and reproducible.
 
+Evaluation criteria, in priority order:
+1. Correctness and numerical accuracy.
+2. Evidence from executed validation and convergence checks.
+3. Reproducibility of the implementation and results.
+4. Meaningful improvement over existing work, when applicable.
+
+For partial work, assess the available evidence using these same criteria.
+Novelty alone is not an improvement.
+
 Your final response should summarize the method, numerical result, error,
 validation performed, files produced, and any remaining weakness.
 """

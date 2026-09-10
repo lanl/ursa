@@ -4,12 +4,13 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from ursa.environments.agent_elo import AgentEloEnvironment
+from ursa.environments.agent_elo import AgentEloEnvironment, MemberRunResult
 from ursa.environments.agent_elo_judge import AgentEloJudge, JudgeDecision
 
 
@@ -44,7 +45,7 @@ class LocalMember:
 @pytest.fixture
 def elo_factory(monkeypatch, tmp_path):
     created = []
-    judgment = SimpleNamespace(winner="A", calls=0)
+    judgment = SimpleNamespace(winner="A", calls=0, submissions=[])
 
     def build(env, config):
         member = LocalMember(env, config)
@@ -53,6 +54,7 @@ def elo_factory(monkeypatch, tmp_path):
 
     async def judge(self, **kwargs):
         judgment.calls += 1
+        judgment.submissions.append(kwargs)
         return JudgeDecision(judgment.winner, "Deterministic test judgment")
 
     monkeypatch.setattr(AgentEloEnvironment, "build_member", build)
@@ -415,3 +417,180 @@ def test_judge_falls_back_on_agent_errors(
     )
     if failure_stage != "initialization":
         assert "Failed to close Elo judge" in caplog.text
+
+
+@pytest.mark.parametrize("with_report", [False, True])
+@pytest.mark.parametrize("both_timeout", [False, True])
+def test_timeouts_are_judged_using_available_work(
+    elo_factory, monkeypatch, with_report, both_timeout
+):
+    env = elo_factory.make(
+        members=[{"name": "a"}, {"name": "b"}],
+        member_timeout_seconds=1,
+        deaths_per_round=1,
+    )
+    timed_names = {"a", "b"} if both_timeout else {"b"}
+    for name in timed_names:
+        member = env.members[name]
+
+        async def work(prompt, member=member, **kwargs):
+            if with_report:
+                report = member.workspace / "_elo_progress" / "generation_1.md"
+                report.parent.mkdir(parents=True)
+                report.write_text("Verified result: 0.746824", encoding="utf-8")
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(member, "ainvoke", work)
+
+    async def choose_timeout(**kwargs):
+        elo_factory.judgment.submissions.append(kwargs)
+        return JudgeDecision(
+            "A" if kwargs["player_a"] == "b" else "B", "Stronger saved evidence"
+        )
+
+    monkeypatch.setattr(env.judge, "judge_match", choose_timeout)
+    generation = env.invoke("Compare numerical accuracy")["generations"][0]
+    assert set(generation["timed_out"]) == timed_names
+    assert generation["matches"][0]["winner"] == "b"
+    assert generation["reproducing_parents"] == ["b"]
+    submission = elo_factory.judgment.submissions[0]
+    for side in ("a", "b"):
+        name = submission[f"player_{side}"]
+        text = submission[f"output_{side}"]
+        if name in timed_names:
+            assert "Execution status: timed_out" in text
+            assert generation["outputs"][name] is None
+            report = generation["member_runs"][name]["progress_report"]
+            if with_report:
+                assert report == "Verified result: 0.746824"
+                assert report in text
+            else:
+                assert report is None
+                assert "Briefly inspect" in text
+        else:
+            assert "Final response:" in text
+
+
+@pytest.mark.parametrize("final_response", ["Final result", ""])
+def test_submission_prefers_final_response_then_current_report(
+    elo_factory, monkeypatch, final_response
+):
+    env = elo_factory.make()
+    member = env.member_configs[0]
+    report_dir = env._member_workspace(member.name) / "_elo_progress"
+    report_dir.mkdir()
+    (report_dir / "generation_0.md").write_text("Old inherited report")
+    assert env._read_progress_report(member.name) is None
+    report = "verified evidence " * 600
+    (report_dir / "generation_1.md").write_text(report, encoding="utf-8")
+
+    async def work(*args, **kwargs):
+        return {"final": final_response}
+
+    monkeypatch.setattr(env.members[member.name], "ainvoke", work)
+    run = asyncio.run(env._run_member(member, "task", {}))
+    submission = env._judge_submission(run)
+    if final_response:
+        assert final_response in submission
+        assert "verified evidence" not in submission
+    else:
+        assert run.progress_report == report.strip()
+        assert report.strip() in submission
+    # Capture does not change when the file is modified later.
+    (report_dir / "generation_1.md").write_text("Later update")
+    assert env._judge_submission(run) == submission
+
+
+@pytest.mark.parametrize(
+    "status_a,status_b,score",
+    [
+        ("completed", "failed", 1.0),
+        ("failed", "completed", 0.0),
+        ("timed_out", "failed", 0.5),
+        ("failed", "timed_out", 0.5),
+        ("failed", "failed", 0.5),
+    ],
+)
+def test_execution_failures_keep_existing_match_rules(
+    elo_factory, status_a, status_b, score
+):
+    env = elo_factory.make()
+    result = asyncio.run(
+        env._resolve_match(
+            task="task",
+            player_a="a",
+            player_b="b",
+            run_a=MemberRunResult(
+                "a", status_a, "Result" if status_a == "completed" else None
+            ),
+            run_b=MemberRunResult(
+                "b", status_b, "Result" if status_b == "completed" else None
+            ),
+        )
+    )
+    assert result.score_a == score
+    assert elo_factory.judgment.calls == 0
+
+
+def test_prompts_share_task_criteria_and_preserve_lineage_guidance(elo_factory):
+    env = elo_factory.make()
+    member = env.member_configs[0]
+    task = "Evaluate accuracy first, then reproducibility."
+    founding = env._member_prompt(member, task)
+    assert "independent approach" in founding
+    assert "Deadline" not in founding
+    env.generation_index = 1
+    surviving = env._member_prompt(member, task)
+    assert "Favor refinement" in surviving
+    env.players[member.name].parent = "ancestor"
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=30)
+    descendant = env._member_prompt(member, task, deadline=deadline)
+    assert "alternative approach" in descendant
+    assert "terminated at this deadline" in descendant
+    assert "generation_2.md" in descendant
+    assert "If you can write files" in descendant
+    assert "500" not in descendant
+    assert task in descendant
+    assert env.judge_prompt == ""
+    prompt = env.judge._judge_prompt(
+        task=task,
+        player_a="a",
+        player_b="b",
+        agent_type_a="ExecutionAgent",
+        agent_type_b="ExecutionAgent",
+        output_a="result",
+        output_b="partial",
+    )
+    assert task in prompt
+    assert "task's evaluation criteria" in prompt
+    assert "briefly inspect" in prompt
+    assert "timeout alone is not a loss" in prompt
+    assert '"winner"' in prompt
+
+
+def test_expired_deadline_captures_progress_without_invoking_member(
+    elo_factory, monkeypatch
+):
+    env = elo_factory.make()
+    member = env.member_configs[0]
+    report = (
+        env._member_workspace(member.name)
+        / env._progress_report_relative_path()
+    )
+    report.parent.mkdir()
+    report.write_text("Saved progress")
+
+    async def unexpected(*args, **kwargs):
+        pytest.fail("Expired deadline must not start member execution")
+
+    monkeypatch.setattr(env.members[member.name], "ainvoke", unexpected)
+    run = asyncio.run(
+        env._run_member(
+            member,
+            "task",
+            {},
+            deadline=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+    )
+    assert run.timed_out
+    assert run.progress_report == "Saved progress"

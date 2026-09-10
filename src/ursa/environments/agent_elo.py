@@ -81,6 +81,7 @@ class MemberRunResult:
     output: str | None
     deadline: str | None = None
     error: str | None = None
+    progress_report: str | None = None
 
     @property
     def completed(self) -> bool:
@@ -235,17 +236,7 @@ class AgentEloEnvironment(BaseEnvironment):
                 for member in self.member_configs
             }
 
-        default_judge_prompt = (
-            "You are an impartial judge comparing two candidate solutions "
-            "to the same task.\n\n"
-            "Judge primarily on correctness, quality of reasoning, completeness, "
-            "use of evidence, and adherence to the task. Do not prefer a candidate "
-            "merely because it is longer or better written."
-        )
-
-        judge_instructions = self.config.judge_prompt or default_judge_prompt
-
-        self.judge_prompt = judge_instructions
+        self.judge_prompt = self.config.judge_prompt or ""
 
         self.judge = AgentEloJudge(
             llm=self.llm,
@@ -1057,6 +1048,22 @@ class AgentEloEnvironment(BaseEnvironment):
             )
         ]
 
+    def _progress_report_relative_path(self) -> Path:
+        return (
+            Path("_elo_progress") / f"generation_{self.generation_index + 1}.md"
+        )
+
+    def _read_progress_report(self, member_name: str) -> str | None:
+        path = (
+            self._member_workspace(member_name)
+            / self._progress_report_relative_path()
+        )
+        try:
+            report = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return None
+        return report or None
+
     def _member_prompt(
         self,
         member: EnvironmentMemberConfig,
@@ -1065,77 +1072,53 @@ class AgentEloEnvironment(BaseEnvironment):
         deadline: datetime | None = None,
     ) -> str:
         player = self.players[member.name]
-
+        if self.generation_index == 0:
+            approach = "Develop and validate a strong independent approach to the task."
+        elif player.parent is not None:
+            approach = (
+                "Build on your parent's work while exploring a substantive "
+                "improvement or alternative approach. Preserve useful results "
+                "and validate your changes; novelty alone is not success."
+            )
+        else:
+            approach = (
+                "Build on your existing work. Favor refinement and stronger "
+                "validation, making larger changes when justified."
+            )
+        execution_budget = (
+            f"\nDeadline (UTC): {deadline.isoformat()}\n"
+            "Your run will be terminated at this deadline. Save useful results "
+            "as you work and aim to provide a final response before time runs out.\n"
+            if deadline is not None
+            else ""
+        )
         extra = (
-            f"\n\nMember-specific guidance:\n{member.prompt}"
+            f"\nAdditional guidance:\n{member.prompt}\n"
             if member.prompt
             else ""
         )
-
-        lineage = (
-            "Evolutionary status:\n"
-            f"- Name: {player.name}\n"
-            f"- Lineage generation: {player.generation}\n"
-            f"- Parent: {player.parent or 'None'}\n"
-            f"- Environment generations already completed: "
-            f"{self.generation_index}\n"
-        )
-
-        if deadline is None:
-            execution_budget = ""
-
-        else:
-            deadline_text = deadline.isoformat()
-
-            execution_budget = (
-                "\n\nExecution budget:\n"
-                f"- Hard deadline: {deadline_text}\n"
-                "- The deadline is expressed in UTC.\n"
-                "- You may run `date -u` to check the current wall-clock time.\n"
-                "- Plan your work so that useful, judgeable results exist "
-                "before the deadline.\n"
-                "- If you do not finish working before the deadline, "
-                "you may automatically lose this round.\n"
-            )
-
-        if self.generation_index == 0:
-            evolutionary_instruction = (
-                "This is the founding round of the evolutionary run.\n"
-                "Develop the strongest independent solution you can. "
-                "Explore the problem directly and execute the work required "
-                "by the task."
-            )
-
-        elif player.parent is not None:
-            evolutionary_instruction = (
-                "You are a descendant of a previously successful agent. "
-                "You inherited your parent's research state and workspace.\n\n"
-                "Do not merely repeat, rerun, or summarize the inherited work. "
-                "Treat it as a successful starting point.\n\n"
-                "Identify at least one substantive scientific, numerical, or "
-                "methodological limitation in the inherited work. "
-                "Choose a modification that addresses it and execute that work."
-            )
-
-        else:
-            evolutionary_instruction = (
-                "You are a surviving founding agent from an earlier round. "
-                "Continue developing your existing research rather than starting "
-                "over or merely summarizing it.\n\n"
-                "Identify a substantive limitation, uncertainty, weakness, or "
-                "untested assumption in your current work. Make and execute a "
-                "scientifically motivated improvement."
-            )
-
+        report_path = self._progress_report_relative_path().as_posix()
         return (
             f"You are competitor '{member.name}'.\n"
-            f"Your role is: {member.role}.\n\n"
-            f"{lineage}\n"
-            f"Evolutionary instructions:\n"
-            f"{evolutionary_instruction}"
-            f"{execution_budget}"
-            f"{extra}\n\n"
-            f"Scientific task:\n{task}"
+            f"Role: {member.role}\n"
+            f"Environment generation: {self.generation_index + 1}\n"
+            f"Lineage generation: {player.generation}\n"
+            f"Parent: {player.parent or 'None'}\n\n"
+            f"Task:\n{task}\n\n"
+            f"Approach:\n{approach}\n\n"
+            "Follow the task's evaluation criteria. Distinguish verified results "
+            "from plans or untested claims.\n"
+            f"{execution_budget}\n"
+            "If you can write files, maintain a concise progress report at:\n"
+            f"{report_path}\n\n"
+            "Update it after meaningful milestones with completed work, verified "
+            "results, remaining limitations, and supporting file paths. "
+            "Distinguish new progress from inherited work. Write updates to a "
+            "temporary file, then rename it into place.\n\n"
+            "Your final response should summarize results, evidence, limitations, "
+            "and files produced. If you time out, the judge will use your progress "
+            "report or briefly inspect your workspace. A timeout alone is not a loss.\n"
+            f"{extra}"
         )
 
     def _format_member_result(
@@ -1199,6 +1182,7 @@ class AgentEloEnvironment(BaseEnvironment):
                         status="timed_out",
                         output=None,
                         deadline=deadline_text,
+                        progress_report=self._read_progress_report(member.name),
                     )
 
                 # Cancellation stops the environment from awaiting this
@@ -1210,14 +1194,17 @@ class AgentEloEnvironment(BaseEnvironment):
                     timeout=remaining_seconds,
                 )
 
+            output = self._format_member_result(member.name, result)
             return MemberRunResult(
                 name=member.name,
                 status="completed",
-                output=self._format_member_result(
-                    member.name,
-                    result,
-                ),
+                output=output,
                 deadline=deadline_text,
+                progress_report=(
+                    self._read_progress_report(member.name)
+                    if not output.strip()
+                    else None
+                ),
             )
 
         except TimeoutError:
@@ -1226,6 +1213,7 @@ class AgentEloEnvironment(BaseEnvironment):
                 status="timed_out",
                 output=None,
                 deadline=deadline_text,
+                progress_report=self._read_progress_report(member.name),
             )
 
         except Exception as exc:
@@ -1241,6 +1229,19 @@ class AgentEloEnvironment(BaseEnvironment):
     # Judging
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _judge_submission(run: MemberRunResult) -> str:
+        if run.output and run.output.strip():
+            evidence = f"Final response:\n{run.output}"
+        elif run.progress_report:
+            evidence = f"Saved progress report:\n{run.progress_report}"
+        else:
+            evidence = (
+                "No final response or progress report is available. "
+                "Briefly inspect this candidate's workspace for evidence."
+            )
+        return f"Execution status: {run.status}\n\n{evidence}"
+
     async def _resolve_match(
         self,
         *,
@@ -1252,17 +1253,16 @@ class AgentEloEnvironment(BaseEnvironment):
     ) -> MatchResult:
         """Resolve a match using execution status before LLM judging."""
 
-        # Both produced valid completed outputs: use the normal judge.
-        if run_a.completed and run_b.completed:
-            assert run_a.output is not None
-            assert run_b.output is not None
-
+        # Timeouts remain eligible for judging using partial work.
+        if (run_a.completed or run_a.timed_out) and (
+            run_b.completed or run_b.timed_out
+        ):
             return await self._judge_match(
                 task=task,
                 player_a=player_a,
-                output_a=run_a.output,
+                output_a=self._judge_submission(run_a),
                 player_b=player_b,
-                output_b=run_b.output,
+                output_b=self._judge_submission(run_b),
             )
 
         # A completed and B did not.
@@ -1401,7 +1401,8 @@ class AgentEloEnvironment(BaseEnvironment):
                         close()
                     except Exception:
                         logging.getLogger(__name__).warning(
-                            "Failed to close eliminated Elo member %s", name,
+                            "Failed to close eliminated Elo member %s",
+                            name,
                             exc_info=True,
                         )
 
@@ -1429,7 +1430,8 @@ class AgentEloEnvironment(BaseEnvironment):
         """
         excluded_names = set(excluded or [])
         candidates = [
-            player for player in self.players.values()
+            player
+            for player in self.players.values()
             if player.name not in excluded_names
         ]
 
@@ -2007,6 +2009,7 @@ class AgentEloEnvironment(BaseEnvironment):
                     "status": run.status,
                     "deadline": run.deadline,
                     "error": run.error,
+                    "progress_report": run.progress_report,
                 }
                 for name, run in runs.items()
             },

@@ -62,36 +62,32 @@ class AgentEloJudge:
         agent_type_b: str,
         output_b: str,
     ) -> str:
+        guidance = (
+            f"\nAdditional judging guidance:\n{self.judge_prompt}\n"
+            if self.judge_prompt
+            else ""
+        )
         return (
-            f"{self.judge_prompt}\n\n"
-            "You are judging one Elo match.\n\n"
-            "First evaluate the candidates using their declared final "
-            "outputs below. If those outputs provide enough evidence for "
-            "a clear decision, decide immediately without unnecessary "
-            "tool use.\n\n"
-            "If quick verification or clarification is useful, you may "
-            "inspect files in the candidates' workspaces. Your current "
-            "workspace is the parent Elo workspace.\n\n"
-            "The only candidate workspace directories relevant to this "
-            "match are:\n"
-            f"- Candidate A: {player_a}/\n"
-            f"- Candidate B: {player_b}/\n\n"
-            "Be efficient. Do not reproduce the candidates' entire work, "
-            "perform extensive new research, or launch long-running "
-            "calculations. Use tools only when they materially help resolve "
-            "the comparison.\n\n"
-            "Do not modify candidate files.\n\n"
-            f"Original task:\n{task}\n\n"
-            "Candidate A\n"
-            f"Name: {player_a}\n"
+            "Compare the candidates using the task's evaluation criteria. "
+            "If none are specified, judge how well each fulfills the task. "
+            "A timeout alone is not a loss.\n\n"
+            "Use the supplied final responses or progress reports first. "
+            "If neither is available, briefly inspect the candidate's workspace. "
+            "Otherwise, inspect files only when useful for verification. "
+            "Prioritize relevant summaries and results; avoid extensive searches "
+            "or lengthy calculations. If evidence remains unavailable, state that "
+            "limitation. Do not modify candidate files.\n\n"
+            "Your workspace is the parent of the candidate directories below.\n"
+            f"{guidance}\n"
+            f"Task:\n{task}\n\n"
+            f"Candidate A: {player_a}\n"
             f"Agent type: {agent_type_a}\n"
             f"Workspace: {player_a}/\n"
-            f"Declared final output:\n{output_a}\n\n"
-            "Candidate B\n"
-            f"Name: {player_b}\n"
+            f"Submission:\n{output_a}\n\n"
+            f"Candidate B: {player_b}\n"
             f"Agent type: {agent_type_b}\n"
             f"Workspace: {player_b}/\n"
-            f"Declared final output:\n{output_b}"
+            f"Submission:\n{output_b}\n"
             f"{self.OUTPUT_INSTRUCTIONS}"
         )
 
@@ -139,7 +135,7 @@ class AgentEloJudge:
         output_b: str,
     ) -> JudgeDecision:
         """Judge one match with fault-tolerant fallback."""
-    
+
         prompt = self._judge_prompt(
             task=task,
             player_a=player_a,
@@ -149,9 +145,9 @@ class AgentEloJudge:
             agent_type_b=agent_type_b,
             output_b=output_b,
         )
-    
+
         judge = None
-    
+
         try:
             try:
                 judge = ChatAgent(
@@ -160,51 +156,33 @@ class AgentEloJudge:
                     group=self.group,
                     use_web=False,
                 )
-                result = await judge.ainvoke(
-                    prompt
-                )
-    
+                result = await judge.ainvoke(prompt)
+
                 formatter = getattr(
                     judge,
                     "format_result",
                     None,
                 )
-    
+
                 if callable(formatter):
-                    text = str(
-                        formatter(result)
-                    )
+                    text = str(formatter(result))
                 else:
-                    text = result_to_text(
-                        result
-                    )
-    
-                decision = (
-                    self._parse_decision(
-                        text
-                    )
-                )
-    
+                    text = result_to_text(result)
+
+                decision = self._parse_decision(text)
+
                 return JudgeDecision(
                     winner=decision.winner,
-                    reasoning=(
-                        decision.reasoning
-                    ),
+                    reasoning=(decision.reasoning),
                     method="chat_agent",
                 )
-    
+
             except Exception as agent_exc:
                 try:
-                    fallback = (
-                        await self._judge_with_llm(
-                            prompt
-                        )
-                    )
-    
+                    fallback = await self._judge_with_llm(prompt)
+
                     return JudgeDecision(
-                        winner=(
-                            fallback.winner
-                        ),
+                        winner=(fallback.winner),
                         reasoning=(
                             "Agentic judge failed "
                             f"({type(agent_exc).__name__}: "
@@ -215,7 +193,7 @@ class AgentEloJudge:
                         ),
                         method="llm_fallback",
                     )
-    
+
                 except Exception as fallback_exc:
                     return JudgeDecision(
                         winner="DRAW",
@@ -233,45 +211,35 @@ class AgentEloJudge:
                         ),
                         method="failed_draw",
                     )
-    
+
         finally:
             close = getattr(
                 judge,
                 "close",
                 None,
             )
-    
+
             if callable(close):
                 try:
                     close()
                 except Exception:
                     logging.getLogger(__name__).warning(
-                        "Failed to close Elo judge", exc_info=True,
+                        "Failed to close Elo judge",
+                        exc_info=True,
                     )
 
-    
     async def _judge_with_llm(
         self,
         prompt: str,
     ) -> JudgeDecision:
         """Fallback to a single raw LLM judgment."""
-    
-        response = await self.llm.ainvoke(
-            [
-                HumanMessage(
-                    content=prompt
-                )
-            ]
-        )
-    
-        text = result_to_text(
-            response
-        )
-    
-        decision = self._parse_decision(
-            text
-        )
-    
+
+        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+
+        text = result_to_text(response)
+
+        decision = self._parse_decision(text)
+
         return JudgeDecision(
             winner=decision.winner,
             reasoning=decision.reasoning,

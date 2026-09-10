@@ -35,9 +35,9 @@ Each generation follows this sequence:
    run asynchronously in their own workspaces.
 2. **Pairing.** The environment randomly pairs the active members. Each member
    participates in exactly one match.
-3. **Judging.** Completed solutions are compared by an LLM judge, which chooses
-   candidate A, candidate B, or a draw. Failed or timed-out runs are handled before
-   calling the judge.
+3. **Judging.** Completed and timed-out competitors are compared by an LLM judge,
+   which chooses candidate A, candidate B, or a draw using the task’s evaluation
+   criteria. Ordinary execution failures are handled before calling the judge.
 4. **Rating updates.** Match results update both competitors' Elo ratings.
 5. **Selection and reproduction.** Up to `deaths_per_round` decisive losers are
    selected for elimination. The highest-rated survivors each produce one child
@@ -65,10 +65,7 @@ k_factor: 32
 deaths_per_round: 1
 seed: 12345
 
-judge_prompt: >
-  Prefer correct, executed, reproducible numerical work. Evaluate accuracy,
-  convergence checks, and evidence supporting the conclusions. In later
-  generations, reward useful improvements and stronger validation.
+# Put evaluation criteria in the task supplied to invoke().
 
 members:
   - name: researcher_1
@@ -103,6 +100,12 @@ Numerically integrate exp(-x^2) from 0 to 1 using Python.
 Create and execute code in your workspace. Compare the result with a reference
 computed using math.erf, report absolute error, and perform a convergence check.
 Save the code and useful results. Explain remaining limitations.
+
+Evaluation criteria, in priority order:
+1. Correctness and numerical accuracy.
+2. Evidence from executed validation and convergence checks.
+3. Reproducibility.
+4. Meaningful improvement over existing work, when applicable.
 """
 
 try:
@@ -165,7 +168,7 @@ env = AgentEloEnvironment(
 | `generations` | `1` | Number of additional generations run by each invocation; must be at least one. |
 | `seed` | `null` | Optional seed for pairing and selection tie-breaking. |
 | `member_timeout_seconds` | `null` | Positive execution budget for the independent-work phase; no environment-imposed deadline when omitted. |
-| `judge_prompt` | Built-in criteria | Instructions guiding comparisons of completed solutions. |
+| `judge_prompt` | `null` | Optional additional judging guidance; put evaluation criteria in the task. |
 | `restart_from_json` | `null` | Path to a saved `environment_state.json`. |
 
 Elo uses the standard expected-score calculation. A win scores `1`, a draw `0.5`,
@@ -185,31 +188,68 @@ outcomes; it does not make LLM responses deterministic.
 
 ## Judging and incomplete runs
 
-The default judge prioritizes correctness, reasoning, completeness, evidence, and
-adherence to the task. Set `judge_prompt` to emphasize the criteria that matter
-for your problem, such as numerical accuracy or reproducible validation.
+Specify evaluation criteria in the task so both competitors and judge receive
+the same definition of success. The built-in judge prompt provides comparison
+and inspection instructions, without a task-specific quality rubric. If the task
+omits criteria, the judge evaluates how well each candidate fulfills it.
+`judge_prompt` remains available for optional additional guidance.
 
-The judge receives the task and both final outputs. It can inspect candidate
-workspace files when useful, and its instructions prohibit modifying them. The
-judge uses the environment-level `llm`, even when members have their own models.
+The member prompt asks founders to establish an independent approach, surviving
+founders to favor refinement and validation, and descendants to explore a
+substantive improvement or alternative. A descendant retains that guidance in
+later rounds, even if it has itself produced children. The task determines what
+counts as a useful improvement.
+
+Submissions use the following order:
+
+1. The member's final response, when available.
+2. Its saved progress report when there is no usable final response.
+3. A request for brief workspace inspection when neither is available.
+
+Members with file-writing tools are asked to maintain a concise report at
+`_elo_progress/generation_<number>.md` inside their own workspace. The report
+should describe completed work, verified results, limitations, and supporting
+file paths, distinguishing new work from inherited results. There is no fixed
+word limit. Members should update it after meaningful milestones, using a
+temporary file and rename to avoid partially written reports. The report is
+optional for agents without file-writing tools.
+
+The environment reads the current generation's report when handling a timeout,
+or when a completed run has an empty final response. It passes that captured text
+directly to the judge; it does not make an extra competitor LLM call or scan the
+workspace for a submission. An earlier generation's report is not substituted.
+
+The judge evaluates supplied submissions first, with optional file verification.
+When no submission is available, it is instructed to inspect obvious relevant
+artifacts briefly, avoid extensive searches or lengthy calculations, and note
+insufficient evidence if useful results cannot be found. It must not modify
+candidate files. These efficiency instructions are not a hard judging timeout.
+The judge uses the environment-level `llm`, even when members have their own models.
 
 If the agentic judge fails to initialize, execute, or return a valid decision,
-URSA tries a direct LLM judgment. If that also fails, the match is recorded as a
-draw with an explanation.
+URSA tries a direct LLM judgment. That fallback uses the supplied text without
+workspace tools. If it also fails, the match is recorded as a draw with an
+explanation.
 
-Execution status takes precedence over judging:
+A timeout alone is not a loss: timed-out members can win, draw, survive, and
+reproduce based on the judgment. Ordinary execution exceptions retain their
+separate handling:
 
 | Candidate A | Candidate B | Outcome |
 | --- | --- | --- |
-| Completed | Completed | Ask the judge. |
-| Completed | Failed or timed out | A wins automatically. |
-| Failed or timed out | Completed | B wins automatically. |
-| Failed or timed out | Failed or timed out | Draw. |
+| Completed or timed out | Completed or timed out | Ask the judge. |
+| Completed | Failed | A wins automatically. |
+| Failed | Completed | B wins automatically. |
+| Timed out | Failed | Draw. |
+| Failed | Timed out | Draw. |
+| Failed | Failed | Draw. |
 
 When `member_timeout_seconds` is set, all members receive the same UTC deadline
 for that generation's independent work. This budget does not cover judging or
-reproduction. Cancellation may leave an already-running blocking subprocess
-active until it exits or reaches its own timeout.
+reproduction. The environment cancels member execution at the deadline, but an
+already-running blocking subprocess may continue until it exits or reaches its
+own timeout. Neither report capture nor optional workspace inspection guarantees
+a filesystem snapshot taken precisely at the deadline.
 
 ## Workspaces, persistence, and lineage
 
@@ -356,7 +396,9 @@ The returned mapping includes:
 Each generation report includes member `outputs`, `member_runs`, `pairs`,
 `matches` with scores and reasoning, `ratings_before`, `standings_after_matches`,
 `eliminated`, `reproducing_parents`, `children`, and the resulting `standings`.
-It also lists failed and timed-out members.
+It also lists failed and timed-out members. Each `member_runs` entry includes
+`progress_report` when captured; `outputs` remains reserved for final responses.
+Timed-out members retain their `timed_out` status regardless of the judgment.
 
 Inspect outputs and match reasoning alongside ratings. Final standings include
 new children that have inherited ratings but have not yet competed themselves.

@@ -925,10 +925,8 @@ generations: 2
 member_timeout_seconds: null
 restart_from_json: null
 
-judge_prompt: >
-  Compare the candidates on correctness, evidence,
-  reproducibility, and substantive progress.
-  Prefer validated work over unsupported claims.
+# Put evaluation criteria in the task entered when launching the run.
+# judge_prompt can provide optional additional guidance.
 
 members:
   - name: researcher_1
