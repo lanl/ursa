@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ from chainlit.user import PersistedUser
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class JsonDataLayer(BaseDataLayer):
@@ -74,7 +74,7 @@ class JsonDataLayer(BaseDataLayer):
         self, element_id: str, thread_id: str | None = None
     ):
         if thread_id is None:
-            return None
+            return
         data = self._load()
         thread = data["threads"].get(thread_id)
         if thread is not None:
@@ -84,7 +84,7 @@ class JsonDataLayer(BaseDataLayer):
                 if element.get("id") != element_id
             ]
             self._save(data)
-        return None
+        return
 
     async def create_step(self, step_dict: dict[str, Any]) -> None:
         data = self._load()
