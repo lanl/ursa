@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ursa import security
@@ -155,6 +156,51 @@ def test_environment_launch_validation_is_group_scoped_and_safe(
         assert "not available from the dashboard" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("Custom class was accepted")
+
+
+@pytest.mark.parametrize("setting", ["workspace", "agent_name"])
+def test_dashboard_elo_validation_rejects_member_overrides(
+    monkeypatch, tmp_path, setting
+):
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
+    monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
+    config_yaml = """\
+name: elo_workspace_test
+workspace: ./elo_run
+members:
+  - name: researcher_1
+    agent: ExecutionAgent
+  - name: researcher_2
+    agent: ExecutionAgent
+"""
+    with TestClient(
+        create_app(credential_store=MemoryCredentialStore())
+    ) as client:
+        valid = client.post(
+            "/environment-runs/validate",
+            json={"environment_type": "agent_elo", "config_yaml": config_yaml},
+        )
+        assert valid.status_code == 200
+        for workspace in ("./custom_workspace", "null"):
+            invalid_yaml = config_yaml.replace(
+                "  - name: researcher_1\n",
+                "  - name: researcher_1\n"
+                f"    config:\n      {setting}: {workspace}\n",
+            )
+            invalid = client.post(
+                "/environment-runs/validate",
+                json={
+                    "environment_type": "agent_elo",
+                    "config_yaml": invalid_yaml,
+                },
+            )
+            assert invalid.status_code == 400
+            detail = invalid.json()["detail"]
+            assert f"Member 'researcher_1' sets config.{setting}" in detail
+            if setting == "workspace":
+                assert "Set the top-level workspace instead" in detail
+            else:
+                assert "Remove config.agent_name" in detail
 
 
 def test_dashboard_can_validate_create_and_replace_environment_run(

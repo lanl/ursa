@@ -19,7 +19,7 @@ class RunCancelRequest(BaseModel):
 
 
 class EnvironmentRunCreateRequest(BaseModel):
-    environment_type: Literal["agent_team", "agent_symposium"]
+    environment_type: Literal["agent_team", "agent_symposium", "agent_elo"]
     config_yaml: str = Field(min_length=1, max_length=500_000)
     prompt: str = Field(min_length=1, max_length=500_000)
     run_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -27,7 +27,7 @@ class EnvironmentRunCreateRequest(BaseModel):
 
 
 class EnvironmentConfigValidateRequest(BaseModel):
-    environment_type: Literal["agent_team", "agent_symposium"]
+    environment_type: Literal["agent_team", "agent_symposium", "agent_elo"]
     config_yaml: str = Field(min_length=1, max_length=500_000)
 
 

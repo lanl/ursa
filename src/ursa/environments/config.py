@@ -142,6 +142,102 @@ class AgentSymposiumConfig:
         return cls(**raw)
 
 
+@dataclass(frozen=True)
+class AgentEloConfig:
+    """YAML-loadable configuration for an Agent Elo environment."""
+    name: str
+    group: str = "default"
+    description: str | None = None
+    inference_providers: dict[
+        str,
+        InferenceProviderConfig,
+    ] = field(
+        default_factory=dict
+    )
+    members: list[
+        EnvironmentMemberConfig
+    ] = field(
+        default_factory=list
+    )
+    
+    workspace: str | None = None
+    defaults: dict[str, Any] = field(default_factory=dict)
+
+    initial_rating: float = 1500.0
+    k_factor: float = 32.0
+    deaths_per_round: int = 1
+    seed: int | None = None
+    generations: int = 1
+    restart_from_json: str | None = None
+    member_timeout_seconds: float | None = None
+    judge_prompt: str | None = None
+
+    def __post_init__(self) -> None:
+        seen: set[str] = set()
+        for member in self.members:
+            self.validate_member_config(member)
+            if member.name in seen:
+                raise ValueError(
+                    f"Elo member name {member.name!r} is duplicated. "
+                    "Each member must have a unique name."
+                )
+            seen.add(member.name)
+
+    @staticmethod
+    def validate_member_config(member: EnvironmentMemberConfig) -> None:
+        """Validate member settings for both new and restored populations."""
+        if "workspace" in (member.config or {}):
+            raise ValueError(
+                f"Member {member.name!r} sets config.workspace. "
+                "AgentEloEnvironment manages member workspaces automatically. "
+                "Set the top-level workspace instead."
+            )
+        if "agent_name" in (member.config or {}):
+            raise ValueError(
+                f"Member {member.name!r} sets config.agent_name. "
+                "AgentEloEnvironment generates persistent agent identities "
+                "automatically. Remove config.agent_name and use the "
+                "member's name field instead."
+            )
+
+    @classmethod
+    def from_mapping(
+        cls,
+        data: Mapping[str, Any],
+    ) -> "AgentEloConfig":
+        raw = dict(data)
+    
+        providers = _inference_providers(
+            raw.get(
+                "inference_providers"
+            )
+            or {}
+        )
+    
+        raw[
+            "inference_providers"
+        ] = providers
+    
+        group = str(
+            raw.get("group")
+            or "default"
+        )
+    
+        if "members" in raw:
+            raw["members"] = [
+                EnvironmentMemberConfig.from_mapping(
+                    member,
+                    providers,
+                    group,
+                )
+                for member in raw[
+                    "members"
+                ]
+            ]
+    
+        return cls(**raw)
+
+
 def load_yaml_mapping(path: str | Path) -> dict[str, Any]:
     """Load a YAML mapping with URSA-style environment interpolation."""
     p = Path(path).expanduser()
@@ -253,3 +349,48 @@ def make_llm(
     if isinstance(model_config, Mapping):
         model_config = ModelConfig.model_validate(model_config)
     return init_chat_model(**model_config.kwargs)
+
+
+def load_elo_config(
+    path: str | Path,
+) -> AgentEloConfig:
+    return AgentEloConfig.from_mapping(load_yaml_mapping(path))
+
+
+def elo_cache_dir(
+    group: str,
+    name: str,
+) -> Path:
+    """Return the persistent configuration directory for a named Elo environment."""
+    return group_environments_dir(group) / "agent_elo" / name
+
+
+def save_elo_config(
+    config: AgentEloConfig,
+    path: str | Path | None = None,
+) -> Path:
+    """Persist an Elo environment configuration."""
+    target = (
+        Path(path).expanduser()
+        if path
+        else elo_cache_dir(
+            config.group,
+            config.name,
+        )
+        / "elo.yaml"
+    )
+
+    target.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    target.write_text(
+        yaml.safe_dump(
+            _dataclass_to_plain(config),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    return target
