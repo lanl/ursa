@@ -14,11 +14,12 @@ import keyring
 from jsonargparse import ArgumentParser, Namespace
 
 from ursa.cli.config import (
+    UrsaConfig,
     config_layers,
     deep_merge_dicts,
     load_config_file,
 )
-from ursa.util.secrets import SecretReference, SecretTemplate
+from ursa.util.secrets import SecretReference
 
 KEYRING_SERVICE = "ursa"
 
@@ -84,72 +85,64 @@ def add_auth_subcommands(subparsers) -> None:
 
 def config_keyring_usernames(path: Path) -> list[str]:
     """Return keyring usernames referenced anywhere in an URSA config."""
-    secrets = _iter_secrets(load_config_file(path))
+    secrets = _resolved_secrets(load_config_file(path))
     return sorted({
         reference.keyring
+        for _, reference in secrets
         if isinstance(reference.keyring, str)
-        else default_username
-        for _, reference, default_username in secrets
-        if reference.keyring not in (None, False)
     })
 
 
 def _iter_secrets(
     value: Any,
     path: tuple[str, ...] = (),
-    default_username: str | None = None,
-) -> Iterator[tuple[tuple[str, ...], SecretReference, str | None]]:
-    """Yield secrets found in a loaded config mapping."""
-    value = SecretTemplate.maybe_validate(value)
+) -> Iterator[tuple[tuple[str, ...], SecretReference]]:
+    """Yield secret templates found in an arbitrary config value."""
+    value = SecretReference.maybe_validate(value)
     if isinstance(value, SecretReference):
-        yield path, value, default_username
+        yield path, value
         return
     if isinstance(value, Mapping):
-        if isinstance(value.get("inference_provider"), str):
-            default_username = value["inference_provider"]
-        elif isinstance(value.get("model"), str) and ":" in value["model"]:
-            default_username = value["model"].split(":", 1)[0]
         for name, item in value.items():
-            if name == "api_key_env" and isinstance(item, str):
-                yield (
-                    (*path, "api_key"),
-                    SecretReference(env=item),
-                    default_username,
-                )
-                continue
-            child_default = default_username
-            if path in {("inference_providers",), ("mcp_servers",)}:
-                child_default = str(name)
-            elif child_default is None:
-                child_default = str(name)
-            yield from _iter_secrets(item, (*path, str(name)), child_default)
+            yield from _iter_secrets(item, (*path, str(name)))
         return
     if isinstance(value, Sequence) and not isinstance(
         value, (str, bytes, bytearray)
     ):
         for index, item in enumerate(value):
-            yield from _iter_secrets(
-                item, (*path, str(index)), default_username
-            )
+            yield from _iter_secrets(item, (*path, str(index)))
+
+
+def _resolved_secrets(
+    config: Mapping[str, Any],
+) -> Iterator[tuple[tuple[str, ...], SecretReference]]:
+    """Yield explicitly configured secrets after canonical resolution."""
+    resolved = UrsaConfig.model_validate(config).resolve()
+    resolved_by_path = dict(_iter_secrets(resolved.model_dump(mode="python")))
+    for path, _ in _iter_secrets(config):
+        yield path, resolved_by_path[path]
 
 
 def _secret_lines(
     config: dict, show_secrets: bool = False
 ) -> dict[str, list[str]]:
-    secrets = list(_iter_secrets(config))
+    secrets = list(_resolved_secrets(config))
     mcp_counts = Counter(
-        path[1] for path, _, _ in secrets if path[:1] == ("mcp_servers",)
+        path[1] for path, _ in secrets if path[:1] == ("mcp_servers",)
     )
     sections: dict[str, list[str]] = {
         "Inference Providers": [],
         "MCP Servers:": [],
         "Other": [],
     }
-    for path, reference, default_username in secrets:
+    for path, reference in secrets:
+        contextual_keyring_name = None
         if path[:1] == ("inference_providers",):
             section, name = "Inference Providers", path[1]
+            contextual_keyring_name = path[1]
         elif path[:1] == ("mcp_servers",):
             section, server_name = "MCP Servers:", path[1]
+            contextual_keyring_name = server_name
             suffix = ".".join(part for part in path[2:] if part != "headers")
             name = (
                 f"{server_name}.{suffix}"
@@ -162,10 +155,14 @@ def _secret_lines(
             name = ".".join(display_path)
 
         source = "env" if reference.env is not None else "keyring"
-        if source == "keyring" and isinstance(reference.keyring, str):
+        if (
+            source == "keyring"
+            and isinstance(reference.keyring, str)
+            and reference.keyring != contextual_keyring_name
+        ):
             name += f" ({reference.keyring})"
         try:
-            resolved = reference.resolve(default_username)
+            resolved = reference.resolve()
         except (ValueError, keyring.errors.KeyringError):
             resolved = None
         line = (

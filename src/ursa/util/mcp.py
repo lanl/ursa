@@ -15,7 +15,7 @@ from mcp.client.session_group import (
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
-from ursa.util.secrets import SecretTemplate
+from ursa.util.secrets import SecretReference
 
 
 class UrsaMCPClient(MultiServerMCPClient):
@@ -72,7 +72,7 @@ def validate_server_parameters(config: dict):
     payload = {k: v for k, v in config.items() if k != "transport"}
     if isinstance(headers := payload.get("headers"), dict):
         payload["headers"] = {
-            name: SecretTemplate.maybe_validate(value)
+            name: SecretReference.maybe_validate(value)
             for name, value in headers.items()
         }
     if transport_hint == "stdio":
@@ -145,12 +145,12 @@ def start_mcp_client(
 def _resolve_header(value, server_name: str):
     """Resolve a typed secret template in an MCP HTTP header."""
     reference = (
-        SecretTemplate.model_validate(value)
+        SecretReference.model_validate(value)
         if isinstance(value, dict)
         else value
     )
-    if isinstance(reference, SecretTemplate):
-        rendered = reference.get_secret_value(server_name)
+    if isinstance(reference, SecretReference):
+        rendered = reference.bind_keyring_name(server_name).get_secret_value()
         if rendered is None:
             raise ValueError(
                 f"Secret for MCP server '{server_name}' is not set"

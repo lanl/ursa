@@ -12,7 +12,7 @@ from mcp.client.session_group import (
 )
 
 from ursa.util import mcp as mcp_mod
-from ursa.util.secrets import SecretTemplate
+from ursa.util.secrets import SecretReference
 
 DUMMY_SERVER = Path(__file__).parents[1] / "tools" / "dummy_mcp_server.py"
 
@@ -97,7 +97,7 @@ def test_mcp_config_loading_types_secret_headers():
         },
     })
 
-    assert isinstance(config.headers["Authorization"], SecretTemplate)
+    assert isinstance(config.headers["Authorization"], SecretReference)
 
 
 def test_mcp_header_reports_missing_environment_secret(monkeypatch):

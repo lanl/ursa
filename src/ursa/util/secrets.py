@@ -1,7 +1,8 @@
 """References to secrets stored outside configuration files."""
 
 from os import environ
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
+from warnings import warn
 
 from pydantic import (
     AfterValidator,
@@ -23,12 +24,13 @@ def _non_blank(value: str | None) -> str | None:
 
 
 class SecretReference(BaseModel):
-    """A reference to a secret in the environment or system keyring."""
+    """A secret reference rendered into a string at point of use."""
 
     model_config = ConfigDict(extra="forbid")
 
     env: Annotated[str | None, AfterValidator(_non_blank)] = None
     keyring: bool | Annotated[str, AfterValidator(_non_blank)] | None = None
+    template: str = "%s"
 
     @classmethod
     def maybe_validate(cls, value: Any, **kwargs) -> Any:
@@ -47,51 +49,56 @@ class SecretReference(BaseModel):
             raise ValueError("a secret reference requires exactly one source")
         return self
 
-    def resolve(
-        self, default_keyring_username: str | None = None
-    ) -> SecretStr | None:
-        """Resolve the reference, returning ``None`` for a missing env value."""
-        if self.env is not None:
-            value = environ.get(self.env)
-            return SecretStr(value) if value is not None else None
-
-        import keyring
-
-        username = (
-            default_keyring_username if self.keyring is True else self.keyring
-        )
-        if not username:
-            raise ValueError("keyring=true requires a default username")
-        value = keyring.get_password("ursa", username)
-        if value is None:
-            raise ValueError(
-                f"No secret found in the system keyring for '{username}'"
-            )
-        return SecretStr(value)
-
-    def get_secret_value(
-        self, default_keyring_username: str | None = None
-    ) -> str | None:
-        """Resolve and unwrap the referenced secret value."""
-        secret = self.resolve(default_keyring_username)
-        return secret.get_secret_value() if secret is not None else None
-
-
-class SecretTemplate(SecretReference):
-    """A secret reference rendered into a string at point of use."""
-
-    template: str = "%s"
-
     @model_validator(mode="after")
     def _validate_template(self):
         if self.template.count("%s") != 1:
             raise ValueError("secret template must contain exactly one '%s'")
         return self
 
-    def get_secret_value(
-        self, default_keyring_username: str | None = None
-    ) -> str | None:
-        secret = super().get_secret_value(default_keyring_username)
-        if secret is None:
-            return None
-        return self.template % secret
+    def bind_keyring_name(self, name: str) -> Self:
+        """Replace the contextual ``keyring: true`` shorthand with a name."""
+        if self.keyring is not True:
+            return self
+        normalized = _non_blank(name)
+        assert normalized is not None
+        return self.model_copy(update={"keyring": normalized})
+
+    def resolve(self) -> SecretStr | None:
+        """Resolve and render the secret, or return ``None`` for a missing env."""
+        if self.env is not None:
+            value = environ.get(self.env)
+            return (
+                SecretStr(self.template % value) if value is not None else None
+            )
+
+        import keyring
+
+        username = self.keyring
+        if not isinstance(username, str):
+            raise ValueError(
+                "keyring=true must be bound by UrsaConfig.resolve() before "
+                "the secret is used"
+            )
+        value = keyring.get_password("ursa", username)
+        if value is None:
+            raise ValueError(
+                f"No secret found in the system keyring for '{username}'"
+            )
+        return SecretStr(self.template % value)
+
+    def get_secret_value(self) -> str | None:
+        """Resolve and unwrap the referenced secret value."""
+        secret = self.resolve()
+        return secret.get_secret_value() if secret is not None else None
+
+
+class SecretTemplate(SecretReference):
+    """Deprecated compatibility name for :class:`SecretReference`."""
+
+    def __init__(self, **data: Any) -> None:
+        warn(
+            "SecretTemplate is deprecated; use SecretReference instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(**data)

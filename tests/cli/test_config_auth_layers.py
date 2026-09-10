@@ -149,11 +149,22 @@ def test_secret_reference_get_secret_value(monkeypatch):
 
     assert SecretReference(env="MODEL_TOKEN").get_secret_value() == "secret"
     assert (
-        SecretTemplate(
+        SecretReference(
             env="MODEL_TOKEN", template="Bearer %s"
         ).get_secret_value()
         == "Bearer secret"
     )
+
+
+def test_secret_template_compatibility_name_is_deprecated():
+    with pytest.warns(
+        DeprecationWarning,
+        match="SecretTemplate is deprecated; use SecretReference instead",
+    ):
+        reference = SecretTemplate(env="MODEL_TOKEN")
+
+    assert isinstance(reference, SecretReference)
+    assert reference.template == "%s"
 
 
 def test_loaded_config_exposes_typed_secret_references():
@@ -172,14 +183,14 @@ def test_loaded_config_exposes_typed_secret_references():
         config.inference_providers["hosted"].api_key, SecretReference
     )
     assert isinstance(
-        config.mcp_servers["tools"].headers["Authorization"], SecretTemplate
+        config.mcp_servers["tools"].headers["Authorization"], SecretReference
     )
 
 
 @pytest.mark.parametrize("template", ["Bearer", "%s:%s"])
 def test_secret_template_requires_one_placeholder(template):
     with pytest.raises(ValueError, match="exactly one"):
-        SecretTemplate(env="MODEL_TOKEN", template=template)
+        SecretReference(env="MODEL_TOKEN", template=template)
 
 
 def test_api_key_env_reference_resolves(monkeypatch):
@@ -228,6 +239,47 @@ def test_resolution_populates_provider_keyring_username():
     assert config.inference_providers["acme"].api_key == SecretReference(
         keyring=True
     )
+
+
+def test_resolution_populates_direct_model_keyring_username():
+    config = UrsaConfig(
+        llm_model={
+            "model": "ollama:gemma4",
+            "api_key": {"keyring": True},
+        }
+    )
+
+    resolved = config.resolve()
+
+    assert resolved.llm_model.api_key == SecretReference(keyring="ollama")
+    assert config.llm_model.api_key == SecretReference(keyring=True)
+
+
+def test_resolution_populates_mcp_keyring_username():
+    config = UrsaConfig(
+        mcp_servers={
+            "remote-tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {
+                    "Authorization": {
+                        "keyring": True,
+                        "template": "Bearer %s",
+                    }
+                },
+            }
+        }
+    )
+
+    resolved = config.resolve()
+    header = resolved.mcp_servers["remote-tools"].headers["Authorization"]
+
+    assert header == SecretReference(
+        keyring="remote-tools", template="Bearer %s"
+    )
+    assert config.mcp_servers["remote-tools"].headers[
+        "Authorization"
+    ] == SecretReference(keyring=True, template="Bearer %s")
 
 
 def test_legacy_api_key_env_is_migrated_with_warning(monkeypatch):

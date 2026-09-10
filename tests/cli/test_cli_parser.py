@@ -1281,6 +1281,7 @@ def test_print_config_includes_defaults_and_nulls(
     assert output["inference_providers"]["openai"]["api_key"] == {
         "env": "OPENAI_API_KEY",
         "keyring": None,
+        "template": "%s",
     }
     assert output["mcp_servers"] == {
         "example": {

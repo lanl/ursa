@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from ursa.cli import build_parser, main
 from ursa.cli.auth import (
@@ -122,7 +123,7 @@ llm_model:
     assert fake_keyring[(KEYRING_SERVICE, "hosted")] == "token"
 
 
-def test_config_login_supports_environment_configs(tmp_path, fake_keyring):
+def test_config_login_rejects_non_ursa_configs(tmp_path):
     path = tmp_path / "team.yaml"
     path.write_text(
         """
@@ -140,10 +141,8 @@ members:
 """
     )
 
-    assert config_keyring_usernames(path) == [
-        "anthropic",
-        "model-override",
-    ]
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        config_keyring_usernames(path)
 
 
 def test_from_env_rejects_config_with_multiple_secrets(
@@ -357,15 +356,15 @@ llm_model:
     )
     calls = []
 
-    def resolve(reference, default_username=None):
-        calls.append((reference.env, default_username))
+    def resolve(reference):
+        calls.append(reference.env)
         return None
 
     monkeypatch.setattr("ursa.cli.auth.SecretReference.resolve", resolve)
 
     list_credentials(config)
 
-    assert calls == [("MODEL_TOKEN", "openai")]
+    assert calls == ["MODEL_TOKEN"]
     assert "llm_model: env missing" in capsys.readouterr().out
 
 

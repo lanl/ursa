@@ -101,9 +101,7 @@ class InferenceProviderConfig(BaseModel):
             and self.api_key.keyring is True
         ):
             return self.model_copy(
-                update={
-                    "api_key": self.api_key.model_copy(update={"keyring": name})
-                }
+                update={"api_key": self.api_key.bind_keyring_name(name)}
             )
         return self.model_copy()
 
@@ -737,8 +735,40 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
         if model is None:
             continue
         model = model.resolve_inference_provider(resolved.inference_providers)
+        if (
+            isinstance(model.api_key, SecretReference)
+            and model.api_key.keyring is True
+        ):
+            keyring_name = model.inference_provider or model.model_provider
+            if keyring_name is None:
+                raise ValueError(
+                    f"{field_name}.api_key uses keyring=true but the model "
+                    "does not identify an inference or model provider"
+                )
+            model = model.model_copy(
+                update={
+                    "api_key": model.api_key.bind_keyring_name(keyring_name)
+                }
+            )
         enforce_group_base_url_policy(model.base_url, resolved.group)
         setattr(resolved, field_name, model)
+
+    for server_name, server in tuple(resolved.mcp_servers.items()):
+        headers = getattr(server, "headers", None)
+        if not headers:
+            continue
+        resolved_headers = {
+            name: (
+                value.bind_keyring_name(server_name)
+                if isinstance(value, SecretReference)
+                else value
+            )
+            for name, value in headers.items()
+        }
+        if resolved_headers != headers:
+            resolved.mcp_servers[server_name] = server.model_copy(
+                update={"headers": resolved_headers}
+            )
 
     if str(resolved.workspace) == "tmp":
         if resolved._temp_workspace is not None:
