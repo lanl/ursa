@@ -506,12 +506,12 @@ def test_submission_prefers_final_response_then_current_report(
     [
         ("completed", "failed", 1.0),
         ("failed", "completed", 0.0),
-        ("timed_out", "failed", 0.5),
-        ("failed", "timed_out", 0.5),
+        ("timed_out", "failed", 1.0),
+        ("failed", "timed_out", 0.0),
         ("failed", "failed", 0.5),
     ],
 )
-def test_execution_failures_keep_existing_match_rules(
+def test_execution_failures_forfeit_unless_both_failed(
     elo_factory, status_a, status_b, score
 ):
     env = elo_factory.make()
@@ -530,6 +530,12 @@ def test_execution_failures_keep_existing_match_rules(
     )
     assert result.score_a == score
     assert elo_factory.judgment.calls == 0
+    assert result.winner == (
+        "a" if score == 1.0 else "b" if score == 0.0 else None
+    )
+    if "timed_out" in (status_a, status_b):
+        assert "forfeits the match" in result.reasoning
+        assert "produced judgeable partial work" not in result.reasoning
 
 
 def test_prompts_share_task_criteria_and_preserve_lineage_guidance(elo_factory):

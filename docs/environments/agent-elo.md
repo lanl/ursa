@@ -232,16 +232,17 @@ workspace tools. If it also fails, the match is recorded as a draw with an
 explanation.
 
 A timeout alone is not a loss: timed-out members can win, draw, survive, and
-reproduce based on the judgment. Ordinary execution exceptions retain their
-separate handling:
+reproduce based on the judgment. An execution failure forfeits against a completed
+or timed-out competitor, even if the timed-out competitor has no saved report.
+Two failed competitors draw:
 
 | Candidate A | Candidate B | Outcome |
 | --- | --- | --- |
 | Completed or timed out | Completed or timed out | Ask the judge. |
 | Completed | Failed | A wins automatically. |
 | Failed | Completed | B wins automatically. |
-| Timed out | Failed | Draw. |
-| Failed | Timed out | Draw. |
+| Timed out | Failed | A wins automatically. |
+| Failed | Timed out | B wins automatically. |
 | Failed | Failed | Draw. |
 
 When `member_timeout_seconds` is set, all members receive the same UTC deadline

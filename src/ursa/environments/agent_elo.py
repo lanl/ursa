@@ -1293,7 +1293,31 @@ class AgentEloEnvironment(BaseEnvironment):
                 ),
             )
 
-        # Neither completed.
+        if run_a.timed_out and run_b.failed:
+            return MatchResult(
+                player_a=player_a,
+                player_b=player_b,
+                score_a=1.0,
+                reasoning=(
+                    f"{player_a} reached the execution deadline; "
+                    f"{player_b} failed during execution and forfeits the match. "
+                    f"{player_a} therefore wins automatically."
+                ),
+            )
+
+        if run_b.timed_out and run_a.failed:
+            return MatchResult(
+                player_a=player_a,
+                player_b=player_b,
+                score_a=0.0,
+                reasoning=(
+                    f"{player_b} reached the execution deadline; "
+                    f"{player_a} failed during execution and forfeits the match. "
+                    f"{player_b} therefore wins automatically."
+                ),
+            )
+
+        # Both failed.
         return MatchResult(
             player_a=player_a,
             player_b=player_b,
