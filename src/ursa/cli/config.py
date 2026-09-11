@@ -192,15 +192,18 @@ class ModelConfig(BaseModel):
         """Internal helper matching langchain.chat_models._parse_model"""
         model = self.model
         model_provider = self.model_provider
+        model_provider_is_explicit = "model_provider" in self.model_fields_set
+        inferred_model_provider = False
 
         # Model specified as `model_provider:model`
         if (
-            not model_provider
+            not model_provider_is_explicit
             and ":" in model
             and model.split(":", maxsplit=1)[0] in known_providers
         ):
             model_provider = model.split(":", maxsplit=1)[0]
             model = ":".join(model.split(":")[1:])
+            inferred_model_provider = True
 
         # Model provider specified and model is `model_provider:model`
         elif (
@@ -210,7 +213,7 @@ class ModelConfig(BaseModel):
         ):
             model = model.split(":", maxsplit=1)[1]
 
-        if not model_provider:
+        if not model_provider and not self.inference_provider:
             # Enhanced error message with suggestions
             supported_list = ", ".join(sorted(known_providers))
             msg = (
@@ -224,7 +227,13 @@ class ModelConfig(BaseModel):
 
         # Update with parsed entries
         self.model = model
-        self.model_provider = model_provider.replace("-", "_").lower()
+        self.model_provider = (
+            model_provider.replace("-", "_").lower()
+            if model_provider is not None
+            else None
+        )
+        if not model_provider_is_explicit and not inferred_model_provider:
+            self.__pydantic_fields_set__.discard("model_provider")
         return self
 
     @property

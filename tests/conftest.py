@@ -154,5 +154,6 @@ def embedding_model():
     model = FakeEmbeddingModel(size=12)
     model._testing_only_kwargs = {
         "model": "fake:embeddings",
+        "model_provider": "fake",
     }
     return model
