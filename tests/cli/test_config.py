@@ -208,6 +208,18 @@ def test_model_config_colon_model_name_handling(
     assert cfg.model_provider == expected_provider
 
 
+def test_embedding_model_provider_error_lists_supported_providers():
+    with pytest.raises(ValueError) as exc_info:
+        config_mod.EmbModelConfig(model="unknown:model")
+
+    message = str(exc_info.value)
+    assert "Supported providers: azure_ai, azure_openai" in message
+    assert (
+        "https://docs.langchain.com/oss/python/integrations/providers"
+        in message
+    )
+
+
 @pytest.mark.parametrize(
     "higher_priority",
     [
@@ -236,6 +248,96 @@ def test_emb_model_merge_base_url_overrides_inference_provider(
     assert merged.model_provider == "ollama"
     assert merged.base_url == "http://localhost:11434"
     assert merged.inference_provider is None
+    assert merged.model_extra == {}
+
+
+@pytest.mark.parametrize(
+    "higher_priority",
+    [
+        {"inference_provider": "hosted"},
+        config_mod.ChatModelConfig(
+            model="gpt-5.4-mini",
+            inference_provider="hosted",
+        ),
+    ],
+)
+def test_chat_model_merge_inference_provider_overrides_base_url(
+    higher_priority,
+):
+    base = config_mod.ChatModelConfig(
+        model="gpt-5.4",
+        base_url="https://models.example/v1",
+    )
+
+    merged = base.model_merge(higher_priority)
+
+    assert merged.base_url is None
+    assert merged.inference_provider == "hosted"
+    assert merged.model_extra == {}
+
+
+def test_chat_model_merge_marks_cleared_base_url_as_explicit():
+    base = config_mod.ChatModelConfig(model="gpt-5.4")
+
+    merged = base.model_merge({"inference_provider": "hosted"})
+
+    assert merged.base_url is None
+    assert {"base_url", "inference_provider"} <= merged.model_fields_set
+
+
+def test_chat_model_merge_prefers_base_url_if_override_has_both_endpoints():
+    base = config_mod.ChatModelConfig(
+        model="gpt-5.4",
+        inference_provider="openai",
+    )
+
+    merged = base.model_merge({
+        "base_url": "https://models.example/v1",
+        "inference_provider": "hosted",
+    })
+
+    assert merged.base_url == "https://models.example/v1"
+    assert merged.inference_provider is None
+    assert merged.model_extra == {}
+
+
+def test_chat_model_merge_preserves_values_unset_in_dict_override():
+    base = config_mod.ChatModelConfig(
+        model="gpt-5.4",
+        base_url="https://models.example/v1",
+        ssl_verify=False,
+    )
+
+    merged = base.model_merge({"max_completion_tokens": 512})
+
+    assert merged.model == "gpt-5.4"
+    assert merged.base_url == "https://models.example/v1"
+    assert merged.ssl_verify is False
+    assert merged.max_completion_tokens == 512
+    assert merged.model_fields_set == (
+        base.model_fields_set | {"max_completion_tokens"}
+    )
+    assert merged.model_extra == {}
+
+
+def test_chat_model_merge_preserves_values_unset_in_model_override():
+    base = config_mod.ChatModelConfig(
+        model="gpt-5.4",
+        ssl_verify=False,
+    )
+    override = config_mod.ChatModelConfig(
+        model="gpt-5.4-mini",
+        max_completion_tokens=512,
+    )
+
+    merged = base.model_merge(override)
+
+    assert merged.model == "gpt-5.4-mini"
+    assert merged.ssl_verify is False
+    assert merged.max_completion_tokens == 512
+    assert merged.model_fields_set == (
+        base.model_fields_set | override.model_fields_set
+    )
 
 
 def test_model_merge_keeps_provider_defaults_resolvable():
@@ -392,6 +494,92 @@ def test_ursa_config_emb_model_layering(
         assert merged.emb_model.api_key.env == expected_api_key_env
 
 
+def test_ursa_config_merges_multiple_embedding_model_layers():
+    merged = config_mod.UrsaConfig().model_merge(
+        {
+            "emb_model": {
+                "model": "text-embedding-3-large",
+                "model_provider": "openai",
+                "inference_provider": "openai",
+            }
+        },
+        {
+            "emb_model": {
+                "model": "ollama:nomic-embed-text:latest",
+                "base_url": "http://localhost:11434",
+            }
+        },
+    )
+
+    assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
+    assert merged.emb_model.model == "nomic-embed-text:latest"
+    assert merged.emb_model.model_provider == "ollama"
+    assert merged.emb_model.base_url == "http://localhost:11434"
+    assert merged.emb_model.inference_provider is None
+
+
+def test_ursa_config_deep_merges_mapping_field():
+    base = config_mod.UrsaConfig(
+        agent_config={"research": {"temperature": 0.5}}
+    )
+
+    merged = base.model_merge({"agent_config": {"research": {"max_steps": 10}}})
+
+    assert merged.agent_config == {
+        "research": {"temperature": 0.5, "max_steps": 10}
+    }
+
+
+def test_ursa_config_merge_replaces_mapping_with_none():
+    base = config_mod.UrsaConfig(
+        agent_config={"research": {"temperature": 0.5}}
+    )
+
+    merged = base.model_merge({"agent_config": None})
+
+    assert merged.agent_config == {}
+
+
+def test_ursa_config_deep_merges_inference_provider_catalog():
+    base = config_mod.UrsaConfig(
+        inference_providers={
+            "hosted": config_mod.InferenceProviderConfig(
+                base_url="https://models.example/v1"
+            )
+        }
+    )
+
+    merged = base.model_merge({
+        "inference_providers": {
+            "local": {
+                "base_url": "http://localhost:11434",
+                "ssl_verify": False,
+            }
+        }
+    })
+
+    assert merged.inference_providers["hosted"].base_url == (
+        "https://models.example/v1"
+    )
+    assert merged.inference_providers["local"].base_url == (
+        "http://localhost:11434"
+    )
+    assert merged.inference_providers["local"].ssl_verify is False
+
+
+def test_ursa_config_merge_accepts_concrete_path_field():
+    workspace = Path("/tmp/ursa-workspace")
+
+    merged = config_mod.UrsaConfig().model_merge({"workspace": workspace})
+
+    assert merged.workspace == workspace
+
+
+def test_ursa_config_merge_rejects_unknown_field():
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        config_mod.UrsaConfig().model_merge({"unknown": "value"})
+
+
 @pytest.mark.parametrize(
     (
         "base_config",
@@ -430,3 +618,39 @@ def test_ursa_config_merge_sparse_layer_behavior(
     assert merged.workspace == expected_workspace
     if expected_fields_set is not None:
         assert merged.model_fields_set == expected_fields_set
+
+
+def test_model_provider_name_is_normalized():
+    config = config_mod.ChatModelConfig(
+        model="model",
+        model_provider="Custom-Provider",
+    )
+
+    assert config.model_provider == "custom_provider"
+
+
+def test_chat_model_initialization_returns_factory_result(monkeypatch):
+    sentinel = object()
+    calls = []
+    monkeypatch.setattr(
+        config_mod,
+        "init_chat_model",
+        lambda **kwargs: calls.append(kwargs) or sentinel,
+    )
+
+    result = config_mod.ChatModelConfig(
+        model="model",
+        model_provider="custom",
+    ).init_chat_model()
+
+    assert result is sentinel
+    assert calls == [{"model": "model", "model_provider": "custom"}]
+
+
+def test_ursa_config_from_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("group: science\n", encoding="utf-8")
+
+    config = config_mod.UrsaConfig.from_file(path)
+
+    assert config.group == "science"
