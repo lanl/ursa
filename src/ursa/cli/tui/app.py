@@ -222,7 +222,7 @@ class UrsaTextualApp(App[None]):
     def _update_status(self, state: str) -> None:
         items = [
             self.hitl.config.llm_model.pretty_repr(short=True),
-            f"{self.total_tokens} tokens",
+            f"{self.total_tokens:,} tokens",
         ]
         if agent_name := self.hitl.config.agent_name:
             items.append(f"agent {agent_name}")
