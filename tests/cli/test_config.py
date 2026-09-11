@@ -87,6 +87,12 @@ def test_deep_interp_env_recurses_nested_dictionaries(
             "openai",
         ),
         (
+            config_mod.ChatModelConfig,
+            "ollama:llama3.1",
+            "llama3.1",
+            "ollama",
+        ),
+        (
             config_mod.ModelConfig,
             "ollama:nomic-embed-text:latest",
             "ollama:nomic-embed-text:latest",
@@ -155,8 +161,8 @@ def test_model_config_model_parsing_for_known_provider_prefix(
             config_mod.ChatModelConfig,
             "anthropic:claude-4.8:0",
             None,
-            "anthropic:claude-4.8:0",
-            "openai",
+            "claude-4.8:0",
+            "anthropic",
             None,
         ),
         (
@@ -218,6 +224,16 @@ def test_embedding_model_provider_error_lists_supported_providers():
         "https://docs.langchain.com/oss/python/integrations/providers"
         in message
     )
+
+
+def test_embedding_model_defers_provider_to_inference_provider():
+    config = config_mod.EmbModelConfig(
+        model="private-embedding",
+        inference_provider="hosted",
+    )
+
+    assert config.model_provider is None
+    assert "model_provider" not in config.model_fields_set
 
 
 @pytest.mark.parametrize(
