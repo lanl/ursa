@@ -1,3 +1,5 @@
+import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -106,3 +108,14 @@ async def wait_for(pilot, condition, *, timeout=3.0, interval=0.05):
         await asyncio.sleep(interval)
         await pilot.pause()
     return bool(condition())
+
+
+async def wait_for_event(pilot, event, timeout=10.0):
+    """Wait for a threading.Event while keeping the Textual app pumping."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if event.is_set():
+            return True
+        await pilot.pause()
+        await asyncio.sleep(0.02)
+    return event.is_set()
