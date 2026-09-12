@@ -139,19 +139,26 @@ class ModelConfig(BaseModel):
 
     def model_merge(self, other: Self | dict[str, Any]) -> Self:
         """Merge explicit values from a higher-priority model config."""
-        candidate = (
-            other
-            if isinstance(other, ModelConfig)
-            else type(self).model_validate({
+        if isinstance(other, ModelConfig):
+            candidate = other
+            updates = candidate.model_dump(mode="python", exclude_unset=True)
+        else:
+            updates = deepcopy(other)
+            if updates.get("base_url") is not None:
+                updates["inference_provider"] = None
+            elif updates.get("inference_provider") is not None:
+                updates["base_url"] = None
+            candidate = type(self).model_validate({
                 "model": self.model,
-                **deepcopy(other),
+                **updates,
             })
-        )
-        updates = candidate.model_dump(mode="python", exclude_unset=True)
+            updates = candidate.model_dump(mode="python", exclude_unset=True)
+
         if updates.get("base_url") is not None:
-            updates.setdefault("inference_provider", None)
+            updates["inference_provider"] = None
         elif updates.get("inference_provider") is not None:
-            updates.setdefault("base_url", None)
+            updates["base_url"] = None
+
         merged = type(self).model_validate({
             **self.model_dump(mode="python"),
             **updates,
@@ -172,16 +179,6 @@ class ModelConfig(BaseModel):
             return data
 
         data = dict(data)
-        model = data.get("model")
-        if isinstance(model, str) and ":" in model:
-            provider, model_name = model.split(":", 1)
-            explicit_provider = data.get("model_provider")
-            if explicit_provider is not None and explicit_provider != provider:
-                raise ValueError(
-                    f"model provider prefix ({provider}) conflicts with model_provider ({explicit_provider})"
-                )
-            data["model"] = model_name
-            data["model_provider"] = provider
         if (
             data.get("base_url") is not None
             and data.get("inference_provider") is not None
@@ -190,6 +187,54 @@ class ModelConfig(BaseModel):
                 "base_url and inference_provider cannot both be configured"
             )
         return data
+
+    def _parse_model_and_provider(self, known_providers: dict[str, tuple]):
+        """Internal helper matching langchain.chat_models._parse_model"""
+        model = self.model
+        model_provider = self.model_provider
+        model_provider_is_explicit = "model_provider" in self.model_fields_set
+        inferred_model_provider = False
+
+        # Model specified as `model_provider:model`
+        if (
+            not model_provider_is_explicit
+            and ":" in model
+            and model.split(":", maxsplit=1)[0] in known_providers
+        ):
+            model_provider = model.split(":", maxsplit=1)[0]
+            model = ":".join(model.split(":")[1:])
+            inferred_model_provider = True
+
+        # Model provider specified and model is `model_provider:model`
+        elif (
+            model_provider
+            and ":" in model
+            and model.split(":", maxsplit=1)[0] == model_provider
+        ):
+            model = model.split(":", maxsplit=1)[1]
+
+        if not model_provider and not self.inference_provider:
+            # Enhanced error message with suggestions
+            supported_list = ", ".join(sorted(known_providers))
+            msg = (
+                f"Unable to infer model provider for {model=}. "
+                f"Please specify 'model_provider' directly.\n\n"
+                f"Supported providers: {supported_list}\n\n"
+                f"For help with specific providers, see: "
+                f"https://docs.langchain.com/oss/python/integrations/providers"
+            )
+            raise ValueError(msg)
+
+        # Update with parsed entries
+        self.model = model
+        self.model_provider = (
+            model_provider.replace("-", "_").lower()
+            if model_provider is not None
+            else None
+        )
+        if not model_provider_is_explicit and not inferred_model_provider:
+            self.__pydantic_fields_set__.discard("model_provider")
+        return self
 
     @property
     def api_key_env(self) -> str | None:
@@ -338,6 +383,12 @@ class ChatModelConfig(ModelConfig):
         self.check_instantiated_model(llm)
         return llm
 
+    @model_validator(mode="after")
+    def parse_model_and_provider(self):
+        from langchain.chat_models.base import _BUILTIN_PROVIDERS
+
+        return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
+
 
 class EmbModelConfig(ModelConfig):
     """Configuration for instantiating an embeddings model"""
@@ -353,6 +404,12 @@ class EmbModelConfig(ModelConfig):
         emb = init_embeddings(**self.kwargs)
         self.check_instantiated_model(emb)
         return emb
+
+    @model_validator(mode="after")
+    def parse_model_and_provider(self):
+        from langchain.embeddings.base import _BUILTIN_PROVIDERS
+
+        return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
 
 
 class UrsaConfig(BaseModel):
@@ -477,9 +534,33 @@ class UrsaConfig(BaseModel):
             fields_set.update(updates)
             for key, value in updates.items():
                 current = merged.get(key)
+                field_info = type(self).model_fields.get(key)
+                field_annotation = getattr(field_info, "annotation", None)
+                model_cls = None
+                if isinstance(field_annotation, type) and issubclass(
+                    field_annotation, BaseModel
+                ):
+                    model_cls = field_annotation
+                elif getattr(field_annotation, "__args__", None):
+                    for arg in field_annotation.__args__:
+                        if isinstance(arg, type) and issubclass(arg, BaseModel):
+                            model_cls = arg
+                            break
+
                 model_merge = getattr(current, "model_merge", None)
                 if callable(model_merge):
                     merged[key] = model_merge(value)
+                elif (
+                    model_cls is not None
+                    and isinstance(value, dict)
+                    and not (
+                        isinstance(current, dict)
+                        and all(
+                            isinstance(v, BaseModel) for v in current.values()
+                        )
+                    )
+                ):
+                    merged[key] = model_cls.model_validate(value)
                 elif isinstance(current, dict) and isinstance(value, dict):
                     merged[key] = deep_merge_dicts(current, value)
                 else:
