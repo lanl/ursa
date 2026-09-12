@@ -44,6 +44,8 @@ async def assess_command_safety(
         safe_codes = []
 
     prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
+    if prompt_level == "yolo":
+        return SafetyAssessment(is_safe=True, reason="yolo")
     return await ainvoke_structured(
         runtime.context.llm,
         SafetyAssessment,
