@@ -4,8 +4,6 @@ The graph compiles from ``state_type``; a TypedDict declared only in the
 generic parameter or the legacy ``agent_state`` attribute never applies.
 """
 
-import importlib
-import sys
 import warnings
 from typing import TypedDict
 
@@ -38,6 +36,10 @@ def test_guard_silent_for_registered_state():
 
 
 def test_guard_warns_for_legacy_agent_state_attribute():
-    sys.modules.pop("ursa.agents.rag_agent", None)
-    with pytest.warns(UnregisteredAgentStateWarning, match="RAGState"):
-        importlib.import_module("ursa.agents.rag_agent")
+    with pytest.warns(UnregisteredAgentStateWarning, match="SyntheticState"):
+
+        class Legacy(BaseAgent):
+            agent_state = SyntheticState
+
+            def _build_graph(self):
+                pass
