@@ -38,7 +38,9 @@ def remove_surrogates(text: str) -> str:
     return re.sub(r"[\ud800-\udfff]", "", text)
 
 
-class MaterialsProjectAgent(BaseAgent):
+class MaterialsProjectAgent(BaseAgent[PaperState]):
+    state_type = PaperState
+
     def __init__(
         self,
         llm: BaseChatModel,
