@@ -188,8 +188,19 @@ class ModelConfig(BaseModel):
             )
         return data
 
-    def _parse_model_and_provider(self, known_providers: dict[str, tuple]):
-        """Internal helper matching langchain.chat_models._parse_model"""
+    def _parse_model_and_provider(
+        self, known_providers: dict[str, tuple]
+    ) -> Self:
+        """Internal helper to parse `model` and `model_provider` into coherent entries.
+
+        Parse `model` and `model_provider` into coherent entries.
+        - Splits model = `model_provider:model` -> `model_provider`, `model`
+        - Drops model_provider prefix from model iff matching model_provider is set
+        - Leaves unrecognized model_providers alone -> May error at runtime
+
+        Matches the langchain.chat_models._parse_model implementation
+        - Dropped model_provider normalization, as unclear how that would trigger
+        """
         model = self.model
         model_provider = self.model_provider
         model_provider_is_explicit = "model_provider" in self.model_fields_set
@@ -201,8 +212,9 @@ class ModelConfig(BaseModel):
             and ":" in model
             and model.split(":", maxsplit=1)[0] in known_providers
         ):
-            model_provider = model.split(":", maxsplit=1)[0]
-            model = ":".join(model.split(":")[1:])
+            # model = `known_model_provider:model` to:
+            # model = `model` and model_provider = known_model_provider
+            model_provider, model = model.split(":", maxsplit=1)
             inferred_model_provider = True
 
         # Model provider specified and model is `model_provider:model`
@@ -211,6 +223,9 @@ class ModelConfig(BaseModel):
             and ":" in model
             and model.split(":", maxsplit=1)[0] == model_provider
         ):
+            # model = `model_provider:model` and matches explicit
+            # model_provider. Remove `model_provider` prefix from
+            # model
             model = model.split(":", maxsplit=1)[1]
 
         if not model_provider and not self.inference_provider:
@@ -227,11 +242,7 @@ class ModelConfig(BaseModel):
 
         # Update with parsed entries
         self.model = model
-        self.model_provider = (
-            model_provider.replace("-", "_").lower()
-            if model_provider is not None
-            else None
-        )
+        self.model_provider = model_provider
         if not model_provider_is_explicit and not inferred_model_provider:
             self.__pydantic_fields_set__.discard("model_provider")
         return self
