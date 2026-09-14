@@ -1504,6 +1504,8 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
 async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
     tmp_path, monkeypatch
 ):
+    # This test validates explicitly; keep the debounce from racing assertions.
+    monkeypatch.setattr(ModelScreen, "YAML_VALIDATION_DELAY", 30.0)
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
@@ -1542,9 +1544,17 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
         assert editor.language == "yaml"
 
         for document, expected_valid in cases:
+            previous_timer = app.screen._yaml_timers.get("chat")
             editor.text = document
-            await pilot.pause()
-            assert not editor.has_class("yaml-valid", "yaml-invalid")
+            # Each Changed event must schedule its own validation before we
+            # inspect the neutral state and stop that edit's debounce timer.
+            assert await wait_for(
+                pilot,
+                lambda: app.screen._yaml_timers.get("chat")
+                is not previous_timer,
+            )
+            assert not editor.has_class("yaml-valid")
+            assert not editor.has_class("yaml-invalid")
             app.screen._yaml_timers["chat"].stop()
 
             result = app.screen._validate_yaml(
