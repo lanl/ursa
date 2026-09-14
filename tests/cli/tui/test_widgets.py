@@ -2389,14 +2389,18 @@ async def test_agents_lazily_load_tools_and_only_once(tmp_path):
 
         await wait_for(pilot, lambda: isinstance(app.screen, AgentsScreen))
         assert isinstance(app.screen, AgentsScreen)
-        assert calls == ["plan"]
+        # Mounting the screen does not mean its activation worker has started.
+        assert await wait_for(pilot, lambda: calls == ["plan"])
         # A callback already queued when hydration stops must tolerate the
         # frame state being gone while the loading node is still mounted.
         app.screen._stop_tool_loading(0)
         app.screen._advance_tool_loading(0)
         # Tool discovery is suspended, but tabs remain interactive.
         await pilot.press("right")
-        await pilot.pause()
+        assert await wait_for(
+            pilot,
+            lambda: len(app.screen.query("#agent-tools-1 .agent-tool")) == 1,
+        )
         assert calls == ["plan", "chat"]
         assert len(app.screen.query("#agent-tools-1 .agent-tool")) == 1
 
