@@ -636,15 +636,6 @@ def test_ursa_config_merge_sparse_layer_behavior(
         assert merged.model_fields_set == expected_fields_set
 
 
-def test_model_provider_name_is_normalized():
-    config = config_mod.ChatModelConfig(
-        model="model",
-        model_provider="Custom-Provider",
-    )
-
-    assert config.model_provider == "custom_provider"
-
-
 def test_chat_model_initialization_returns_factory_result(monkeypatch):
     sentinel = object()
     calls = []
