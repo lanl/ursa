@@ -133,6 +133,39 @@ def _planning_executor_workflow_builder() -> Callable[
     )
 
 
+def _hypothesis_symposium_workflow_builder() -> Callable[
+    [Any, dict[str, Any]], AgentAdapter
+]:
+    """Build the hypothesis-symposium workflow adapter.
+
+    Like the other LangGraph workflows exposed here (Plan -> Execute,
+    Hypothesize -> Plan -> Execute), this workflow subclasses ``BaseWorkflow``
+    and exposes the same ``ainvoke(inputs, config=...)`` surface, so it can be
+    driven through the shared in-process BaseAgent adapter.
+    """
+
+    return _baseagent_adapter_builder(
+        "ursa.workflows.hypothesis_symposium.HypothesisSymposiumWorkflow"
+    )
+
+
+def _hypothesis_orchestrator_workflow_builder() -> Callable[
+    [Any, dict[str, Any]], AgentAdapter
+]:
+    """Build the hypothesis-orchestrator workflow adapter.
+
+    A dynamic-topology counterpart to the hypothesis-symposium workflow: an
+    orchestrating ExecutionAgent spawns persistent, timestamped per-hypothesis
+    investigator sub-agents on demand and then has them cross-review. Like the
+    other LangGraph workflows exposed here it subclasses ``BaseWorkflow`` and
+    is driven through the shared in-process BaseAgent adapter.
+    """
+
+    return _baseagent_adapter_builder(
+        "ursa.workflows.hypothesis_orchestrator.HypothesisOrchestratorWorkflow"
+    )
+
+
 def register(entry: AgentEntry) -> None:
     agent_id = entry.spec.agent_id
     if agent_id in REGISTRY:
@@ -471,6 +504,110 @@ register(
             tags=["workflow", "planning", "tools"],
         ),
         build_adapter=_think_plan_execute_workflow_builder(),
+        build_inputs=lambda p: p["prompt"],
+    )
+)
+
+register(
+    AgentEntry(
+        spec=AgentSpec(
+            agent_id="hypothesis_symposium_agent",
+            display_name="Hypothesize -> Investigate -> Symposium",
+            description="Generates competing hypotheses, investigates each in a parallel fan-out, then runs a multi-round cross-review symposium (individual member failures are contained, never fatal) before synthesizing findings and folding all new information back into a persistent hypothesis space. A single member failing an investigation branch or a symposium phase does not abort the run.",
+            capabilities=AgentCapabilities(
+                supports_streaming=False,
+                supports_cancellation=False,
+                produces_artifacts=True,
+            ),
+            parameters=[
+                _prompt_param(title="Question or evidence"),
+                AgentParam(
+                    name="max_hypotheses",
+                    title="Max hypotheses",
+                    description="Maximum number of competing hypotheses to investigate in parallel.",
+                    type="integer",
+                    required=False,
+                    default=5,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="max_hypotheses",
+                    constraints=ParamConstraint(minimum=1, maximum=25),
+                ),
+                AgentParam(
+                    name="revision_rounds",
+                    title="Symposium revision rounds",
+                    description="Number of cross-review/revision rounds the symposium performs.",
+                    type="integer",
+                    required=False,
+                    default=1,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="revision_rounds",
+                    constraints=ParamConstraint(minimum=1, maximum=10),
+                ),
+                AgentParam(
+                    name="experience_filename",
+                    title="Hypothesis-space artifact",
+                    description="Markdown experience file used to persist and update the hypothesis space across runs.",
+                    type="string",
+                    required=False,
+                    default="hypothesis_space.md",
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="experience_filename",
+                ),
+            ]
+            + _common_llm_params()
+            + _runner_params(),
+            tags=["workflow", "research", "hypotheses", "review"],
+        ),
+        build_adapter=_hypothesis_symposium_workflow_builder(),
+        build_inputs=lambda p: p["prompt"],
+    )
+)
+
+register(
+    AgentEntry(
+        spec=AgentSpec(
+            agent_id="hypothesis_orchestrator_agent",
+            display_name="Hypothesize -> Spawn Investigators -> Cross-Review",
+            description="Generates competing hypotheses, then an orchestrator agent spawns one persistent, timestamped investigator sub-agent per hypothesis to gather evidence for/against it, then reuses those same agents to cross-review each other's findings before synthesizing a final verdict. A dynamic-topology alternative to the hypothesis symposium workflow (adaptive orchestration in exchange for weaker observability).",
+            capabilities=AgentCapabilities(
+                supports_streaming=False,
+                supports_cancellation=False,
+                produces_artifacts=True,
+            ),
+            parameters=[
+                _prompt_param(title="Question or evidence"),
+                AgentParam(
+                    name="max_hypotheses",
+                    title="Max hypotheses",
+                    description="Maximum number of competing hypotheses to investigate.",
+                    type="integer",
+                    required=False,
+                    default=5,
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="max_hypotheses",
+                    constraints=ParamConstraint(minimum=1, maximum=25),
+                ),
+                AgentParam(
+                    name="experience_filename",
+                    title="Hypothesis-space artifact",
+                    description="Markdown experience file used to persist and update the hypothesis space across runs.",
+                    type="string",
+                    required=False,
+                    default="hypothesis_space.md",
+                    advanced=True,
+                    source=ParamSource.agent_init,
+                    target="experience_filename",
+                ),
+            ]
+            + _common_llm_params()
+            + _runner_params(),
+            tags=["workflow", "research", "hypotheses", "subagents"],
+        ),
+        build_adapter=_hypothesis_orchestrator_workflow_builder(),
         build_inputs=lambda p: p["prompt"],
     )
 )
