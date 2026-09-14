@@ -13,6 +13,7 @@ from ursa.tools import (
     edit_code,
     edit_experience,
     list_experiences,
+    load_skill,
     read_experience,
     read_file,
     run_command,
@@ -25,6 +26,7 @@ from ursa.tools.search_tools import (
     run_osti_search,
     run_web_search,
 )
+from ursa.util.skills import discover_skills, render_skill_catalog
 
 
 class ChatState(TypedDict):
@@ -36,6 +38,10 @@ class BasicChatAgent(BaseAgent[ChatState]):
     """Basic Chat Agent"""
 
     state_type = ChatState
+
+    # Appended to the system prompt when the agent has discovered skills.
+    # BasicChatAgent has none; ChatAgent populates this in its __init__.
+    _skills_catalog: str = ""
 
     def _response_node(
         self, state: ChatState, runtime: Runtime[AgentContext]
@@ -49,7 +55,12 @@ class BasicChatAgent(BaseAgent[ChatState]):
     def format_query(self, prompt: str, state: ChatState | None = None):
         if state is None:
             state = ChatState(
-                messages=[SystemMessage(content=get_chatter_system_prompt())]
+                messages=[
+                    SystemMessage(
+                        content=get_chatter_system_prompt()
+                        + self._skills_catalog
+                    )
+                ]
             )
         state["messages"].append(HumanMessage(content=prompt))
 
@@ -113,6 +124,15 @@ class ChatAgent(AgentWithTools, BasicChatAgent):
                 run_osti_search,
                 run_arxiv_search,
             ])
+
+        # Discover Agent Skills (progressive disclosure). When any SKILL.md is
+        # found, advertise its frontmatter in the system prompt and expose the
+        # load_skill tool so the model can pull in a skill's full body on demand.
+        skills = discover_skills()
+        self._skills_catalog = render_skill_catalog(skills)
+        if skills:
+            default_tools.append(load_skill)
+
         super().__init__(llm=llm, tools=default_tools, **kwargs)
 
     def _build_graph(self):

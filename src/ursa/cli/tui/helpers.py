@@ -92,13 +92,36 @@ def _embedding_name(hitl: HITL) -> str:
     return type(embedding).__name__
 
 
+def _skill_directive(name: str, prompt: str) -> str:
+    """Wrap a user prompt with an instruction to load and apply a skill."""
+    directive = (
+        f"Use the '{name}' skill to handle this request. Load it with the "
+        "load_skill tool if you have not already loaded it this conversation, "
+        "then follow its instructions."
+    )
+    prompt = prompt.strip()
+    return f"{directive}\n\n{prompt}" if prompt else directive
+
+
 def _route_prompt(hitl: HITL, prompt: str) -> tuple[str, str]:
-    """Route a leading ``#agent`` macro, defaulting to chat."""
+    """Route a leading ``#agent`` or ``/skill`` macro, defaulting to chat."""
     match = re.match(
         r"^#(?P<name>\S+)(?:\s(?P<prompt>.*))?$", prompt, re.DOTALL
     )
     if match and match["name"] in hitl.agents:
         return match["name"], match["prompt"] or ""
+    # `/skill` explicitly triggers a discovered skill via the chat agent. Only
+    # names that resolve to a real skill are treated as macros; anything else
+    # (including built-in `/` commands, which dispatch through the picker) falls
+    # through to chat as literal text.
+    skill_match = re.match(
+        r"^/(?P<name>\S+)(?:\s(?P<prompt>.*))?$", prompt, re.DOTALL
+    )
+    skills = getattr(hitl, "skills", {})
+    if skill_match and skill_match["name"] in skills:
+        return "chat", _skill_directive(
+            skill_match["name"], skill_match["prompt"] or ""
+        )
     return "chat", prompt
 
 

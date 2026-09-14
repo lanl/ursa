@@ -63,6 +63,7 @@ from ursa.tools import (
     edit_code,
     edit_experience,
     list_experiences,
+    load_skill,
     read_experience,
     read_file,
     run_command,
@@ -75,6 +76,7 @@ from ursa.tools.search_tools import (
     run_osti_search,
     run_web_search,
 )
+from ursa.util.skills import discover_skills, render_skill_catalog
 from ursa.util.structured_output import invoke_structured
 
 
@@ -238,13 +240,21 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         if extra_tools:
             default_tools.extend(extra_tools)
 
+        # Discover Agent Skills (progressive disclosure). When any SKILL.md is
+        # found, advertise its frontmatter in the system prompt and expose the
+        # load_skill tool so the model can pull in a skill's full body on demand.
+        skills = discover_skills()
+        self._skills_catalog = render_skill_catalog(skills)
+        if skills:
+            default_tools.append(load_skill)
+
         super().__init__(
             llm=llm,
             tools=default_tools,
             safe_codes=safe_codes or ["python", "julia"],
             **kwargs,
         )
-        self.executor_prompt = executor_prompt
+        self.executor_prompt = executor_prompt + self._skills_catalog
         self.recap_prompt = recap_prompt
         self.extra_tools = extra_tools
         self.log_state = log_state

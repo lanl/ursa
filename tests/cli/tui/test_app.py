@@ -8,7 +8,7 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
+from tests.cli._app_fakes import FakeHITL, FakeSkill, emit_event, wait_for
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
@@ -557,6 +557,47 @@ def test_hash_agent_routing_accepts_whitespace_and_multiline_prompts(
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     assert app._route_prompt(prompt) == expected
+
+
+def test_slash_skill_routing_wraps_prompt_for_chat_agent(tmp_path):
+    skills = {"bamboo": FakeSkill("bamboo", "All about bamboo")}
+    app = UrsaTextualApp(FakeHITL(tmp_path, skills=skills))
+
+    name, routed = app._route_prompt("/bamboo tell me more")
+
+    assert name == "chat"
+    assert "bamboo" in routed
+    assert "load_skill" in routed
+    assert routed.endswith("tell me more")
+
+
+def test_slash_skill_routing_without_extra_prompt(tmp_path):
+    skills = {"bamboo": FakeSkill("bamboo", "All about bamboo")}
+    app = UrsaTextualApp(FakeHITL(tmp_path, skills=skills))
+
+    name, routed = app._route_prompt("/bamboo")
+
+    assert name == "chat"
+    assert "bamboo" in routed
+
+
+def test_slash_unknown_skill_falls_through_to_chat_verbatim(tmp_path):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    assert app._route_prompt("/notaskill hello") == (
+        "chat",
+        "/notaskill hello",
+    )
+
+
+def test_slash_candidates_include_commands_and_skills(tmp_path):
+    skills = {"bamboo": FakeSkill("bamboo", "All about bamboo")}
+    app = UrsaTextualApp(FakeHITL(tmp_path, skills=skills))
+
+    candidates = app._hotlist_candidates("/")
+
+    assert any(c.startswith("agents — ") for c in candidates)
+    assert any(c.startswith("bamboo — All about bamboo") for c in candidates)
 
 
 def test_copy_to_clipboard_prefers_platform_tool_when_available(

@@ -30,6 +30,7 @@ from ursa.security import (
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import start_mcp_client
+from ursa.util.skills import discover_skills
 
 
 @dataclass
@@ -189,6 +190,10 @@ class HITL:
 
         self.agent_name = self.config.agent_name
         self.group = self.config.group
+
+        # Skills advertised for explicit `/skill` invocation in the TUI. Keyed
+        # by name; discovery mirrors what the agents themselves see.
+        self.skills = discover_skills()
 
         validate_model_provider(self.config.llm_model, "chat")
         if self.config.emb_model is not None:

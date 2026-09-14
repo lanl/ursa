@@ -421,17 +421,33 @@ class UrsaTextualApp(App[None]):
         prompt = self.query_one(PromptArea)
         origin = self._hotlist_origin
         if trigger == "/":
-            self._hotlist_open = False
-            self._hotlist_origin = None
-            if choice:
+            if not choice:
+                self._hotlist_open = False
+                self._hotlist_origin = None
+                prompt.focus()
+                return
+            name = choice.split(" — ", 1)[0]
+            # Built-in commands dispatch immediately; a discovered skill is
+            # inserted as a `/skill ` macro so the user can add context before
+            # submitting (routing then triggers the skill via the chat agent).
+            if name in COMMAND_CHOICES:
+                self._hotlist_open = False
+                self._hotlist_origin = None
                 if origin is not None:
                     _, start = origin
                     prompt.replace("", start, (start[0], start[1] + 1))
-                self.call_after_refresh(
-                    self._show_command, choice.split(" — ", 1)[0]
+                self.call_after_refresh(self._show_command, name)
+                return
+            if origin is not None:
+                _, start = origin
+                prompt.replace(
+                    f"/{name} ",
+                    start,
+                    (start[0], start[1] + 1),
                 )
-            else:
-                prompt.focus()
+            self._hotlist_open = False
+            self._hotlist_origin = None
+            prompt.focus()
             return
         if trigger == "#":
             self._insert_agent_choice(choice)
@@ -501,10 +517,16 @@ class UrsaTextualApp(App[None]):
         if trigger == "#":
             return sorted(self.hitl.agents)
         if trigger == "/":
-            return [
+            commands = [
                 f"{name} — {description}"
                 for name, description in COMMAND_CHOICES.items()
             ]
+            skills = [
+                f"{skill.name} — {skill.description}"
+                for skill in getattr(self.hitl, "skills", {}).values()
+                if skill.name not in COMMAND_CHOICES
+            ]
+            return commands + sorted(skills)
         workspace = Path(self.hitl.workspace)
         ignored = {".git", ".venv", "__pycache__", "node_modules"}
         # TODO: Traverse asynchronously and remove the arbitrary result cap;

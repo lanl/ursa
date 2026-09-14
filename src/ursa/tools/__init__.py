@@ -7,6 +7,7 @@ from .experience_tools import write_experience as write_experience
 from .read_file_tool import download_file_tool as download_file_tool
 from .read_file_tool import read_file as read_file
 from .run_command_tool import run_command as run_command
+from .skill_tools import load_skill as load_skill
 from .workspace_tools import list_workspace_files as list_workspace_files
 from .write_code_tool import edit_code as edit_code
 from .write_code_tool import write_code as write_code

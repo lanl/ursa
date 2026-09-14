@@ -14,6 +14,12 @@ class FakeAgent:
     config = {"mode": "test"}
 
 
+class FakeSkill:
+    def __init__(self, name: str, description: str):
+        self.name = name
+        self.description = description
+
+
 class FakeHITL:
     model = SimpleNamespace(model_name="test-model")
     embedding = None
@@ -21,8 +27,9 @@ class FakeHITL:
     agent_name = None
     agents = {"chat": FakeAgent(), "plan": FakeAgent()}
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, skills=None):
         self.workspace = workspace
+        self.skills = skills or {}
         inference_providers = {
             "openai": InferenceProviderConfig(
                 base_url="https://api.openai.com/v1",
