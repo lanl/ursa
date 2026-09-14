@@ -2522,10 +2522,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     logs: { stdout: '', stderr: '' },
     workspaceInfo: null,
 
-    // Panel visibility (left sidebar is always shown)
-    showChat: true,
-    showRunLogs: true,
-    showArtifacts: true,
+    // Panel visibility (left sidebar is always shown). Every dashboard load
+    // starts with the work panels closed so the welcome screen can orient users.
+    showChat: false,
+    showRunLogs: false,
+    showArtifacts: false,
 
     settings: null,
     credentialStatuses: {},
@@ -2533,11 +2534,63 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     _settingsSessionId: null,
     _settingsSessionTitle: '',
     _openSessionMenu: null,
+    _sessionCreateMenuOpen: false,
     _renderTimers: { stdout: null, stderr: null },
     _logToken: 0,
     _followLogs: { stdout: true, stderr: true },
     _pendingWhilePaused: { stdout: false, stderr: false },
+    _welcomeTaskIndexes: {},
   };
+
+  // Add new examples here. The welcome screen chooses one task from each
+  // group on load; users can rotate the examples without leaving the page.
+  const WELCOME_TASK_LIBRARY = [
+    {
+      agentId: 'chat_agent',
+      label: 'Chat Agent',
+      purpose: 'Explore and explain',
+      tasks: [
+        {
+          title: 'Build intuition for Bayesian optimization',
+          prompt: 'Explain Expected Improvement and Upper Confidence Bound to an undergraduate student. Use one concrete optimization example, compare how the acquisition functions balance exploration and exploitation, and end with practical guidance about when to choose each one.'
+        },
+        {
+          title: 'Design a clear learning path for neural networks',
+          prompt: 'Create a concise learning path that teaches neural networks to a student who understands linear regression but has not studied deep learning. Emphasize the central ideas, useful intuitions, and a small set of exercises that build on one another.'
+        }
+      ]
+    },
+    {
+      agentId: 'execution_agent',
+      label: 'Execution Agent',
+      purpose: 'Analyze and create',
+      tasks: [
+        {
+          title: 'Visualize prime-number spacings',
+          prompt: 'Make a professional, clean PNG visualizing the spacings between the first 10,000 prime numbers. Include clear labels and a short Markdown note explaining the main patterns visible in the plot.'
+        },
+        {
+          title: 'Compare EI and UCB experimentally',
+          prompt: 'Compare Expected Improvement and Upper Confidence Bound for optimizing the six-hump camel function and write a report summarizing the results. The report should include one professional, clean PNG image visualizing the results.'
+        }
+      ]
+    },
+    {
+      agentId: 'planning_executor_workflow',
+      label: 'Plan + Execute',
+      purpose: 'Plan a larger project',
+      tasks: [
+        {
+          title: 'Teach ML through a model comparison',
+          prompt: 'Download the Boston Housing Dataset and compare 5 different machine-learning predictors on hold-out prediction performance. Choose the models to make central ideas from machine learning clear to a student audience. Then write a presentation geared at an undergraduate audience using these results.'
+        },
+        {
+          title: 'Plan and deliver a reproducible data study',
+          prompt: 'Find a small public tabular dataset suitable for teaching classification. Plan and run a reproducible comparison of five models that illuminate different machine-learning ideas, then create an undergraduate-level presentation with a professional results visualization and clear takeaways.'
+        }
+      ]
+    }
+  ];
 
   function escHtml(s) {
     return String(s).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[c]));
@@ -2560,6 +2613,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   function savePref(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
   function loadPref(k, def=null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } }
 
+  function welcomeIsVisible() {
+    return !state.showChat && !state.showRunLogs && !state.showArtifacts;
+  }
+
   function applyPanelVisibility() {
     const app = $('.app');
     const left = $('#leftPanel');
@@ -2567,6 +2624,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const right = $('#rightPanel');
     const leftSplit = $('#leftSplitter');
     const rightSplit = $('#rightSplitter');
+    const welcome = $('#welcomePanel');
 
     const conv = $('#conversationSection');
     const run = $('#runSection');
@@ -2577,12 +2635,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const showRunLogs = !!state.showRunLogs;
     const showArtifacts = !!state.showArtifacts;
     const showMain = (showChat || showRunLogs);
+    const showWelcome = welcomeIsVisible();
 
     // Left sidebar is always visible.
     if (left) left.classList.toggle('hidden', false);
 
     if (main) main.classList.toggle('hidden', !showMain);
     if (right) right.classList.toggle('hidden', !showArtifacts);
+    if (welcome) welcome.classList.toggle('hidden', !showWelcome);
     if (app) app.classList.toggle('mainHidden', !showMain);
 
     if (conv) conv.classList.toggle('hidden', !showChat);
@@ -2608,7 +2668,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     // Splitters only make sense when both adjacent panels are visible.
-    if (leftSplit) leftSplit.classList.toggle('hidden', !showMain);
+    if (leftSplit) leftSplit.classList.toggle('hidden', !(showMain || showWelcome));
     if (rightSplit) rightSplit.classList.toggle('hidden', !showMain || !showArtifacts);
 
     // Keep stable labels and communicate visibility through pressed state.
@@ -2631,6 +2691,94 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     savePref('ursa.ui.showChat', showChat);
     savePref('ursa.ui.showRunLogs', showRunLogs);
     savePref('ursa.ui.showArtifacts', showArtifacts);
+  }
+
+  function selectedWelcomeTasks() {
+    return WELCOME_TASK_LIBRARY.map(group => {
+      const tasks = group.tasks || [];
+      if (!tasks.length) return null;
+      if (!Number.isInteger(state._welcomeTaskIndexes[group.agentId])) {
+        state._welcomeTaskIndexes[group.agentId] = Math.floor(Math.random() * tasks.length);
+      }
+      const index = state._welcomeTaskIndexes[group.agentId] % tasks.length;
+      return { ...group, ...tasks[index] };
+    }).filter(Boolean);
+  }
+
+  function rotateWelcomeTasks() {
+    for (const group of WELCOME_TASK_LIBRARY) {
+      const tasks = group.tasks || [];
+      if (tasks.length < 2) continue;
+      const current = Number.isInteger(state._welcomeTaskIndexes[group.agentId])
+        ? state._welcomeTaskIndexes[group.agentId]
+        : 0;
+      state._welcomeTaskIndexes[group.agentId] = (current + 1) % tasks.length;
+    }
+    renderWelcomeTasks();
+  }
+
+  function openComposerDraft(agentId, prompt) {
+    state.selectedComposerAgentId = String(agentId || '');
+    state.showChat = true;
+    applyPanelVisibility();
+    renderComposerAgentSelect();
+    const input = $('#messageInput');
+    if (input) {
+      input.value = String(prompt || '');
+      requestAnimationFrame(() => {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    }
+  }
+
+  async function useWelcomeTask(task) {
+    if (!task) return;
+    clearActiveSessionForDraft(task.agentId);
+    await startSession(task.agentId, '', { draftPrompt: task.prompt });
+  }
+
+  function renderWelcomeTasks() {
+    const list = $('#welcomeTaskList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    for (const task of selectedWelcomeTasks()) {
+      const agent = state.agentsById.get(task.agentId);
+      if (!agent) continue;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'welcomeTaskCard';
+      btn.title = `Start with ${agent.display_name || task.label}`;
+      btn.onclick = () => useWelcomeTask(task);
+
+      const meta = document.createElement('div');
+      meta.className = 'welcomeTaskMeta';
+      meta.innerHTML = `<span class="welcomeTaskAgent">${escHtml(agent.display_name || task.label)}</span><span>${escHtml(task.purpose)}</span>`;
+
+      const title = document.createElement('div');
+      title.className = 'welcomeTaskTitle';
+      title.textContent = task.title;
+
+      const prompt = document.createElement('div');
+      prompt.className = 'welcomeTaskPrompt';
+      prompt.textContent = task.prompt;
+
+      const action = document.createElement('div');
+      action.className = 'welcomeTaskAction';
+      action.innerHTML = '<span>Use this prompt</span><span aria-hidden="true">→</span>';
+
+      btn.appendChild(meta);
+      btn.appendChild(title);
+      btn.appendChild(prompt);
+      btn.appendChild(action);
+      list.appendChild(btn);
+    }
+
+    if (!list.children.length) {
+      list.innerHTML = '<div class="muted">Suggested tasks will appear when agents are available.</div>';
+    }
   }
 
   function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
@@ -3322,42 +3470,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     };
   }
 
-  function chooseNewSessionType() {
-    return new Promise((resolve) => {
-      const modal = $('#newSessionTypeModal');
-      const namedBtn = $('#newSessionNamedBtn');
-      const nonPersistentBtn = $('#newSessionNonPersistentBtn');
-      const closeBtn = $('#closeNewSessionTypeBtn');
-      const backdrop = $('#newSessionTypeBackdrop');
-      if (!modal || !namedBtn || !nonPersistentBtn || !closeBtn || !backdrop) {
-        resolve('nonpersistent');
-        return;
-      }
-
-      const cleanup = (choice) => {
-        modal.classList.remove('open');
-        namedBtn.onclick = null;
-        nonPersistentBtn.onclick = null;
-        closeBtn.onclick = null;
-        backdrop.onclick = null;
-        document.removeEventListener('keydown', onKeydown);
-        resolve(choice);
-      };
-
-      const onKeydown = (e) => {
-        if (e.key === 'Escape') cleanup(null);
-      };
-
-      namedBtn.onclick = () => cleanup('named');
-      nonPersistentBtn.onclick = () => cleanup('nonpersistent');
-      closeBtn.onclick = () => cleanup(null);
-      backdrop.onclick = () => cleanup(null);
-      document.addEventListener('keydown', onKeydown);
-      modal.classList.add('open');
-      namedBtn.focus();
-    });
-  }
-
   function chooseWorkspaceSelection({ title='Choose a workspace', currentPath='' } = {}) {
     return new Promise((resolve) => {
       const modal = $('#workspaceChoiceModal');
@@ -3426,116 +3538,133 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     });
   }
 
-  function renderAgents() {
-    const list = $('#agentList');
-    if (!list) return;
-    list.innerHTML = '';
+  function composerAgentId() {
+    return String(state.selectedComposerAgentId || 'chat_agent').trim() || 'chat_agent';
+  }
 
-    const groupPill = $('#dashboardGroupPill');
-    if (groupPill) groupPill.textContent = `Group: ${state.dashboardGroup || 'default'}`;
+  function composerBehaviorLabel(agent) {
+    const fullName = String(agent?.display_name || agent?.agent_id || '');
+    return fullName.replace(/\s+(Agent|Workflow)$/i, '');
+  }
 
-    const wrap = document.createElement('div');
-    wrap.className = 'sessionStartWrap';
+  function promptForPersistentAgentName() {
+    const name = prompt('Enter a name for the persistent agent');
+    if (name === null) return null;
+    const trimmed = String(name || '').trim();
+    if (!trimmed) {
+      alert('Agent name cannot be empty.');
+      return null;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
+      alert('Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number.');
+      return null;
+    }
+    return trimmed;
+  }
 
-    const form = document.createElement('div');
-    form.className = 'sessionStartOption';
-    form.innerHTML = `
-      <div class="sessionStartOptionTitle">New or temporary agent</div>
-      <!-- <div class="sessionStartOptionCopy">Create a named agent you can return to, or begin a non-persistent session.</div> -->
-      <div class="sessionStartOptionCopy"> </div>
-      <button class="btn sessionStartAction" id="createNewSessionBtn" type="button">Choose session type</button>
-    `;
-    wrap.appendChild(form);
+  function clearActiveSessionForDraft(agentId='chat_agent') {
+    state.activeSessionId = null;
+    state.activeSession = null;
+    state.workspaceInfo = null;
+    state.selectedComposerAgentId = state.agentsById.has(agentId)
+      ? agentId
+      : (state.agentsById.has('chat_agent') ? 'chat_agent' : state.agents[0]?.agent_id || '');
+    state._sessionCreateMenuOpen = false;
+    savePref('ursa.ui.activeSessionId', '');
+    clearArtifactPreview();
+    clearLogs();
+    renderSessions();
+    renderActiveSession();
+    renderWorkspace([]);
+  }
+
+  function openBlankComposer() {
+    clearActiveSessionForDraft('chat_agent');
+    state.showChat = true;
+    applyPanelVisibility();
+    renderComposerAgentSelect();
+    renderSessionCreateMenu();
+    requestAnimationFrame(() => $('#messageInput')?.focus());
+  }
+
+  function renderSessionCreateMenu() {
+    const button = $('#sessionCreateMenuBtn');
+    const menu = $('#sessionCreateMenu');
+    if (!button || !menu) return;
+
+    const hasSession = !!state.activeSessionId;
+    button.classList.toggle('hidden', hasSession);
+    button.setAttribute('aria-expanded', String(state._sessionCreateMenuOpen && !hasSession));
+    if (hasSession) state._sessionCreateMenuOpen = false;
+    menu.classList.toggle('open', state._sessionCreateMenuOpen && !hasSession);
+    menu.innerHTML = '';
+    if (hasSession) return;
+
+    const heading = document.createElement('div');
+    heading.className = 'sessionCreateMenuHead';
+    heading.innerHTML = `<strong>Persistent agents</strong><span>Using ${escHtml(composerBehaviorLabel(state.agentsById.get(composerAgentId())) || composerAgentId())}</span>`;
+    menu.appendChild(heading);
+
+    const persistent = document.createElement('button');
+    persistent.type = 'button';
+    persistent.className = 'sessionCreateOption';
+    persistent.innerHTML = '<span class="sessionCreateIcon">＋</span><span><strong>Create persistent agent</strong><small>Name an agent you can return to later</small></span>';
+    persistent.onclick = async () => {
+      const name = promptForPersistentAgentName();
+      if (!name) return;
+      state._sessionCreateMenuOpen = false;
+      renderSessionCreateMenu();
+      await startSession(composerAgentId(), name);
+    };
+    menu.appendChild(persistent);
 
     const divider = document.createElement('div');
-    divider.className = 'sessionStartDivider';
-    divider.innerHTML = '<span>or</span>';
-    wrap.appendChild(divider);
+    divider.className = 'sessionCreateDivider';
+    divider.textContent = 'Use an existing persistent agent';
+    menu.appendChild(divider);
 
-    const existing = document.createElement('div');
-    existing.className = 'sessionStartOption';
-    const items = (state.agentNames || []);
-    existing.innerHTML = `
-      <div class="sessionStartOptionTitle">Existing named agent</div>
-      <!-- <div class="sessionStartOptionCopy">Start a new session with an agent you have worked with before.</div> -->
-      <div class="sessionStartOptionCopy"> </div>
-      <!-- <label class="agentSearchLabel" for="agentSearchInput">Agent name</label> -->
-      <input class="input sessionAgentSearch" id="agentSearchInput" placeholder="Search named agents..." autocomplete="off" />
-      <div class="agentSearchResults" id="agentSearchResults"></div>
-    `;
+    const search = document.createElement('input');
+    search.className = 'input sessionCreateSearch';
+    search.placeholder = 'Search persistent agents…';
+    search.autocomplete = 'off';
+    menu.appendChild(search);
 
-    const search = existing.querySelector('#agentSearchInput');
-    const listWrap = existing.querySelector('#agentSearchResults');
+    const results = document.createElement('div');
+    results.className = 'sessionCreateResults';
+    menu.appendChild(results);
 
-    function draw(filterText='') {
-      const q = String(filterText || '').trim().toLowerCase();
-      listWrap.innerHTML = '';
-      if (!q) {
-        listWrap.innerHTML = items.length
-          ? '<div class="small muted">Type a name, then select an agent to start a session.</div>'
-          : '<div class="small muted">No named agents yet. Create one using the option above.</div>';
+    const draw = (value='') => {
+      const query = String(value || '').trim().toLowerCase();
+      const items = (state.agentNames || []).filter(item => !query || String(item.agent_name || '').toLowerCase().includes(query));
+      results.innerHTML = '';
+      if (!items.length) {
+        results.innerHTML = `<div class="sessionCreateEmpty">${query ? 'No matching persistent agents.' : 'No persistent agents yet.'}</div>`;
         return;
       }
-      const filtered = items.filter(item => String(item.agent_name || '').toLowerCase().includes(q));
-      if (!filtered.length) {
-        listWrap.innerHTML = '<div class="small muted">No matching named agents.</div>';
-        return;
+      for (const item of items.slice(0, 12)) {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'sessionCreateAgent';
+        option.innerHTML = `<span>${escHtml(item.agent_name)}</span><small>${escHtml(fmtTime(item.updated_at))}</small>`;
+        option.onclick = async () => {
+          state._sessionCreateMenuOpen = false;
+          renderSessionCreateMenu();
+          await startSession(composerAgentId(), item.agent_name);
+        };
+        results.appendChild(option);
       }
-      for (const item of filtered) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'agentBtn';
-        btn.onclick = () => startSession('', item.agent_name);
+    };
 
-        const top = document.createElement('div');
-        top.className = 'row';
-        const name = document.createElement('div');
-        name.className = 'agentName';
-        name.textContent = item.agent_name;
-        top.appendChild(name);
-        const start = document.createElement('span');
-        start.className = 'pill action';
-        start.textContent = 'Start session';
-        top.appendChild(start);
+    search.oninput = () => draw(search.value);
+    draw();
 
-        const desc = document.createElement('div');
-        desc.className = 'agentDesc';
-        desc.textContent = `${fmtTime(item.updated_at)}`;
-
-        btn.appendChild(top);
-        btn.appendChild(desc);
-        listWrap.appendChild(btn);
-      }
-    }
-
-    search.oninput = () => draw(search.value || '');
-    draw('');
-    wrap.appendChild(existing);
-    list.appendChild(wrap);
-
-    const createBtn = $('#createNewSessionBtn');
-    if (createBtn) {
-      createBtn.onclick = async () => {
-        const sessionType = await chooseNewSessionType();
-        if (sessionType === null) return;
-        if (sessionType === 'nonpersistent') {
-          await startSession('', '');
-          return;
-        }
-        const name = prompt('Enter the new agent name');
-        if (name === null) return;
-        const trimmed = String(name || '').trim();
-        if (!trimmed) {
-          alert('Agent name cannot be empty.');
-          return;
-        }
-        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
-          alert('Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number.');
-          return;
-        }
-        await startSession('', trimmed);
-      };
-    }
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state._sessionCreateMenuOpen = !state._sessionCreateMenuOpen;
+      renderSessionCreateMenu();
+      if (state._sessionCreateMenuOpen) requestAnimationFrame(() => $('#sessionCreateMenu input')?.focus());
+    };
   }
 
 
@@ -3656,7 +3785,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     if (!state.sessions.length) {
-        list.innerHTML = '<div class="muted">No sessions yet. Choose an option above to start one.</div>';
+        list.innerHTML = '<div class="muted">No sessions yet. Open Chat to begin a new conversation.</div>';
     }
   }
 
@@ -3687,7 +3816,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!state.activeSession) {
         if (title) title.textContent = 'No session selected';
         if (meta) meta.textContent = '';
-        if (msgs) msgs.innerHTML = '<div class="muted">Start a new session or select an existing session from the panel on the left.</div>';
+        if (msgs) msgs.innerHTML = '<div class="emptyChatState"><strong>Start a new conversation</strong><span>Type a message below for a non-persistent session, or use + to choose a persistent agent.</span></div>';
         if (wsTitle) wsTitle.textContent = 'Session artifacts';
 
         if (badge) {
@@ -3702,6 +3831,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         renderWorkspacePath();
         clearRunView();
         updateComposerState();
+        renderComposerAgentSelect();
+        renderSessionCreateMenu();
         return;
     }
 
@@ -3784,6 +3915,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     renderComposerAgentSelect();
+    renderSessionCreateMenu();
     msgs.scrollTop = msgs.scrollHeight;
 
     showSessionLogs(state.activeSession).catch(err => {
@@ -3804,9 +3936,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!state.selectedComposerAgentId && state.agents.length) {
       state.selectedComposerAgentId = state.agents[0].agent_id;
     }
-    renderAgents();
     renderSessions();
     renderComposerAgentSelect();
+    renderSessionCreateMenu();
+    renderWelcomeTasks();
     await refreshAgentManagement();
   }
 
@@ -3816,7 +3949,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     renderSessions();
   }
 
-  async function startSession(agentId, agentName='') {
+  async function startSession(agentId, agentName='', options={}) {
     try {
       const workspace = await chooseWorkspaceSelection({
         title: 'Choose a workspace for this session',
@@ -3828,11 +3961,17 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       payload.workspace_mode = workspace.workspace_mode;
       if (workspace.workspace_path) payload.workspace_path = workspace.workspace_path;
       const res = await api('POST', '/sessions', payload);
+      if (payload.agent_id) state.selectedComposerAgentId = payload.agent_id;
       await refreshAgents();
       await refreshSessions();
       await loadSession(res.session.session_id);
+      if (options.draftPrompt) {
+        openComposerDraft(payload.agent_id || res.session.agent_id, options.draftPrompt);
+      }
+      return res;
     } catch (e) {
       alert(String(e && e.message ? e.message : e));
+      return null;
     }
   }
 
@@ -3877,6 +4016,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state.activeSessionId = sessionId;
     savePref('ursa.ui.activeSessionId', sessionId);
     state.activeSession = await api('GET', `/sessions/${encodeURIComponent(sessionId)}`);
+    state.selectedComposerAgentId = state.activeSession?.session?.agent_id || state.selectedComposerAgentId;
+    state.showChat = true;
+    applyPanelVisibility();
     renderSessions();
     renderActiveSession();
     updateComposerState();
@@ -3998,16 +4140,32 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   function renderComposerAgentSelect() {
-    const sel = $('#composerAgentType');
-    if (!sel) return;
+    const wrap = $('#composerAgentType');
+    if (!wrap) return;
     const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
-    sel.innerHTML = agents.map(a => `<option value="${escHtml(a.agent_id)}">${escHtml(a.display_name || a.agent_id)}</option>`).join('');
     const activeAgentId = state.activeSession?.session?.agent_id || '';
     const target = state.selectedComposerAgentId || activeAgentId || agents[0]?.agent_id || '';
-    if (target) sel.value = target;
-    sel.onchange = () => {
-      state.selectedComposerAgentId = String(sel.value || '');
-    };
+    if (target) state.selectedComposerAgentId = target;
+    wrap.innerHTML = '';
+
+    for (const agent of agents) {
+      const id = String(agent.agent_id || '');
+      const selected = id === state.selectedComposerAgentId;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'composerAgentButton' + (selected ? ' selected' : '');
+      btn.textContent = composerBehaviorLabel(agent) || id;
+      btn.title = agent.description || `Use ${agent.display_name || id}`;
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', String(selected));
+      btn.setAttribute('aria-label', `${agent.display_name || id}: ${agent.description || ''}`);
+      btn.onclick = () => {
+        state.selectedComposerAgentId = id;
+        renderComposerAgentSelect();
+        renderSessionCreateMenu();
+      };
+      wrap.appendChild(btn);
+    }
   }
 
   async function setSessionWorkspace(selection) {
@@ -4049,14 +4207,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   function updateComposerState() {
     const ta = $('#messageInput');
     const btn = $('#sendMsgBtn');
-    const ready = !!state.activeSessionId;
     if (ta) {
-      ta.disabled = !ready;
-      ta.placeholder = ready
+      ta.disabled = false;
+      ta.placeholder = state.activeSessionId
         ? 'Message the agent...'
-        : 'Create a session to start chatting';
+        : 'Ask URSA anything…';
     }
-    if (btn) btn.disabled = !ready;
+    if (btn) btn.disabled = false;
+    renderSessionCreateMenu();
   }
 
   function showSendError(message) {
@@ -4074,20 +4232,24 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   async function sendMessage() {
-    if (!state.activeSessionId) return;
     const ta = $('#messageInput');
     const text = (ta && ta.value || '').trim();
     if (!text) return;
-    if (!(await ensureSessionWorkspaceConfigured())) return;
 
     const sendBtn = $('#sendMsgBtn');
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      const agentId = String($('#composerAgentType')?.value || state.selectedComposerAgentId || state.activeSession?.session?.agent_id || '').trim();
+      const agentId = String(state.selectedComposerAgentId || state.activeSession?.session?.agent_id || 'chat_agent').trim();
+      if (!state.activeSessionId) {
+        const created = await startSession(agentId, '', { draftPrompt: text });
+        if (!created) return;
+      }
+      if (!(await ensureSessionWorkspaceConfigured())) return;
       await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/message`, { text, agent_id: agentId || undefined });
       state.selectedComposerAgentId = agentId || state.selectedComposerAgentId;
-      if (ta) ta.value = '';
+      const activeInput = $('#messageInput');
+      if (activeInput) activeInput.value = '';
       await loadSession(state.activeSessionId);
       await refreshSessions();
       await refreshAgents();
@@ -4161,23 +4323,23 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state._settingsSessionTitle = session?.title || '';
     const title = $('#settingsModalTitle');
     const sub = $('#settingsModalSubtitle');
-    const uiBtn = document.querySelector('.settingsNavBtn[data-settings-section="ui"]');
-    const mcpBtn = document.querySelector('.settingsNavBtn[data-settings-section="mcp"]');
+    const themeBtn = $('#cycleThemeBtn');
+    const globalOnlyButtons = $$('.settingsNavBtn[data-settings-scope="global"]');
     $$('.globalCredentialOnly').forEach(el => {
       el.style.display = mode === 'session' ? 'none' : '';
     });
     if (mode === 'session') {
       if (title) title.textContent = 'Session settings';
       if (sub) sub.textContent = `Applies to this session only: ${session?.title || session?.session_id || ''}`;
-      if (uiBtn) uiBtn.style.display = 'none';
-      if (mcpBtn) mcpBtn.style.display = 'none';
+      globalOnlyButtons.forEach(btn => { btn.style.display = 'none'; });
+      if (themeBtn) themeBtn.style.display = 'none';
       setSettingsSection('llm');
     } else {
       if (title) title.textContent = 'Settings';
       if (sub) sub.textContent = 'Global defaults for new sessions and runs.';
-      if (uiBtn) uiBtn.style.display = '';
-      if (mcpBtn) mcpBtn.style.display = '';
-      setSettingsSection('ui');
+      globalOnlyButtons.forEach(btn => { btn.style.display = ''; });
+      if (themeBtn) themeBtn.style.display = '';
+      setSettingsSection('llm');
     }
   }
 
@@ -4381,6 +4543,41 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     document.documentElement.setAttribute('data-theme', resolved);
   }
 
+  function updateThemeButton() {
+    const value = $('#set_theme')?.value || 'system';
+    const label = value === 'dark' ? 'Dark' : value === 'light' ? 'Light' : 'System';
+    const btn = $('#cycleThemeBtn');
+    if (btn) {
+      btn.innerHTML = `<span aria-hidden="true">${value === 'dark' ? '☾' : value === 'light' ? '☀' : '◐'}</span><span>Theme: ${label}</span>`;
+      btn.title = 'Change dashboard theme';
+    }
+  }
+
+  async function cycleThemeSetting() {
+    const input = $('#set_theme');
+    if (!input) return;
+    const values = ['system', 'light', 'dark'];
+    const current = values.indexOf(input.value || 'system');
+    const previous = input.value || 'system';
+    input.value = values[(current + 1) % values.length];
+    applyTheme(input.value);
+    updateThemeButton();
+    try {
+      const res = await api('PATCH', '/settings', { patch: { ui: { theme: input.value } } });
+      state.settings = res.settings || state.settings;
+      const saved = $('#settingsSaved');
+      if (saved) {
+        saved.textContent = 'Theme saved.';
+        setTimeout(() => { saved.textContent = ''; }, 1500);
+      }
+    } catch (e) {
+      input.value = previous;
+      applyTheme(previous);
+      updateThemeButton();
+      alert('Could not save theme: ' + (e && e.message ? e.message : String(e)));
+    }
+  }
+
   function renderCredentialStatus(kind) {
     const status = state.credentialStatuses?.[kind] || {};
     const el = $(`#set_${kind}_credential_status`);
@@ -4457,17 +4654,15 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     const globalLlm = state.settings.llm || {};
     const globalEmbedding = state.settings.embedding || {};
-    const globalRunner = state.settings.runner || {};
     const llm = mode === 'session' ? _deepMergeObjects(globalLlm, session?.llm || {}) : globalLlm;
     const embedding = globalEmbedding;
-    const runner = mode === 'session' ? _deepMergeObjects(globalRunner, session?.runner || {}) : globalRunner;
     const mcp = state.settings.mcp || {};
     const tools = state.settings.tools || {};
 
     // Settings-related entries
     const ui = state.settings.ui || {};
-    $('#set_stdout_buffer_lines').value = ui.stdout_buffer_lines ?? 20000;
     $('#set_theme').value = ui.theme || 'system';
+    updateThemeButton();
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
@@ -4485,7 +4680,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const embeddingModelKwargs = embedding.model_kwargs || {};
     $('#set_embedding_model_kwargs').value = Object.keys(embeddingModelKwargs).length ? JSON.stringify(embeddingModelKwargs, null, 2) : '';
 
-    $('#set_timeout').value = runner.timeout_seconds ?? '';
     updateCredentialControls('llm');
     updateCredentialControls('embedding');
     if (mode === 'global') await refreshCredentialStatuses();
@@ -4647,15 +4841,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       llm: {
         ...llmPatch,
       },
-      runner: {
-        timeout_seconds: ($('#set_timeout').value === '' ? null : Number($('#set_timeout').value)),
-      },
     };
 
     const patch = state._settingsMode === 'session' ? common : {
       ui: {
         theme: ($('#set_theme').value || 'system'),
-        stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
       },
       ...common,
       embedding: {
@@ -4771,14 +4961,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   function setupUi() {
-    // New panel toggles (sidebar is always visible)
-    // Migrate old prefs if present.
-    const oldHideMain = loadPref('ursa.ui.hideMain', null);
-    const oldHideRight = loadPref('ursa.ui.hideRight', null);
-
-    state.showChat = !!loadPref('ursa.ui.showChat', oldHideMain === null ? true : !oldHideMain);
-    state.showRunLogs = !!loadPref('ursa.ui.showRunLogs', oldHideMain === null ? true : !oldHideMain);
-    state.showArtifacts = !!loadPref('ursa.ui.showArtifacts', oldHideRight === null ? true : !oldHideRight);
+    // Always use the welcome screen as the dashboard's landing state. Panel
+    // choices still apply for the rest of the current page visit.
+    state.showChat = false;
+    state.showRunLogs = false;
+    state.showArtifacts = false;
 
     applyPanelVisibility();
     setupLogFollowState();
@@ -4791,6 +4978,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     const tArt = $('#toggleArtifactsBtn');
     if (tArt) tArt.onclick = () => { state.showArtifacts = !state.showArtifacts; applyPanelVisibility(); };
+
+    const refreshWelcome = $('#refreshWelcomeTasksBtn');
+    if (refreshWelcome) refreshWelcome.onclick = rotateWelcomeTasks;
+    const startBlank = $('#startBlankChatBtn');
+    if (startBlank) startBlank.onclick = openBlankComposer;
 
     $('#refreshSessionsBtn').onclick = async () => { await refreshSessions(); };
     $('#refreshFilesBtn').onclick = async () => { await refreshWorkspace(); };
@@ -4888,14 +5080,19 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     $('#set_embedding_credential_source').onchange = () => updateCredentialControls('embedding');
     $('#set_llm_remove_key').onclick = () => removeStoredCredential('llm');
     $('#set_embedding_remove_key').onclick = () => removeStoredCredential('embedding');
+    $('#cycleThemeBtn').onclick = cycleThemeSetting;
 
     $('#saveSettingsBtn').onclick = saveSettings;
 
     document.addEventListener('click', (e) => {
-      if (!state._openSessionMenu) return;
-      if (e.target && e.target.closest && e.target.closest('.sessionMenuWrap')) return;
-      state._openSessionMenu = null;
-      renderSessions();
+      if (state._openSessionMenu && !(e.target && e.target.closest && e.target.closest('.sessionMenuWrap'))) {
+        state._openSessionMenu = null;
+        renderSessions();
+      }
+      if (state._sessionCreateMenuOpen && !(e.target && e.target.closest && e.target.closest('.sessionCreateMenuWrap'))) {
+        state._sessionCreateMenuOpen = false;
+        renderSessionCreateMenu();
+      }
     });
   }
 
@@ -4909,14 +5106,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     await refreshAgents();
     await refreshSessions();
 
-    // Restore last selected session if possible; otherwise select most recent.
-    const remembered = loadPref('ursa.ui.activeSessionId', null);
-    if (!state.activeSessionId && state.sessions.length) {
-      const exists = remembered && state.sessions.some(s => s.session_id === remembered);
-      await loadSession(exists ? remembered : state.sessions[0].session_id);
-    } else if (!state.activeSessionId) {
-      renderActiveSession();
-    }
+    // Sessions remain available in the sidebar, but none is silently restored:
+    // suggested tasks should never inherit an earlier conversation by accident.
+    renderActiveSession();
 
     // periodic refresh
     setInterval(() => { refreshSessions().catch(() => {}); }, 5000);
@@ -4945,7 +5137,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 :root[data-theme="dark"] .btn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .histItem { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .sessActBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
-:root[data-theme="dark"] .agentBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .fileItem { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .fileDl { background: #1f242b; color: #8ab4ff; border-color: var(--border); }
 :root[data-theme="dark"] .messages { background: #171b20; border-color: var(--border); }
@@ -4960,8 +5151,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 :root[data-theme="dark"] .settingsNavBtn.active { background: #233247; border-color: #355070; }
 :root[data-theme="dark"] .settingsNavBtn { color: #b7bda6; }
 :root[data-theme="dark"] .settingsNavBtn.active { color: #eef4ff; }
-:root[data-theme="dark"] .sessionStartOption { background: rgba(255,255,255,0.05); }
-:root[data-theme="dark"] #dashboardGroupPill { background: rgba(255,255,255,0.05); }
 :root {
   --bg: #ffffff;
   --panel: rgba(250, 250, 250, 0.92);
@@ -4982,7 +5171,7 @@ body::before {
   background-image: var(--ursa-logo-url);
   background-repeat: no-repeat;
   background-position: center;
-  background-size: min(70vmin, 820px) auto;
+  background-size: cover;
   opacity: 0.05;
   pointer-events: none;
   z-index: 0;
@@ -5119,6 +5308,43 @@ body::before {
   max-width: none;
 }
 
+.welcomePanel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: clamp(24px, 5vw, 36px);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  background:
+    radial-gradient(circle at 50% 16%, rgba(11,87,208,0.08), transparent 38%),
+    transparent;
+}
+.welcomeContent { width: min(1040px, 100%); margin: auto; }
+.welcomeEyebrow { color: #0b57d0; font-size: 12px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
+.welcomeContent h1 { margin: 10px 0 12px; font-size: clamp(34px, 5vw, 58px); line-height: 1.04; letter-spacing: -0.035em; }
+.welcomeLead { max-width: 720px; margin: 0; color: var(--muted); font-size: clamp(16px, 1.8vw, 20px); line-height: 1.55; }
+.welcomeSectionHead { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: clamp(28px, 5vh, 52px) 0 14px; }
+.welcomeSectionTitle { font-size: 18px; font-weight: 720; margin-bottom: 3px; }
+.welcomeRefresh { flex: 0 0 auto; }
+.welcomeTaskGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.welcomeTaskCard { min-width: 0; min-height: 268px; display: flex; flex-direction: column; gap: 13px; padding: 18px; text-align: left; color: var(--text); background: rgba(255,255,255,0.92); border: 1px solid var(--border); border-radius: 16px; cursor: pointer; font: inherit; box-shadow: 0 4px 18px rgba(29,39,51,0.05); transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
+.welcomeTaskCard:hover, .welcomeTaskCard:focus-visible { transform: translateY(-2px); border-color: rgba(11,87,208,0.55); box-shadow: 0 10px 28px rgba(29,39,51,0.11); outline: none; }
+.welcomeTaskMeta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 11px; font-weight: 650; }
+.welcomeTaskAgent { padding: 4px 8px; color: #0b57d0; background: rgba(11,87,208,0.08); border-radius: 999px; }
+.welcomeTaskTitle { font-size: 17px; font-weight: 730; line-height: 1.3; }
+.welcomeTaskPrompt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.welcomeTaskAction { margin-top: auto; display: flex; align-items: center; justify-content: space-between; color: #0b57d0; font-size: 13px; font-weight: 700; }
+.welcomeFooter { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 20px; padding: 20px 0 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 15px; line-height: 1.45; }
+.welcomeFooter > div { display: grid; gap: 3px; }
+.welcomeFooter strong { color: var(--text); font-size: 16px; }
+.welcomeBlankAction { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; font-weight: 700; }
+:root[data-theme="dark"] .welcomePanel { background: radial-gradient(circle at 50% 16%, rgba(138,180,255,0.09), transparent 38%), transparent; }
+:root[data-theme="dark"] .welcomeEyebrow, :root[data-theme="dark"] .welcomeTaskAction { color: #8ab4ff; }
+:root[data-theme="dark"] .welcomeTaskCard { background: rgba(28,32,38,0.92); box-shadow: 0 4px 18px rgba(0,0,0,0.18); }
+:root[data-theme="dark"] .welcomeTaskCard:hover, :root[data-theme="dark"] .welcomeTaskCard:focus-visible { border-color: rgba(138,180,255,0.65); box-shadow: 0 10px 28px rgba(0,0,0,0.30); }
+:root[data-theme="dark"] .welcomeTaskAgent { color: #8ab4ff; background: rgba(138,180,255,0.10); }
+
 .topbar { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .topbarCol { flex-direction: column; align-items: stretch; justify-content: flex-start; }
 .topbarCol > .row { width: 100%; }
@@ -5161,23 +5387,6 @@ body::before {
 .btn.primary { background: #0b57d0; border-color: #0b57d0; color: #fff; }
 .btn.danger { border-color: #cc3a3a; color: #cc3a3a; }
 .btn.danger:hover { background: rgba(204,58,58,0.06); }
-
-.sessionStartWrap { display: flex; flex-direction: column; }
-.sessionStartHeader { margin-bottom: 8px; }
-.sessionStartOption { border: 1px solid var(--border); border-radius: 11px; padding: 11px; background: #f4f5f6; }
-.sessionStartOptionTitle { font-size: 14px; font-weight: 700; line-height: 1.25; }
-.sessionStartOptionCopy { margin: 4px 0 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }
-.sessionStartAction { width: 100%; font-weight: 450; }
-.sessionStartDivider { display: flex; align-items: center; gap: 8px; margin: 5px 3px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-.sessionStartDivider::before, .sessionStartDivider::after { content: ""; height: 1px; flex: 1 1 auto; background: var(--border); }
-.agentSearchLabel { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 650; }
-.sessionAgentSearch { width: 100%; }
-.agentSearchResults { margin-top: 9px; }
-.agentSearchResults .agentBtn:last-child { margin-bottom: 0; }
-
-.agentBtn { width: 100%; text-align: left; border: 1px solid var(--border); background: #fff; padding: 10px; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
-.agentName { font-weight: 650; }
-.agentDesc { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.3; }
 
 .pill { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--muted); }
 .pill.action { color: #0b57d0; border-color: rgba(11,87,208,0.35); }
@@ -5226,6 +5435,8 @@ body::before {
   padding: 10px;
   background: #fff;
 }
+.emptyChatState { height: 100%; min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; box-sizing: border-box; text-align: center; color: var(--muted); }
+.emptyChatState strong { color: var(--text); font-size: 18px; }
 
 .msgRow { margin-bottom: 12px; }
 .sendError { color: #dc2626; background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.4); border-radius: 8px; padding: 8px 10px; margin: 8px 0; white-space: pre-wrap; }
@@ -5242,8 +5453,46 @@ body::before {
 .bubble.user { background: #eef5ff; }
 
 .composer { margin-top: 10px; }
+.composerBehaviorPicker { flex: 1 1 auto; min-width: 0; }
+.composerAgentLabel { margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.035em; text-transform: uppercase; white-space: nowrap; }
+.composerAgentLabel .muted { font-weight: 500; letter-spacing: 0; text-transform: none; }
+.composerAgentButtons { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.composerAgentButton { border: 1px solid var(--border); background: transparent; color: var(--muted); padding: 5px 8px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 650; line-height: 1.15; transition: color 120ms ease, border-color 120ms ease, background 120ms ease; }
+.composerAgentButton:hover { color: var(--text); border-color: #aaa; }
+.composerAgentButton.selected { color: #0b57d0; border-color: rgba(11,87,208,0.42); background: rgba(11,87,208,0.08); }
+:root[data-theme="dark"] .composerAgentButton:hover { border-color: #737b87; }
+:root[data-theme="dark"] .composerAgentButton.selected { color: #8ab4ff; border-color: rgba(138,180,255,0.50); background: rgba(138,180,255,0.10); }
 textarea, input, select { font: inherit; box-sizing: border-box; }
 textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; border-radius: 10px; border: 1px solid var(--border); }
+.composerInputShell { border: 1px solid var(--border); border-radius: 14px; background: #fff; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.composerInputShell:focus-within { border-color: rgba(11,87,208,0.65); box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
+.composerInputShell textarea { display: block; min-height: 92px; padding: 12px 13px 4px; border: 0; border-radius: 14px 14px 0 0; background: transparent; outline: none; }
+.composerInputFooter { min-height: 48px; display: flex; align-items: flex-end; gap: 9px; padding: 5px 7px 7px; }
+.composerSendButton { flex: 0 0 auto; }
+.composerBelow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 7px; }
+.sessionCreateMenuWrap { position: relative; flex: 0 0 auto; }
+.composerPlusButton { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: #f3f4f6; color: var(--muted); cursor: pointer; font: inherit; font-size: 22px; font-weight: 350; line-height: 1; }
+.composerPlusButton:hover, .composerPlusButton[aria-expanded="true"] { color: var(--text); border-color: #aaa; background: #e9ebee; }
+.sessionCreateMenu { display: none; position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 100; width: min(370px, calc(100vw - 80px)); max-height: min(460px, 68vh); overflow: auto; padding: 9px; border: 1px solid var(--border); border-radius: 14px; background: var(--panelSolid); box-shadow: 0 18px 50px rgba(0,0,0,0.20); }
+.sessionCreateMenu.open { display: block; }
+.sessionCreateMenuHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 7px 8px 10px; }
+.sessionCreateMenuHead span { color: var(--muted); font-size: 11px; text-align: right; }
+.sessionCreateOption, .sessionCreateAgent { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px; border: 0; border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; font: inherit; text-align: left; }
+.sessionCreateOption:hover, .sessionCreateAgent:hover { background: rgba(11,87,208,0.08); }
+.sessionCreateOption > span:last-child { display: grid; gap: 2px; }
+.sessionCreateOption small, .sessionCreateAgent small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.sessionCreateIcon { width: 28px; height: 28px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; color: #0b57d0; font-size: 17px; }
+.sessionCreateDivider { margin: 8px 7px 7px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: 0.055em; text-transform: uppercase; }
+.sessionCreateSearch { width: 100%; margin-bottom: 6px; }
+.sessionCreateResults { max-height: 170px; overflow: auto; }
+.sessionCreateAgent { justify-content: space-between; }
+.sessionCreateAgent span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessionCreateAgent small { flex: 0 0 auto; }
+.sessionCreateEmpty { padding: 10px 9px; color: var(--muted); font-size: 12px; }
+:root[data-theme="dark"] .composerInputShell { background: #171b20; }
+:root[data-theme="dark"] .composerPlusButton { background: #252b33; }
+:root[data-theme="dark"] .composerPlusButton:hover, :root[data-theme="dark"] .composerPlusButton[aria-expanded="true"] { border-color: #737b87; background: #303741; }
+:root[data-theme="dark"] .sessionCreateIcon { color: #8ab4ff; }
 
 .logDetails { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #fff; margin-bottom: 10px; }
 .logDetails:last-child { margin-bottom: 0; }
@@ -5305,11 +5554,6 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   height: auto;
   gap: 14px;
 }
-.modalActions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
 .workspaceChoiceBody { display: grid; gap: 14px; }
 .workspaceChoiceSection {
   border: 1px solid var(--border);
@@ -5323,7 +5567,6 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 .workspaceChoiceError { min-height: 1.25em; color: #b3261e; }
 :root[data-theme="dark"] .workspaceChoiceError { color: #ffb4ab; }
 @media (max-width: 560px) {
-  .modalActions { grid-template-columns: 1fr; }
   .workspaceChoiceInputRow { grid-template-columns: 1fr; }
 }
 
@@ -5367,6 +5610,8 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   background: #eef5ff;
   border-color: #c9daf8;
 }
+.settingsFooter { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.themeCycleBtn { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .fieldRow { display:grid; grid-template-columns: 170px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
 .fieldHelp { display: grid; grid-template-columns: 170px 1fr; gap: 8px; margin: -2px 0 12px; }
 .fieldHelpText { color: var(--muted); font-size: 12px; line-height: 1.35; }
@@ -5375,10 +5620,15 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 @media (max-width: 1100px) {
+  .welcomeTaskGrid { grid-template-columns: 1fr; }
+  .welcomePanel { align-items: flex-start; }
+  .welcomeTaskCard { min-height: 0; }
   .workspace { display:none; }
 }
 @media (max-width: 820px) {
   .sidebar { display:none; }
+  .welcomePanel { padding: 28px 18px; }
+  .welcomeSectionHead, .welcomeFooter { align-items: flex-start; flex-direction: column; }
 }
 """
 
@@ -5763,15 +6013,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <div class="panelControls">
           <div class="controlLabel">Visible panels</div>
           <div class="panelToggleGroup" role="group" aria-label="Visible dashboard panels">
-            <button class="panelToggle" id="toggleChatBtn" type="button" aria-pressed="true" title="Hide chat panel">
+            <button class="panelToggle" id="toggleChatBtn" type="button" aria-pressed="false" title="Show chat panel">
               <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
               <span>Chat</span>
             </button>
-            <button class="panelToggle" id="toggleLogsBtn" type="button" aria-pressed="true" title="Hide logs panel">
+            <button class="panelToggle" id="toggleLogsBtn" type="button" aria-pressed="false" title="Show logs panel">
               <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 4 4-4 4m6 0h8"/><rect x="2" y="3" width="20" height="18" rx="3"/></svg>
               <span>Logs</span>
             </button>
-            <button class="panelToggle" id="toggleArtifactsBtn" type="button" aria-pressed="true" title="Hide artifacts panel">
+            <button class="panelToggle" id="toggleArtifactsBtn" type="button" aria-pressed="false" title="Show artifacts panel">
               <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
               <span>Artifacts</span>
             </button>
@@ -5788,14 +6038,6 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     </div>
 
     <div class="section">
-      <div class="row sessionStartHeader">
-        <div class="sectionHead" style="margin:0">Start a session</div>
-        <span class="pill" id="dashboardGroupPill">Group: default</span>
-      </div>
-      <div id="agentList"></div>
-    </div>
-
-    <div class="section">
       <div class="row" style="margin-bottom: 8px">
         <div class="sectionHead" style="margin:0">Sessions</div>
         <button class="btn" id="refreshSessionsBtn" type="button">Refresh</button>
@@ -5805,6 +6047,27 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   </div>
 
   <div class="splitter" id="leftSplitter" title="Drag to resize"></div>
+
+  <main class="welcomePanel" id="welcomePanel">
+    <div class="welcomeContent">
+      <div class="welcomeEyebrow">Scientific work, from question to artifact</div>
+      <h1>Welcome to URSA</h1>
+      <p class="welcomeLead">Choose an example to see how each agent approaches a different kind of work.</p>
+
+      <div class="welcomeSectionHead">
+        <button class="btn welcomeRefresh" id="refreshWelcomeTasksBtn" type="button" title="Show different examples">New examples</button>
+      </div>
+      <div class="welcomeTaskGrid" id="welcomeTaskList"></div>
+
+      <div class="welcomeFooter">
+        <div>
+          <strong>Prefer to begin from scratch?</strong>
+          <span>Open a blank chat and start typing. Your first message begins a non-persistent session by default.</span>
+        </div>
+        <button class="btn primary welcomeBlankAction" id="startBlankChatBtn" type="button">Open a blank chat <span aria-hidden="true">→</span></button>
+      </div>
+    </div>
+  </main>
 
   <div class="main" id="mainPanel">
     <div class="topbar">
@@ -5827,18 +6090,24 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <div class="section conversation" id="conversationSection">
         <div class="messages" id="sessionMessages"></div>
         <div class="composer">
-          <div class="row" style="justify-content:space-between; align-items:center; margin: 8px 0; gap: 8px; flex-wrap: wrap;">
-            <div class="muted small">Ctrl/⌘ + Enter to send</div>
-            <div class="row" style="gap:8px; justify-content:flex-end; align-items:center; margin-left:auto;">
-              <label class="muted small" for="composerAgentType">Agent type</label>
-              <select id="composerAgentType" style="min-width:220px"></select>
+          <div class="composerInputShell">
+            <textarea id="messageInput" placeholder="Ask URSA anything…"></textarea>
+            <div class="composerInputFooter">
+              <div class="sessionCreateMenuWrap">
+                <button class="composerPlusButton" id="sessionCreateMenuBtn" type="button" aria-label="Persistent agent options" aria-expanded="false" title="Persistent agent options">+</button>
+                <div class="sessionCreateMenu" id="sessionCreateMenu"></div>
+              </div>
+              <div class="composerBehaviorPicker">
+                <div class="composerAgentLabel">Choose behavior <span class="muted">· Hover for details</span> · Use (+) to utilize persisent agents</div>
+                <div class="composerAgentButtons" id="composerAgentType" role="radiogroup" aria-label="Behavior for this message"></div>
+              </div>
+              <button class="btn primary composerSendButton" id="sendMsgBtn" type="button">Send</button>
             </div>
           </div>
-          <textarea id="messageInput" placeholder="Create a session to start chatting" disabled></textarea>
-          <div class="row" style="margin-top: 8px">
-            <button class="btn primary" id="sendMsgBtn" type="button" disabled>Send</button>
-            <div class="muted small" id="runStatus"></div>
-            <a class="muted small" href="/ui/workspace" style="margin-left:auto">Run workspace browser</a>
+          <div class="composerBelow">
+            <span class="muted small">Ctrl/⌘ + Enter to send</span>
+            <span class="muted small" id="runStatus"></span>
+            <a class="muted small" href="/ui/workspace">Run workspace browser</a>
           </div>
         </div>
       </div>
@@ -5898,24 +6167,6 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 
 
-<div class="modal" id="newSessionTypeModal" aria-hidden="true">
-  <div class="backdrop" id="newSessionTypeBackdrop"></div>
-  <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="newSessionTypeTitle">
-    <div class="topbar">
-      <div>
-        <div class="title" id="newSessionTypeTitle">Start New Session</div>
-        <div class="muted small">Choose how this session should be created.</div>
-      </div>
-      <button class="btn" id="closeNewSessionTypeBtn" type="button">Close</button>
-    </div>
-    <div class="modalActions">
-      <button class="btn primary" id="newSessionNamedBtn" type="button">New Named Agent Session</button>
-      <button class="btn" id="newSessionNonPersistentBtn" type="button">Non-persistent Session</button>
-    </div>
-  </div>
-</div>
-
-
 <div class="modal" id="workspaceChoiceModal" aria-hidden="true">
   <div class="backdrop" id="workspaceChoiceBackdrop"></div>
   <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="workspaceChoiceTitle">
@@ -5964,47 +6215,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
     <div class="settingsShell">
       <div class="settingsNav">
-        <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
-        <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
-        <button class="settingsNavBtn" data-settings-section="embedding" type="button">Embedding/RAG</button>
-        <button class="settingsNavBtn" data-settings-section="agents" type="button">Agent management</button>
-        <button class="settingsNavBtn" data-settings-section="tools" type="button">RAG tools</button>
-        <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
-        <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
+        <button class="settingsNavBtn active" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn" data-settings-section="embedding" data-settings-scope="global" type="button">Embedding/RAG</button>
+        <button class="settingsNavBtn" data-settings-section="agents" data-settings-scope="global" type="button">Agent management</button>
+        <button class="settingsNavBtn" data-settings-section="tools" data-settings-scope="global" type="button">RAG tools</button>
+        <button class="settingsNavBtn" data-settings-section="mcp" data-settings-scope="global" type="button">MCP tools</button>
       </div>
 
       <div class="settingsContent">
-        <div class="settingsPane" data-settings-pane="ui">
-          <div class="section">
-            <div class="sectionHead">User Interface</div>
-            <div class="fieldRow">
-            <div class="label">Theme</div>
-            <select class="input" id="set_theme">
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-            </select>
-            </div>
-            <div class="fieldHelp">
-              <div></div>
-              <div class="fieldHelpText">
-                Follow your OS/browser theme, or force light or dark mode for the dashboard.
-              </div>
-            </div>
-            <div class="fieldRow">
-              <div class="label">STDOUT buffer lines</div>
-              <input class="input" id="set_stdout_buffer_lines" type="number" min="5000" step="100" />
-            </div>
-            <div class="fieldHelp">
-              <div></div>
-              <div class="fieldHelpText">
-              Number of log lines kept in the browser for the STDOUT pane. Higher values preserve more scrollback but can make the page heavier for very long runs.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="settingsPane hidden" data-settings-pane="llm">
+        <div class="settingsPane" data-settings-pane="llm">
           <div class="section">
             <div class="sectionHead">LLM</div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
@@ -6040,13 +6259,6 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             </div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_embedding_model_kwargs" rows="7" placeholder='{{"dimensions":1024}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_embeddings. Explicit fields above still take precedence for model and base_url.</div>
-          </div>
-        </div>
-
-        <div class="settingsPane hidden" data-settings-pane="runner">
-          <div class="section">
-            <div class="sectionHead">Runner</div>
-            <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
           </div>
         </div>
 
@@ -6122,7 +6334,9 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       </div>
     </div>
 
-    <div class="row" style="gap: 10px">
+    <div class="row settingsFooter" style="gap: 10px">
+      <input id="set_theme" type="hidden" value="system" />
+      <button class="btn themeCycleBtn" id="cycleThemeBtn" type="button"><span aria-hidden="true">◐</span><span>Theme: System</span></button>
       <div class="muted small" id="settingsUpdated"></div>
       <div class="muted small" id="settingsSaved"></div>
       <div style="margin-left:auto">
