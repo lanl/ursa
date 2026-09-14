@@ -187,7 +187,10 @@ def render_skill_catalog(skills: dict[str, Skill]) -> str:
         "tasks. Only their names and descriptions are shown below. When the "
         "current task matches a skill, call the `load_skill` tool with the "
         "skill's name ONCE to load its full instructions, then treat that "
-        "content as authoritative and answer directly from it. Do not reload a "
+        "content as authoritative and answer directly from it. Loaded "
+        "instructions start with the skill's directory; if the skill bundles a "
+        "script, resolve its relative path against that directory and run it "
+        "with the `run_command` tool using the absolute path. Do not reload a "
         "skill you have already loaded this conversation, and do not hedge "
         "about or second-guess skill content. Do not load a skill unless the "
         "task calls for it.",
@@ -198,6 +201,36 @@ def render_skill_catalog(skills: dict[str, Skill]) -> str:
         lines.append(f"- {skill.name}: {skill.description}")
     lines.append("")
     return "\n".join(lines)
+
+
+def render_loaded_skill(skill: Skill) -> str:
+    """Render a skill's body with the context needed to run bundled scripts.
+
+    Skills may ship scripts or data files alongside ``SKILL.md``. The body
+    refers to them with paths relative to that directory, but tools such as
+    ``run_command`` execute in the workspace, not the skill directory. Prefixing
+    the body with the skill's absolute directory lets the model resolve those
+    relative paths and invoke bundled scripts with an absolute path.
+
+    Args:
+        skill: The skill whose body to render.
+
+    Returns:
+        The skill body preceded by a short context block naming the skill's
+        directory and how to run any bundled scripts.
+    """
+    skill_dir = skill.path.parent
+    header = (
+        f"[Skill: {skill.name}]\n"
+        f"Skill directory: {skill_dir}\n"
+        "Any file paths in the instructions below are relative to this "
+        "directory. To run a bundled script or reference a bundled file, build "
+        "an absolute path from the skill directory above (for example, run "
+        f"`python {skill_dir / 'script.py'}` with the run_command tool). Do not "
+        "assume bundled files exist in the workspace.\n\n"
+        "---\n\n"
+    )
+    return header + skill.body
 
 
 def load_skill_body(name: str, roots: list[Path] | None = None) -> str | None:

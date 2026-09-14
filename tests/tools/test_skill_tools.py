@@ -33,7 +33,11 @@ def test_load_skill_returns_body(
         runtime=runtime,
     )
 
-    assert result == "Say hello nicely."
+    assert "Say hello nicely." in result
+    # The loaded body is prefixed with the skill directory so relative script
+    # paths and bundled files resolve correctly.
+    skill_dir = tmp_path / ".ursa" / "skills" / "greeter"
+    assert str(skill_dir) in result
     _, event = recorder.events[-1]
     assert event["message"] == "Skill loaded"
     assert event["name"] == "greeter"
@@ -76,7 +80,7 @@ def test_load_skill_repeat_load_is_short_circuited(
     first, _ = invoke_with_event_recorder(
         load_skill.func, name="greeter", runtime=runtime
     )
-    assert first == "Say hello nicely."
+    assert "Say hello nicely." in first
 
     second, recorder = invoke_with_event_recorder(
         load_skill.func, name="greeter", runtime=runtime

@@ -4,7 +4,7 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.rendering import file_artifact
-from ursa.util.skills import discover_skills, load_skill_body
+from ursa.util.skills import discover_skills, render_loaded_skill
 
 
 @tool
@@ -16,12 +16,18 @@ def load_skill(name: str, runtime: ToolRuntime[AgentContext]) -> str:
     tool to pull a skill's full instructions into context ONLY when the current
     task calls for it.
 
+    The returned text begins with the skill's directory. A skill may bundle
+    scripts or data files next to its instructions; resolve any relative paths
+    against that directory and run bundled scripts with the run_command tool
+    using their absolute path.
+
     Args:
         name: The name of the skill to load (as listed in the available skills).
 
     Returns:
-        The full markdown instructions for the skill, or a message listing the
-        available skills when no skill matches the requested name.
+        The full markdown instructions for the skill (prefixed with its
+        directory), or a message listing the available skills when no skill
+        matches the requested name.
     """
     events = ToolEvents.from_runtime("load_skill", runtime)
     skills = discover_skills()
@@ -56,7 +62,7 @@ def load_skill(name: str, runtime: ToolRuntime[AgentContext]) -> str:
             "reload it."
         )
 
-    body = load_skill_body(name) or skill.body
+    body = render_loaded_skill(skill)
     if store is not None:
         store.put(
             ("skills", "loaded"),

@@ -4,6 +4,7 @@ from ursa.util.skills import (
     discover_skills,
     load_skill_body,
     parse_frontmatter,
+    render_loaded_skill,
     render_skill_catalog,
 )
 
@@ -108,3 +109,22 @@ def test_load_skill_body_returns_body_or_none(tmp_path: Path) -> None:
     _write_skill(tmp_path, "greeter", "greeter", "Greets", "Full instructions.")
     assert load_skill_body("greeter", roots=[tmp_path]) == "Full instructions."
     assert load_skill_body("missing", roots=[tmp_path]) is None
+
+
+def test_render_loaded_skill_includes_directory_and_body(
+    tmp_path: Path,
+) -> None:
+    _write_skill(
+        tmp_path,
+        "runner",
+        "runner",
+        "Runs a script",
+        "Run ./go.py to do the thing.",
+    )
+    skill = discover_skills(roots=[tmp_path])["runner"]
+    rendered = render_loaded_skill(skill)
+
+    # The skill directory is surfaced so relative paths (like ./go.py) resolve.
+    assert str(tmp_path / "runner") in rendered
+    assert "run_command" in rendered
+    assert "Run ./go.py to do the thing." in rendered
