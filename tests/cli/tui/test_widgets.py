@@ -449,19 +449,22 @@ async def test_prompt_scrolls_to_each_newline_after_reaching_height_cap(
         # At this terminal height the prompt has six visible content rows.
         prompt.load_text("\n".join(f"line {index}" for index in range(6)))
         prompt.move_cursor((5, len("line 5")))
-        await pilot.pause()
-        assert prompt.region.height == 8
+        # Resizing and cursor scrolling run after refresh; one pause may
+        # return before the resulting layout has finished on a busy runner.
+        assert await wait_for(pilot, lambda: prompt.region.height == 8)
         assert prompt.scroll_y == 0
 
         await pilot.press("ctrl+j")
-        await pilot.pause()
+        assert await wait_for(pilot, lambda: prompt.scroll_y == 1)
         first_scroll = prompt.scroll_y
         assert prompt.cursor_location == (6, 0)
         assert first_scroll == prompt.max_scroll_y == 1
         assert prompt.content_region.contains(*prompt.cursor_screen_offset)
 
         await pilot.press("ctrl+j")
-        await pilot.pause()
+        assert await wait_for(
+            pilot, lambda: prompt.scroll_y == first_scroll + 1
+        )
         assert prompt.cursor_location == (7, 0)
         assert prompt.scroll_y == prompt.max_scroll_y == first_scroll + 1
         assert prompt.content_region.contains(*prompt.cursor_screen_offset)
