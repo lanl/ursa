@@ -774,3 +774,81 @@ def test_config_normalizes_types_and_validates_after_overrides(tmp_path):
         name="restart", restart_from_json=tmp_path / "state.json"
     )
     assert restarted.members == []
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "completed",
+        "empty",
+        "failed",
+        "format_failed",
+        "timed_out",
+        "expired",
+        "cancelled",
+    ],
+)
+@pytest.mark.parametrize("with_report", [False, True])
+def test_member_result_preserves_execution_outcomes(
+    elo_factory, monkeypatch, outcome, with_report
+):
+    env = elo_factory.make()
+    member = env.member_configs[0]
+    if with_report:
+        report = (
+            env._member_workspace(member.name)
+            / env._progress_report_relative_path()
+        )
+        report.parent.mkdir()
+        report.write_text("Saved progress")
+    invoked = False
+
+    async def work(*args, **kwargs):
+        nonlocal invoked
+        invoked = True
+        if outcome == "failed":
+            raise RuntimeError("execution failed")
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+        if outcome == "timed_out":
+            await asyncio.sleep(60)
+        return {"final": "" if outcome == "empty" else "Final result"}
+
+    def bad_formatter(*args):
+        raise ValueError("formatting failed")
+
+    monkeypatch.setattr(env.members[member.name], "ainvoke", work)
+    if outcome == "format_failed":
+        monkeypatch.setattr(env, "_format_member_result", bad_formatter)
+    deadline = None
+    if outcome in {"timed_out", "expired"}:
+        deadline = datetime.now(timezone.utc) + timedelta(
+            seconds=0.05 if outcome == "timed_out" else -1
+        )
+    invocation = env._run_member(member, "task", {}, deadline=deadline)
+    if outcome == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(invocation)
+        return
+    run = asyncio.run(invocation)
+    status = {
+        "empty": "completed",
+        "format_failed": "failed",
+        "expired": "timed_out",
+    }.get(outcome, outcome)
+    assert run == MemberRunResult(
+        name=member.name,
+        status=status,
+        output=("" if outcome == "empty" else "Final result")
+        if status == "completed"
+        else None,
+        deadline=deadline.isoformat() if deadline else None,
+        error={
+            "failed": "RuntimeError: execution failed",
+            "format_failed": "ValueError: formatting failed",
+        }.get(outcome),
+        progress_report="Saved progress"
+        if with_report and outcome in {"empty", "timed_out", "expired"}
+        else None,
+    )
+    assert invoked == (outcome != "expired")

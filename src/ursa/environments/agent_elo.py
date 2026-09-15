@@ -1024,6 +1024,10 @@ class AgentEloEnvironment(BaseEnvironment):
             )
 
         deadline_text = deadline.isoformat() if deadline is not None else None
+        status = "completed"
+        output = None
+        error = None
+        progress_report = None
 
         try:
             if deadline is None:
@@ -1035,13 +1039,7 @@ class AgentEloEnvironment(BaseEnvironment):
                 ).total_seconds()
 
                 if remaining_seconds <= 0:
-                    return MemberRunResult(
-                        name=member.name,
-                        status="timed_out",
-                        output=None,
-                        deadline=deadline_text,
-                        progress_report=self._read_progress_report(member.name),
-                    )
+                    raise TimeoutError
 
                 # Cancellation stops the environment from awaiting this
                 # member. A blocking subprocess already running in an
@@ -1053,35 +1051,27 @@ class AgentEloEnvironment(BaseEnvironment):
                 )
 
             output = self._format_member_result(member.name, result)
-            return MemberRunResult(
-                name=member.name,
-                status="completed",
-                output=output,
-                deadline=deadline_text,
-                progress_report=(
-                    self._read_progress_report(member.name)
-                    if not output.strip()
-                    else None
-                ),
-            )
+            if not output.strip():
+                progress_report = self._read_progress_report(member.name)
 
         except TimeoutError:
-            return MemberRunResult(
-                name=member.name,
-                status="timed_out",
-                output=None,
-                deadline=deadline_text,
-                progress_report=self._read_progress_report(member.name),
-            )
+            status = "timed_out"
+            output = None
+            progress_report = self._read_progress_report(member.name)
 
         except Exception as exc:
-            return MemberRunResult(
-                name=member.name,
-                status="failed",
-                output=None,
-                deadline=deadline_text,
-                error=(f"{type(exc).__name__}: {exc}"),
-            )
+            status = "failed"
+            output = None
+            error = f"{type(exc).__name__}: {exc}"
+
+        return MemberRunResult(
+            name=member.name,
+            status=status,
+            output=output,
+            deadline=deadline_text,
+            error=error,
+            progress_report=progress_report,
+        )
 
     # ------------------------------------------------------------------
     # Judging
