@@ -1016,7 +1016,7 @@ class AgentEloEnvironment(BaseEnvironment):
             deadline=deadline,
         )
 
-        async def invoke() -> Any:
+        async def ainvoke() -> Any:
             return await self._invoke_member_async(
                 self.members[member.name],
                 prompt,
@@ -1027,7 +1027,7 @@ class AgentEloEnvironment(BaseEnvironment):
 
         try:
             if deadline is None:
-                result = await invoke()
+                result = await ainvoke()
 
             else:
                 remaining_seconds = (
@@ -1048,7 +1048,7 @@ class AgentEloEnvironment(BaseEnvironment):
                 # executor may continue until that subprocess exits or
                 # reaches its own timeout.
                 result = await asyncio.wait_for(
-                    invoke(),
+                    ainvoke(),
                     timeout=remaining_seconds,
                 )
 
