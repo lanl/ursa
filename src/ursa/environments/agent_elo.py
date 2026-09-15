@@ -815,7 +815,12 @@ class AgentEloEnvironment(BaseEnvironment):
         rating_b: float,
     ) -> float:
         """Return A's expected Elo score against B."""
-        return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
+        difference = (rating_b - rating_a) / 400.0
+        # A nonpositive exponent avoids overflow for large rating differences.
+        factor = 10.0 ** (-abs(difference))
+        if difference >= 0:
+            return factor / (1.0 + factor)
+        return 1.0 / (1.0 + factor)
 
     def update_elo(
         self,

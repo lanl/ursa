@@ -14,6 +14,19 @@ from ursa.environments.agent_elo import AgentEloEnvironment, MemberRunResult
 from ursa.environments.agent_elo_judge import AgentEloJudge, JudgeDecision
 
 
+@pytest.mark.parametrize("difference", [-4000, -400, -1, 0, 1, 400, 4000])
+def test_expected_score_preserves_ordinary_elo_formula(difference):
+    expected = 1.0 / (1.0 + 10.0 ** (difference / 400.0))
+    actual = AgentEloEnvironment.expected_score(1500.0, 1500.0 + difference)
+    assert actual == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("rating_a,rating_b", [(0.0, 1e6), (-1e308, 1e308)])
+def test_expected_score_handles_extreme_rating_differences(rating_a, rating_b):
+    assert AgentEloEnvironment.expected_score(rating_a, rating_b) == 0.0
+    assert AgentEloEnvironment.expected_score(rating_b, rating_a) == 1.0
+
+
 class LocalMember:
     """Small persistent worker used in place of a live agent."""
 
