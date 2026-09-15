@@ -50,79 +50,17 @@ A population must contain at least two members and have an even size. Names must
 be unique. The population size stays constant after each successful generation,
 although its members may change. Children first compete in the next generation.
 
-## Minimal Elo YAML
+## Try the worked example
 
-Save the following as `elo.yaml`:
-
-```yaml
-name: numerical_integration_elo
-group: default
-workspace: ./elo_workspace
-
-generations: 2
-initial_rating: 1500
-k_factor: 32
-deaths_per_round: 1
-seed: 12345
-
-# Put evaluation criteria in the task supplied to invoke().
-
-members:
-  - name: researcher_1
-    role: Develops and validates numerical integration methods
-    agent: ExecutionAgent
-    config:
-      use_web: false
-
-  - name: researcher_2
-    role: Explores alternative methods and checks numerical accuracy
-    agent: ExecutionAgent
-    config:
-      use_web: false
-```
-
-The repository also includes `examples/environments/agent_elo.yaml` and
-`examples/environments/run_elo.py`. That runner asks agents to integrate
-`exp(-x^2)` from zero to one, compare against a reference computed with `math.erf`,
-and save executable code and validation results.
-
-## Run Elo from Python
-
-```python
-from langchain.chat_models import init_chat_model
-from ursa.environments import AgentEloEnvironment
-
-llm = init_chat_model(model="openai:gpt-4o-mini")
-env = AgentEloEnvironment.from_yaml("elo.yaml", llm=llm)
-
-task = """
-Numerically integrate exp(-x^2) from 0 to 1 using Python.
-Create and execute code in your workspace. Compare the result with a reference
-computed using math.erf, report absolute error, and perform a convergence check.
-Save the code and useful results. Explain remaining limitations.
-
-Evaluation criteria, in priority order:
-1. Correctness and numerical accuracy.
-2. Evidence from executed validation and convergence checks.
-3. Reproducibility.
-4. Meaningful improvement over existing work, when applicable.
-"""
-
-try:
-    result = env.invoke({"task": task})
-    for row in result["standings"]:
-        print(row["name"], row["rating"], row["parent"])
-    print("Restart state:", result["environment_state"])
-finally:
-    for member in env.members.values():
-        close = getattr(member, "close", None)
-        if callable(close):
-            close()
-```
+Follow [Evolve numerical methods with Agent Elo](../examples/environments/agent_elo/index.md)
+for setup instructions, a complete YAML population, the Python runner, and a
+walkthrough of two generations. Its task asks competitors to implement and
+validate numerical integration, with evaluation criteria specified in the task.
 
 One invocation runs the configured number of `generations` on the supplied task.
 Invoking the same environment again runs that many additional generations using
-its current population and ratings.
+its current population and ratings. Load YAML with
+`AgentEloEnvironment.from_yaml(path, llm=llm)` and pass the task to `env.invoke(...)`.
 
 Inside an existing async event loop, use `await env.ainvoke(...)`. Calling
 `env.invoke(...)` from that context raises an error.
@@ -332,7 +270,7 @@ Use `save_elo_config(...)` to save the environment definition:
 ```python
 from ursa.environments import load_elo_config, save_elo_config
 
-config = load_elo_config("elo.yaml")
+config = load_elo_config("examples/environments/agent_elo/agent_elo.yaml")
 path = save_elo_config(config)
 print(path)
 ```
@@ -348,13 +286,13 @@ in the environment workspace. It contains the active member configurations,
 ratings, lineage, completed-generation count, and random-generator state.
 
 To restart, use the same environment name, group, and workspace, and supply the
-snapshot path. For example, save this as `elo-restart.yaml`:
+snapshot path. From the worked example directory, save this as `elo-restart.yaml`:
 
 ```yaml
 name: numerical_integration_elo
 group: default
-workspace: ./elo_workspace
-restart_from_json: ./elo_workspace/environment_state.json
+workspace: ./workspace_agent_elo
+restart_from_json: ./workspace_agent_elo/environment_state.json
 generations: 2
 k_factor: 32
 deaths_per_round: 1
