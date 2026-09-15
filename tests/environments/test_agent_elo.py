@@ -251,7 +251,13 @@ def test_restart_preserves_configuration_and_continues_evolution(
     assert restored.generation_index == env.generation_index
     for member in restored.members.values():
         model = member.config.model
-        assert model.model == "test-model"
+        original_model = env.members[member.config.name].config.model
+        # Restart preserves model settings; prefix normalization belongs to
+        # model initialization, not environment persistence. Snapshots omit
+        # the provider reference because its settings are already resolved.
+        assert model.model_dump(exclude={"inference_provider"}) == (
+            original_model.model_dump(exclude={"inference_provider"})
+        )
         assert model.base_url == "http://localhost:1234/v1"
         assert model.api_key.env == "ELO_TEST_API_KEY"
         assert model.model_extra["temperature"] == 0.2
