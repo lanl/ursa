@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
+from langchain.chat_models import init_chat_model
 
 from ursa.environments import AgentEloEnvironment
 
@@ -66,8 +66,8 @@ def print_generation(result):
 
 
 def main():
-    llm = ChatOpenAI(
-        model="gpt-5",
+    llm = init_chat_model(
+        model="openai:gpt-5",
         timeout=None,
         max_retries=2,
     )
