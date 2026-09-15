@@ -550,3 +550,64 @@ async def test_real_ghostty_exec_failure_and_concurrent_close(tmp_path):
         terminal.terminate(), terminal.terminate(), terminal.terminate()
     )
     assert terminal._terminal_closed
+
+
+async def test_ghostty_resources_include_children_and_preserve_exit_identity(
+    fake_ghostty,
+):
+    from ursa.tools.terminal.manager import TermManager
+    from ursa.tools.terminal.resources import capture_process_identity
+
+    terminal = ghostty.GhosttyTerm("resource", ["/bin/sh"])
+    assert terminal.process_identity is None
+    try:
+        await terminal.start("sleep 30 & printf 'ready\\n'; wait")
+        async with asyncio.timeout(5):
+            while "ready" not in await terminal.contents():
+                await asyncio.sleep(0.01)
+        identity = terminal.process_identity
+        assert identity is not None
+        assert identity == capture_process_identity(identity.pid)
+        assert identity.create_time is not None
+        result = await TermManager._resources(terminal)
+        assert result["status"] == "running"
+        assert result["process_count"] >= 2
+        assert result["thread_count"] >= 2
+        assert result["rss_bytes"] > 0
+        assert result["vms_bytes"] > 0
+        assert result["cpu_percent"] >= 0
+        assert result["sample_seconds"] >= 0.2
+        assert result["pid"] == identity.pid
+    finally:
+        await terminal.terminate()
+    assert terminal.process_identity is identity
+    result = await TermManager._resources(terminal)
+    assert result["status"] == "exited"
+    assert "exit_code" in result
+    assert "rss_bytes" not in result
+    assert "cpu_percent" not in result
+
+
+async def test_ghostty_captures_identity_before_wait_task_even_when_unavailable(
+    fake_ghostty, monkeypatch
+):
+    from ursa.tools.terminal.resources import ProcessIdentity
+
+    terminal = ghostty.GhosttyTerm("resource", ["/bin/sh"])
+    captures = []
+
+    def capture(pid):
+        assert terminal._pid == pid
+        assert terminal._wait_task is None
+        assert terminal._return_code is None
+        captures.append(pid)
+        return ProcessIdentity(pid, None)
+
+    monkeypatch.setattr(ghostty, "capture_process_identity", capture)
+    try:
+        await terminal.start("exit 7")
+        assert terminal.process_identity == ProcessIdentity(captures[0], None)
+        assert await terminal.wait() == 7
+        assert len(captures) == 1
+    finally:
+        await terminal.terminate()

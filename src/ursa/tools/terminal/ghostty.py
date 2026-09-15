@@ -24,6 +24,7 @@ from .base import (
     TerminalStyle,
     TermSession,
 )
+from .resources import capture_process_identity
 
 _C1_ERROR_HANDLER = "ursa_terminal_c1_controls"
 
@@ -201,6 +202,8 @@ class GhosttyTerm(TermSession):
 
         self._pid = pid
         self._master_fd = master_fd
+        # Capture before the wait task can reap the child and recycle its PID.
+        self._process_identity = capture_process_identity(pid)
         os.set_blocking(master_fd, False)
         rows, cols = await self.size()
         self._set_winsize(master_fd, rows, cols)
