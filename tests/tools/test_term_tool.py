@@ -100,6 +100,17 @@ class WrapperManager:
     async def wait(self, term_id):
         return await self.get(term_id).wait()
 
+    async def resources(self, term_id):
+        assert term_id == self.terminal.term_id
+        return {
+            "term_id": term_id,
+            "status": "running",
+            "scope": "process_tree",
+            "pid": 123,
+            "cpu_percent": 150.0,
+            "rss_bytes": 1024,
+        }
+
     async def is_alive(self, term_id):
         return await self.get(term_id).is_alive()
 
@@ -195,6 +206,8 @@ def test_launch_safety_text_contains_complete_benign_configuration(tmp_path):
         (term_tool.term_send_key, {"key": "c", "modifiers": ["ctrl"]}),
         (term_tool.term_read, {}),
         (term_tool.term_is_alive, {}),
+        (term_tool.term_close, {}),
+        (term_tool.term_resources, {}),
         (term_tool.term_wait_for, {"pattern": "ready"}),
         (term_tool.term_wait_screen, {"condition": "stable"}),
         (term_tool.term_resize, {"rows": 24, "cols": 80}),
@@ -251,6 +264,30 @@ async def test_term_short_command_returns_output_and_removes_session(
         )
     ]
     assert manager.removed == [(terminal.term_id, {"terminate": True})]
+
+
+async def test_term_close_terminates_and_removes_session(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    result = await term_tool.term_close.ainvoke({"term_id": terminal.term_id})
+
+    assert result == "Closed terminal Ab12Cd34"
+    assert manager.removed == [(terminal.term_id, {"terminate": True})]
+
+
+@pytest.mark.parametrize("term_id", ["", "short", "Ab12Cd345", "Ab12-d34"])
+async def test_term_close_rejects_invalid_ids_before_manager(
+    monkeypatch, term_id
+):
+    manager = WrapperManager(WrapperTerm())
+    monkeypatch.setattr(term_tool, "term_manager", manager)
+
+    with pytest.raises(ValidationError):
+        await term_tool.term_close.ainvoke({"term_id": term_id})
+
+    assert manager.removed == []
 
 
 async def test_term_session_mode_returns_id_without_waiting(
@@ -1159,6 +1196,8 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
                 "term_send_key",
                 "term_read",
                 "term_is_alive",
+                "term_close",
+                "term_resources",
                 "term_wait_for",
             },
         ),
@@ -1173,6 +1212,8 @@ async def test_screenshot_settle_bounds_truly_blank_screen(monkeypatch):
                 "term_send_key",
                 "term_read",
                 "term_is_alive",
+                "term_close",
+                "term_resources",
                 "term_wait_for",
                 "term_resize",
                 "term_cursor",
@@ -1199,8 +1240,35 @@ def test_get_supported_term_tools_filters_screen_capabilities(
     assert {tool.name for tool in first} == expected_names
     assert first is not second
     assert first == second
+    assert term_tool.term_resources in term_tool.TERM_TOOLS
+    assert term_tool.term_close in term_tool.TERM_TOOLS
     assert term_tool.term_send_key in term_tool.TERM_TOOLS
     assert term_tool.term_paste_text in term_tool.TERM_TOOLS
     assert all(
         tool.name != "term_send_keycode" for tool in term_tool.TERM_TOOLS
     )
+
+
+async def test_term_resources_returns_structured_metrics(monkeypatch):
+    terminal = WrapperTerm()
+    manager = WrapperManager(terminal)
+    monkeypatch.setattr("ursa.tools.term_tool.term_manager", manager)
+    result = await term_tool.term_resources.ainvoke({
+        "term_id": terminal.term_id
+    })
+    assert result == await manager.resources(terminal.term_id)
+
+
+@pytest.mark.parametrize("term_id", ["", "short", "Ab12Cd345", "Ab12-d34"])
+async def test_term_resources_rejects_invalid_id_before_sampling(
+    monkeypatch, term_id
+):
+    class UnexpectedManager:
+        async def resources(self, term_id):
+            pytest.fail("invalid IDs must not reach the manager")
+
+    monkeypatch.setattr(
+        "ursa.tools.term_tool.term_manager", UnexpectedManager()
+    )
+    with pytest.raises(ValidationError):
+        await term_tool.term_resources.ainvoke({"term_id": term_id})

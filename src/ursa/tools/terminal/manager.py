@@ -21,6 +21,7 @@ from .base import (
     TerminalRenderSnapshot,
     TermSession,
 )
+from .resources import collect_resources
 from .screenshot import screen_comparison_key
 
 SessionFactory = Callable[..., TermSession]
@@ -31,6 +32,7 @@ _STREAM_CAPABILITIES = frozenset({
     "contents",
     "is_alive",
     "read",
+    "resources",
     "send_bytes",
     "send_line",
     "send_text",
@@ -550,6 +552,46 @@ class TermManager:
     async def is_alive(self, term_id: str) -> dict[str, bool | int]:
         """Return a registered terminal's process state."""
         return await self._dispatch(self.get(term_id).is_alive())
+
+    async def resources(self, term_id: str) -> dict[str, int | float | str]:
+        """Sample a terminal's local process tree without sending it input."""
+        return await self._dispatch_cancellable(
+            self._resources(self.get(term_id))
+        )
+
+    @staticmethod
+    async def _resources(terminal: TermSession) -> dict[str, int | float | str]:
+        result: dict[str, int | float | str] = {
+            "term_id": terminal.term_id,
+            "scope": "process_tree",
+        }
+        identity = terminal.process_identity
+        if identity is not None:
+            result["pid"] = identity.pid
+        state = await terminal.is_alive()
+        if "exit_code" in state:
+            return {
+                **result,
+                "status": "exited",
+                "exit_code": state["exit_code"],
+            }
+        if identity is None:
+            return {
+                **result,
+                "status": "unavailable",
+                "reason": "backend has no captured process identity",
+            }
+        sampled = await collect_resources(identity)
+        # Lifecycle state is authoritative, including an exit or concurrent
+        # close during sampling. Do not return old counters as live usage.
+        state = await terminal.is_alive()
+        if "exit_code" in state:
+            return {
+                **result,
+                "status": "exited",
+                "exit_code": state["exit_code"],
+            }
+        return {**result, **sampled}
 
     async def wait(self, term_id: str) -> int:
         """Wait for a registered terminal to exit."""

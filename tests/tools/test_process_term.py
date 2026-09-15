@@ -387,3 +387,64 @@ async def test_process_terminate_unblocks_large_pipe_send(tmp_path):
     await asyncio.wait_for(terminal.terminate(), timeout=3.0)
     with pytest.raises(BrokenPipeError):
         await asyncio.wait_for(send, timeout=1.0)
+
+
+async def test_process_resources_include_children_and_preserve_exit_identity():
+    from ursa.tools.terminal.manager import TermManager
+    from ursa.tools.terminal.resources import capture_process_identity
+
+    terminal = ProcessTerm("resource", ["/bin/sh"])
+    assert terminal.process_identity is None
+    try:
+        await terminal.start("sleep 30 & printf 'ready\\n'; wait")
+        async with asyncio.timeout(5):
+            while "ready" not in await terminal.contents():
+                await asyncio.sleep(0.01)
+        identity = terminal.process_identity
+        assert identity is not None
+        assert identity == capture_process_identity(identity.pid)
+        assert identity.create_time is not None
+        result = await TermManager._resources(terminal)
+        assert result["status"] == "running"
+        assert result["process_count"] >= 2
+        assert result["thread_count"] >= 2
+        assert result["rss_bytes"] > 0
+        assert result["vms_bytes"] > 0
+        assert result["cpu_percent"] >= 0
+        assert result["sample_seconds"] >= 0.2
+        assert result["pid"] == identity.pid
+        assert await terminal.read() == "ready\n"
+    finally:
+        await terminal.terminate()
+    assert terminal.process_identity is identity
+    result = await TermManager._resources(terminal)
+    assert result["status"] == "exited"
+    assert "exit_code" in result
+    assert "rss_bytes" not in result
+    assert "cpu_percent" not in result
+
+
+async def test_process_captures_identity_before_polling_even_when_unavailable(
+    monkeypatch,
+):
+    from ursa.tools.terminal.resources import ProcessIdentity
+
+    terminal = ProcessTerm("resource", ["/bin/sh"])
+    captures = []
+
+    def capture(pid):
+        assert terminal._process.pid == pid
+        assert terminal._process.returncode is None
+        captures.append(pid)
+        return ProcessIdentity(pid, None)
+
+    monkeypatch.setattr(
+        "ursa.tools.terminal.process.capture_process_identity", capture
+    )
+    try:
+        await terminal.start("exit 7")
+        assert terminal.process_identity == ProcessIdentity(captures[0], None)
+        assert await terminal.wait() == 7
+        assert len(captures) == 1
+    finally:
+        await terminal.terminate()
