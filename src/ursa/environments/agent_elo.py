@@ -70,6 +70,54 @@ class MatchResult:
 
         return None
 
+    @staticmethod
+    def expected_score(
+        rating_a: float,
+        rating_b: float,
+    ) -> float:
+        """Return A's expected Elo score against B."""
+        difference = (rating_b - rating_a) / 400.0
+        # A nonpositive exponent avoids overflow for large rating differences.
+        factor = 10.0 ** (-abs(difference))
+        if difference >= 0:
+            return factor / (1.0 + factor)
+        return 1.0 / (1.0 + factor)
+
+    def updated_ratings(
+        self,
+        rating_a: float,
+        rating_b: float,
+        k_factor: float,
+    ) -> tuple[float, float]:
+        """Return updated Elo ratings for a match.
+
+        ``score_a``:
+            1.0 -> A wins
+            0.5 -> draw
+            0.0 -> B wins
+        """
+        score_a = self.score_a
+        if score_a not in {
+            0.0,
+            0.5,
+            1.0,
+        }:
+            raise ValueError("score_a must be one of 0.0, 0.5, or 1.0")
+
+        expected_a = self.expected_score(
+            rating_a,
+            rating_b,
+        )
+
+        expected_b = 1.0 - expected_a
+        score_b = 1.0 - score_a
+
+        new_a = rating_a + k_factor * (score_a - expected_a)
+
+        new_b = rating_b + k_factor * (score_b - expected_b)
+
+        return new_a, new_b
+
 
 @dataclass
 class MemberRunResult:
@@ -809,53 +857,6 @@ class AgentEloEnvironment(BaseEnvironment):
     # Elo
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def expected_score(
-        rating_a: float,
-        rating_b: float,
-    ) -> float:
-        """Return A's expected Elo score against B."""
-        difference = (rating_b - rating_a) / 400.0
-        # A nonpositive exponent avoids overflow for large rating differences.
-        factor = 10.0 ** (-abs(difference))
-        if difference >= 0:
-            return factor / (1.0 + factor)
-        return 1.0 / (1.0 + factor)
-
-    def update_elo(
-        self,
-        rating_a: float,
-        rating_b: float,
-        score_a: float,
-    ) -> tuple[float, float]:
-        """Return updated Elo ratings for a match.
-
-        ``score_a``:
-            1.0 -> A wins
-            0.5 -> draw
-            0.0 -> B wins
-        """
-        if score_a not in {
-            0.0,
-            0.5,
-            1.0,
-        }:
-            raise ValueError("score_a must be one of 0.0, 0.5, or 1.0")
-
-        expected_a = self.expected_score(
-            rating_a,
-            rating_b,
-        )
-
-        expected_b = 1.0 - expected_a
-        score_b = 1.0 - score_a
-
-        new_a = rating_a + self.k_factor * (score_a - expected_a)
-
-        new_b = rating_b + self.k_factor * (score_b - expected_b)
-
-        return new_a, new_b
-
     def _apply_match_result(
         self,
         result: MatchResult,
@@ -864,10 +865,10 @@ class AgentEloEnvironment(BaseEnvironment):
 
         player_b = self.players[result.player_b]
 
-        new_a, new_b = self.update_elo(
+        new_a, new_b = result.updated_ratings(
             player_a.rating,
             player_b.rating,
-            result.score_a,
+            self.k_factor,
         )
 
         player_a.rating = new_a

@@ -10,21 +10,47 @@ from types import SimpleNamespace
 
 import pytest
 
-from ursa.environments.agent_elo import AgentEloEnvironment, MemberRunResult
+from ursa.environments.agent_elo import (
+    AgentEloEnvironment,
+    MatchResult,
+    MemberRunResult,
+)
 from ursa.environments.agent_elo_judge import AgentEloJudge, JudgeDecision
 
 
 @pytest.mark.parametrize("difference", [-4000, -400, -1, 0, 1, 400, 4000])
 def test_expected_score_preserves_ordinary_elo_formula(difference):
     expected = 1.0 / (1.0 + 10.0 ** (difference / 400.0))
-    actual = AgentEloEnvironment.expected_score(1500.0, 1500.0 + difference)
+    actual = MatchResult.expected_score(1500.0, 1500.0 + difference)
     assert actual == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("rating_a,rating_b", [(0.0, 1e6), (-1e308, 1e308)])
 def test_expected_score_handles_extreme_rating_differences(rating_a, rating_b):
-    assert AgentEloEnvironment.expected_score(rating_a, rating_b) == 0.0
-    assert AgentEloEnvironment.expected_score(rating_b, rating_a) == 1.0
+    assert MatchResult.expected_score(rating_a, rating_b) == 0.0
+    assert MatchResult.expected_score(rating_b, rating_a) == 1.0
+
+
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (1.0, (1516.0, 1484.0)),
+        (0.5, (1500.0, 1500.0)),
+        (0.0, (1484.0, 1516.0)),
+    ],
+)
+def test_match_result_updates_ratings(score, expected):
+    result = MatchResult("a", "b", score, "test")
+    assert result.updated_ratings(1500.0, 1500.0, 32.0) == expected
+    assert result.updated_ratings(1500.0, 1500.0, 16.0) == tuple(
+        1500.0 + (rating - 1500.0) / 2 for rating in expected
+    )
+
+
+def test_match_result_rejects_invalid_score():
+    result = MatchResult("a", "b", 0.25, "test")
+    with pytest.raises(ValueError, match="score_a must be"):
+        result.updated_ratings(1500.0, 1500.0, 32.0)
 
 
 class LocalMember:
