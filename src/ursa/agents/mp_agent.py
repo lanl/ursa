@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
@@ -21,24 +20,22 @@ except ImportError:
     working = False
 
 
-class PaperMetadata(TypedDict):
-    arxiv_id: str
-    full_text: str
+class MaterialRecord(TypedDict):
+    material_id: str
+    metadata: dict
 
 
 class PaperState(TypedDict, total=False):
-    query: str
+    query: dict
     context: str
-    papers: list[PaperMetadata]
+    materials: list[MaterialRecord]
     summaries: list[str]
     final_summary: str
 
 
-def remove_surrogates(text: str) -> str:
-    return re.sub(r"[\ud800-\udfff]", "", text)
+class MaterialsProjectAgent(BaseAgent[PaperState]):
+    state_type = PaperState
 
-
-class MaterialsProjectAgent(BaseAgent):
     def __init__(
         self,
         llm: BaseChatModel,
@@ -170,12 +167,3 @@ You are a materials-science assistant. Given the following metadata about a mate
         else:
             self.graph.set_entry_point("_fetch_node")
             self.graph.set_finish_point("_fetch_node")
-
-
-if __name__ == "__main__":
-    agent = MaterialsProjectAgent()
-    resp = agent.invoke(
-        mp_query="LiFePO4",
-        context="What is its band gap and stability, and any synthesis challenges?",
-    )
-    LOGGER.info("%s", resp)

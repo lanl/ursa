@@ -13,7 +13,8 @@ from ursa.agents.base import BaseAgent
 
 
 def test_state_registration_ratchet_allowlist():
-    allowlist = {"PaperState", "RAGState", "RecallState"}
+    # All agent states are registered; any new unregistered state fails here.
+    allowlist: set[str] = set()
 
     import ursa.agents as agents_pkg
 

@@ -28,7 +28,7 @@ from textual.widgets import (
 )
 
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, wait_for
+from tests.cli._app_fakes import FakeHITL, wait_for, wait_for_event
 from ursa.agents.base import AgentWithTools
 from ursa.agents.execution_agent import ExecutionAgent
 from ursa.cli.config import (
@@ -2606,7 +2606,7 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
     try:
         async with app.run_test(size=(100, 36)) as pilot:
             await app._show_command("agents")
-            assert await asyncio.to_thread(schema_started.wait, 2)
+            assert await wait_for_event(pilot, schema_started)
             assert app.screen.query(".agent-tools-loading")
             tools = app.screen.query("#agent-tools-0 .agent-tool")
             assert len(tools) == 1
@@ -2744,16 +2744,16 @@ async def test_agents_remain_responsive_during_blocking_initialization(
     try:
         async with app.run_test(size=(100, 36)) as pilot:
             await app._show_command("agents")
-            assert await asyncio.to_thread(constructor_started.wait, 2)
+            assert await wait_for_event(pilot, constructor_started)
             screen = app.screen
             await assert_ui_is_live(pilot, screen)
 
             constructor_release.set()
-            assert await asyncio.to_thread(mcp_started.wait, 2)
+            assert await wait_for_event(pilot, mcp_started)
             await assert_ui_is_live(pilot, screen)
 
             mcp_release.set()
-            assert await asyncio.to_thread(schema_started.wait, 2)
+            assert await wait_for_event(pilot, schema_started)
             await assert_ui_is_live(pilot, screen)
 
             schema_release.set()
@@ -2807,7 +2807,7 @@ async def test_dismissing_agents_during_loading_cleans_up_and_publishes(
     try:
         async with app.run_test(size=(100, 36)) as pilot:
             await app._show_command("agents")
-            assert await asyncio.to_thread(schema_started.wait, 2)
+            assert await wait_for_event(pilot, schema_started)
             loading_screen = app.screen
             await pilot.press("escape")
             await pilot.pause()
