@@ -4139,6 +4139,57 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
   }
 
+  function composerAgentTooltipElement() {
+    let tooltip = $('#composerAgentTooltip');
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.id = 'composerAgentTooltip';
+    tooltip.className = 'composerAgentTooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(tooltip);
+    window.addEventListener('resize', hideComposerAgentTooltip);
+    document.addEventListener('scroll', hideComposerAgentTooltip, true);
+    return tooltip;
+  }
+
+  function showComposerAgentTooltip(button, agent) {
+    const tooltip = composerAgentTooltipElement();
+    const label = composerBehaviorLabel(agent) || agent.agent_id || 'Behavior';
+    const description = agent.description || `Use ${agent.display_name || agent.agent_id}`;
+    tooltip.replaceChildren();
+    const title = document.createElement('strong');
+    title.className = 'composerAgentTooltipTitle';
+    title.textContent = label;
+    const copy = document.createElement('span');
+    copy.className = 'composerAgentTooltipCopy';
+    copy.textContent = description;
+    tooltip.append(title, copy);
+    tooltip.classList.add('visible');
+    tooltip.setAttribute('aria-hidden', 'false');
+
+    const buttonRect = button.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const margin = 12;
+    const gap = 10;
+    const centeredLeft = buttonRect.left + (buttonRect.width - tooltipRect.width) / 2;
+    const left = Math.min(
+      Math.max(margin, centeredLeft),
+      window.innerWidth - tooltipRect.width - margin,
+    );
+    let top = buttonRect.top - tooltipRect.height - gap;
+    if (top < margin) top = buttonRect.bottom + gap;
+    tooltip.style.left = `${Math.max(margin, left)}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function hideComposerAgentTooltip() {
+    const tooltip = $('#composerAgentTooltip');
+    if (!tooltip) return;
+    tooltip.classList.remove('visible');
+    tooltip.setAttribute('aria-hidden', 'true');
+  }
+
   function renderComposerAgentSelect() {
     const wrap = $('#composerAgentType');
     if (!wrap) return;
@@ -4155,11 +4206,15 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       btn.type = 'button';
       btn.className = 'composerAgentButton' + (selected ? ' selected' : '');
       btn.textContent = composerBehaviorLabel(agent) || id;
-      btn.title = agent.description || `Use ${agent.display_name || id}`;
       btn.setAttribute('role', 'radio');
       btn.setAttribute('aria-checked', String(selected));
       btn.setAttribute('aria-label', `${agent.display_name || id}: ${agent.description || ''}`);
+      btn.addEventListener('mouseenter', () => showComposerAgentTooltip(btn, agent));
+      btn.addEventListener('mouseleave', hideComposerAgentTooltip);
+      btn.addEventListener('focus', () => showComposerAgentTooltip(btn, agent));
+      btn.addEventListener('blur', hideComposerAgentTooltip);
       btn.onclick = () => {
+        hideComposerAgentTooltip();
         state.selectedComposerAgentId = id;
         renderComposerAgentSelect();
         renderSessionCreateMenu();
@@ -5462,6 +5517,12 @@ body::before {
 .composerAgentButton.selected { color: #0b57d0; border-color: rgba(11,87,208,0.42); background: rgba(11,87,208,0.08); }
 :root[data-theme="dark"] .composerAgentButton:hover { border-color: #737b87; }
 :root[data-theme="dark"] .composerAgentButton.selected { color: #8ab4ff; border-color: rgba(138,180,255,0.50); background: rgba(138,180,255,0.10); }
+.composerAgentTooltip { position: fixed; z-index: 300; visibility: hidden; width: min(340px, calc(100vw - 24px)); box-sizing: border-box; padding: 12px 14px 13px; border: 1px solid rgba(17,24,39,0.16); border-radius: 12px; background: rgba(255,255,255,0.98); color: #252a32; box-shadow: 0 16px 38px rgba(15,23,42,0.18), 0 3px 10px rgba(15,23,42,0.10); opacity: 0; transform: translateY(4px); pointer-events: none; text-align: left; transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease; }
+.composerAgentTooltip.visible { visibility: visible; opacity: 1; transform: translateY(0); }
+.composerAgentTooltipTitle { display: block; margin-bottom: 4px; color: #111827; font-size: 13px; font-weight: 750; line-height: 1.25; letter-spacing: 0.01em; }
+.composerAgentTooltipCopy { display: block; font-size: 14px; font-weight: 450; line-height: 1.48; }
+:root[data-theme="dark"] .composerAgentTooltip { border-color: #49515d; background: rgba(35,40,48,0.98); color: #dce2ea; box-shadow: 0 18px 44px rgba(0,0,0,0.40), 0 3px 10px rgba(0,0,0,0.26); }
+:root[data-theme="dark"] .composerAgentTooltipTitle { color: #f3f6fa; }
 textarea, input, select { font: inherit; box-sizing: border-box; }
 textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; border-radius: 10px; border: 1px solid var(--border); }
 .composerInputShell { border: 1px solid var(--border); border-radius: 14px; background: #fff; transition: border-color 120ms ease, box-shadow 120ms ease; }
@@ -6187,7 +6248,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 <div class="sessionCreateMenu" id="sessionCreateMenu"></div>
               </div>
               <div class="composerBehaviorPicker">
-                <div class="composerAgentLabel">Choose behavior <span class="muted">· Hover for details</span> · Use (+) to utilize persisent agents</div>
+                <div class="composerAgentLabel">Choose behavior <span class="muted">· Hover for details</span> · Use (+) to utilize persistent agents</div>
                 <div class="composerAgentButtons" id="composerAgentType" role="radiogroup" aria-label="Behavior for this message"></div>
               </div>
               <button class="btn primary composerSendButton" id="sendMsgBtn" type="button">Send</button>

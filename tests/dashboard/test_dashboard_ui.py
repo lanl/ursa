@@ -47,7 +47,10 @@ def test_composer_uses_registry_driven_agent_buttons(
         'class="composerAgentButtons" id="composerAgentType"' in dashboard_html
     )
     assert '<select id="composerAgentType"' not in dashboard_html
-    assert "btn.title = agent.description" in dashboard_html
+    assert "showComposerAgentTooltip(btn, agent)" in dashboard_html
+    assert "className = 'composerAgentTooltip'" in dashboard_html
+    assert "composerAgentTooltipCopy" in dashboard_html
+    assert "btn.title = agent.description" not in dashboard_html
     assert "role', 'radio'" in dashboard_html
     assert "Choose behavior" in dashboard_html
     assert "composerBehaviorLabel(agent)" in dashboard_html

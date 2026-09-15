@@ -194,7 +194,7 @@ register(
         spec=AgentSpec(
             agent_id="chat_agent",
             display_name="Chat Agent",
-            description="General chat interface to an LLM.",
+            description="General chat interface to an LLM that also has tools for doing basic problems. Best to get started and try some simple things. web/arXiv/OSTI tools are reflected only when web access is enabled.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -249,48 +249,48 @@ register(
     )
 )
 
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="prompting_agent",
-            display_name="Prompting Agent",
-            description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=False,
-            ),
-            parameters=[
-                _prompt_param(title="Prompt to refine"),
-                AgentParam(
-                    name="use_web",
-                    title="Include web tool context",
-                    description="Include web/arXiv/OSTI tools in the downstream-tool context used while drafting the prompt.",
-                    type="boolean",
-                    required=False,
-                    default=False,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="use_web",
-                ),
-            ]
-            + _common_llm_params()
-            + _runner_params(),
-            tags=["planning", "prompting"],
-        ),
-        build_adapter=_baseagent_adapter_builder(
-            "ursa.agents.prompting_agent.PromptingAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
+### register(
+###     AgentEntry(
+###         spec=AgentSpec(
+###             agent_id="prompting_agent",
+###             display_name="Prompting Agent",
+###             description="Iterates with the user to refine a rough request into clean, self-contained instructions for a downstream agentic workflow. It can reference available ChatAgent and ExecutionAgent tools when drafting prompts; web/arXiv/OSTI tools are reflected only when web access is enabled.",
+###             capabilities=AgentCapabilities(
+###                 supports_streaming=False,
+###                 supports_cancellation=False,
+###                 produces_artifacts=False,
+###             ),
+###             parameters=[
+###                 _prompt_param(title="Prompt to refine"),
+###                 AgentParam(
+###                     name="use_web",
+###                     title="Include web tool context",
+###                     description="Include web/arXiv/OSTI tools in the downstream-tool context used while drafting the prompt.",
+###                     type="boolean",
+###                     required=False,
+###                     default=False,
+###                     advanced=True,
+###                     source=ParamSource.agent_init,
+###                     target="use_web",
+###                 ),
+###             ]
+###             + _common_llm_params()
+###             + _runner_params(),
+###             tags=["planning", "prompting"],
+###         ),
+###         build_adapter=_baseagent_adapter_builder(
+###             "ursa.agents.prompting_agent.PromptingAgent"
+###         ),
+###         build_inputs=lambda p: p["prompt"],
+###     )
+### )
 
 register(
     AgentEntry(
         spec=AgentSpec(
             agent_id="execution_agent",
             display_name="Execution Agent",
-            description="Tool-using agent that can write/edit files and run shell commands. Web/arXiv/OSTI search tools are available only when the dashboard is started with --use-web or agent_init.use_web=true.",
+            description="Tool-using agent that can write/edit files and run shell commands. Uses an internal review to push it to fully complete the users request. Web/arXiv/OSTI search tools are available only when the dashboard is started with --use-web or agent_init.use_web=true.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
@@ -754,7 +754,7 @@ register(
         spec=AgentSpec(
             agent_id="hypothesizer_agent",
             display_name="Hypothesizer Agent",
-            description="Maintains a persistent hypothesis space in an experience artifact for reuse by other agents.",
+            description="Defines and maintains a persistent hypothesis space in an experience artifact for reuse by tool-using agents to solve problems.",
             capabilities=AgentCapabilities(
                 supports_streaming=False,
                 supports_cancellation=False,
