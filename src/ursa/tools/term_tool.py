@@ -510,6 +510,35 @@ async def term_is_alive(term_id: TermId) -> dict[str, bool | int]:
 
 
 @tool
+async def term_resources(term_id: TermId) -> dict[str, int | float | str]:
+    """Report CPU, memory, process and thread counts for a local session tree.
+
+    Samples the shell and recursive children about 200 ms apart without sending
+    terminal input. CPU percent uses 100% per logical CPU and can exceed 100%.
+    RSS/VMS are summed bytes; shared memory may be counted more than once.
+    Counts and memory describe the second snapshot. CPU is omitted if the tree
+    changes or counters are unavailable. Status is running, partial, unavailable,
+    or exited (with exit_code); unavailable metrics are omitted, not zero-filled.
+    Detached/reparented and remote jobs, GPU usage, historical peaks, and URSA's
+    own emulator/scrollback overhead are not tracked.
+    """
+    try:
+        return await term_manager.resources(term_id)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+
+
+@tool
+async def term_close(term_id: TermId) -> str:
+    """Terminate and remove a terminal session, making its ID unusable."""
+    try:
+        await term_manager.remove(term_id, terminate=True)
+    except KeyError as error:
+        raise _unknown_terminal(term_id) from error
+    return f"Closed terminal {term_id}"
+
+
+@tool
 async def term_wait_for(
     term_id: TermId,
     pattern: RegexPattern,
@@ -729,6 +758,8 @@ _BASE_TERM_TOOLS = [
     term_send_key,
     term_read,
     term_is_alive,
+    term_resources,
+    term_close,
     term_wait_for,
 ]
 

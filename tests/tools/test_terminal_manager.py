@@ -1510,3 +1510,114 @@ async def test_cancelled_create_reclaims_session_on_owner_loop(real_manager):
     assert manager.ids() == ()
     assert made[0].started_with == "ok"
     assert made[0].terminated is True
+
+
+async def test_resources_forwards_on_owner_loop_without_terminal_input(
+    real_manager, monkeypatch
+):
+    from ursa.tools.terminal.resources import ProcessIdentity
+
+    terminal = FakeTerm("resource", ["bash"])
+    terminal._process_identity = ProcessIdentity(123, 10.0)
+    real_manager.register(terminal)
+    sampled = {"status": "running", "cpu_percent": 150.0, "rss_bytes": 1024}
+
+    async def collect(identity):
+        assert identity is terminal.process_identity
+        assert asyncio.get_running_loop() is real_manager._owner_loop
+        return sampled
+
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.collect_resources", collect
+    )
+    assert await real_manager.resources(terminal.term_id) == {
+        "term_id": terminal.term_id,
+        "scope": "process_tree",
+        "pid": 123,
+        **sampled,
+    }
+    assert terminal.writes == []
+    await real_manager.close_all()
+
+
+@pytest.mark.parametrize("during_sampling", [False, True])
+async def test_resources_reports_exit_without_live_metrics(
+    real_manager, monkeypatch, during_sampling
+):
+    from ursa.tools.terminal.resources import ProcessIdentity
+
+    terminal = FakeTerm("resource", ["bash"])
+    terminal._process_identity = ProcessIdentity(123, 10.0)
+    terminal.running = during_sampling
+    real_manager.register(terminal)
+    calls = []
+
+    async def collect(identity):
+        calls.append(identity)
+        terminal.running = False
+        return {"status": "running", "cpu_percent": 10.0}
+
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.collect_resources", collect
+    )
+    result = await real_manager.resources(terminal.term_id)
+    assert result == {
+        "term_id": terminal.term_id,
+        "scope": "process_tree",
+        "pid": 123,
+        "status": "exited",
+        "exit_code": 0,
+    }
+    assert len(calls) == int(during_sampling)
+    await real_manager.close_all()
+
+
+async def test_resources_for_backend_without_identity(real_manager):
+    terminal = FakeTerm("resource", ["bash"])
+    real_manager.register(terminal)
+    result = await real_manager.resources(terminal.term_id)
+    assert result["status"] == "unavailable"
+    assert "process identity" in result["reason"]
+    assert "pid" not in result
+    assert "cpu_percent" not in result
+    await real_manager.close_all()
+
+
+async def test_resources_for_unknown_terminal(real_manager):
+    with pytest.raises(KeyError, match="unknown terminal"):
+        await real_manager.resources("Missing1")
+
+
+async def test_resources_cancellation_stops_sampling_not_the_session(
+    real_manager, monkeypatch
+):
+    from ursa.tools.terminal.resources import ProcessIdentity
+
+    terminal = FakeTerm("resource", ["bash"])
+    terminal._process_identity = ProcessIdentity(123, 10.0)
+    real_manager.register(terminal)
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    async def collect(identity):
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(
+        "ursa.tools.terminal.manager.collect_resources", collect
+    )
+    task = asyncio.create_task(real_manager.resources(terminal.term_id))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert await asyncio.to_thread(cancelled.wait, 2)
+        assert real_manager.get(terminal.term_id) is terminal
+        assert terminal.running
+    finally:
+        task.cancel()
+        await real_manager.close_all()

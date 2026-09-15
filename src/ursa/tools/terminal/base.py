@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from .resources import ProcessIdentity
+
 TERM_TIMEOUT: Final[float] = float(os.getenv("URSA_TERM_TIMEOUT", "10"))
 TERM_MAX_BYTES: Final[int] = int(os.getenv("URSA_TERM_MAX_BYTES", "20000"))
 TERM_MAX_LINES: Final[int] = int(os.getenv("URSA_TERM_MAX_LINES", "200"))
@@ -80,6 +82,17 @@ class TermSession(ABC):
         self.shell = list(shell)
         self.env = dict(env or {})
         self.cwd = Path(cwd) if cwd is not None else None
+        self._process_identity: ProcessIdentity | None = None
+
+    @property
+    def process_identity(self) -> ProcessIdentity | None:
+        """Launch-time process identity, or None for an untracked backend.
+
+        Backends capture this before polling/waiting can reap the child. The
+        immutable identity is retained after exit; it must never be refreshed
+        from a PID that may since have been reused.
+        """
+        return self._process_identity
 
     @abstractmethod
     async def start(self, command: str | list[str] | None = None) -> None:

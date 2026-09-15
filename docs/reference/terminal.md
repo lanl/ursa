@@ -108,6 +108,8 @@ process environment; it does not replace the complete environment.
 | `term_send_key(term_id, key, modifiers=None)` | Send a printable or named key with optional modifiers. |
 | `term_read(term_id, offset=0, lines=None)` | Read terminal text, or select lines back from the end. |
 | `term_is_alive(term_id)` | Return `{"is_alive": true}` while running, or report `exit_code` after exit. |
+| `term_resources(term_id)` | Sample CPU, memory, process count, and thread count for the local shell and its recursive children. |
+| `term_close(term_id)` | Terminate and remove a session, making its ID unusable. |
 | `term_wait_for(term_id, pattern, timeout=None)` | Search output emitted after the call begins, newest-first, and return the newest matching line and stream offset. |
 | `term_wait_screen(term_id, condition="stable", bounding_box=None, include_styling=true, timeout=None)` | Wait for a Ghostty screen to remain unchanged for one second or ten frames (minimum two frames), or to change. |
 | `term_click(term_id, row, col, button="left", modifiers=None)` | Click a mouse button at a Ghostty screen cell. |

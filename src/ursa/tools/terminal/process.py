@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from .base import TermSession
+from .resources import capture_process_identity
 
 
 class ProcessTerm(TermSession):
@@ -177,6 +178,7 @@ class ProcessTerm(TermSession):
             self._output_path = Path(output.name)
             self._output_writer = output
             self._process = process
+            self._process_identity = capture_process_identity(process.pid)
 
     async def send_bytes(self, data: bytes) -> None:
         """Write raw bytes to the shell's standard input."""

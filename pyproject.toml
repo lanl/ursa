@@ -24,6 +24,7 @@ dependencies = [
     "beautifulsoup4>=4.13.4,<5.0",
     "randomname>=0.2.1,<0.3",
     "pillow>=11.3.0,<12.0",
+    "psutil>=7.1.0,<8.0",
     "pymupdf>=1.28.0,<2.0",
     "pymupdf4llm>=0.3.4,<1.0",
     "rich>=14.2.0,<15.0",
