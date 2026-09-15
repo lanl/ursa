@@ -701,53 +701,53 @@ register(
 ###     )
 ### )
 
-register(
-    AgentEntry(
-        spec=AgentSpec(
-            agent_id="deep_review_agent",
-            display_name="Deep Review Agent",
-            description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
-            capabilities=AgentCapabilities(
-                supports_streaming=False,
-                supports_cancellation=False,
-                produces_artifacts=True,
-            ),
-            parameters=[
-                _prompt_param(title="Research question"),
-                AgentParam(
-                    name="max_iterations",
-                    title="Max iterations",
-                    description="Number of draft/critique/refinement loops.",
-                    type="integer",
-                    required=False,
-                    default=3,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="max_iterations",
-                    constraints=ParamConstraint(minimum=1, maximum=20),
-                ),
-                AgentParam(
-                    name="use_web",
-                    title="Enable web search tools",
-                    description="Expose web/arXiv/OSTI search tools to the autonomous reviewer. When false, Deep Review cannot perform web searches.",
-                    type="boolean",
-                    required=False,
-                    default=False,
-                    advanced=True,
-                    source=ParamSource.agent_init,
-                    target="use_web",
-                ),
-            ]
-            + _common_llm_params()
-            + _runner_params(),
-            tags=["research", "review"],
-        ),
-        build_adapter=_baseagent_adapter_builder(
-            "ursa.agents.deep_review_agent.DeepReviewAgent"
-        ),
-        build_inputs=lambda p: p["prompt"],
-    )
-)
+### register(
+###     AgentEntry(
+###         spec=AgentSpec(
+###             agent_id="deep_review_agent",
+###             display_name="Deep Review Agent",
+###             description="Iteratively drafts, critiques, and refines a solution with adversarial review. Workspace file tools are available by default; web/arXiv/OSTI search tools are opt-in via --use-web or agent_init.use_web=true.",
+###             capabilities=AgentCapabilities(
+###                 supports_streaming=False,
+###                 supports_cancellation=False,
+###                 produces_artifacts=True,
+###             ),
+###             parameters=[
+###                 _prompt_param(title="Research question"),
+###                 AgentParam(
+###                     name="max_iterations",
+###                     title="Max iterations",
+###                     description="Number of draft/critique/refinement loops.",
+###                     type="integer",
+###                     required=False,
+###                     default=3,
+###                     advanced=True,
+###                     source=ParamSource.agent_init,
+###                     target="max_iterations",
+###                     constraints=ParamConstraint(minimum=1, maximum=20),
+###                 ),
+###                 AgentParam(
+###                     name="use_web",
+###                     title="Enable web search tools",
+###                     description="Expose web/arXiv/OSTI search tools to the autonomous reviewer. When false, Deep Review cannot perform web searches.",
+###                     type="boolean",
+###                     required=False,
+###                     default=False,
+###                     advanced=True,
+###                     source=ParamSource.agent_init,
+###                     target="use_web",
+###                 ),
+###             ]
+###             + _common_llm_params()
+###             + _runner_params(),
+###             tags=["research", "review"],
+###         ),
+###         build_adapter=_baseagent_adapter_builder(
+###             "ursa.agents.deep_review_agent.DeepReviewAgent"
+###         ),
+###         build_inputs=lambda p: p["prompt"],
+###     )
+### )
 
 register(
     AgentEntry(

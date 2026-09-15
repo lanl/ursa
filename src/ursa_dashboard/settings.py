@@ -21,7 +21,7 @@ def _qualified_model_name(model_config) -> str:
 
 
 class LLMSettings(BaseModel):
-    model: str = "openai:gpt-5.2"
+    model: str = "openai:gpt-5.5"
     base_url: str | None = None
 
     # Security: settings contain only a credential source/reference. Stored

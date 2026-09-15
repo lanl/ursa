@@ -20,6 +20,7 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
     monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
     run_dir = tmp_path / "ursa" / "default" / "environment_runs" / "run-1"
     run_dir.mkdir(parents=True)
+    full_task = "Compare every candidate in the complete source dataset. " * 20
     (run_dir / "manifest.json").write_text(
         json.dumps({
             "run_id": "run-1",
@@ -29,10 +30,15 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
             "status": "succeeded",
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:00:01Z",
-            "task_preview": "demo",
+            "task_preview": "Compare every candidate… [truncated 1035 chars]",
         }),
         encoding="utf-8",
     )
+    (run_dir / "task.json").write_text(
+        json.dumps({"prompt": full_task}), encoding="utf-8"
+    )
+    config_yaml = _team_yaml("team")
+    (run_dir / "environment.yaml").write_text(config_yaml, encoding="utf-8")
     (run_dir / "events.jsonl").write_text(
         "\n".join([
             json.dumps({
@@ -79,12 +85,25 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
     assert detail_response.status_code == 200
     detail_json = detail_response.json()
     assert detail_json["environment_name"] == "team"
+    assert detail_json["task"] == full_task
+    assert detail_json["task_preview"].endswith("chars]")
+    assert detail_json["can_rerun"] is True
     assert detail_json["paths"]["run_dir"] == str(run_dir)
     assert detail_json["paths"]["artifacts_dir"] == str(run_dir / "artifacts")
 
     events_response = client.get("/environment-runs/run-1/events?after_seq=1")
     assert events_response.status_code == 200
     assert [event["seq"] for event in events_response.json()["events"]] == [2]
+
+    rerun_response = client.get("/environment-runs/run-1/rerun-template")
+    assert rerun_response.status_code == 200
+    assert rerun_response.json() == {
+        "source_run_id": "run-1",
+        "environment_name": "team",
+        "environment_type": "agent_team",
+        "config_yaml": config_yaml,
+        "prompt": full_task,
+    }
 
     cancel_response = client.post(
         "/environment-runs/run-1/cancel", json={"reason": "test"}
@@ -96,15 +115,32 @@ def test_environment_run_api_routes(monkeypatch, tmp_path):
     assert ui_response.status_code == 200
     assert "Environment Runs" in ui_response.text
     assert "Open work replay" in ui_response.text
+    assert "Run again" in ui_response.text
+    assert "data-rerun='run-1'" in ui_response.text
 
     detail_ui_response = client.get("/ui/environment-runs/run-1")
     assert detail_ui_response.status_code == 200
     assert "Environment Graph" in detail_ui_response.text
     assert "Work Timeline" in detail_ui_response.text
     assert "Current Activity" in detail_ui_response.text
-    assert "Final Result" in detail_ui_response.text
+    assert "Original task" in detail_ui_response.text
+    assert "Copy task" in detail_ui_response.text
+    assert "/ui/environment-runs?rerun=run-1" in detail_ui_response.text
+    assert "function extractFullTask" in detail_ui_response.text
+    assert "Final Result" not in detail_ui_response.text
     assert "Workspace" in detail_ui_response.text
-    assert "Raw Events" in detail_ui_response.text
+    assert "Raw events" in detail_ui_response.text
+    assert "SCIENTIST_BEAR_IMAGE" in detail_ui_response.text
+    assert "function isToolEvent" in detail_ui_response.text
+    assert "function renderEventArtifacts" in detail_ui_response.text
+    assert (
+        "New write-code events preserve a content snapshot"
+        in detail_ui_response.text
+    )
+    assert "data-artifact-copy" in detail_ui_response.text
+    assert "eventVisibleInTimeline" in detail_ui_response.text
+    assert "Select a scientist to focus the timeline" in detail_ui_response.text
+    assert "id='copyWorkspace'" in detail_ui_response.text
     assert "Participants" not in detail_ui_response.text
     assert "Inspector" not in detail_ui_response.text
     assert "cytoscape" in detail_ui_response.text

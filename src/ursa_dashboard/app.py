@@ -2547,27 +2547,27 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   const WELCOME_TASK_LIBRARY = [
     {
       agentId: 'chat_agent',
-      label: 'Chat Agent',
+      label: 'Base',
       purpose: 'Explore and explain',
       tasks: [
         {
           title: 'Build intuition for Bayesian optimization',
-          prompt: 'Explain Expected Improvement and Upper Confidence Bound to an undergraduate student. Use one concrete optimization example, compare how the acquisition functions balance exploration and exploitation, and end with practical guidance about when to choose each one.'
+          prompt: 'Explain Expected Improvement and Upper Confidence Bound. Use one concrete optimization example, compare how the acquisition functions balance exploration and exploitation, and end with practical guidance about when to choose each one.'
         },
         {
-          title: 'Design a clear learning path for neural networks',
-          prompt: 'Create a concise learning path that teaches neural networks to a student who understands linear regression but has not studied deep learning. Emphasize the central ideas, useful intuitions, and a small set of exercises that build on one another.'
+          title: 'Making a graph for a presentation',
+          prompt: 'Make a professional, clean PNG visualizing the spacings between the first 10,000 prime numbers. Include clear labels and a short Markdown note explaining the main patterns visible in the plot.'
         }
       ]
     },
     {
       agentId: 'execution_agent',
-      label: 'Execution Agent',
+      label: 'Execute',
       purpose: 'Analyze and create',
       tasks: [
         {
-          title: 'Visualize prime-number spacings',
-          prompt: 'Make a professional, clean PNG visualizing the spacings between the first 10,000 prime numbers. Include clear labels and a short Markdown note explaining the main patterns visible in the plot.'
+          title: 'Benchmark coding algorithms',
+          prompt: 'Create a python function that finds the sum of the first N positive integers with a for loop. Time how long it takes to sum the first 10,000 and print the results to the console. Then add a new function that computes the same value using the built-in sum function, no loops. Compare the timing for these two methods on the first 100,000 integers, and check the results match. Finally, add a third function that uses a static formula the compute the same value. Compare the timing for all three methods on the first million integers, and check the results match.'
         },
         {
           title: 'Compare EI and UCB experimentally',
@@ -2755,7 +2755,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
       const meta = document.createElement('div');
       meta.className = 'welcomeTaskMeta';
-      meta.innerHTML = `<span class="welcomeTaskAgent">${escHtml(agent.display_name || task.label)}</span><span>${escHtml(task.purpose)}</span>`;
+      meta.innerHTML = `<span class="welcomeTaskAgent">${escHtml(task.label || agent.display_name)}</span><span>${escHtml(task.purpose)}</span>`;
 
       const title = document.createElement('div');
       title.className = 'welcomeTaskTitle';
@@ -5667,9 +5667,56 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             headers={"Cache-Control": "no-cache"},
         )
 
+    def _environment_run_task(run_id: str) -> str | None:
+        """Read the full task from known, run-local files only."""
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        for filename in ("task.json", "launch.json"):
+            path = paths.run_dir / filename
+            if not path.is_file():
+                continue
+            with contextlib.suppress(Exception):
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("prompt") is not None:
+                    prompt = data["prompt"]
+                    if isinstance(prompt, str):
+                        return prompt
+                    return json.dumps(prompt, indent=2, ensure_ascii=False)
+        return None
+
+    def _environment_type_for_rerun(
+        run_id: str, manifest: dict[str, Any]
+    ) -> str | None:
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        launch_path = paths.run_dir / "launch.json"
+        with contextlib.suppress(Exception):
+            launch = json.loads(launch_path.read_text(encoding="utf-8"))
+            launch_type = str(launch.get("environment_type") or "")
+            if launch_type in {"agent_team", "agent_symposium"}:
+                return launch_type
+        manifest_type = str(manifest.get("environment_type") or "").lower()
+        if "symposium" in manifest_type:
+            return "agent_symposium"
+        if "team" in manifest_type:
+            return "agent_team"
+        return None
+
+    def _environment_run_can_rerun(
+        run_id: str, manifest: dict[str, Any]
+    ) -> bool:
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        return bool(
+            (paths.run_dir / "environment.yaml").is_file()
+            and _environment_type_for_rerun(run_id, manifest)
+            and _environment_run_task(run_id) is not None
+        )
+
     def _environment_run_manifest_for_dashboard(run_id: str) -> dict[str, Any]:
         manifest = read_environment_run_manifest(dashboard_group, run_id)
         paths = get_environment_run_paths(dashboard_group, run_id)
+        full_task = _environment_run_task(run_id)
+        if full_task is not None:
+            manifest["task"] = full_task
+        manifest["can_rerun"] = _environment_run_can_rerun(run_id, manifest)
         manifest.setdefault("paths", {})
         manifest["paths"].update({
             "run_dir": str(paths.run_dir),
@@ -5776,6 +5823,43 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             raise HTTPException(
                 status_code=404, detail="Run not found"
             ) from exc
+
+    @app.get(
+        "/environment-runs/{run_id}/rerun-template",
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_environment_rerun_template(run_id: str) -> dict[str, Any]:
+        try:
+            manifest = read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        config_path = paths.run_dir / "environment.yaml"
+        environment_type = _environment_type_for_rerun(run_id, manifest)
+        prompt = _environment_run_task(run_id)
+        if not config_path.is_file() or not environment_type or prompt is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This run does not contain the full configuration and task "
+                    "needed to start it again."
+                ),
+            )
+        config_yaml = config_path.read_text(encoding="utf-8")
+        if len(config_yaml) > 500_000 or len(prompt) > 500_000:
+            raise HTTPException(
+                status_code=409,
+                detail="This run is too large to prefill in the environment launcher.",
+            )
+        return {
+            "source_run_id": run_id,
+            "environment_name": manifest.get("environment_name") or run_id,
+            "environment_type": environment_type,
+            "config_yaml": config_yaml,
+            "prompt": prompt,
+        }
 
     @app.post(
         "/environment-runs/{run_id}/cancel",
@@ -5925,6 +6009,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     )
     async def ui_environment_runs() -> HTMLResponse:
         runs = list_environment_run_manifests(dashboard_group)
+        for run in runs:
+            run_id = str(run.get("run_id") or "")
+            run["can_rerun"] = bool(
+                run_id and _environment_run_can_rerun(run_id, run)
+            )
         return HTMLResponse(
             render_environment_runs_page(
                 dashboard_group=dashboard_group,
