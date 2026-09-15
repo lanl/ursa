@@ -96,6 +96,23 @@ env = AgentEloEnvironment(
 )
 ```
 
+## Configuration validation
+
+`AgentEloConfig` is a frozen Pydantic model. YAML loading, direct Python
+construction, and dashboard validation use the same Elo configuration rules.
+Constructor overrides are merged before validation; an override of `None` keeps
+the configured value, while values such as `deaths_per_round=0` take effect.
+
+Invalid settings raise a validation error before members are built. Counts must
+be integers, ratings and timeouts must be finite, and unknown configuration fields
+are rejected. Numeric strings are converted to the declared types. A new run
+requires an even population of at least two members; a restart may omit members
+because they are restored from the checkpoint.
+
+Use `AgentEloConfig.model_validate(mapping)` to validate a mapping, or
+`config.model_dump()` to obtain a serializable configuration. Saved configurations
+retain resolved member model settings so they can be loaded again.
+
 ## Competition settings
 
 | Setting | Default | Meaning |

@@ -28,7 +28,6 @@ from .base import (
 from .config import (
     AgentEloConfig,
     EnvironmentMemberConfig,
-    load_elo_config,
 )
 
 
@@ -141,7 +140,7 @@ class AgentEloEnvironment(BaseEnvironment):
         persist_members: bool = True,
         **kwargs: Any,
     ):
-        elo_config = self._coerce_config(
+        elo_config = AgentEloConfig.from_source(
             config=config,
             name=name,
             group=group,
@@ -168,34 +167,11 @@ class AgentEloEnvironment(BaseEnvironment):
 
         self.config = elo_config
 
-        self.initial_rating = float(elo_config.initial_rating)
-
-        self.k_factor = float(elo_config.k_factor)
-
-        if self.k_factor <= 0:
-            raise ValueError("k_factor must be positive.")
-
-        self.deaths_per_round = int(elo_config.deaths_per_round)
-
-        if self.deaths_per_round < 0:
-            raise ValueError("deaths_per_round must be non-negative.")
-
-        self.generations = int(elo_config.generations)
-
-        if self.generations < 1:
-            raise ValueError("generations must be at least 1.")
-
-        self.member_timeout_seconds = (
-            None
-            if elo_config.member_timeout_seconds is None
-            else float(elo_config.member_timeout_seconds)
-        )
-
-        if (
-            self.member_timeout_seconds is not None
-            and self.member_timeout_seconds <= 0
-        ):
-            raise ValueError("member_timeout_seconds must be positive or None.")
+        self.initial_rating = elo_config.initial_rating
+        self.k_factor = elo_config.k_factor
+        self.deaths_per_round = elo_config.deaths_per_round
+        self.generations = elo_config.generations
+        self.member_timeout_seconds = elo_config.member_timeout_seconds
 
         self.seed = elo_config.seed
 
@@ -249,123 +225,8 @@ class AgentEloEnvironment(BaseEnvironment):
     # Configuration
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _validate_population_size(
-        population_size: int,
-    ) -> None:
-        """Validate the active Elo population size."""
-
-        if population_size < 2:
-            raise ValueError(
-                "AgentEloEnvironment requires at least two active members."
-            )
-
-        if population_size % 2 != 0:
-            raise ValueError(
-                "AgentEloEnvironment requires an even number of active members. "
-                f"Received {population_size}."
-            )
-
-    def _coerce_config(
-        self,
-        *,
-        config: (AgentEloConfig | Mapping[str, Any] | str | Path | None),
-        name: str | None,
-        group: str | None,
-        members: (list[EnvironmentMemberConfig | Mapping[str, Any]] | None),
-        workspace: str | Path | None,
-        initial_rating: float | None,
-        k_factor: float | None,
-        deaths_per_round: int | None,
-        seed: int | None,
-        generations: int | None,
-        member_timeout_seconds: float | None,
-        restart_from_json: str | Path | None,
-        judge_prompt: str | None,
-    ) -> AgentEloConfig:
-        if isinstance(config, (str, Path)):
-            base = load_elo_config(config)
-
-        elif isinstance(config, Mapping):
-            base = AgentEloConfig.from_mapping(config)
-
-        elif isinstance(config, AgentEloConfig):
-            base = config
-
-        else:
-            member_cfgs = [
-                self._coerce_member(member) for member in (members or [])
-            ]
-
-            base = AgentEloConfig(
-                name=name or "agent_elo",
-                group=group or "default",
-                members=member_cfgs,
-                workspace=(str(workspace) if workspace is not None else None),
-                initial_rating=(
-                    initial_rating if initial_rating is not None else 1500.0
-                ),
-                k_factor=(k_factor if k_factor is not None else 32.0),
-                deaths_per_round=(
-                    deaths_per_round if deaths_per_round is not None else 1
-                ),
-                seed=seed,
-                generations=(generations if generations is not None else 1),
-                member_timeout_seconds=member_timeout_seconds,
-                restart_from_json=(
-                    str(restart_from_json)
-                    if restart_from_json is not None
-                    else None
-                ),
-                judge_prompt=judge_prompt,
-            )
-
-        if members is not None:
-            resolved_members = [
-                self._coerce_member(member) for member in members
-            ]
-        else:
-            resolved_members = base.members
-
-        return AgentEloConfig(
-            name=(name if name is not None else base.name),
-            group=(group if group is not None else base.group),
-            description=base.description,
-            members=resolved_members,
-            workspace=(
-                str(workspace) if workspace is not None else base.workspace
-            ),
-            defaults=base.defaults,
-            initial_rating=(
-                initial_rating
-                if initial_rating is not None
-                else base.initial_rating
-            ),
-            k_factor=(k_factor if k_factor is not None else base.k_factor),
-            deaths_per_round=(
-                deaths_per_round
-                if deaths_per_round is not None
-                else base.deaths_per_round
-            ),
-            seed=(seed if seed is not None else base.seed),
-            generations=(
-                generations if generations is not None else base.generations
-            ),
-            member_timeout_seconds=(
-                member_timeout_seconds
-                if member_timeout_seconds is not None
-                else base.member_timeout_seconds
-            ),
-            restart_from_json=(
-                str(restart_from_json)
-                if restart_from_json is not None
-                else base.restart_from_json
-            ),
-            judge_prompt=(
-                judge_prompt if judge_prompt is not None else base.judge_prompt
-            ),
-            inference_providers=(base.inference_providers),
-        )
+    # Keep checking live population sizes after reproduction and on restart.
+    _validate_population_size = staticmethod(AgentEloConfig.validate_population_size)
 
     @classmethod
     def from_yaml(
@@ -377,18 +238,9 @@ class AgentEloEnvironment(BaseEnvironment):
     ) -> "AgentEloEnvironment":
         return cls(
             llm=llm,
-            config=load_elo_config(path),
+            config=path,
             **kwargs,
         )
-
-    @staticmethod
-    def _coerce_member(
-        member: EnvironmentMemberConfig | Mapping[str, Any],
-    ) -> EnvironmentMemberConfig:
-        if isinstance(member, EnvironmentMemberConfig):
-            return member
-
-        return EnvironmentMemberConfig.from_mapping(member)
 
     # ------------------------------------------------------------------
     # For lightweight environment level persistence

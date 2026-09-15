@@ -600,3 +600,138 @@ def test_expired_deadline_captures_progress_without_invoking_member(
     )
     assert run.timed_out
     assert run.progress_report == "Saved progress"
+
+
+@pytest.mark.parametrize("source_kind", ["mapping", "model", "yaml", "kwargs"])
+def test_config_sources_and_overrides_preserve_execution(
+    elo_factory, tmp_path, source_kind
+):
+    from ursa.environments.config import AgentEloConfig, save_elo_config
+
+    original = elo_factory.make().config
+    data = original.model_dump()
+    # Each entry point must apply explicit overrides, including zero, and retain
+    # supplied settings for None overrides.
+    overrides = dict(generations=2, deaths_per_round=0, seed=None)
+    if source_kind == "mapping":
+        source = data
+    elif source_kind == "model":
+        source = original
+    elif source_kind == "yaml":
+        source = save_elo_config(original, tmp_path / "elo.yaml")
+    else:
+        source = None
+        overrides.update(
+            name=original.name,
+            members=original.members,
+            workspace=original.workspace,
+            seed=original.seed,
+        )
+    env = AgentEloEnvironment(llm=None, config=source, **overrides)
+    assert isinstance(env.config, AgentEloConfig)
+    assert env.seed == original.seed
+    assert (
+        env.config.model_dump()["members"] == original.model_dump()["members"]
+    )
+    result = env.invoke("Improve the research")
+    assert result["completed_generations"] == 2
+    assert result["population_size"] == 4
+    assert all(
+        not generation["children"] for generation in result["generations"]
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("k_factor", 0),
+        ("k_factor", -1),
+        ("k_factor", float("nan")),
+        ("initial_rating", float("inf")),
+        ("generations", 0),
+        ("generations", 1.5),
+        ("deaths_per_round", -1),
+        ("deaths_per_round", 1.5),
+        ("member_timeout_seconds", 0),
+        ("member_timeout_seconds", float("inf")),
+        ("unexpected", True),
+        ("group", "../invalid"),
+        ("members", []),
+        ("members", [{"name": "a"}]),
+        ("members", [{"name": "a"}, {"name": "a"}]),
+        ("members", [{"name": "a"}, {"name": "b"}, {"name": "c"}]),
+        ("members", [{"role": "missing name"}, {"name": "b"}]),
+        ("inference_providers", "invalid"),
+    ],
+)
+def test_invalid_config_is_rejected_before_building_members(
+    elo_factory, field, value
+):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        elo_factory.make(**{field: value})
+    assert elo_factory.created == []
+
+
+def test_config_round_trips_preserve_resolved_models(elo_factory, tmp_path):
+    from ursa.environments.config import (
+        AgentEloConfig,
+        load_elo_config,
+        save_elo_config,
+    )
+
+    config = elo_factory.make().config
+    original_models = [member.model.model_dump() for member in config.members]
+    restored_configs = [
+        AgentEloConfig.model_validate(config.model_dump()),
+        AgentEloConfig.model_validate_json(config.model_dump_json()),
+        load_elo_config(save_elo_config(config, tmp_path / "elo.yaml")),
+    ]
+    for restored in restored_configs:
+        for original, member in zip(config.members, restored.members):
+            assert member.model.model_dump(exclude={"inference_provider"}) == (
+                original.model.model_dump(exclude={"inference_provider"})
+            )
+            assert member.model.temperature == 0.2
+        assert restored.inference_providers == config.inference_providers
+    assert [
+        member.model.model_dump() for member in config.members
+    ] == original_models
+
+
+def test_config_normalizes_types_and_validates_after_overrides(tmp_path):
+    import yaml
+    from pydantic import ValidationError
+
+    from ursa.environments.config import AgentEloConfig
+
+    raw = dict(
+        name="typed",
+        members=[{"name": "a"}, {"name": "b"}],
+        generations="2",
+        deaths_per_round="0",
+        k_factor="16.5",
+        initial_rating="1000",
+        member_timeout_seconds="30",
+        seed="42",
+    )
+    config = AgentEloConfig(**raw, workspace=tmp_path)
+    assert config.generations == 2
+    assert config.deaths_per_round == 0
+    assert config.k_factor == 16.5
+    assert config.initial_rating == 1000.0
+    assert config.member_timeout_seconds == 30.0
+    assert config.seed == 42
+    assert config.workspace == str(tmp_path)
+    with pytest.raises(ValidationError, match="frozen"):
+        config.generations = 3
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({**raw, "generations": -1}))
+    assert AgentEloConfig.from_source(path, generations=2) == AgentEloConfig(
+        **raw
+    )
+    restarted = AgentEloConfig(
+        name="restart", restart_from_json=tmp_path / "state.json"
+    )
+    assert restarted.members == []

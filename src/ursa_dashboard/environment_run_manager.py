@@ -194,7 +194,7 @@ def _validate_config_mapping(
     *,
     group: str,
     nested: bool = False,
-) -> AgentTeamConfig | AgentSymposiumConfig:
+) -> AgentTeamConfig | AgentSymposiumConfig | AgentEloConfig:
     data["group"] = group
     assert_no_raw_api_key(data, context="environment config")
     try:
@@ -224,15 +224,8 @@ def _validate_config_mapping(
         label="Environment name",
     )
 
-    if not config.members:
+    if environment_type != "agent_elo" and not config.members:
         raise ValueError("An environment must contain at least one member.")
-
-    if environment_type == "agent_elo":
-        if len(config.members) < 2:
-            raise ValueError("Agent Elo requires at least two members.")
-
-        if len(config.members) % 2:
-            raise ValueError("Agent Elo requires an even number of members.")
 
     seen: set[str] = set()
 
@@ -255,7 +248,7 @@ def _validate_config_mapping(
             label=f"Member {index}",
         )
 
-        if member.name in seen:
+        if environment_type != "agent_elo" and member.name in seen:
             raise ValueError(
                 f"Environment member name {member.name!r} is duplicated."
             )

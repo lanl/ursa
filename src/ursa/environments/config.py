@@ -1,19 +1,31 @@
 from __future__ import annotations
 
 import importlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Self
 
 import yaml
 from langchain.chat_models import BaseChatModel, init_chat_model
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ursa.cli.config import (
     InferenceProviderConfig,
     ModelConfig,
     deep_interp_env,
 )
-from ursa.security import enforce_group_base_url_policy, group_environments_dir
+from ursa.security import (
+    enforce_group_base_url_policy,
+    group_environments_dir,
+    validate_group_name,
+)
 
 
 @dataclass(frozen=True)
@@ -142,37 +154,81 @@ class AgentSymposiumConfig:
         return cls(**raw)
 
 
-@dataclass(frozen=True)
-class AgentEloConfig:
-    """YAML-loadable configuration for an Agent Elo environment."""
+class AgentEloConfig(BaseModel):
+    """Validated configuration for a new or resumed Elo environment."""
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", validate_default=True
+    )
+
     name: str
     group: str = "default"
     description: str | None = None
-    inference_providers: dict[
-        str,
-        InferenceProviderConfig,
-    ] = field(
+    inference_providers: dict[str, InferenceProviderConfig] = Field(
         default_factory=dict
     )
-    members: list[
-        EnvironmentMemberConfig
-    ] = field(
-        default_factory=list
-    )
-    
+    members: list[EnvironmentMemberConfig] = Field(default_factory=list)
     workspace: str | None = None
-    defaults: dict[str, Any] = field(default_factory=dict)
-
-    initial_rating: float = 1500.0
-    k_factor: float = 32.0
-    deaths_per_round: int = 1
+    defaults: dict[str, Any] = Field(default_factory=dict)
+    initial_rating: float = Field(default=1500.0, allow_inf_nan=False)
+    k_factor: float = Field(default=32.0, gt=0, allow_inf_nan=False)
+    deaths_per_round: int = Field(default=1, ge=0)
     seed: int | None = None
-    generations: int = 1
+    generations: int = Field(default=1, ge=1)
     restart_from_json: str | None = None
-    member_timeout_seconds: float | None = None
+    member_timeout_seconds: float | None = Field(
+        default=None, gt=0, allow_inf_nan=False
+    )
     judge_prompt: str | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator("workspace", "restart_from_json", mode="before")
+    @classmethod
+    def _path_to_string(cls, value: Any) -> Any:
+        return str(value) if isinstance(value, Path) else value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_members(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        raw = dict(value)
+        group = raw.get("group")
+        if group is not None and not isinstance(group, str):
+            raise ValueError("Group name must be a string")
+        raw["group"] = validate_group_name(group)
+        provider_data = raw.get("inference_providers") or {}
+        if not isinstance(provider_data, Mapping):
+            raise ValueError("inference_providers must be a mapping")
+        providers = _inference_providers(provider_data)
+        raw["inference_providers"] = providers
+        members = raw.get("members", [])
+        if isinstance(members, (list, tuple)):
+            resolved = []
+            for member in members:
+                if isinstance(member, Mapping):
+                    member = dict(member)
+                    model = member.get("model")
+                elif isinstance(member, EnvironmentMemberConfig):
+                    model = member.model
+                else:
+                    resolved.append(member)
+                    continue
+                if model is not None:
+                    if not isinstance(model, ModelConfig):
+                        model = ModelConfig.model_validate(model)
+                    if not model._inference_provider_resolved:
+                        model = model.resolve_inference_provider(providers)
+                    enforce_group_base_url_policy(model.base_url, raw["group"])
+                    if isinstance(member, dict):
+                        member["model"] = model
+                    else:
+                        member = replace(member, model=model)
+                resolved.append(member)
+            raw["members"] = resolved
+        return raw
+
+    @model_validator(mode="after")
+    def _validate_population(self) -> Self:
         seen: set[str] = set()
         for member in self.members:
             self.validate_member_config(member)
@@ -182,6 +238,21 @@ class AgentEloConfig:
                     "Each member must have a unique name."
                 )
             seen.add(member.name)
+        if self.restart_from_json is None:
+            self.validate_population_size(len(self.members))
+        return self
+
+    @staticmethod
+    def validate_population_size(population_size: int) -> None:
+        if population_size < 2:
+            raise ValueError(
+                "AgentEloEnvironment requires at least two active members."
+            )
+        if population_size % 2:
+            raise ValueError(
+                "AgentEloEnvironment requires an even number of active members. "
+                f"Received {population_size}."
+            )
 
     @staticmethod
     def validate_member_config(member: EnvironmentMemberConfig) -> None:
@@ -200,42 +271,49 @@ class AgentEloConfig:
                 "member's name field instead."
             )
 
+    @model_serializer(mode="wrap")
+    def _serialize_resolved_models(self, handler):
+        # Resolved endpoints are self-contained. Retaining the provider reference
+        # would make the saved model invalid when read from YAML or dashboard JSON.
+        data = handler(self)
+        for member in data.get("members", []):
+            model = member.get("model")
+            if isinstance(model, dict):
+                model.pop("inference_provider", None)
+        return data
+
     @classmethod
-    def from_mapping(
+    def from_mapping(cls, data: Mapping[str, Any]) -> Self:
+        """Compatibility entry point for callers loading a mapping."""
+        return cls.model_validate(data)
+
+    @classmethod
+    def from_source(
         cls,
-        data: Mapping[str, Any],
-    ) -> "AgentEloConfig":
-        raw = dict(data)
-    
-        providers = _inference_providers(
-            raw.get(
-                "inference_providers"
+        config: Self | Mapping[str, Any] | str | Path | None = None,
+        **overrides: Any,
+    ) -> Self:
+        """Merge constructor overrides before validating the final configuration.
+
+        None overrides retain the supplied configuration, as in the environment
+        constructor. Existing model instances are preserved during merging.
+        """
+        if isinstance(config, (str, Path)):
+            raw = load_yaml_mapping(config)
+        elif isinstance(config, cls):
+            raw = {name: getattr(config, name) for name in cls.model_fields}
+        elif isinstance(config, Mapping):
+            raw = dict(config)
+        elif config is None:
+            raw = {"name": "agent_elo"}
+        else:
+            raise TypeError(
+                "Elo config must be a config object, mapping, or YAML path"
             )
-            or {}
-        )
-    
-        raw[
-            "inference_providers"
-        ] = providers
-    
-        group = str(
-            raw.get("group")
-            or "default"
-        )
-    
-        if "members" in raw:
-            raw["members"] = [
-                EnvironmentMemberConfig.from_mapping(
-                    member,
-                    providers,
-                    group,
-                )
-                for member in raw[
-                    "members"
-                ]
-            ]
-    
-        return cls(**raw)
+        raw.update({
+            key: value for key, value in overrides.items() if value is not None
+        })
+        return cls.model_validate(raw)
 
 
 def load_yaml_mapping(path: str | Path) -> dict[str, Any]:
