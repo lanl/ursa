@@ -29,7 +29,6 @@ from textual.widgets import (
     OptionList,
     Select,
     Static,
-    Tab,
     TabbedContent,
     TabPane,
     TextArea,
@@ -1266,9 +1265,15 @@ class TermsScreen(ModalScreen[None]):
 
     async def _sync_terminals(self) -> None:
         manager_terminals = getattr(self.manager, "terminals", None)
-        if manager_terminals is None or self._tabs is None or not self.is_mounted:
+        if (
+            manager_terminals is None
+            or self._tabs is None
+            or not self.is_mounted
+        ):
             return
-        latest = tuple(sorted(manager_terminals(), key=lambda term: term.creation_order))
+        latest = tuple(
+            sorted(manager_terminals(), key=lambda term: term.creation_order)
+        )
         if latest == self.terminals:
             return
         previous_ids = [terminal.term_id for terminal in self.terminals]
@@ -1277,7 +1282,9 @@ class TermsScreen(ModalScreen[None]):
             return
 
         added = [term for term in latest if term.term_id not in previous_ids]
-        removed = [term_id for term_id in previous_ids if term_id not in latest_ids]
+        removed = [
+            term_id for term_id in previous_ids if term_id not in latest_ids
+        ]
 
         for term_id in removed:
             await self._tabs.remove_pane(f"terminal-tab-{term_id}")
@@ -1300,7 +1307,9 @@ class TermsScreen(ModalScreen[None]):
         self.terminals = latest
         if added and previous_active == f"terminal-tab-{previous_ids[-1]}":
             self._tabs.active = f"terminal-tab-{latest_ids[-1]}"
-        elif previous_active in {f"terminal-tab-{term_id}" for term_id in latest_ids}:
+        elif previous_active in {
+            f"terminal-tab-{term_id}" for term_id in latest_ids
+        }:
             self._tabs.active = previous_active
         else:
             self._tabs.active = f"terminal-tab-{latest_ids[-1]}"

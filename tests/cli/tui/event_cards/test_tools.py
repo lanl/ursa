@@ -393,28 +393,26 @@ def test_paste_text_routes_to_terminal_card():
 
 @pytest.mark.parametrize(
     "tool",
-    sorted(
-        [
-            "term_send_bytes",
-            "term_send_text",
-            "term_paste_text",
-            "term_send_line",
-            "term_send_key",
-            "term_read",
-            "term_is_alive",
-            "term_wait_for",
-            "term_wait_screen",
-            "term_click",
-            "term_mouse_down",
-            "term_mouse_up",
-            "term_hover",
-            "term_scroll",
-            "term_resize",
-            "term_cursor",
-            "term_size",
-            "term_screenshot",
-        ]
-    ),
+    sorted([
+        "term_send_bytes",
+        "term_send_text",
+        "term_paste_text",
+        "term_send_line",
+        "term_send_key",
+        "term_read",
+        "term_is_alive",
+        "term_wait_for",
+        "term_wait_screen",
+        "term_click",
+        "term_mouse_down",
+        "term_mouse_up",
+        "term_hover",
+        "term_scroll",
+        "term_resize",
+        "term_cursor",
+        "term_size",
+        "term_screenshot",
+    ]),
 )
 async def test_every_session_term_tool_routes_to_term_card(tmp_path, tool):
     app = UrsaTextualApp(FakeHITL(tmp_path))
