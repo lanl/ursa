@@ -346,7 +346,9 @@ async def test_terms_screen_refreshes_tabs_when_sessions_change(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
-        app.push_screen(TermsScreen(infos, manager=manager, refresh_interval=0.05))
+        app.push_screen(
+            TermsScreen(infos, manager=manager, refresh_interval=0.05)
+        )
         await pilot.pause()
         tabs = list(app.screen.query(Tab))
         assert [str(tab.label) for tab in tabs] == ["process0"]
