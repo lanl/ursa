@@ -22,10 +22,13 @@ Design goals baked into the structure:
 from __future__ import annotations
 
 import asyncio
+import logging
 import operator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Mapping, Sequence, TypedDict
+from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig, RunnableLambda
@@ -39,6 +42,8 @@ from ursa.agents.hypothesizer_agent import (
     HypothesizerAgent,
 )
 from ursa.workflows.base_workflow import BaseWorkflow, InputLike
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Hypothesis",
@@ -106,6 +111,7 @@ class HypothesisSymposiumState(TypedDict, total=False):
 
     evidence_digest: str
     symposium_result: dict[str, Any]
+    symposium_run_id: str
     synthesis: str
     hypothesis_space_markdown: str
     summary: str
@@ -145,8 +151,10 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         symposium_member_names: Sequence[str] | None = None,
         workspace: str | Path | None = None,
         group: str | None = None,
+        name: str = "hypothesis_symposium",
         checkpointer: Any | None = None,
         recursion_limit: int = 200,
+        visualize: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -157,6 +165,10 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         # was swallowed into **kwargs and discarded by BaseWorkflow.__init__.
         self.workspace = Path(workspace) if workspace else None
         self.group = group
+        # Display name for the internal symposium environment. It surfaces on
+        # the dashboard Runs page, so keep it short and human-readable rather
+        # than deriving it from the (long) class name.
+        self.name = name
         self.experience_filename = (
             HypothesizerAgent._validate_experience_filename(experience_filename)
         )
@@ -172,6 +184,11 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         )
         self._symposium = symposium
         self._default_symposium: Any | None = None
+        # When true, the symposium stage is wrapped in the environment
+        # visualization recorder so the dashboard can follow it *while running*
+        # (the recorder flushes each event to events.jsonl immediately).
+        self.visualize = bool(visualize)
+        self.symposium_run_id: str | None = None
         self.recursion_limit = int(recursion_limit)
         self.checkpointer = checkpointer or InMemorySaver()
         # Branch retries: RetryPolicy's default predicate refuses common builtin
@@ -235,9 +252,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
             "failures": Overwrite([]),
         }
 
-    def _fan_out(
-        self, state: HypothesisSymposiumState
-    ) -> list[Send] | str:
+    def _fan_out(self, state: HypothesisSymposiumState) -> list[Send] | str:
         hypotheses = state.get("hypotheses") or []
         if not hypotheses:
             return "converge"
@@ -307,7 +322,12 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         self, state: HypothesisSymposiumState, config: RunnableConfig
     ) -> dict[str, Any]:
         result = await self.run_symposium(state, config)
-        return {"symposium_result": result}
+        update: dict[str, Any] = {"symposium_result": result}
+        # Surface the visualization run id in state so the dashboard/caller can
+        # locate the live event stream for this symposium stage.
+        if self.symposium_run_id:
+            update["symposium_run_id"] = self.symposium_run_id
+        return update
 
     async def _node_synthesize(
         self, state: HypothesisSymposiumState, config: RunnableConfig
@@ -322,12 +342,23 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
     # ------------------------------------------------------- overridable hooks
 
     def format_result(self, result: HypothesisSymposiumState) -> str:
-        detailed = result.get("symposium_result",{"final":None}).get("final",None)
-        summary  = result.get("summary", None)
-        if not summary and not detailed:
+        """Return only the final write-up, not the whole state.
+
+        Prefers the symposium's detailed final answer and falls back to the
+        shorter synthesized ``summary`` when the symposium produced no final
+        text (for example if the stage was skipped).
+        """
+        symposium_result = result.get("symposium_result")
+        detailed = (
+            symposium_result.get("final")
+            if isinstance(symposium_result, Mapping)
+            else None
+        )
+        summary = result.get("summary")
+        text = detailed or summary
+        if not text:
             raise ValueError("Symposium completed without a response.")
-        return_message = f"Basic summary:\n{summary}\n\nDetailed response:\n{detailed}"
-        return return_message
+        return str(text).strip()
 
     def build_hypotheses(
         self, state: HypothesisSymposiumState, config: RunnableConfig
@@ -399,9 +430,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         failures = [
             HypothesisInvestigation(**d) for d in state.get("failures", [])
         ]
-        ordered = sorted(
-            investigations + failures, key=lambda i: i.index
-        )
+        ordered = sorted(investigations + failures, key=lambda i: i.index)
         parts = [i.as_markdown() for i in ordered]
         if failures:
             parts.append(
@@ -446,7 +475,65 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
             "others, challenge weak evidence, and converge on which hypothesis "
             f"is best supported.{digest_block}"
         )
-        return await symposium.ainvoke(task, config=config)
+        return await self._ainvoke_symposium(symposium, task, config)
+
+    async def _ainvoke_symposium(
+        self, symposium: Any, task: str, config: RunnableConfig
+    ) -> dict[str, Any]:
+        """Invoke the symposium, recording a live visualization run when enabled.
+
+        ``arun_with_visualization`` attaches an ``EnvironmentEventRecorder``
+        callback to the run config and flushes every structured progress event
+        to ``events.jsonl`` as it happens, so the dashboard can render the
+        symposium *while it is still running* instead of only at the end. The
+        run id is stashed on the workflow (and logged) so callers can locate the
+        stream. Any failure to set up visualization must never break the
+        science, so we degrade to a plain ``ainvoke``.
+        """
+        if not self.visualize:
+            return await symposium.ainvoke(task, config=config)
+
+        try:
+            from ursa.environments import arun_with_visualization
+        except Exception:  # pragma: no cover - defensive import guard
+            logger.warning(
+                "Symposium visualization unavailable; running unrecorded.",
+                exc_info=True,
+            )
+            return await symposium.ainvoke(task, config=config)
+
+        run_id = self._new_symposium_run_id()
+        group = getattr(symposium, "group", None) or "default"
+        # Decide whether visualization is viable *before* invoking: a failure
+        # after the run has started would either lose the result or re-run the
+        # whole (expensive) symposium.
+        try:
+            from ursa.security import validate_group_name
+
+            validate_group_name(group)
+        except Exception:
+            logger.warning(
+                "Symposium group %r is not recordable; running unrecorded.",
+                group,
+                exc_info=True,
+            )
+            return await symposium.ainvoke(task, config=config)
+
+        self.symposium_run_id = run_id
+        logger.info(
+            "Symposium visualization run started: group=%s run_id=%s "
+            "(events stream live to the dashboard)",
+            group,
+            run_id,
+        )
+        return await arun_with_visualization(
+            symposium, task, config=config, run_id=run_id
+        )
+
+    @staticmethod
+    def _new_symposium_run_id() -> str:
+        """Readable, sortable, unique run id for one symposium stage."""
+        return f"hypsym_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
 
     async def synthesize(
         self, state: HypothesisSymposiumState, config: RunnableConfig
@@ -498,9 +585,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
         ]
         return "\n".join(sections)
 
-    def _parse_hypotheses(
-        self, artifact: str, query: str
-    ) -> list[Hypothesis]:
+    def _parse_hypotheses(self, artifact: str, query: str) -> list[Hypothesis]:
         hypotheses: list[Hypothesis] = []
         current: Hypothesis | None = None
         detail: list[str] = []
@@ -548,7 +633,9 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
                 return str(summary)
         return HypothesizerAgent._response_text(result)
 
-    def _get_symposium(self, hypotheses: Sequence[Hypothesis] | None = None) -> Any:
+    def _get_symposium(
+        self, hypotheses: Sequence[Hypothesis] | None = None
+    ) -> Any:
         # An explicitly injected symposium is used as-is. Otherwise the default
         # symposium is built *per run* from the hypotheses so that each member
         # can be assigned one hypothesis as its expertise (design A). We cache
@@ -565,15 +652,12 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
     def _hypothesis_member_name(self, hypothesis: Hypothesis) -> str:
         """Stable, filesystem/tool-safe member name for one hypothesis."""
         words = "".join(
-            ch.lower() if ch.isalnum() else " "
-            for ch in hypothesis.statement
+            ch.lower() if ch.isalnum() else " " for ch in hypothesis.statement
         ).split()
         slug = "_".join(words[:4]) or "hypothesis"
         return f"h{hypothesis.index}_{slug}"[:48]
 
-    def _build_default_symposium(
-        self, hypotheses: Sequence[Hypothesis]
-    ) -> Any:
+    def _build_default_symposium(self, hypotheses: Sequence[Hypothesis]) -> Any:
         """Build a symposium with one member per hypothesis (design A).
 
         Each member is assigned exactly one hypothesis as its expertise. During
@@ -634,7 +718,7 @@ class HypothesisSymposiumWorkflow(BaseWorkflow):
             )
         return AgentSymposiumEnvironment(
             self.llm,
-            name=f"{type(self).__name__.lower()}_symposium",
+            name=self.name,
             members=members,
             revision_rounds=self._symposium_spec.revision_rounds,
             persist_members=False,

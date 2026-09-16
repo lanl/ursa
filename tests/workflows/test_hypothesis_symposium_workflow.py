@@ -8,6 +8,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.runnables import RunnableConfig
 
 from tests.conftest import FakeChatModel
+from ursa import security
 from ursa.workflows import (
     Hypothesis,
     HypothesisInvestigation,
@@ -30,6 +31,16 @@ ARTIFACT = """# Hypothesis Space
 
 - **Relative likelihood:** 0.2
 """
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ursa_cache(monkeypatch, tmp_path):
+    """Keep visualization run artifacts out of the developer's real cache.
+
+    The symposium stage records environment runs under `URSA_CACHE_DIR` by
+    default, so without this fixture tests would litter `~/.cache/ursa`.
+    """
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
 
 
 def fake_llm() -> FakeListChatModel:
@@ -103,8 +114,8 @@ def test_converge_digest_orders_and_includes_all_branches():
     result = wf.invoke("why?")
     digest = result["evidence_digest"]
     # All three hypotheses appear, ordered by index.
-    assert digest.index("### H1") < digest.index("### H2") < digest.index(
-        "### H3"
+    assert (
+        digest.index("### H1") < digest.index("### H2") < digest.index("### H3")
     )
     assert "evidence for H2" in digest
 
@@ -221,3 +232,58 @@ def test_workspace_absent_uses_environment_default():
     )
     # No explicit workspace -> BaseEnvironment default path is used.
     assert symposium.workspace is not None
+
+
+def test_format_result_prefers_detailed_symposium_answer():
+    """Only the final write-up is returned, not the whole bulky state."""
+    wf = StubWorkflow()
+    state = {
+        "symposium_result": {"final": "  detailed verdict  "},
+        "summary": "short summary",
+        "hypothesis_space_markdown": "# noisy artifact",
+    }
+    assert wf.format_result(state) == "detailed verdict"
+
+
+def test_format_result_falls_back_to_summary():
+    wf = StubWorkflow()
+    # No final text at all.
+    assert wf.format_result({"summary": "short summary"}) == "short summary"
+    # Present-but-empty final must not mask the summary.
+    assert (
+        wf.format_result({
+            "symposium_result": {"final": ""},
+            "summary": "short summary",
+        })
+        == "short summary"
+    )
+    # A non-mapping symposium_result must not raise AttributeError.
+    assert (
+        wf.format_result({"symposium_result": None, "summary": "short summary"})
+        == "short summary"
+    )
+
+
+def test_format_result_raises_without_any_response():
+    wf = StubWorkflow()
+    with pytest.raises(ValueError, match="without a response"):
+        wf.format_result({})
+
+
+def test_default_symposium_uses_short_display_name():
+    """The symposium environment name surfaces on the dashboard Runs page, so it
+    must stay short/readable instead of being derived from the class name."""
+    wf = HypothesisSymposiumWorkflow(tool_llm())
+    assert wf.name == "hypothesis_symposium"
+    symposium = wf._build_default_symposium(
+        wf._parse_hypotheses(ARTIFACT, "why?")
+    )
+    assert symposium.name == "hypothesis_symposium"
+
+
+def test_symposium_display_name_is_overridable():
+    wf = HypothesisSymposiumWorkflow(tool_llm(), name="protein_folding")
+    symposium = wf._build_default_symposium(
+        wf._parse_hypotheses(ARTIFACT, "why?")
+    )
+    assert symposium.name == "protein_folding"
