@@ -59,6 +59,54 @@ def test_folder_workspace_is_used_without_cached_default(client) -> None:
     assert not cached_paths.workspace_dir.exists()
 
 
+def test_new_session_snapshots_all_run_settings(client) -> None:
+    test_client, _tmp_path = client
+    updated = test_client.patch(
+        "/settings",
+        json={
+            "patch": {
+                "llm": {"model": "openai:session-chat"},
+                "embedding": {
+                    "model": "openai:session-embedding",
+                    "credential_source": "none",
+                },
+                "mcp": {
+                    "servers": {
+                        "local": {
+                            "transport": "stdio",
+                            "command": "example-mcp",
+                        }
+                    }
+                },
+                "tools": {"rag_tools": ["course-notes"]},
+            }
+        },
+    )
+    assert updated.status_code == 200
+
+    response = test_client.post(
+        "/sessions",
+        json={"agent_id": "chat_agent", "workspace_mode": "temporary"},
+    )
+
+    assert response.status_code == 200
+    session = response.json()["session"]
+    assert session["llm"]["model"] == "openai:session-chat"
+    assert session["embedding"]["model"] == "openai:session-embedding"
+    assert session["mcp"]["servers"]["local"]["command"] == "example-mcp"
+    assert session["tools"]["rag_tools"] == ["course-notes"]
+
+    changed_global = test_client.patch(
+        "/settings",
+        json={"patch": {"llm": {"model": "openai:new-global-chat"}}},
+    )
+    assert changed_global.status_code == 200
+    retained = test_client.get(f"/sessions/{session['session_id']}").json()[
+        "session"
+    ]
+    assert retained["llm"]["model"] == "openai:session-chat"
+
+
 def test_temporary_workspace_is_outside_cache_and_deleted_with_session(
     client,
 ) -> None:

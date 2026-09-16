@@ -92,6 +92,15 @@ def test_flag_overrides_falsy_env_value(monkeypatch):
     assert str(value).strip().lower() in APP_TRUTHY
 
 
+@pytest.mark.xfail(
+    reason=(
+        "Deep Review agent removed from default dashboard list. When/if"
+        "it is added back in, this should stop failing and the xfail "
+        "can be removed."
+    ),
+    strict=True,
+    raises=AssertionError,
+)
 def test_deep_review_agent_participates_in_web_opt_in():
     """Deep Review must follow the dashboard-wide opt-in, like the CLI.
 

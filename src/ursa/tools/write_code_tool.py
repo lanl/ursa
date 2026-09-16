@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from ursa.agents.base import AgentContext
 from ursa.util.events import ToolEvents
 from ursa.util.parse import read_text_file
-from ursa.util.rendering import event_artifact, file_artifact
+from ursa.util.rendering import event_artifact, file_content_mime_type
 from ursa.util.types import (
     AsciiStr,
     AsciiValidationError,
@@ -82,7 +82,19 @@ def _write_code_file(
             code_file.parent.mkdir(parents=True, exist_ok=True)
             with open(code_file, "w", encoding="utf-8") as f:
                 f.write(code)
-            span.update(artifact=file_artifact(code_file, title="File written"))
+            # Persist the content that was written, rather than only a path to
+            # a file that may be edited again later in the run.  Environment
+            # replay UIs can then show the exact output of this tool call.
+            span.update(
+                artifact=event_artifact(
+                    code,
+                    file_content_mime_type(code_file),
+                    metadata={
+                        "title": "Written code",
+                        "path": str(code_file),
+                    },
+                )
+            )
     except OSError as exc:
         return f"Failed to write {filename}: {exc}"
     if (store := runtime.store) is not None:

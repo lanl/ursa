@@ -23,8 +23,18 @@ ursa-dashboard \
   --config config.yaml
 ```
 
-The optional config file initializes the dashboard LLM endpoint settings. It is
-not needed for the built-in OpenAI provider.
+The optional config file initializes the dashboard model settings and makes its
+named `inference_providers` available in the LLM and Embedding/RAG settings.
+Select a provider to use its configured endpoint and load the models advertised
+by that endpoint. Model fields remain editable when an endpoint does not support
+model discovery. The config file is not needed for the built-in OpenAI provider.
+
+Dashboard model, MCP, and RAG-tool settings use this precedence, from highest
+to lowest: an explicit `--config` file, standard URSA environment overrides,
+the user config, dashboard `settings.json`, and the system config. The explicit
+file is applied at runtime and is not copied into `settings.json`. This means a
+value declared in the user config remains authoritative over the corresponding
+dashboard default.
 
 ## Enable web tools
 
@@ -51,6 +61,13 @@ launch with `--use-web` and disable it for a specific run.
 4. Choose an agent and submit a prompt.
 5. Follow the activity timeline and inspect generated files in the artifacts
    panel.
+
+New sessions snapshot the effective LLM, embedding, MCP, and RAG-tool settings.
+Open **Session settings** from a session card to adjust the same controls for
+that session without changing the dashboard defaults. Securely saved session
+keys use an isolated credential-store entry, so replacing one does not replace
+the global key or another session's key. Theme and agent-management actions
+remain dashboard-wide.
 
 ## Configure API credentials
 
