@@ -94,7 +94,12 @@ def manager(monkeypatch):
     async def inline(coroutine):
         return await coroutine
 
+    # Keep fake terminal updates and baseline captures on the test loop.
+    # Otherwise polling can reach the owner loop after a scheduled update,
+    # treating the new output or screen as the initial state and timing out.
+    # Tests of real cross-loop dispatch use real_manager instead.
     monkeypatch.setattr(instance, "_dispatch", inline)
+    monkeypatch.setattr(instance, "_dispatch_cancellable", inline)
     yield instance
     instance._sessions.clear()
     instance._reserved_ids.clear()
@@ -529,6 +534,47 @@ def test_registry_access_is_safe_across_threads_and_event_loops(manager):
         thread.join()
     assert errors == []
     assert manager.ids() == ()
+
+
+@pytest.mark.parametrize("manager_fixture", ["manager", "real_manager"])
+@pytest.mark.parametrize("operation", ["wait_for", "wait_screen"])
+async def test_waits_capture_baseline_on_expected_event_loop(
+    request, manager_fixture, operation
+):
+    manager = request.getfixturevalue(manager_fixture)
+    expected_loop = (
+        asyncio.get_running_loop()
+        if manager_fixture == "manager"
+        else manager._owner_loop
+    )
+
+    class LoopTerm(ScreenFakeTerm):
+        async def output_marker(self):
+            assert asyncio.get_running_loop() is expected_loop
+            marker = await super().output_marker()
+            self.emit("READY\n")
+            return marker
+
+        async def render_snapshot(self):
+            assert asyncio.get_running_loop() is expected_loop
+            snapshot = await super().render_snapshot()
+            self.output = "READY"
+            return snapshot
+
+    terminal = LoopTerm("waitloop", ["bash"])
+    manager.register(terminal)
+
+    if operation == "wait_for":
+        assert await manager.wait_for(terminal.term_id, "READY", 0.5) == (
+            "READY\nOffset: 0"
+        )
+    else:
+        assert (
+            await manager.wait_screen(
+                terminal.term_id, condition="change", timeout=0.5
+            )
+            == "Screen changed"
+        )
 
 
 async def test_wait_for_ignores_output_that_already_exists(manager):
