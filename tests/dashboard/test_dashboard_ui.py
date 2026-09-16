@@ -91,3 +91,57 @@ def test_settings_default_to_llm_without_runner_or_ui_sections(
     assert 'data-settings-section="ui"' not in dashboard_html
     assert "STDOUT buffer lines" not in dashboard_html
     assert 'id="cycleThemeBtn"' in dashboard_html
+
+
+def test_settings_include_inference_provider_model_pickers(
+    dashboard_html: str,
+) -> None:
+    assert 'id="set_llm_inference_provider"' in dashboard_html
+    assert 'id="set_embedding_inference_provider"' in dashboard_html
+    assert 'list="set_llm_model_options"' in dashboard_html
+    assert 'list="set_embedding_model_options"' in dashboard_html
+    assert 'id="refresh_llm_models"' in dashboard_html
+    assert "refreshProviderModels(kind)" in dashboard_html
+    assert "stageInferenceProvider('llm'" in dashboard_html
+
+
+def test_session_settings_match_global_model_and_tool_options(
+    dashboard_html: str,
+) -> None:
+    assert (
+        'data-settings-section="embedding" data-settings-scope="global"'
+        not in dashboard_html
+    )
+    assert (
+        'data-settings-section="tools" data-settings-scope="global"'
+        not in dashboard_html
+    )
+    assert (
+        'data-settings-section="mcp" data-settings-scope="global"'
+        not in dashboard_html
+    )
+    assert "credentialApiPath(kind=null)" in dashboard_html
+    assert "/sessions/${encodeURIComponent(state._settingsSessionId)}" in (
+        dashboard_html
+    )
+    assert "? scopedSettings" in dashboard_html
+    assert "globalCredentialOnly').forEach" not in dashboard_html
+
+
+def test_settings_use_cancel_and_update_actions(
+    dashboard_html: str,
+) -> None:
+    assert (
+        'id="closeSettingsBtn" type="button">Cancel</button>' in dashboard_html
+    )
+    assert (
+        'id="saveSettingsBtn" type="button">Update</button>' in dashboard_html
+    )
+    assert (
+        "if (await saveSettings()) modal.classList.remove('open');"
+        in dashboard_html
+    )
+    assert "Theme preview. Click Update to keep it." in dashboard_html
+    assert (
+        "applyTheme(state.settings?.ui?.theme || 'system');" in dashboard_html
+    )

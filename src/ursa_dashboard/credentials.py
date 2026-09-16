@@ -104,6 +104,19 @@ def credential_id(group: str, kind: CredentialKind) -> str:
     return f"dashboard:{validate_group_name(group)}:{kind}"
 
 
+def session_credential_id(
+    group: str, session_id: str, kind: CredentialKind
+) -> str:
+    """Return the isolated keyring identifier for one dashboard session."""
+    normalized_session_id = str(session_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", normalized_session_id):
+        raise CredentialConfigurationError("Invalid dashboard session ID.")
+    return (
+        f"dashboard:{validate_group_name(group)}:session:"
+        f"{normalized_session_id}:{kind}"
+    )
+
+
 def credential_target(config: Mapping[str, object]) -> str:
     """Bind a credential to an endpoint origin or model provider."""
     base_url = normalize_base_url(
@@ -248,6 +261,8 @@ def resolve_api_key(
     kind: CredentialKind,
     store: CredentialStore,
     environ: Mapping[str, str] | None = None,
+    stored_credential_id: str | None = None,
+    llm_stored_credential_id: str | None = None,
 ) -> str | None:
     """Resolve a key without adding it to persistent configuration."""
     assert_no_raw_api_key(config, context=kind)
@@ -276,7 +291,12 @@ def resolve_api_key(
             raise CredentialConfigurationError(
                 "Only embedding settings may reuse the LLM credential."
             )
-        stored = read_api_key(store, credential_id=credential_id(group, "llm"))
+        stored = read_api_key(
+            store,
+            credential_id=(
+                llm_stored_credential_id or credential_id(group, "llm")
+            ),
+        )
         if not stored:
             raise CredentialConfigurationError(
                 "No stored LLM API key is available to reuse."
@@ -290,7 +310,7 @@ def resolve_api_key(
             )
         return value
 
-    expected_id = credential_id(group, kind)
+    expected_id = stored_credential_id or credential_id(group, kind)
     configured_id = str(config.get("credential_id") or "")
     if not configured_id:
         raise CredentialConfigurationError(
@@ -330,6 +350,8 @@ def credential_status(
     group: str,
     kind: CredentialKind,
     store: CredentialStore,
+    stored_credential_id: str | None = None,
+    llm_stored_credential_id: str | None = None,
 ) -> dict[str, object]:
     """Return non-secret status suitable for a dashboard API response."""
     source = effective_credential_source(config)
@@ -344,7 +366,12 @@ def credential_status(
         usable = configured or not env_name
     elif source == "llm":
         stored = (
-            read_api_key(store, credential_id=credential_id(group, "llm"))
+            read_api_key(
+                store,
+                credential_id=(
+                    llm_stored_credential_id or credential_id(group, "llm")
+                ),
+            )
             if kind == "embedding"
             else None
         )
@@ -353,7 +380,7 @@ def credential_status(
         usable = configured and trusted_target == target
         needs_reentry = configured and not usable
     elif source == "stored":
-        expected_id = credential_id(group, kind)
+        expected_id = stored_credential_id or credential_id(group, kind)
         metadata_matches = (
             config.get("credential_id") == expected_id
             and config.get("credential_target") == target
