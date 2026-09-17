@@ -4,13 +4,19 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import (
+    AIMessage,
     HumanMessage,
 )
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END
+from pydantic import BaseModel, ConfigDict
 
-from ursa.agents.chat_agent import ChatAgent
+from ursa.agents.chat_agent import ChatAgent, ChatState, should_continue
+from ursa.util.structured_output import invoke_structured
 
 from .base import result_to_text
 
@@ -22,6 +28,58 @@ class JudgeDecision:
     winner: str
     reasoning: str
     method: str = "chat_agent"
+
+
+class Judgment(BaseModel):
+    """Validated final response, separate from internal decision metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+    winner: Literal["A", "B", "DRAW"]
+    reasoning: str
+
+
+class EloJudgeAgent(ChatAgent):
+    """Inspect evidence with tools, then produce a structured judgment."""
+
+    def __init__(self, llm: BaseChatModel, **kwargs):
+        # Preserve the unbound model across graph rebuilds.
+        self._judgment_llm = llm
+        super().__init__(llm=llm, **kwargs)
+
+    def _build_graph(self):
+        self.llm = self._judgment_llm.bind_tools(self.tools.values())
+        self.add_node(self._response_node, "respond")
+        self.add_node(self.tool_node, "tool_node")
+        self.add_node(self._final_judgment, "final_judgment")
+        self.graph.set_entry_point("respond")
+        self.graph.add_conditional_edges(
+            "respond",
+            self._wrap_cond(should_continue, "should_continue"),
+            {"continue": "tool_node", "finish": "final_judgment"},
+        )
+        self.graph.add_edge("tool_node", "respond")
+        self.graph.add_edge("final_judgment", END)
+
+    def _final_judgment(self, state: ChatState, config: RunnableConfig) -> dict:
+        # LangGraph runs synchronous nodes in an executor during ainvoke,
+        # so the shared synchronous helper does not block the event loop.
+        decision = invoke_structured(
+            self._judgment_llm,
+            Judgment,
+            list(state["messages"])
+            + [
+                HumanMessage(
+                    content=(
+                        "Return your final judgment using the task's evaluation criteria "
+                        "and the submissions and inspected evidence above. Choose A, B, "
+                        "or DRAW and give a brief explanation."
+                    )
+                )
+            ],
+            config=config,
+            context="Elo final judgment",
+        )
+        return {"messages": [AIMessage(content=decision.model_dump_json())]}
 
 
 class AgentEloJudge:
@@ -88,7 +146,6 @@ class AgentEloJudge:
             f"Agent type: {agent_type_b}\n"
             f"Workspace: {player_b}/\n"
             f"Submission:\n{output_b}\n"
-            f"{self.OUTPUT_INSTRUCTIONS}"
         )
 
     @staticmethod
@@ -150,13 +207,17 @@ class AgentEloJudge:
 
         try:
             try:
-                judge = ChatAgent(
+                judge = EloJudgeAgent(
                     llm=self.llm,
                     workspace=self.workspace,
                     group=self.group,
                     use_web=False,
                 )
-                result = await judge.ainvoke(prompt)
+                result = await judge.ainvoke(
+                    prompt
+                    + "\nInspect evidence as needed, then summarize your "
+                    "assessment. A final structured judgment step follows.\n"
+                )
 
                 formatter = getattr(
                     judge,
@@ -234,7 +295,9 @@ class AgentEloJudge:
     ) -> JudgeDecision:
         """Fallback to a single raw LLM judgment."""
 
-        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+        response = await self.llm.ainvoke([
+            HumanMessage(content=prompt + self.OUTPUT_INSTRUCTIONS)
+        ])
 
         text = result_to_text(response)
 

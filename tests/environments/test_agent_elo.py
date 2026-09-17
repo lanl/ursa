@@ -438,7 +438,7 @@ def test_judge_falls_back_on_agent_errors(
             return '{"winner": "B", "reasoning": "better evidence"}'
 
     monkeypatch.setattr(
-        "ursa.environments.agent_elo_judge.ChatAgent", JudgeAgent
+        "ursa.environments.agent_elo_judge.EloJudgeAgent", JudgeAgent
     )
     llm = LLM()
     judge = AgentEloJudge(
@@ -616,7 +616,7 @@ def test_prompts_share_task_criteria_and_preserve_lineage_guidance(elo_factory):
     assert "task's evaluation criteria" in prompt
     assert "briefly inspect" in prompt
     assert "timeout alone is not a loss" in prompt
-    assert '"winner"' in prompt
+    assert "exactly one JSON object" not in prompt
 
 
 def test_expired_deadline_captures_progress_without_invoking_member(
@@ -858,3 +858,129 @@ def test_member_result_preserves_execution_outcomes(
         else None,
     )
     assert invoked == (outcome != "expired")
+
+
+@pytest.mark.parametrize(
+    "structured_mode",
+    ["default", "function_calling", "unsupported", "invalid", "failed_draw"],
+)
+def test_judge_graph_inspects_files_then_requests_structured_output(
+    chat_model, monkeypatch, tmp_path, structured_mode
+):
+    import threading
+
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.tools import tool
+
+    from ursa.environments.agent_elo_judge import EloJudgeAgent, Judgment
+
+    evidence = tmp_path / "evidence.txt"
+    evidence.write_text("Verified error: A=0.1, B=0.5")
+    main_thread = threading.get_ident()
+    attempts = []
+    structured_messages = []
+    raw_prompts = []
+
+    @tool
+    def inspect_evidence() -> str:
+        """Read the candidates' verified results."""
+        return evidence.read_text()
+
+    original_build = EloJudgeAgent._build_graph
+
+    def build(agent):
+        agent._apply_tools([inspect_evidence], rebuild_graph=False)
+        original_build(agent)
+
+    def respond(agent, state):
+        if not any(
+            isinstance(message, ToolMessage) for message in state["messages"]
+        ):
+            message = AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "inspect_evidence",
+                        "args": {},
+                        "id": "inspect-1",
+                    }
+                ],
+            )
+        else:
+            message = AIMessage(content="A has lower verified error.")
+        return {"messages": [message]}
+
+    def with_structured_output(model, schema, **kwargs):
+        assert schema is Judgment
+        assert model is chat_model
+        assert threading.get_ident() != main_thread
+        method = kwargs.get("method")
+        attempts.append(method)
+        if structured_mode in {"unsupported", "failed_draw"} or (
+            structured_mode == "function_calling" and method is None
+        ):
+            raise NotImplementedError("Structured method unsupported")
+
+        class Structured:
+            def invoke(self, messages, **kwargs):
+                structured_messages.extend(messages)
+                if structured_mode == "invalid":
+                    return {"winner": "INVALID", "reasoning": "bad winner"}
+                return {"winner": "A", "reasoning": "Lower verified error"}
+
+        return Structured()
+
+    async def raw_invoke(model, messages, **kwargs):
+        raw_prompts.extend(messages)
+        if structured_mode == "failed_draw":
+            raise RuntimeError("Raw fallback failed")
+        return AIMessage(
+            content='{"winner": "B", "reasoning": "Fallback judgment"}'
+        )
+
+    monkeypatch.setattr(EloJudgeAgent, "_build_graph", build)
+    monkeypatch.setattr(EloJudgeAgent, "_response_node", respond)
+    monkeypatch.setattr(
+        type(chat_model), "with_structured_output", with_structured_output
+    )
+    monkeypatch.setattr(type(chat_model), "ainvoke", raw_invoke)
+    monkeypatch.setattr(
+        type(chat_model), "bind_tools", lambda model, tools: model.bind()
+    )
+    judge = AgentEloJudge(
+        llm=chat_model, workspace=tmp_path, group="default", judge_prompt=""
+    )
+    decision = asyncio.run(
+        judge.judge_match(
+            task="Minimize error",
+            player_a="a",
+            agent_type_a="ExecutionAgent",
+            output_a="A submission",
+            player_b="b",
+            agent_type_b="ExecutionAgent",
+            output_b="B submission",
+        )
+    )
+    assert attempts == (
+        [None] if structured_mode == "default" else [None, "function_calling"]
+    ), decision.reasoning
+    if structured_mode == "failed_draw":
+        assert decision.winner == "DRAW"
+        assert decision.method == "failed_draw"
+        assert "Raw fallback failed" in decision.reasoning
+    elif structured_mode in {"unsupported", "invalid"}:
+        assert decision.winner == "B"
+        assert decision.method == "llm_fallback"
+        assert "exactly one JSON object" in raw_prompts[0].content
+    else:
+        assert decision.winner == "A"
+        assert decision.method == "chat_agent"
+        assert any(
+            isinstance(message, ToolMessage) and "A=0.1" in message.content
+            for message in structured_messages
+        )
+        assert any(
+            "Minimize error" in str(message.content)
+            for message in structured_messages
+        )
+        assert not raw_prompts

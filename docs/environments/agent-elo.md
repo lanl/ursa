@@ -181,9 +181,17 @@ insufficient evidence if useful results cannot be found. It must not modify
 candidate files. These efficiency instructions are not a hard judging timeout.
 The judge uses the environment-level `llm`, even when members have their own models.
 
+After inspection, an Elo-specific judge runs a final structured-output model call
+using the accumulated conversation and tool results. It uses URSA's
+`invoke_structured()` helper to validate `winner` (`A`, `B`, or `DRAW`) and
+`reasoning`. This adds a final model call and uses the provider's default
+structured-output method, with function calling as an alternative; it does not
+guarantee strict decoder-level enforcement across providers.
+
 If the agentic judge fails to initialize, execute, or return a valid decision,
-URSA tries a direct LLM judgment. That fallback uses the supplied text without
-workspace tools. If it also fails, the match is recorded as a draw with an
+including when structured output is unsupported, URSA tries a direct LLM
+judgment with JSON prompting and validation. That fallback uses the supplied text
+without workspace tools. If it also fails, the match is recorded as a draw with an
 explanation.
 
 A timeout alone is not a loss: timed-out members can win, draw, survive, and
