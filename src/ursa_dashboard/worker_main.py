@@ -94,6 +94,7 @@ def _init_llm(
 ):
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model  # type: ignore
+    from ursa.util.http import build_httpx_async_client, build_httpx_client
 
     raw_base_url = llm_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
@@ -117,6 +118,18 @@ def _init_llm(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
+    
+    # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
+    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought 
+    #     into compatibility with the TUI.
+    cond1 = base_url and "openai.com" in base_url
+    cond2 = model_kwargs.get("model_provider", "") == "openai" or model[:7] == "openai:"
+    if cond1 or (not base_url and cond2):
+        kwargs.setdefault("http_client", build_httpx_client(verify=ssl_verify))
+        kwargs.setdefault(
+            "http_async_client",
+            build_httpx_async_client(verify=ssl_verify),
+        )
 
     return init_chat_model(**kwargs)
 
@@ -132,6 +145,7 @@ def _init_embedding(
     snapshotted into the run record; the run manager delivers stored or
     environment-backed secrets through the worker's one-time stdin channel.
     """
+    from ursa.util.http import build_httpx_async_client, build_httpx_client
 
     model = str(embedding_cfg.get("model") or "").strip()
     if not model or model.lower() in {"none", "disabled"}:
@@ -158,6 +172,18 @@ def _init_embedding(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
+
+    # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
+    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought 
+    #     into compatibility with the TUI.
+    cond1 = base_url and "openai.com" in base_url
+    cond2 = model_kwargs.get("model_provider", "") == "openai" or model[:7] == "openai:"
+    if cond1 or (not base_url and cond2):
+        kwargs.setdefault("http_client", build_httpx_client(verify=ssl_verify))
+        kwargs.setdefault(
+            "http_async_client",
+            build_httpx_async_client(verify=ssl_verify),
+        )
 
     return init_embeddings(**kwargs)
 
