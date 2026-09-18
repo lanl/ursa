@@ -75,7 +75,9 @@ def _api_key_from_config(
 
     env_name = str(config.get("api_key_env") or "").strip()
     if not env_name and api_key_reference is not None:
-        assert api_key_reference.keyring is None, "Keyring not currently supported here. Use API_KEY_ENV for setting the key."
+        assert api_key_reference.keyring is None, (
+            "Keyring not currently supported here. Use API_KEY_ENV for setting the key."
+        )
         env_name = str(api_key_reference.env or "").strip()
     if not env_name:
         return None
@@ -94,6 +96,7 @@ def _init_llm(
 ):
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model  # type: ignore
+
     from ursa.util.http import build_httpx_async_client, build_httpx_client
 
     raw_base_url = llm_cfg.get("base_url")
@@ -118,17 +121,20 @@ def _init_llm(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
-    
+
     # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
-    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought 
+    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought
     #     into compatibility with the TUI.
     cond1 = base_url and "openai.com" in base_url
-    cond2 = model_kwargs.get("model_provider", "") == "openai" or model[:7] == "openai:"
+    cond2 = (
+        model_kwargs.get("model_provider", "") == "openai"
+        or model[:7] == "openai:"
+    )
     if cond1 or (not base_url and cond2):
-        kwargs.setdefault("http_client", build_httpx_client(verify=ssl_verify))
+        kwargs.setdefault("http_client", build_httpx_client(verify=True))
         kwargs.setdefault(
             "http_async_client",
-            build_httpx_async_client(verify=ssl_verify),
+            build_httpx_async_client(verify=True),
         )
 
     return init_chat_model(**kwargs)
@@ -174,15 +180,18 @@ def _init_embedding(
         kwargs["base_url"] = base_url
 
     # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
-    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought 
+    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought
     #     into compatibility with the TUI.
     cond1 = base_url and "openai.com" in base_url
-    cond2 = model_kwargs.get("model_provider", "") == "openai" or model[:7] == "openai:"
+    cond2 = (
+        model_kwargs.get("model_provider", "") == "openai"
+        or model[:7] == "openai:"
+    )
     if cond1 or (not base_url and cond2):
-        kwargs.setdefault("http_client", build_httpx_client(verify=ssl_verify))
+        kwargs.setdefault("http_client", build_httpx_client(verify=True))
         kwargs.setdefault(
             "http_async_client",
-            build_httpx_async_client(verify=ssl_verify),
+            build_httpx_async_client(verify=True),
         )
 
     return init_embeddings(**kwargs)
