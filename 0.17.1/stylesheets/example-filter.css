@@ -1,0 +1,33 @@
+.example-tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+}
+
+.example-tag-filter__button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.example-tag-filter__button[aria-pressed="true"] {
+  background-color: var(--md-accent-fg-color);
+  color: var(--md-accent-bg-color);
+}
+
+.example-filter-status {
+  margin: -0.5rem 0 1rem;
+  min-height: 1.4em;
+}
+
+.example-tags .md-tag {
+  line-height: 1.5;
+  margin-right: 0.25em;
+  padding-inline: 0.45em;
+  padding-block: 0;
+}
+
+.example-catalog .example-card--filtered {
+  display: none !important;
+}
