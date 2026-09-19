@@ -52,6 +52,7 @@ def _result_text(result: Any) -> str:
 
 async def _run(args: argparse.Namespace, secrets: dict[str, Any]) -> Any:
     from ursa.environments import (
+        AgentEloEnvironment,
         AgentSymposiumEnvironment,
         AgentTeamEnvironment,
         arun_with_visualization,
@@ -75,10 +76,24 @@ async def _run(args: argparse.Namespace, secrets: dict[str, Any]) -> Any:
             api_key_override=secrets.get("llm_api_key"),
         )
         if args.environment_type == "agent_team":
-            environment = AgentTeamEnvironment(llm=llm, config=config)
+            environment = AgentTeamEnvironment(
+                llm=llm,
+                config=config,
+            )
+
         elif args.environment_type == "agent_symposium":
-            environment = AgentSymposiumEnvironment(llm=llm, config=config)
-        else:  # pragma: no cover - argparse constrains this
+            environment = AgentSymposiumEnvironment(
+                llm=llm,
+                config=config,
+            )
+
+        elif args.environment_type == "agent_elo":
+            environment = AgentEloEnvironment(
+                llm=llm,
+                config=config,
+            )
+
+        else:
             raise ValueError(
                 f"Unsupported environment type: {args.environment_type}"
             )
@@ -103,7 +118,7 @@ def main() -> int:
     parser.add_argument(
         "--environment-type",
         required=True,
-        choices=["agent_team", "agent_symposium"],
+        choices=["agent_team", "agent_symposium", "agent_elo"],
     )
     parser.add_argument("--config-yaml", required=True)
     parser.add_argument("--task-json", required=True)
