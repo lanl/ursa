@@ -38,6 +38,7 @@ AGENT_LABELS = {
 
 COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
+    "skills": "Discovered skills, their scope, and where they came from",
     "exit": "Quit URSA gracefully",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",

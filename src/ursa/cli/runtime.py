@@ -27,6 +27,7 @@ from ursa.cli.config import (
 from ursa.security import (
     enforce_model_group_policy,
 )
+from ursa.skills import ensure_bundled_skills
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import start_mcp_client
@@ -186,6 +187,13 @@ class HITL:
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
         self.config.workspace.mkdir(parents=True, exist_ok=True)
+
+        # Skills: materialize the bundled `skill-creation` skill into
+        # ~/.agents/skills on every launch, so the agent can always author new
+        # skills. Done here rather than in the TUI so the `exec`, MCP server,
+        # and dashboard entry points get it too. Never raises, and never
+        # overwrites a file the user has edited. See ursa.skills.bundled.
+        ensure_bundled_skills()
 
         self.agent_name = self.config.agent_name
         self.group = self.config.group

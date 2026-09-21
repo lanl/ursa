@@ -52,6 +52,7 @@ from ursa.cli.tui.widgets import (
     ToolMessage,
     WelcomeBanner,
 )
+from ursa.skills import discover_skills, skills_markdown
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
 from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
@@ -414,6 +415,7 @@ class UrsaTextualApp(App[None]):
             "#": "Agents",
             "@": "Workspace paths",
             "/": "Commands",
+            "$": "Skills",
         }[trigger]
         self.push_screen(
             HotlistScreen(title, candidates),
@@ -441,6 +443,10 @@ class UrsaTextualApp(App[None]):
         if trigger == "#":
             self._insert_agent_choice(choice)
             return
+        if trigger == "$" and choice:
+            # Skill candidates carry a description for fuzzy matching; only the
+            # name belongs in the prompt, as "$name".
+            choice = choice.split(" — ", 1)[0]
         if choice and origin is not None:
             _, start = origin
             prompt.replace(
@@ -510,6 +516,11 @@ class UrsaTextualApp(App[None]):
                 f"{name} — {description}"
                 for name, description in COMMAND_CHOICES.items()
             ]
+        if trigger == "$":
+            return [
+                f"{name} — {skill.description}"
+                for name, skill in discover_skills().items()
+            ]
         workspace = Path(self.hitl.workspace)
         ignored = {".git", ".venv", "__pycache__", "node_modules"}
         # TODO: Traverse asynchronously and remove the arbitrary result cap;
@@ -568,6 +579,9 @@ class UrsaTextualApp(App[None]):
         content = {
             "status": self._status_markdown,
             "keymap": self._keymap_markdown,
+            # Skills are read from disk on each open so newly added ones show up
+            # without restarting URSA.
+            "skills": skills_markdown,
         }.get(command)
         if content is None:
             self.query_one(PromptArea).focus()
