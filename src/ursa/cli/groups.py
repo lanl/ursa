@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 from ursa.security import (
+    DEFAULT_GROUP_NAME,
     GROUP_CONFIG_FILENAME,
     URSA_CACHE_DIR,
     validate_group_name,
@@ -190,6 +191,10 @@ def update_group(group_name: str, config_file: Path) -> None:
     group_name = validate_group_name(group_name)
 
     validate_group_config(config_file)
+
+    # The implicit default group may not have been persisted yet.
+    if group_name == DEFAULT_GROUP_NAME:
+        _ensure_group_subdirs(group_name)
 
     group_dir = _group_root_dir(group_name)
     if not group_dir.exists() or not group_dir.is_dir():
