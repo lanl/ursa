@@ -26,6 +26,22 @@ ursa-dashboard \
 The optional config file initializes the dashboard LLM endpoint settings. It is
 not needed for the built-in OpenAI provider.
 
+## Enable web tools
+
+Web, arXiv, and OSTI search tools are opt in, matching `ursa --use-web` in the
+CLI and TUI:
+
+```bash
+ursa-dashboard --use-web
+```
+
+Equivalently, set `URSA_DASHBOARD_USE_WEB=1` in the environment.
+
+This sets the default for agents that support web access (chat, execution,
+planning/execution workflow, prompt refinement, and deep review). Individual
+runs can still override it through the agent's advanced parameters, so you can
+launch with `--use-web` and disable it for a specific run.
+
 ## First session
 
 1. Open **Settings → LLM** and confirm the endpoint and credential source.

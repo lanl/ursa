@@ -28,7 +28,7 @@ uv tool install --python 3.13 'ursa-ai[dashboard]'
 ```
 
 See [Getting started][getting-started] for installation alternatives and a
-walkthough of using URSA.
+walkthrough of using URSA.
 
 ## Quick first run
 

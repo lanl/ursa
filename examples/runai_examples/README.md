@@ -21,6 +21,6 @@ First, you will need to talk to your RunAI admins to give you your RunAI account
 
 Once you have completed that step, you will need to login to RunAI with `runai login remote browser` (if you are using CLI). The system will then ask you to copy a string to your terminal to complete authentication.
 
-Next, you can conviniently use the `sleep_inf.sh` and `exec_container.sh` scripts to start your workload, and then interact with it inside a shell instance. You could do this all by yourself too, and use the `.sh` files as a guide. Note that you will need to include your RunAI account/project variables in a `.env`. Included in this folder is a template you can follow as a reference.
+Next, you can conveniently use the `sleep_inf.sh` and `exec_container.sh` scripts to start your workload, and then interact with it inside a shell instance. You could do this all by yourself too, and use the `.sh` files as a guide. Note that you will need to include your RunAI account/project variables in a `.env`. Included in this folder is a template you can follow as a reference.
 
 Then from there, you can install URSA inside the RunAI container. You can use `isolation_summary.sh` to check for isolation inside the container.

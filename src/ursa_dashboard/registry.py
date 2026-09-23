@@ -8,7 +8,6 @@ from typing import Any, Callable
 from .adapters import (
     AgentAdapter,
     BaseAgentInProcessAdapter,
-    DirectInvokeAdapter,
 )
 from .models import (
     AgentCapabilities,
@@ -122,6 +121,7 @@ def _think_plan_execute_workflow_builder() -> Callable[
     return _baseagent_adapter_builder(
         "ursa.workflows.think_plan_execute.ThinkPlanningExecutionAgent"
     )
+
 
 def _planning_executor_workflow_builder() -> Callable[
     [Any, dict[str, Any]], AgentAdapter
@@ -682,4 +682,3 @@ register(
         build_inputs=lambda p: p["prompt"],
     )
 )
-

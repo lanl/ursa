@@ -252,6 +252,54 @@ def test_build_rag_tools_wraps_persisted_agent(monkeypatch, caplog):
     assert "[Request to policy-docs]: What is in the docs?" in caplog.text
 
 
+def test_build_rag_tools_provides_async_coroutine(monkeypatch):
+    """The RAG tool must expose an async coroutine that awaits ``ainvoke``.
+
+    When a parent agent runs via ``ainvoke``/``astream``, LangGraph's
+    ``ToolNode`` awaits the tool's coroutine directly on the running event loop
+    instead of dispatching the sync ``invoke`` into a worker thread. Running the
+    RAG agent's sync SQLite-backed graph from an executor thread while the parent
+    loop owns async SQLite/Chroma resources is what triggers the classic
+    ``bad value(s) in fds_to_keep`` and lock errors.
+    """
+    import asyncio
+
+    class FakeRAG:
+        def __init__(self):
+            self.async_called = False
+
+        def invoke(self, payload):  # pragma: no cover - defensive
+            raise AssertionError("async path must not call sync invoke")
+
+        async def ainvoke(self, payload):
+            assert payload["context"] == "async question"
+            assert payload["query"] == "async question"
+            self.async_called = True
+            return {"summary": "async summary"}
+
+    fake = FakeRAG()
+
+    def fake_builder(**kwargs):
+        return fake
+
+    monkeypatch.setattr(
+        "ursa.rag.tools.build_persistent_rag_agent", fake_builder
+    )
+    tools = build_rag_tools(
+        names=["policy-docs"],
+        group="default",
+        llm=SimpleNamespace(),
+    )
+    tool = tools[0]
+
+    # The StructuredTool must carry a coroutine so it is not sync-only.
+    assert tool.coroutine is not None
+
+    result = asyncio.run(tool.ainvoke({"query": "async question"}))
+    assert result == "async summary"
+    assert fake.async_called is True
+
+
 def test_rag_group_uses_shared_group_config(monkeypatch, tmp_path: Path):
     root = tmp_path / "ursa"
     group_root = root / "science"

@@ -12,7 +12,7 @@ The original ArXiv paper is [here](https://arxiv.org/abs/2506.22653).
 
 ## Documentation
 
-Detailed documenation including:
+Detailed documentation including:
 - Installation
 - Getting Started Guides
 - Configuration

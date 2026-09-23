@@ -28,7 +28,7 @@ from textual.widgets import (
 )
 
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, wait_for
+from tests.cli._app_fakes import FakeHITL, wait_for, wait_for_event
 from ursa.agents.base import AgentWithTools
 from ursa.agents.execution_agent import ExecutionAgent
 from ursa.cli.config import (
@@ -437,6 +437,37 @@ async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
             if prompt.region.height == 8:
                 break
         assert prompt.region.height == 8  # ceil(20 * 0.3) plus the border.
+
+
+async def test_prompt_scrolls_to_each_newline_after_reaching_height_cap(
+    tmp_path,
+):
+    app = UrsaTextualApp(FakeHITL(tmp_path))
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        prompt = app.query_one(PromptArea)
+        # At this terminal height the prompt has six visible content rows.
+        prompt.load_text("\n".join(f"line {index}" for index in range(6)))
+        prompt.move_cursor((5, len("line 5")))
+        # Resizing and cursor scrolling run after refresh; one pause may
+        # return before the resulting layout has finished on a busy runner.
+        assert await wait_for(pilot, lambda: prompt.region.height == 8)
+        assert prompt.scroll_y == 0
+
+        await pilot.press("ctrl+j")
+        assert await wait_for(pilot, lambda: prompt.scroll_y == 1)
+        first_scroll = prompt.scroll_y
+        assert prompt.cursor_location == (6, 0)
+        assert first_scroll == prompt.max_scroll_y == 1
+        assert prompt.content_region.contains(*prompt.cursor_screen_offset)
+
+        await pilot.press("ctrl+j")
+        assert await wait_for(
+            pilot, lambda: prompt.scroll_y == first_scroll + 1
+        )
+        assert prompt.cursor_location == (7, 0)
+        assert prompt.scroll_y == prompt.max_scroll_y == first_scroll + 1
+        assert prompt.content_region.contains(*prompt.cursor_screen_offset)
 
 
 async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
@@ -1473,6 +1504,8 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
 async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
     tmp_path, monkeypatch
 ):
+    # This test validates explicitly; keep the debounce from racing assertions.
+    monkeypatch.setattr(ModelScreen, "YAML_VALIDATION_DELAY", 30.0)
     monkeypatch.setattr(
         "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
     )
@@ -1511,9 +1544,17 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
         assert editor.language == "yaml"
 
         for document, expected_valid in cases:
+            previous_timer = app.screen._yaml_timers.get("chat")
             editor.text = document
-            await pilot.pause()
-            assert not editor.has_class("yaml-valid", "yaml-invalid")
+            # Each Changed event must schedule its own validation before we
+            # inspect the neutral state and stop that edit's debounce timer.
+            assert await wait_for(
+                pilot,
+                lambda: app.screen._yaml_timers.get("chat")
+                is not previous_timer,
+            )
+            assert not editor.has_class("yaml-valid")
+            assert not editor.has_class("yaml-invalid")
             app.screen._yaml_timers["chat"].stop()
 
             result = app.screen._validate_yaml(
@@ -2358,14 +2399,18 @@ async def test_agents_lazily_load_tools_and_only_once(tmp_path):
 
         await wait_for(pilot, lambda: isinstance(app.screen, AgentsScreen))
         assert isinstance(app.screen, AgentsScreen)
-        assert calls == ["plan"]
+        # Mounting the screen does not mean its activation worker has started.
+        assert await wait_for(pilot, lambda: calls == ["plan"])
         # A callback already queued when hydration stops must tolerate the
         # frame state being gone while the loading node is still mounted.
         app.screen._stop_tool_loading(0)
         app.screen._advance_tool_loading(0)
         # Tool discovery is suspended, but tabs remain interactive.
         await pilot.press("right")
-        await pilot.pause()
+        assert await wait_for(
+            pilot,
+            lambda: len(app.screen.query("#agent-tools-1 .agent-tool")) == 1,
+        )
         assert calls == ["plan", "chat"]
         assert len(app.screen.query("#agent-tools-1 .agent-tool")) == 1
 
@@ -2606,7 +2651,7 @@ async def test_initialized_tools_render_while_schema_hydration_is_pending(
     try:
         async with app.run_test(size=(100, 36)) as pilot:
             await app._show_command("agents")
-            assert await asyncio.to_thread(schema_started.wait, 2)
+            assert await wait_for_event(pilot, schema_started)
             assert app.screen.query(".agent-tools-loading")
             tools = app.screen.query("#agent-tools-0 .agent-tool")
             assert len(tools) == 1
@@ -2744,16 +2789,16 @@ async def test_agents_remain_responsive_during_blocking_initialization(
     try:
         async with app.run_test(size=(100, 36)) as pilot:
             await app._show_command("agents")
-            assert await asyncio.to_thread(constructor_started.wait, 2)
+            assert await wait_for_event(pilot, constructor_started)
             screen = app.screen
             await assert_ui_is_live(pilot, screen)
 
             constructor_release.set()
-            assert await asyncio.to_thread(mcp_started.wait, 2)
+            assert await wait_for_event(pilot, mcp_started)
             await assert_ui_is_live(pilot, screen)
 
             mcp_release.set()
-            assert await asyncio.to_thread(schema_started.wait, 2)
+            assert await wait_for_event(pilot, schema_started)
             await assert_ui_is_live(pilot, screen)
 
             schema_release.set()
@@ -2807,7 +2852,7 @@ async def test_dismissing_agents_during_loading_cleans_up_and_publishes(
     try:
         async with app.run_test(size=(100, 36)) as pilot:
             await app._show_command("agents")
-            assert await asyncio.to_thread(schema_started.wait, 2)
+            assert await wait_for_event(pilot, schema_started)
             loading_screen = app.screen
             await pilot.press("escape")
             await pilot.pause()
