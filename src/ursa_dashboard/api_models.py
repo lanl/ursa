@@ -123,7 +123,7 @@ class CredentialSetRequest(BaseModel):
 
 class CredentialStatusResponse(BaseModel):
     kind: Literal["llm", "embedding"]
-    source: Literal["environment", "stored", "llm", "none"]
+    source: Literal["environment", "stored", "keyring", "llm", "none"]
     configured: bool
     usable: bool
     needs_reentry: bool = False

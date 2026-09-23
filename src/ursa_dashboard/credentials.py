@@ -11,7 +11,7 @@ from ursa.security import normalize_base_url, validate_group_name
 from ursa.util.secrets import SecretReference
 
 CredentialKind = Literal["llm", "embedding"]
-CredentialSource = Literal["environment", "stored", "llm", "none"]
+CredentialSource = Literal["environment", "stored", "keyring", "llm", "none"]
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _STORED_CREDENTIAL_VERSION = 1
@@ -184,7 +184,7 @@ def effective_credential_source(
     if not value:
         # Backward compatibility for settings created before credential_source.
         return "environment" if _config_api_key_env(config) else "none"
-    if value not in {"environment", "stored", "llm", "none"}:
+    if value not in {"environment", "stored", "keyring", "llm", "none"}:
         raise CredentialConfigurationError(
             f"Unknown credential source: {value}"
         )
@@ -248,7 +248,9 @@ def assert_no_credential_metadata(
     config: Mapping[str, object], *, context: str
 ) -> None:
     """Keep secure-store references under server control."""
-    if {"credential_id", "credential_target"}.intersection(config):
+    if {"credential_id", "credential_target", "api_key_keyring"}.intersection(
+        config
+    ):
         raise CredentialConfigurationError(
             f"{context} contains server-managed credential metadata."
         )
@@ -269,6 +271,25 @@ def resolve_api_key(
     source = effective_credential_source(config)
     if source == "none":
         return None
+
+    if source == "keyring":
+        reference = config.get("api_key_keyring")
+        if not isinstance(reference, str) or not reference:
+            raise CredentialConfigurationError(
+                "No URSA config key reference is configured."
+            )
+        if config.get("credential_target") != credential_target(config):
+            raise CredentialConfigurationError(
+                "The URSA config key is not approved for this endpoint. Select its provider again or save a separate key."
+            )
+        value = KeyringCredentialStore(service_name="ursa").get_secret(
+            reference
+        )
+        if not value:
+            raise CredentialConfigurationError(
+                "The URSA config key is missing from system storage. Update it in Default config."
+            )
+        return value
 
     if source == "environment":
         env_name = _config_api_key_env(config) or ""
@@ -364,6 +385,16 @@ def credential_status(
         env_name = str(config.get("api_key_env") or "").strip()
         configured = bool(env_name and os.environ.get(env_name))
         usable = configured or not env_name
+    elif source == "keyring":
+        reference = config.get("api_key_keyring")
+        configured = bool(
+            reference
+            and KeyringCredentialStore(service_name="ursa").get_secret(
+                str(reference)
+            )
+        )
+        usable = configured and config.get("credential_target") == target
+        needs_reentry = configured and not usable
     elif source == "llm":
         stored = (
             read_api_key(

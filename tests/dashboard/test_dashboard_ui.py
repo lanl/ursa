@@ -145,3 +145,63 @@ def test_settings_use_cancel_and_update_actions(
     assert (
         "applyTheme(state.settings?.ui?.theme || 'system');" in dashboard_html
     )
+
+
+def test_walkthrough_has_friendly_three_step_connection_setup(
+    dashboard_html: str,
+) -> None:
+    assert 'id="guidedConfig"' in dashboard_html
+    for step in range(3):
+        assert f'data-guided-step="{step}"' in dashboard_html
+    assert "Where is your model hosted?" in dashboard_html
+    assert "It is not your account password." in dashboard_html
+    assert "Enter a key · store securely" in dashboard_html
+    assert "Enter the variable’s name, not the key itself." in dashboard_html
+    assert "function validateGuidedConfigStep()" in dashboard_html
+    assert "if (guidedConfigStep < 2)" in dashboard_html
+    assert "const directConnection = index < 0;" in dashboard_html
+    assert "Loaded your direct endpoint." in dashboard_html
+    # The normal editor remains available outside the tour.
+    assert 'id="configProviders"' in dashboard_html
+    assert 'id="configEmbeddingFields"' in dashboard_html
+    assert ".tourConfigActive .defaultConfigEditor" in dashboard_html
+
+
+def test_config_tests_show_local_explicit_results(dashboard_html: str) -> None:
+    for result in (
+        "configLlmTestResult",
+        "configEmbTestResult",
+        "guidedTestResult",
+    ):
+        assert f'id="{result}" role="status" aria-live="polite"' in (
+            dashboard_html
+        )
+    assert "Passed — ${result.model} responded successfully." in dashboard_html
+    assert "configTestFeedback(kind, 'failed'" in dashboard_html
+    assert "Settings changed during the test — test again" in dashboard_html
+    assert "function invalidateConfigTests()" in dashboard_html
+
+
+def test_walkthrough_example_uses_chat_and_explains_workspaces(
+    dashboard_html: str,
+) -> None:
+    assert "openComposerDraft('chat_agent', FIRST_TASK)" in dashboard_html
+    assert (
+        "openComposerDraft('execution_agent', FIRST_TASK)" not in dashboard_html
+    )
+    assert "workspace picker opens" in dashboard_html
+    assert "Artifacts → Set workspace" in dashboard_html
+    assert "Temporary files are removed" in dashboard_html
+
+
+def test_walkthrough_reserves_space_for_dialogs_and_compact_artifacts(
+    dashboard_html: str,
+) -> None:
+    assert "bottom:20px; left:16px; width:304px" in dashboard_html
+    assert ".tourActive .modal .modalCard { left:344px" in dashboard_html
+    assert "--tour-dock-height" in dashboard_html
+    assert "new ResizeObserver" in dashboard_html
+    assert (
+        "document.body.classList.remove('tourActive', 'tourConfigActive')"
+        in (dashboard_html)
+    )

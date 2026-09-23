@@ -478,7 +478,9 @@ class UrsaConfig(BaseModel):
             for key, value in updates.items():
                 current = merged.get(key)
                 model_merge = getattr(current, "model_merge", None)
-                if callable(model_merge):
+                # Explicit null replaces a nested config instead of merging
+                # into it; final validation decides whether the field is optional.
+                if value is not None and callable(model_merge):
                     merged[key] = model_merge(value)
                 elif isinstance(current, dict) and isinstance(value, dict):
                     merged[key] = deep_merge_dicts(current, value)

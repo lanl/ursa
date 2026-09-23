@@ -124,6 +124,12 @@ from .environment_run_ui import (
     render_environment_runs_page,
 )
 from .models import AgentListResponse
+from .onboarding_ui import (
+    CONFIG_EDITOR_HTML,
+    ONBOARDING_CSS,
+    ONBOARDING_HTML,
+    ONBOARDING_JS,
+)
 from .registry import REGISTRY
 from .run_manager import RunManager
 from .security import WorkspaceJailError, safe_join
@@ -163,6 +169,12 @@ from .settings import (
     SettingsStore,
     ToolSettings,
     merge_global_settings_patch,
+)
+from .user_config import (
+    ConfigConflictError,
+    UserConfigEdit,
+    UserConfigStore,
+    probe_model,
 )
 
 
@@ -245,6 +257,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     provider_ursa_config = config_resolver.resolve(settings_store.load())[1]
     inference_providers = dict(provider_ursa_config.inference_providers)
+    user_config_store = UserConfigStore(
+        group=dashboard_group,
+        credential_store=KeyringCredentialStore(service_name="ursa"),
+    )
 
     dashboard_use_web = str(
         os.environ.get("URSA_DASHBOARD_USE_WEB", "")
@@ -527,7 +543,159 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         if api_key_env:
             canonical["api_key_env"] = api_key_env
             canonical.setdefault("credential_source", "environment")
+        elif getattr(getattr(provider, "api_key", None), "keyring", None):
+            if canonical.get("credential_source", "keyring") == "keyring":
+                canonical["credential_source"] = "keyring"
+                canonical["api_key_keyring"] = provider.api_key.keyring
+                canonical["credential_target"] = credential_target(canonical)
+                canonical["api_key_env"] = None
         return canonical
+
+    @app.get("/user-config", dependencies=[Depends(require_auth)])
+    def get_user_config(response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            result = user_config_store.describe()
+            result["higher_priority_config"] = bool(
+                config_resolver.explicit_layer
+                or config_resolver.environment_layer
+            )
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not read the user config. Check its YAML and file permissions.",
+            ) from exc
+
+    @app.put("/user-config", dependencies=[Depends(require_auth)])
+    def update_user_config(
+        req: UserConfigEdit, request: Request, response: Response
+    ) -> dict[str, Any]:
+        nonlocal config_resolver, provider_ursa_config, inference_providers
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        try:
+
+            def validate(data):
+                return config_resolver.resolve(
+                    settings_store.load(),
+                    user_override=(user_config_store.path, data),
+                )
+
+            result = user_config_store.save(req, validate)
+            config_resolver = DashboardConfigResolver(
+                group=dashboard_group, explicit_config=dashboard_config or None
+            )
+            provider_ursa_config = config_resolver.resolve(
+                settings_store.load()
+            )[1]
+            inference_providers = dict(provider_ursa_config.inference_providers)
+            result["settings"] = _effective_settings().model_dump(mode="json")
+            return result
+        except ConfigConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ValueError, CredentialStoreError, OSError) as exc:
+            # Config validation errors may include literal credentials from an
+            # older file. Do not reflect that input into a browser response.
+            from pydantic import ValidationError
+
+            detail = (
+                "Invalid configuration. Check provider names, models, and model options."
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            )
+            raise HTTPException(status_code=400, detail=detail) from exc
+
+    @app.post("/user-config/test", dependencies=[Depends(require_auth)])
+    async def test_user_config(
+        req: UserConfigEdit,
+        request: Request,
+        response: Response,
+        kind: str = Query(default="chat", pattern="^(chat|embedding)$"),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        try:
+            data, pending = user_config_store.prepare(req)
+            _settings, config = config_resolver.resolve(
+                settings_store.load(),
+                user_override=(user_config_store.path, data),
+            )
+            from pydantic import SecretStr
+
+            for model in (config.llm_model, config.emb_model):
+                if model is not None:
+                    ref = getattr(model.api_key, "keyring", None)
+                    if ref in pending:
+                        model.api_key = SecretStr(pending[ref])
+                    enforce_group_base_url_policy(
+                        model.base_url, dashboard_group
+                    )
+            await asyncio.wait_for(probe_model(config, kind), timeout=35)
+            model = config.llm_model if kind == "chat" else config.emb_model
+            return {
+                "ok": True,
+                "model": model.model,
+                "message": "The model responded successfully.",
+            }
+        except ConfigConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="The model test failed. Check the endpoint, model name, API key, and model options. No settings were saved.",
+            ) from exc
+
+    @app.post("/user-config/models", dependencies=[Depends(require_auth)])
+    async def list_user_config_models(
+        req: UserConfigEdit,
+        request: Request,
+        response: Response,
+        kind: str = Query(default="chat", pattern="^(chat|embedding)$"),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        try:
+            data, pending = user_config_store.prepare(req)
+            _settings, config = config_resolver.resolve(
+                settings_store.load(),
+                user_override=(user_config_store.path, data),
+            )
+            model = config.llm_model if kind == "chat" else config.emb_model
+            if model is None:
+                raise ValueError("No embedding model selected")
+            from pydantic import SecretStr
+
+            ref = getattr(model.api_key, "keyring", None)
+            if ref in pending:
+                model.api_key = SecretStr(pending[ref])
+            enforce_group_base_url_policy(model.base_url, dashboard_group)
+            provider = config.inference_providers.get(model.inference_provider)
+            protocol = getattr(provider, "model_provider", None)
+            if protocol:
+                # Discovery follows the edited endpoint API type even while
+                # the form still contains the previous provider's model name.
+                model = model.model_copy(update={"model_provider": protocol})
+            models = await asyncio.wait_for(
+                asyncio.to_thread(list_provider_models, model), timeout=15
+            )
+            return {
+                "models": [
+                    {
+                        "name": item.name,
+                        "qualified_name": f"{item.model_provider}:{item.name}"
+                        if item.model_provider
+                        and not item.name.startswith(f"{item.model_provider}:")
+                        else item.name,
+                    }
+                    for item in sort_provider_models(models, kind)[:2000]
+                ]
+            }
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not discover models. Check the endpoint and key, or enter a model name manually.",
+            ) from exc
 
     @app.get(
         "/settings",
@@ -4839,7 +5007,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       if (sub) sub.textContent = `Run settings apply to this session: ${session?.title || session?.session_id || ''}. Theme and agent management remain dashboard-wide.`;
       setSettingsSection('llm');
     } else {
-      if (title) title.textContent = 'Settings';
+      if (title) title.textContent = 'Model and Agent Settings';
       if (sub) sub.textContent = 'Dashboard defaults. User, environment, and launch configuration may take precedence.';
       setSettingsSection('llm');
     }
@@ -5081,6 +5249,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       el.textContent = status.usable ? 'Key saved securely.' : 'No usable saved key.';
       return;
     }
+    if (status.source === 'keyring') {
+      el.textContent = status.usable ? 'Using the key saved in your URSA config. Edit it under Default config.' : 'The URSA config key is missing or not approved for this endpoint.';
+      return;
+    }
     if (status.source === 'environment') {
       el.textContent = status.configured ? 'Environment variable is available.' : 'Environment variable is not currently available.';
       return;
@@ -5227,6 +5399,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       if (controls.credentialSource) controls.credentialSource.value = 'environment';
       if (controls.apiKeyEnv) controls.apiKeyEnv.value = provider.api_key_env;
       updateCredentialControls(kind);
+    } else if (userInitiated && provider.credential_source === 'keyring') {
+      if (controls.credentialSource) controls.credentialSource.value = 'keyring';
+      updateCredentialControls(kind);
     } else if (userInitiated && provider.credential_source === 'none') {
       if (controls.credentialSource) controls.credentialSource.value = 'none';
       if (controls.apiKeyEnv) controls.apiKeyEnv.value = '';
@@ -5236,7 +5411,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const credentialNote = provider.api_key_env
       ? ` Credential: ${provider.api_key_env}.`
       : provider.credential_source === 'keyring'
-        ? ' Model discovery uses the provider keyring reference; dashboard runs use the API key source below.'
+        ? ' Credential: your securely stored URSA config key.'
         : provider.credential_source === 'configured'
           ? ' Model discovery uses the config credential; dashboard runs use the API key source below.'
           : '';
@@ -5285,6 +5460,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   async function loadSettings(opts={}) {
+    defaultConfigDraft = null;
+    $('#settingsModal').setAttribute('aria-hidden', 'false');
     const mode = opts.mode || state._settingsMode || 'global';
     const session = opts.session || null;
     const res = await api('GET', '/settings');
@@ -5580,6 +5757,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   function setSettingsSection(section) {
+    state._settingsSection = section;
+    $('#cycleThemeBtn')?.classList.toggle('hidden', section === 'defaults');
     $$('.settingsNavBtn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.settingsSection === section);
     });
@@ -5590,7 +5769,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
   function setupSettingsNav() {
     $$('.settingsNavBtn').forEach(btn => {
-        btn.onclick = () => setSettingsSection(btn.dataset.settingsSection);
+        btn.onclick = async () => {
+          setSettingsSection(btn.dataset.settingsSection);
+          if (btn.dataset.settingsSection === 'defaults' && !defaultConfigDraft) await loadDefaultConfig();
+        };
     });
   }
 
@@ -5720,9 +5902,13 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     };
     const cancelSettings = () => {
       applyTheme(state.settings?.ui?.theme || 'system');
+      $$('#settingsModal input[type="password"]').forEach(input => { input.value = ''; });
+      defaultConfigDraft = null;
+      lastConfigTest = null;
       const saved = $('#settingsSaved');
       if (saved) saved.textContent = '';
       modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
     };
     $('#closeSettingsBtn').onclick = cancelSettings;
     $('#settingsBackdrop').onclick = cancelSettings;
@@ -5752,7 +5938,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         button.textContent = 'Updating…';
       }
       try {
-        if (await saveSettings()) modal.classList.remove('open');
+        if (state._settingsSection === 'defaults') {
+          if (await saveDefaultConfig()) { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); }
+        } else if (await saveSettings()) modal.classList.remove('open');
+        if (!modal.classList.contains('open')) modal.setAttribute('aria-hidden', 'true');
       } catch (e) {
         alert('Could not update settings: ' + (e && e.message ? e.message : String(e)));
       } finally {
@@ -5788,6 +5977,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     // Sessions remain available in the sidebar, but none is silently restored:
     // suggested tasks should never inherit an earlier conversation by accident.
     renderActiveSession();
+    setupOnboarding();
 
     // periodic refresh
     setInterval(() => { refreshSessions().catch(() => {}); }, 5000);
@@ -6767,7 +6957,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         logo_img_style = "" if str(logo_img_src).strip() else "display:none"
 
         environment_runs_button = (
-            '<a class="sidebarNavAction" href="/ui/environment-runs">'
+            '<a class="sidebarNavAction" id="environmentRunsLink" href="/ui/environment-runs">'
             '<svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true">'
             '<path d="M4 19V9m8 10V5m8 14v-7"/>'
             '<path d="M2 19h20"/>'
@@ -6809,7 +6999,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <nav class="sidebarNav" aria-label="Dashboard actions">
           <button class="sidebarNavAction" id="openSettingsBtn" type="button">
             <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.95 4.6 1.7 1.7 0 0 0 9.97 3.04V3h4v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06L19.77 7l-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H21v4h-.08A1.7 1.7 0 0 0 19.4 15z"/></svg>
-            <span>Settings</span>
+            <span>Model and Agent Settings</span>
           </button>
           {environment_runs_button}
         </nav>
@@ -6834,6 +7024,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <p class="welcomeLead">Choose an example to see how each agent approaches a different kind of work.</p>
 
       <div class="welcomeSectionHead">
+        <button class="welcomeGuideLink" id="startWalkthroughBtn" type="button">Take a guided tour</button>
         <button class="btn welcomeRefresh" id="refreshWelcomeTasksBtn" type="button" title="Show different examples">New examples</button>
       </div>
       <div class="welcomeTaskGrid" id="welcomeTaskList"></div>
@@ -6983,10 +7174,10 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 <div class="modal" id="settingsModal" aria-hidden="true">
   <div class="backdrop" id="settingsBackdrop"></div>
-  <div class="modalCard">
+  <div class="modalCard" role="dialog" aria-labelledby="settingsModalTitle">
     <div class="topbar">
       <div>
-        <div class="title" id="settingsModalTitle">Settings</div>
+        <div class="title" id="settingsModalTitle">Model and Agent Settings</div>
         <div class="muted small" id="settingsModalSubtitle">Dashboard defaults. User, environment, and launch configuration may take precedence.</div>
       </div>
     </div>
@@ -6994,6 +7185,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     <div class="settingsShell">
       <div class="settingsNav">
         <button class="settingsNavBtn active" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn" data-settings-section="defaults" type="button">Default config</button>
         <button class="settingsNavBtn" data-settings-section="embedding" type="button">Embedding/RAG</button>
         <button class="settingsNavBtn" data-settings-section="agents" data-settings-scope="global" type="button">Agent management</button>
         <button class="settingsNavBtn" data-settings-section="tools" type="button">RAG tools</button>
@@ -7001,6 +7193,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       </div>
 
       <div class="settingsContent">
+        {CONFIG_EDITOR_HTML}
         <div class="settingsPane" data-settings-pane="llm">
           <div class="section">
             <div class="sectionHead">LLM</div>
@@ -7009,7 +7202,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_model" list="set_llm_model_options" placeholder="openai:gpt-5.4-mini" /><datalist id="set_llm_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_llm_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
             <div class="globalCredentialOnly">
-              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="keyring">URSA config key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_llm_stored_fields">
                 <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_llm_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
                 <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_llm_remove_key" type="button">Remove saved key</button></div></div>
@@ -7031,7 +7224,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_embedding_base_url" placeholder="Model Provider Default" /></div>
             <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_embedding_model" list="set_embedding_model_options" placeholder="openai:text-embedding-3-large" /><datalist id="set_embedding_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_embedding_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
             <div class="globalCredentialOnly">
-              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="keyring">URSA config key</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_embedding_stored_fields">
                 <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_embedding_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
                 <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_embedding_remove_key" type="button">Remove saved key</button></div></div>
@@ -7134,18 +7327,22 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         """
 
+        dashboard_js = DASHBOARD_JS.replace(
+            "  init().catch", ONBOARDING_JS + "\n  init().catch"
+        )
         html_doc = f"""<!doctype html>
 <html lang=\"en\">
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>URSA Dashboard</title>
-  <style>{DASHBOARD_CSS}</style>
+  <style>{DASHBOARD_CSS}{ONBOARDING_CSS}</style>
   {logo_inline}
 </head>
 <body>
 {body}
-<script>{DASHBOARD_JS}</script>
+{ONBOARDING_HTML}
+<script>{dashboard_js}</script>
 </body>
 </html>"""
         return HTMLResponse(
