@@ -65,40 +65,43 @@ def run_command(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     prompt_level = os.getenv("URSA_SAFETY_LEVEL", "default")
     llm = runtime.context.llm
     events = ToolEvents.from_runtime("run_command", runtime)
-    safety_result = invoke_structured(
-        llm,
-        SafetyAssessment,
-        get_safety_prompt(
-            query, safe_codes, edited_files, prompt_level=prompt_level
-        ),
-        context="run_command safety assessment",
-        fallback=SafetyAssessment(
-            is_safe=False,
-            reason=(
-                "Could not parse command safety assessment from the model. "
-                "Command blocked."
+    if prompt_level.lower() in {"yolo", "none"}:
+        safety_result = SafetyAssessment(is_safe=True, reason=f"User set safety level to {prompt_level}")
+    else:
+        safety_result = invoke_structured(
+            llm,
+            SafetyAssessment,
+            get_safety_prompt(
+                query, safe_codes, edited_files, prompt_level=prompt_level
             ),
-        ),
-        repair=1,
-    )
-
-    if not safety_result.is_safe:
-        tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
+            context="run_command safety assessment",
+            fallback=SafetyAssessment(
+                is_safe=False,
+                reason=(
+                    "Could not parse command safety assessment from the model. "
+                    "Command blocked."
+                ),
+            ),
+            repair=1,
+        )
+    
+        if not safety_result.is_safe:
+            tool_response = f"[UNSAFE] That command `{query}` was deemed unsafe and cannot be run.\nFor reason: {safety_result.reason}"
+            events.emit(
+                "Command deemed unsafe",
+                stage="safety_check",
+                query=query,
+                safe=False,
+                reason=safety_result.reason,
+            )
+            return tool_response
         events.emit(
-            "Command deemed unsafe",
+            "Command passed safety check",
             stage="safety_check",
             query=query,
-            safe=False,
+            safe=True,
             reason=safety_result.reason,
         )
-        return tool_response
-    events.emit(
-        "Command passed safety check",
-        stage="safety_check",
-        query=query,
-        safe=True,
-        reason=safety_result.reason,
-    )
 
     try:
         with events.range(

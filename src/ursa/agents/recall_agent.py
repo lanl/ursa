@@ -13,7 +13,9 @@ class RecallState(TypedDict, total=False):
     memory: str
 
 
-class RecallAgent(BaseAgent):
+class RecallAgent(BaseAgent[RecallState]):
+    state_type = RecallState
+
     def __init__(self, llm: BaseChatModel, memory: AgentMemory, **kwargs):
         super().__init__(llm, **kwargs)
         self.memory = memory

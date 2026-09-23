@@ -8108,7 +8108,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "aiosqlite", specifier = ">=0.20.0,<0.22" },
     { name = "arxiv", specifier = ">=2.2.0,<3.0" },
     { name = "atomman", marker = "extra == 'lammps'", specifier = ">=1.5.2" },
     { name = "beautifulsoup4", specifier = ">=4.13.4,<5.0" },
@@ -8117,14 +8117,14 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.120.0" },
     { name = "fastmcp", specifier = "~=3.0" },
     { name = "jsonargparse", specifier = ">=4.45.0" },
-    { name = "justext", specifier = ">=3.0.2" },
+    { name = "justext", specifier = ">=3.0.1,<4.0.0" },
     { name = "keyring", specifier = ">=25.0.0,<26.0.0" },
     { name = "langchain", specifier = ">=1.3.2" },
     { name = "langchain-anthropic", specifier = ">=1.4" },
     { name = "langchain-chroma", specifier = ">=1.0.0" },
     { name = "langchain-community", specifier = ">=0.4.1" },
     { name = "langchain-google-genai", specifier = ">=4.2" },
-    { name = "langchain-mcp-adapters", specifier = "~=0.2.2" },
+    { name = "langchain-mcp-adapters", specifier = ">=0.2.1,<0.3.0" },
     { name = "langchain-ollama", specifier = ">=1.0.0" },
     { name = "langchain-openai", specifier = ">=1.0.1" },
     { name = "langchain-text-splitters", specifier = ">=1.0.0" },
