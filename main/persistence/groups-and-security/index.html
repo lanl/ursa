@@ -797,6 +797,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#optionally-restrict-the-default-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optionally restrict the default group
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-this-relates-to-model-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       How this relates to model configuration
@@ -2016,6 +2025,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#optionally-restrict-the-default-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optionally restrict the default group
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-this-relates-to-model-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       How this relates to model configuration
@@ -2078,13 +2096,28 @@
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>ursa<span class="w"> </span>update-group<span class="w"> </span>research<span class="w"> </span>updated_allowed_urls.yaml
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>ursa<span class="w"> </span>delete-group<span class="w"> </span>research
 </code></pre></div>
+<h2 id="optionally-restrict-the-default-group">Optionally restrict the default group<a class="headerlink" href="#optionally-restrict-the-default-group" title="Permanent link">&para;</a></h2>
+<p>The <code>default</code> group remains unrestricted when it has no <code>group.yaml</code> policy
+file. To constrain it, use the same non-empty <code>allowed_base_urls</code> YAML format
+shown above:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ursa<span class="w"> </span>update-group<span class="w"> </span>default<span class="w"> </span>updated_allowed_urls.yaml
+</code></pre></div>
+<p>This also works before the default group's cache directory has been created.
+Once configured, the default group enforces the same policy as other groups:
+models must have an explicit <code>base_url</code> matching an allowed URL or its origin
+(scheme and host/port). Paths on the same origin are allowed. Missing or
+unapproved model base URLs are rejected, and an invalid or empty allowlist is
+an error, not a way to disable the policy. Removing the default group's
+<code>group.yaml</code> restores its unrestricted behavior; non-default groups still
+require this file and a non-empty allowlist.</p>
+<p>This policy checks model endpoints; it is not a general network or tool sandbox.</p>
 <h2 id="how-this-relates-to-model-configuration">How this relates to model configuration<a class="headerlink" href="#how-this-relates-to-model-configuration" title="Permanent link">&para;</a></h2>
 <p>If your model config uses a custom <code>base_url</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">llm_model</span><span class="p">:</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:my-model</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://my-approved-endpoint.example.com/v1</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">api_key</span><span class="p">:</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MY_ENDPOINT_API_KEY</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">llm_model</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai:my-model</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://my-approved-endpoint.example.com/v1</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">api_key</span><span class="p">:</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MY_ENDPOINT_API_KEY</span>
 </code></pre></div>
 <p>then the group allowlist should include the approved base URL domain.</p>
 <h2 id="best-practice-guidance">Best-practice guidance<a class="headerlink" href="#best-practice-guidance" title="Permanent link">&para;</a></h2>
