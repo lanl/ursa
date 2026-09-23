@@ -264,6 +264,7 @@ def test_emb_model_merge_base_url_overrides_inference_provider(
     assert merged.model_provider == "ollama"
     assert merged.base_url == "http://localhost:11434"
     assert merged.inference_provider is None
+    assert "inference_provider" not in merged.model_fields_set
     assert merged.model_extra == {}
 
 
@@ -289,16 +290,22 @@ def test_chat_model_merge_inference_provider_overrides_base_url(
 
     assert merged.base_url is None
     assert merged.inference_provider == "hosted"
+    assert "base_url" not in merged.model_fields_set
     assert merged.model_extra == {}
 
 
-def test_chat_model_merge_marks_cleared_base_url_as_explicit():
-    base = config_mod.ChatModelConfig(model="gpt-5.4")
+def test_chat_model_merge_marks_cleared_base_url_as_unset():
+    base = config_mod.ChatModelConfig(
+        model="gpt-5.4",
+        base_url="https://models.example/v1",
+    )
 
     merged = base.model_merge({"inference_provider": "hosted"})
 
     assert merged.base_url is None
-    assert {"base_url", "inference_provider"} <= merged.model_fields_set
+    assert merged.inference_provider == "hosted"
+    assert "base_url" not in merged.model_fields_set
+    assert "base_url" not in merged.model_dump(exclude_unset=True)
 
 
 def test_chat_model_merge_prefers_base_url_if_override_has_both_endpoints():
@@ -314,6 +321,7 @@ def test_chat_model_merge_prefers_base_url_if_override_has_both_endpoints():
 
     assert merged.base_url == "https://models.example/v1"
     assert merged.inference_provider is None
+    assert "inference_provider" not in merged.model_fields_set
     assert merged.model_extra == {}
 
 
@@ -581,6 +589,64 @@ def test_ursa_config_deep_merges_inference_provider_catalog():
         "http://localhost:11434"
     )
     assert merged.inference_providers["local"].ssl_verify is False
+
+
+def test_ursa_config_merges_provider_catalogs_across_layers():
+    merged = config_mod.UrsaConfig().model_merge(
+        {
+            "inference_providers": {
+                "shared": {"base_url": "https://models.example/v1"}
+            }
+        },
+        {
+            "inference_providers": {
+                "shared": {"ssl_verify": False},
+                "local": {"base_url": "http://localhost:11434"},
+            }
+        },
+    )
+
+    assert merged.inference_providers["shared"].base_url == (
+        "https://models.example/v1"
+    )
+    assert merged.inference_providers["shared"].ssl_verify is False
+    assert merged.inference_providers["local"].base_url == (
+        "http://localhost:11434"
+    )
+
+
+def test_ursa_config_recursively_uses_nested_model_merge():
+    base = config_mod.UrsaConfig(
+        agent_config={
+            "nested": {
+                "model": config_mod.ModelConfig(
+                    model="openai:old-model",
+                    base_url="https://old.example/v1",
+                )
+            }
+        }
+    )
+
+    merged = base.model_merge({
+        "agent_config": {
+            "nested": {
+                "model": {
+                    "model": "bedrock:new-model",
+                    "inference_provider": "bedrock",
+                }
+            }
+        }
+    })
+    model = merged.agent_config["nested"]["model"]
+
+    assert isinstance(model, config_mod.ModelConfig)
+    assert model.model == "bedrock:new-model"
+    assert model.inference_provider == "bedrock"
+    assert model.base_url is None
+    assert "base_url" not in model.model_fields_set
+    assert base.agent_config["nested"]["model"].base_url == (
+        "https://old.example/v1"
+    )
 
 
 def test_ursa_config_merge_accepts_concrete_path_field():

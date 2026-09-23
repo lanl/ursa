@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from os import environ
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any, Literal, Self
+from types import UnionType
+from typing import Annotated, Any, Literal, Self, Union, get_args, get_origin
 
 import yaml
 from jsonargparse import Namespace
@@ -144,20 +145,24 @@ class ModelConfig(BaseModel):
             updates = candidate.model_dump(mode="python", exclude_unset=True)
         else:
             updates = deepcopy(other)
-            if updates.get("base_url") is not None:
+            if (
+                updates.get("base_url") is not None
+                and updates.get("inference_provider") is not None
+            ):
                 updates["inference_provider"] = None
-            elif updates.get("inference_provider") is not None:
-                updates["base_url"] = None
             candidate = type(self).model_validate({
                 "model": self.model,
                 **updates,
             })
             updates = candidate.model_dump(mode="python", exclude_unset=True)
 
+        superseded_field = None
         if updates.get("base_url") is not None:
             updates["inference_provider"] = None
+            superseded_field = "inference_provider"
         elif updates.get("inference_provider") is not None:
             updates["base_url"] = None
+            superseded_field = "base_url"
 
         merged = type(self).model_validate({
             **self.model_dump(mode="python"),
@@ -166,9 +171,13 @@ class ModelConfig(BaseModel):
         # Validating the complete merged mapping marks every default as explicit.
         # Preserve only fields supplied by either layer so provider defaults can
         # still fill values that merely appeared in the model dump.
-        merged.__pydantic_fields_set__ = (
-            self.model_fields_set | candidate.model_fields_set
-        )
+        fields_set = self.model_fields_set | candidate.model_fields_set
+        # Switching endpoint styles clears the lower-priority alternative
+        # without turning that internal null into an explicit model override.
+        if superseded_field is not None:
+            fields_set.discard(superseded_field)
+        merged.__pydantic_fields_set__ = fields_set
+
         return merged
 
     @model_validator(mode="before")
@@ -423,6 +432,40 @@ class EmbModelConfig(ModelConfig):
         return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
 
 
+def _model_class_from_annotation(
+    annotation: Any,
+) -> type[BaseModel] | None:
+    """Return a directly annotated model class, optionally inside a union."""
+    if get_origin(annotation) in {Union, UnionType}:
+        candidates = get_args(annotation)
+    else:
+        candidates = (annotation,)
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, type) and issubclass(candidate, BaseModel)
+        ),
+        None,
+    )
+
+
+def _merge_config_values(base: Any, override: Any) -> Any:
+    """Recursively merge Ursa config values using model-specific semantics."""
+    model_merge = getattr(base, "model_merge", None)
+    if callable(model_merge):
+        return model_merge(override)
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = deepcopy(base)
+        for key, value in override.items():
+            if key in merged:
+                merged[key] = _merge_config_values(merged[key], value)
+            else:
+                merged[key] = deepcopy(value)
+        return merged
+    return deepcopy(override)
+
+
 class UrsaConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -547,35 +590,16 @@ class UrsaConfig(BaseModel):
                 current = merged.get(key)
                 field_info = type(self).model_fields.get(key)
                 field_annotation = getattr(field_info, "annotation", None)
-                model_cls = None
-                if isinstance(field_annotation, type) and issubclass(
-                    field_annotation, BaseModel
-                ):
-                    model_cls = field_annotation
-                elif getattr(field_annotation, "__args__", None):
-                    for arg in field_annotation.__args__:
-                        if isinstance(arg, type) and issubclass(arg, BaseModel):
-                            model_cls = arg
-                            break
+                model_cls = _model_class_from_annotation(field_annotation)
 
-                model_merge = getattr(current, "model_merge", None)
-                if callable(model_merge):
-                    merged[key] = model_merge(value)
-                elif (
-                    model_cls is not None
+                if (
+                    current is None
+                    and model_cls is not None
                     and isinstance(value, dict)
-                    and not (
-                        isinstance(current, dict)
-                        and all(
-                            isinstance(v, BaseModel) for v in current.values()
-                        )
-                    )
                 ):
                     merged[key] = model_cls.model_validate(value)
-                elif isinstance(current, dict) and isinstance(value, dict):
-                    merged[key] = deep_merge_dicts(current, value)
                 else:
-                    merged[key] = value
+                    merged[key] = _merge_config_values(current, value)
         result = type(self).model_validate(merged)
         result.__pydantic_fields_set__ = fields_set
         return result
