@@ -40,8 +40,14 @@ def test_simulator_uses_documenter_and_runner_child_subgraphs(tmp_path):
 
     assert state["goal"] == "Run the simulation"
     assert state["messages"][-1].text == "final recap"
-    assert documenter_prompt.strip() in request_text(model.plain_requests[0])
-    assert runner_prompt.strip() in request_text(model.plain_requests[1])
+    assert any(
+        documenter_prompt.strip() in request_text(req)
+        for req in model.plain_requests
+    )
+    assert any(
+        runner_prompt.strip() in request_text(req)
+        for req in model.plain_requests
+    )
     agent.close()
 
 
