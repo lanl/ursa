@@ -123,7 +123,7 @@ class CredentialSetRequest(BaseModel):
 
 class CredentialStatusResponse(BaseModel):
     kind: Literal["llm", "embedding"]
-    source: Literal["environment", "stored", "llm", "none"]
+    source: Literal["environment", "stored", "keyring", "llm", "none"]
     configured: bool
     usable: bool
     needs_reentry: bool = False
@@ -150,7 +150,10 @@ class SessionCreateRequest(BaseModel):
 class SessionPatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     llm: dict[str, Any] | None = None
+    embedding: dict[str, Any] | None = None
     runner: dict[str, Any] | None = None
+    mcp: dict[str, Any] | None = None
+    tools: dict[str, Any] | None = None
 
 
 class SessionMessageRequest(BaseModel):

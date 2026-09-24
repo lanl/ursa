@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import ursa.cli.config as config_mod
 
@@ -526,12 +527,51 @@ def test_ursa_config_merges_multiple_embedding_model_layers():
             }
         },
     )
-
     assert isinstance(merged.emb_model, config_mod.EmbModelConfig)
     assert merged.emb_model.model == "nomic-embed-text:latest"
     assert merged.emb_model.model_provider == "ollama"
     assert merged.emb_model.base_url == "http://localhost:11434"
     assert merged.emb_model.inference_provider is None
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"emb_model": None}, config_mod.UrsaConfig(emb_model=None)],
+    ids=["mapping", "config"],
+)
+def test_ursa_config_merge_can_disable_embedding_model(override):
+    original = config_mod.UrsaConfig(
+        emb_model={"model": "openai:original-embedding", "dimensions": 128}
+    )
+
+    merged = original.model_merge(override)
+
+    assert merged.emb_model is None
+    assert "emb_model" in merged.model_fields_set
+    assert merged.model_dump(exclude_unset=True)["emb_model"] is None
+    assert original.emb_model.model == "original-embedding"
+    assert original.emb_model.dimensions == 128
+
+
+def test_ursa_config_merge_can_reenable_embedding_after_explicit_null():
+    original = config_mod.UrsaConfig(
+        emb_model={"model": "openai:original-embedding", "dimensions": 128}
+    )
+
+    merged = original.model_merge(
+        {"emb_model": None},
+        {"emb_model": {"model": "openai:replacement-embedding"}},
+    )
+
+    assert merged.emb_model.model == "replacement-embedding"
+    assert "dimensions" not in merged.emb_model.model_extra
+
+
+def test_ursa_config_merge_rejects_null_for_required_llm_model():
+    with pytest.raises(ValidationError) as exc_info:
+        config_mod.UrsaConfig().model_merge({"llm_model": None})
+
+    assert exc_info.value.errors()[0]["loc"] == ("llm_model",)
 
 
 def test_ursa_config_deep_merges_mapping_field():

@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from ursa.cli.config import UrsaConfig, resolve_ursa_config
+from ursa.cli.config import (
+    UrsaConfig,
+    deep_interp_env,
+    load_config_file,
+    resolve_ursa_config,
+    system_config_paths,
+)
 from ursa.security import enforce_group_base_url_policy
+from ursa.util.crossplatform import user_config_paths
 
-from .credentials import assert_no_raw_api_key
+from .credentials import assert_no_raw_api_key, credential_target
 from .storage import read_json, utc_now, write_json
 
 
@@ -21,8 +29,9 @@ def _qualified_model_name(model_config) -> str:
 
 
 class LLMSettings(BaseModel):
-    model: str = "openai:gpt-5.2"
+    model: str = "openai:gpt-5.5"
     base_url: str | None = None
+    inference_provider: str | None = None
 
     # Security: settings contain only a credential source/reference. Stored
     # keys live in the OS credential store; environment variables remain an
@@ -31,7 +40,10 @@ class LLMSettings(BaseModel):
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the LLM API key (the secret is not stored).",
     )
-    credential_source: Literal["environment", "stored", "none"] = "stored"
+    credential_source: Literal["environment", "stored", "keyring", "none"] = (
+        "stored"
+    )
+    api_key_keyring: str | None = None
     credential_id: str | None = None
     credential_target: str | None = None
 
@@ -104,13 +116,15 @@ class EmbeddingSettings(BaseModel):
 
     model: str | None = None
     base_url: str | None = None
+    inference_provider: str | None = None
     api_key_env: str | None = Field(
         default="OPENAI_API_KEY",
         description="Name of the environment variable that contains the embedding API key (the secret is not stored).",
     )
-    credential_source: Literal["environment", "stored", "llm", "none"] = (
-        "stored"
-    )
+    credential_source: Literal[
+        "environment", "stored", "keyring", "llm", "none"
+    ] = "stored"
+    api_key_keyring: str | None = None
     credential_id: str | None = None
     credential_target: str | None = None
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
@@ -158,6 +172,7 @@ class ToolSettings(BaseModel):
 class UISettings(BaseModel):
     theme: str = "system"  # e.g. dark/light mode
     stdout_buffer_lines: int = Field(default=20_000, ge=5_000, le=100_000_000)
+    walkthrough_seen: bool = False
 
 
 class GlobalSettings(BaseModel):
@@ -170,6 +185,246 @@ class GlobalSettings(BaseModel):
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     tools: ToolSettings = Field(default_factory=ToolSettings)
     ui: UISettings = Field(default_factory=UISettings)
+
+
+def dashboard_environment_config_layer() -> dict[str, Any]:
+    """Return sparse standard URSA environment-variable overrides."""
+    from ursa.cli import build_parser
+
+    parsed = build_parser().parse_args(args=[], defaults=False)
+    values = parsed.as_dict()
+    return {
+        key: deepcopy(value)
+        for key, value in values.items()
+        if key in UrsaConfig.model_fields
+    }
+
+
+def _dashboard_settings_config_layer(
+    settings: GlobalSettings,
+) -> dict[str, Any]:
+    """Translate the dashboard-owned model settings into an URSA layer."""
+
+    def model_layer(config: LLMSettings | EmbeddingSettings) -> dict[str, Any]:
+        model = str(config.model or "").strip()
+        values: dict[str, Any] = {
+            "model": model,
+            **deepcopy(config.model_kwargs),
+        }
+        values["inference_provider"] = config.inference_provider
+        if not config.inference_provider and config.base_url:
+            values["base_url"] = config.base_url
+        if config.credential_source == "environment" and config.api_key_env:
+            values["api_key"] = {"env": config.api_key_env}
+        elif config.credential_source == "keyring" and config.api_key_keyring:
+            values["api_key"] = {"keyring": config.api_key_keyring}
+        return values
+
+    layer: dict[str, Any] = {
+        "llm_model": model_layer(settings.llm),
+        "mcp_servers": deepcopy(settings.mcp.servers),
+        "rag_tools": list(settings.tools.rag_tools),
+    }
+    layer["emb_model"] = (
+        model_layer(settings.embedding) if settings.embedding.model else None
+    )
+    return layer
+
+
+def _resolve_dashboard_model_config(
+    config: UrsaConfig, *, group: str
+) -> UrsaConfig:
+    """Resolve model/provider inheritance without creating a CLI workspace."""
+    providers = {
+        name: provider.resolve(name)
+        for name, provider in config.inference_providers.items()
+    }
+
+    def resolve_model(model):
+        if model is None:
+            return None
+        if model.inference_provider is not None:
+            # A higher-precedence named provider clears a lower direct URL.
+            # Do not let that cleared lower field block provider inheritance.
+            model = model.model_copy()
+            model.__pydantic_fields_set__ = model.model_fields_set - {
+                "base_url"
+            }
+        return model.resolve_inference_provider(providers)
+
+    llm = resolve_model(config.llm_model)
+    embedding = (
+        resolve_model(config.emb_model)
+        if config.emb_model is not None
+        else None
+    )
+    enforce_group_base_url_policy(llm.base_url, group)
+    if embedding is not None:
+        enforce_group_base_url_policy(embedding.base_url, group)
+    return config.model_copy(
+        update={
+            "group": group,
+            "inference_providers": providers,
+            "llm_model": llm,
+            "emb_model": embedding,
+        }
+    )
+
+
+def _apply_ursa_models_to_dashboard_settings(
+    settings: GlobalSettings, config: UrsaConfig
+) -> GlobalSettings:
+    """Overlay effective URSA model values without persisting secrets."""
+    data = settings.model_dump(mode="python")
+
+    def apply_model(
+        section: dict[str, Any], model_config, *, embedding: bool
+    ) -> None:
+        section["model"] = _qualified_model_name(model_config)
+        section["base_url"] = model_config.base_url
+        section["inference_provider"] = model_config.inference_provider
+        kwargs = deepcopy(model_config.model_extra or {})
+        if not embedding and model_config.max_completion_tokens is not None:
+            kwargs["max_completion_tokens"] = model_config.max_completion_tokens
+        section["model_kwargs"] = kwargs
+        if model_config.api_key_env:
+            section["api_key_env"] = model_config.api_key_env
+            section["credential_source"] = "environment"
+            section["credential_id"] = None
+            section["credential_target"] = None
+            section["api_key_keyring"] = None
+        elif getattr(model_config.api_key, "keyring", None):
+            section["credential_source"] = "keyring"
+            section["api_key_env"] = None
+            section["api_key_keyring"] = model_config.api_key.keyring
+            section["credential_id"] = None
+            section["credential_target"] = credential_target(section)
+        elif (
+            "api_key" in model_config.model_fields_set
+            and model_config.api_key is None
+        ):
+            section["credential_source"] = "none"
+            section["api_key_env"] = None
+            section["api_key_keyring"] = None
+            section["credential_id"] = None
+            section["credential_target"] = None
+
+    apply_model(data["llm"], config.llm_model, embedding=False)
+    if config.emb_model is None:
+        data["embedding"]["model"] = None
+        data["embedding"]["base_url"] = None
+        data["embedding"]["inference_provider"] = None
+        data["embedding"]["model_kwargs"] = {}
+    else:
+        apply_model(data["embedding"], config.emb_model, embedding=True)
+    config_dump = config.model_dump(
+        mode="json", context={"include_defaults": False}
+    )
+    data["mcp"]["servers"] = config_dump.get("mcp_servers") or {}
+    data["tools"]["rag_tools"] = list(config.rag_tools or [])
+    return GlobalSettings.model_validate(data)
+
+
+class DashboardConfigResolver:
+    """Resolve dashboard settings in the normal URSA precedence hierarchy."""
+
+    def __init__(
+        self,
+        *,
+        group: str,
+        explicit_config: str | Path | None = None,
+    ) -> None:
+        self.group = group
+        explicit_path = (
+            Path(explicit_config).expanduser()
+            if explicit_config is not None
+            else None
+        )
+        self.explicit_path = explicit_path
+
+        def load_existing(paths: list[Path]) -> list[dict[str, Any]]:
+            return [
+                load_config_file(path.expanduser())
+                for path in paths
+                if path.expanduser() != explicit_path
+                and path.expanduser().is_file()
+            ]
+
+        self.system_layers = load_existing(system_config_paths())
+        self.user_layers = load_existing(user_config_paths())
+        self.environment_layer = dashboard_environment_config_layer()
+        self.explicit_layer = (
+            load_config_file(explicit_path)
+            if explicit_path is not None
+            else None
+        )
+
+    def resolve(
+        self,
+        settings: GlobalSettings,
+        *,
+        user_override: tuple[Path, dict[str, Any]] | None = None,
+    ) -> tuple[GlobalSettings, UrsaConfig]:
+        user_layers = self.user_layers
+        explicit_layer = self.explicit_layer
+        if user_override:
+            path, data = user_override
+            data = deep_interp_env(data)
+            user_layers = [
+                deepcopy(data)
+                if item.expanduser() == path
+                else load_config_file(item.expanduser())
+                for item in user_config_paths()
+                if item.expanduser() != self.explicit_path
+                and (item.expanduser() == path or item.expanduser().is_file())
+            ]
+            if path == self.explicit_path:
+                explicit_layer = data
+        layers = [
+            *self.system_layers,
+            _dashboard_settings_config_layer(settings),
+            *user_layers,
+            self.environment_layer,
+        ]
+        if explicit_layer is not None:
+            layers.append(explicit_layer)
+        # Selecting a named provider in a higher layer selects that provider's
+        # credential too; a stale dashboard env/keyring reference must not win.
+        catalog = (
+            UrsaConfig()
+            .model_merge(*[
+                {"inference_providers": layer["inference_providers"]}
+                for layer in layers
+                if "inference_providers" in layer
+            ])
+            .inference_providers
+        )
+        layers = deepcopy(layers)
+        for layer in layers:
+            for name in ("llm_model", "emb_model"):
+                model = layer.get(name)
+                if (
+                    isinstance(model, dict)
+                    and model.get("inference_provider")
+                    and "api_key" not in model
+                    and "api_key_env" not in model
+                ):
+                    provider = catalog.get(model["inference_provider"])
+                    if provider is not None:
+                        model["api_key"] = provider.resolve(
+                            model["inference_provider"]
+                        ).api_key
+        # Merge every sparse source before validating. A lower-priority
+        # dashboard preference may legitimately reference a provider declared
+        # by a later user, environment, or launch layer. UrsaConfig.model_merge
+        # also treats an explicit ``emb_model: null`` as a replacement, so the
+        # dashboard can disable an embedding model inherited from the system
+        # configuration without validating incomplete intermediate states.
+        config = UrsaConfig().model_merge(*layers)
+        config = _resolve_dashboard_model_config(config, group=self.group)
+        return _apply_ursa_models_to_dashboard_settings(
+            settings, config
+        ), config
 
 
 def dashboard_llm_patch_from_ursa_config(
@@ -223,6 +478,8 @@ def dashboard_llm_patch_from_ursa_config(
     llm_api_key_env = llm_cfg.api_key_env
 
     patch: dict[str, Any] = {"model": _qualified_model_name(llm_cfg)}
+    if llm_cfg.inference_provider is not None:
+        patch["inference_provider"] = llm_cfg.inference_provider
     if llm_cfg.base_url is not None:
         patch["base_url"] = llm_cfg.base_url
     if llm_api_key_env is not None:
@@ -266,6 +523,8 @@ def dashboard_llm_patch_from_ursa_config(
     if emb_cfg is not None:
         emb_api_key_env = emb_cfg.api_key_env
         emb_patch: dict[str, Any] = {"model": _qualified_model_name(emb_cfg)}
+        if emb_cfg.inference_provider is not None:
+            emb_patch["inference_provider"] = emb_cfg.inference_provider
         if emb_cfg.base_url is not None:
             emb_patch["base_url"] = emb_cfg.base_url
         if emb_api_key_env is not None:

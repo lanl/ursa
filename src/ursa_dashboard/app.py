@@ -11,6 +11,7 @@ import os
 import platform
 import shutil
 import subprocess
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -61,6 +62,11 @@ from ursa.rag.persistence import (
     rag_agent_dir,
 )
 from ursa.security import GroupBaseURLPolicyError, enforce_group_base_url_policy
+from ursa.util.inference_providers import (
+    list_provider_models,
+    model_listing_provider,
+    sort_provider_models,
+)
 
 from .api_models import (
     CredentialSetRequest,
@@ -102,6 +108,7 @@ from .credentials import (
     credential_id,
     credential_status,
     credential_target,
+    session_credential_id,
     store_api_key,
 )
 from .environment_run_manager import (
@@ -118,6 +125,12 @@ from .environment_run_ui import (
     render_environment_runs_page,
 )
 from .models import AgentListResponse
+from .onboarding_ui import (
+    CONFIG_EDITOR_HTML,
+    ONBOARDING_CSS,
+    ONBOARDING_HTML,
+    ONBOARDING_JS,
+)
 from .registry import REGISTRY
 from .run_manager import RunManager
 from .security import WorkspaceJailError, safe_join
@@ -150,9 +163,19 @@ from .sessions import (
 )
 from .settings import (
     AuthConfig,
+    DashboardConfigResolver,
+    EmbeddingSettings,
+    LLMSettings,
+    MCPSettings,
     SettingsStore,
-    apply_dashboard_config,
+    ToolSettings,
     merge_global_settings_patch,
+)
+from .user_config import (
+    ConfigConflictError,
+    UserConfigEdit,
+    UserConfigStore,
+    probe_model,
 )
 
 
@@ -225,10 +248,20 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     dashboard_config = str(
         os.environ.get("URSA_DASHBOARD_CONFIG", "") or ""
     ).strip()
-    if dashboard_config:
-        apply_dashboard_config(
-            settings_store, dashboard_config, group=dashboard_group
-        )
+    config_resolver = DashboardConfigResolver(
+        group=dashboard_group,
+        explicit_config=dashboard_config or None,
+    )
+
+    def _effective_settings():
+        return config_resolver.resolve(settings_store.load())[0]
+
+    provider_ursa_config = config_resolver.resolve(settings_store.load())[1]
+    inference_providers = dict(provider_ursa_config.inference_providers)
+    user_config_store = UserConfigStore(
+        group=dashboard_group,
+        credential_store=KeyringCredentialStore(service_name="ursa"),
+    )
 
     dashboard_use_web = str(
         os.environ.get("URSA_DASHBOARD_USE_WEB", "")
@@ -256,14 +289,19 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     def _agent_init_with_dashboard_defaults(
-        agent_id: str, agent_init: dict[str, Any] | None
+        agent_id: str,
+        agent_init: dict[str, Any] | None,
+        tools_settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         out = dict(agent_init or {})
         if agent_id in web_opt_in_agent_ids:
             out.setdefault("use_web", dashboard_use_web)
         if agent_id in rag_tool_agent_ids:
-            settings_tools = settings_store.load().tools
-            configured = list(settings_tools.rag_tools or [])
+            configured = list(
+                ((tools_settings or {}).get("rag_tools") or [])
+                if tools_settings is not None
+                else (_effective_settings().tools.rag_tools or [])
+            )
             explicit = out.get("rag_tools", None)
             if explicit is None:
                 out["rag_tools"] = configured
@@ -282,7 +320,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             )
         await rm.start()
         await environment_rm.start()
-        settings = settings_store.load()
+        settings = _effective_settings()
         try:
             enforce_group_base_url_policy(
                 (
@@ -362,6 +400,19 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                     merged[key] = value
         return merged
 
+    def _merge_settings_layers(
+        *dicts: dict[str, Any] | None,
+        replace_keys: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        merged = _deep_merge_dicts(*dicts)
+        for obj in dicts:
+            if not isinstance(obj, dict):
+                continue
+            for key in replace_keys:
+                if key in obj:
+                    merged[key] = deepcopy(obj[key])
+        return merged
+
     def _session_settings_patch(req: SessionPatchRequest) -> dict[str, Any]:
         patch: dict[str, Any] = {}
         if req.title is not None:
@@ -377,13 +428,275 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                     status_code=400, detail="llm must be an object"
                 )
             patch["llm"] = req.llm
+        if req.embedding is not None:
+            if not isinstance(req.embedding, dict):
+                raise HTTPException(
+                    status_code=400, detail="embedding must be an object"
+                )
+            patch["embedding"] = req.embedding
         if req.runner is not None:
             if not isinstance(req.runner, dict):
                 raise HTTPException(
                     status_code=400, detail="runner must be an object"
                 )
             patch["runner"] = req.runner
+        if req.mcp is not None:
+            if not isinstance(req.mcp, dict):
+                raise HTTPException(
+                    status_code=400, detail="mcp must be an object"
+                )
+            patch["mcp"] = req.mcp
+        if req.tools is not None:
+            if not isinstance(req.tools, dict):
+                raise HTTPException(
+                    status_code=400, detail="tools must be an object"
+                )
+            patch["tools"] = req.tools
         return patch
+
+    def _provider_api_key_env(provider: Any) -> str | None:
+        reference = getattr(provider, "api_key", None)
+        env_name = getattr(reference, "env", None)
+        return str(env_name).strip() if env_name else None
+
+    def _provider_listing_config(name: str, provider: Any) -> Any:
+        """Give model discovery the protocol implied by configured models."""
+        if getattr(provider, "model_provider", None):
+            return provider
+        model_provider = next(
+            (
+                model.model_provider
+                for model in (
+                    provider_ursa_config.llm_model,
+                    provider_ursa_config.emb_model,
+                )
+                if model is not None
+                and model.inference_provider == name
+                and model.model_provider
+            ),
+            None,
+        )
+        if model_provider is None:
+            model_provider = {
+                "anthropic": "anthropic",
+                "azure": "azure_openai",
+                "azure_openai": "azure_openai",
+                "google": "google_genai",
+                "google_genai": "google_genai",
+                "ollama": "ollama",
+                "openai": "openai",
+            }.get(name.strip().lower())
+        if model_provider is None:
+            return provider
+        return provider.model_copy(update={"model_provider": model_provider})
+
+    def _provider_descriptor(name: str, provider: Any) -> dict[str, Any]:
+        reference = getattr(provider, "api_key", None)
+        api_key_env = _provider_api_key_env(provider)
+        if api_key_env:
+            credential_source = "environment"
+        elif getattr(reference, "keyring", None) not in {None, False}:
+            credential_source = "keyring"
+        elif reference is not None:
+            credential_source = "configured"
+        else:
+            credential_source = "none"
+        base_url = getattr(provider, "base_url", None)
+        allowed = True
+        policy_error = None
+        try:
+            enforce_group_base_url_policy(base_url, dashboard_group)
+        except GroupBaseURLPolicyError as exc:
+            allowed = False
+            policy_error = str(exc)
+        return {
+            "name": name,
+            "base_url": base_url,
+            "model_provider": model_listing_provider(
+                _provider_listing_config(name, provider)
+            ),
+            "credential_source": credential_source,
+            "api_key_env": api_key_env,
+            "allowed": allowed,
+            "policy_error": policy_error,
+        }
+
+    def _canonicalize_inference_provider_patch(
+        section_patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        if "inference_provider" not in section_patch:
+            return dict(section_patch)
+        canonical = dict(section_patch)
+        provider_name = str(canonical.get("inference_provider") or "").strip()
+        canonical["inference_provider"] = provider_name or None
+        if not provider_name:
+            return canonical
+        provider = inference_providers.get(provider_name)
+        if provider is None:
+            raise ValueError(
+                f"Unknown inference provider '{provider_name}'. "
+                "Choose a provider from the current URSA configuration."
+            )
+        base_url = getattr(provider, "base_url", None)
+        enforce_group_base_url_policy(base_url, dashboard_group)
+        canonical["base_url"] = base_url
+        api_key_env = _provider_api_key_env(provider)
+        if api_key_env:
+            canonical["api_key_env"] = api_key_env
+            canonical.setdefault("credential_source", "environment")
+        elif getattr(getattr(provider, "api_key", None), "keyring", None):
+            if canonical.get("credential_source", "keyring") == "keyring":
+                canonical["credential_source"] = "keyring"
+                canonical["api_key_keyring"] = provider.api_key.keyring
+                canonical["credential_target"] = credential_target(canonical)
+                canonical["api_key_env"] = None
+        return canonical
+
+    @app.get("/user-config", dependencies=[Depends(require_auth)])
+    def get_user_config(response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            result = user_config_store.describe()
+            result["higher_priority_config"] = bool(
+                config_resolver.explicit_layer
+                or config_resolver.environment_layer
+            )
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not read the user config. Check its YAML and file permissions.",
+            ) from exc
+
+    @app.put("/user-config", dependencies=[Depends(require_auth)])
+    def update_user_config(
+        req: UserConfigEdit, request: Request, response: Response
+    ) -> dict[str, Any]:
+        nonlocal config_resolver, provider_ursa_config, inference_providers
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        try:
+
+            def validate(data):
+                return config_resolver.resolve(
+                    settings_store.load(),
+                    user_override=(user_config_store.path, data),
+                )
+
+            result = user_config_store.save(req, validate)
+            config_resolver = DashboardConfigResolver(
+                group=dashboard_group, explicit_config=dashboard_config or None
+            )
+            provider_ursa_config = config_resolver.resolve(
+                settings_store.load()
+            )[1]
+            inference_providers = dict(provider_ursa_config.inference_providers)
+            result["settings"] = _effective_settings().model_dump(mode="json")
+            return result
+        except ConfigConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ValueError, CredentialStoreError, OSError) as exc:
+            # Config validation errors may include literal credentials from an
+            # older file. Do not reflect that input into a browser response.
+            from pydantic import ValidationError
+
+            detail = (
+                "Invalid configuration. Check provider names, models, and model options."
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            )
+            raise HTTPException(status_code=400, detail=detail) from exc
+
+    @app.post("/user-config/test", dependencies=[Depends(require_auth)])
+    async def test_user_config(
+        req: UserConfigEdit,
+        request: Request,
+        response: Response,
+        kind: str = Query(default="chat", pattern="^(chat|embedding)$"),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        try:
+            data, pending = user_config_store.prepare(req)
+            _settings, config = config_resolver.resolve(
+                settings_store.load(),
+                user_override=(user_config_store.path, data),
+            )
+            from pydantic import SecretStr
+
+            for model in (config.llm_model, config.emb_model):
+                if model is not None:
+                    ref = getattr(model.api_key, "keyring", None)
+                    if ref in pending:
+                        model.api_key = SecretStr(pending[ref])
+                    enforce_group_base_url_policy(
+                        model.base_url, dashboard_group
+                    )
+            await asyncio.wait_for(probe_model(config, kind), timeout=35)
+            model = config.llm_model if kind == "chat" else config.emb_model
+            return {
+                "ok": True,
+                "model": model.model,
+                "message": "The model responded successfully.",
+            }
+        except ConfigConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="The model test failed. Check the endpoint, model name, API key, and model options. No settings were saved.",
+            ) from exc
+
+    @app.post("/user-config/models", dependencies=[Depends(require_auth)])
+    async def list_user_config_models(
+        req: UserConfigEdit,
+        request: Request,
+        response: Response,
+        kind: str = Query(default="chat", pattern="^(chat|embedding)$"),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        try:
+            data, pending = user_config_store.prepare(req)
+            _settings, config = config_resolver.resolve(
+                settings_store.load(),
+                user_override=(user_config_store.path, data),
+            )
+            model = config.llm_model if kind == "chat" else config.emb_model
+            if model is None:
+                raise ValueError("No embedding model selected")
+            from pydantic import SecretStr
+
+            ref = getattr(model.api_key, "keyring", None)
+            if ref in pending:
+                model.api_key = SecretStr(pending[ref])
+            enforce_group_base_url_policy(model.base_url, dashboard_group)
+            provider = config.inference_providers.get(model.inference_provider)
+            protocol = getattr(provider, "model_provider", None)
+            if protocol:
+                # Discovery follows the edited endpoint API type even while
+                # the form still contains the previous provider's model name.
+                model = model.model_copy(update={"model_provider": protocol})
+            models = await asyncio.wait_for(
+                asyncio.to_thread(list_provider_models, model), timeout=15
+            )
+            return {
+                "models": [
+                    {
+                        "name": item.name,
+                        "qualified_name": f"{item.model_provider}:{item.name}"
+                        if item.model_provider
+                        and not item.name.startswith(f"{item.model_provider}:")
+                        else item.name,
+                    }
+                    for item in sort_provider_models(models, kind)[:2000]
+                ]
+            }
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not discover models. Check the endpoint and key, or enter a model name manually.",
+            ) from exc
 
     @app.get(
         "/settings",
@@ -391,7 +704,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def get_settings() -> SettingsResponse:
-        s = settings_store.load()
+        s = _effective_settings()
         return SettingsResponse(settings=s.model_dump(mode="json"))
 
     @app.patch(
@@ -400,8 +713,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def patch_settings(req: SettingsPatchRequest) -> SettingsResponse:
+        patch_obj = dict(req.patch)
         for section in ("llm", "embedding"):
-            section_patch = req.patch.get(section)
+            section_patch = patch_obj.get(section)
             if isinstance(section_patch, dict):
                 try:
                     assert_no_raw_api_key(
@@ -412,25 +726,104 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                     )
                 except CredentialConfigurationError as e:
                     raise HTTPException(status_code=400, detail=str(e)) from e
+                try:
+                    patch_obj[section] = _canonicalize_inference_provider_patch(
+                        section_patch
+                    )
+                except (GroupBaseURLPolicyError, ValueError) as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
 
         try:
-            s = merge_global_settings_patch(settings_store.load(), req.patch)
-            enforce_group_base_url_policy(s.llm.base_url, dashboard_group)
-            if s.embedding.model:
+            stored = merge_global_settings_patch(
+                settings_store.load(), patch_obj
+            )
+            effective = config_resolver.resolve(stored)[0]
+            enforce_group_base_url_policy(
+                effective.llm.base_url, dashboard_group
+            )
+            if effective.embedding.model:
                 enforce_group_base_url_policy(
-                    s.embedding.base_url, dashboard_group
+                    effective.embedding.base_url, dashboard_group
                 )
         except (GroupBaseURLPolicyError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        settings_store.save(s)
-        return SettingsResponse(settings=s.model_dump(mode="json"))
+        settings_store.save(stored)
+        return SettingsResponse(settings=effective.model_dump(mode="json"))
+
+    @app.get(
+        "/inference-providers",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_inference_providers(response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "providers": [
+                _provider_descriptor(name, provider)
+                for name, provider in sorted(inference_providers.items())
+            ]
+        }
+
+    @app.get(
+        "/inference-provider-models",
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_inference_provider_models(
+        response: Response,
+        provider: str = Query(min_length=1, max_length=256),
+        kind: str = Query(default="chat", pattern="^(chat|embedding)$"),
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        provider_config = inference_providers.get(provider)
+        if provider_config is None:
+            raise HTTPException(
+                status_code=404, detail="Inference provider not found"
+            )
+        try:
+            enforce_group_base_url_policy(
+                getattr(provider_config, "base_url", None), dashboard_group
+            )
+            provider_config = _provider_listing_config(
+                provider, provider_config
+            )
+            models = await asyncio.wait_for(
+                asyncio.to_thread(list_provider_models, provider_config),
+                timeout=15,
+            )
+        except (GroupBaseURLPolicyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Model discovery for '{provider}' timed out.",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Unable to list models for '{provider}': {exc}",
+            ) from exc
+        sorted_models = sort_provider_models(models, kind)
+        items = []
+        for model in sorted_models[:2000]:
+            qualified_name = model.name
+            if model.model_provider and not qualified_name.startswith(
+                f"{model.model_provider}:"
+            ):
+                qualified_name = f"{model.model_provider}:{qualified_name}"
+            items.append({
+                "name": model.name,
+                "qualified_name": qualified_name,
+                "model_provider": model.model_provider,
+                "type": model.type,
+            })
+        return {"provider": provider, "kind": kind, "models": items}
 
     def _credential_config(
         kind: CredentialKind,
     ) -> tuple[Any, dict[str, Any]]:
-        settings = settings_store.load()
-        config = getattr(settings, kind)
-        return settings, config.model_dump(mode="json")
+        stored = settings_store.load()
+        effective = config_resolver.resolve(stored)[0]
+        config = getattr(effective, kind)
+        return stored, config.model_dump(mode="json")
 
     def _require_safe_credential_request(request: Request) -> None:
         if auth.mode == "remote" and request.url.scheme != "https":
@@ -506,7 +899,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
                 target=target,
                 value=value,
             )
-            updated = config | {
+            stored_config = getattr(settings, kind).model_dump(mode="json")
+            updated = stored_config | {
                 "credential_source": "stored",
                 "credential_id": secret_id,
                 "credential_target": target,
@@ -538,7 +932,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         settings, config = _credential_config(kind)
         try:
             credential_store.delete_secret(credential_id(dashboard_group, kind))
-            updated = config | {
+            stored_config = getattr(settings, kind).model_dump(mode="json")
+            updated = stored_config | {
                 "credential_source": "none",
                 "credential_id": None,
                 "credential_target": None,
@@ -548,6 +943,158 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         except (CredentialStoreError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return _credential_status_response(kind)
+
+    def _session_credential_config(
+        session_id: str, kind: CredentialKind
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        try:
+            session = session_read_session(rm.dashboard_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+        global_config = getattr(_effective_settings(), kind).model_dump(
+            mode="json"
+        )
+        config = _merge_settings_layers(
+            global_config,
+            session.get(kind) or {},
+            replace_keys=("model_kwargs",),
+        )
+        return session, config
+
+    def _session_credential_status_response(
+        session_id: str, kind: CredentialKind
+    ) -> CredentialStatusResponse:
+        _session, config = _session_credential_config(session_id, kind)
+
+        def status_credential_id(
+            credential_config: dict[str, Any], credential_kind: CredentialKind
+        ) -> str:
+            global_id = credential_id(dashboard_group, credential_kind)
+            if credential_config.get("credential_id") == global_id:
+                return global_id
+            return session_credential_id(
+                dashboard_group, session_id, credential_kind
+            )
+
+        llm_config = (
+            config
+            if kind == "llm"
+            else _session_credential_config(session_id, "llm")[1]
+        )
+        try:
+            status = credential_status(
+                config,
+                group=dashboard_group,
+                kind=kind,
+                store=credential_store,
+                stored_credential_id=status_credential_id(config, kind),
+                llm_stored_credential_id=status_credential_id(
+                    llm_config, "llm"
+                ),
+            )
+        except (CredentialStoreError, CredentialConfigurationError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        return CredentialStatusResponse.model_validate(status)
+
+    @app.get(
+        "/sessions/{session_id}/credentials/status",
+        dependencies=[Depends(require_auth)],
+    )
+    def get_session_credential_statuses(
+        session_id: str, response: Response
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            kind: _session_credential_status_response(
+                session_id, kind
+            ).model_dump(mode="json")
+            for kind in ("llm", "embedding")
+        }
+
+    @app.put(
+        "/sessions/{session_id}/credentials/{kind}",
+        response_model=CredentialStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    def set_session_credential(
+        session_id: str,
+        kind: CredentialKind,
+        req: CredentialSetRequest,
+        request: Request,
+        response: Response,
+    ) -> CredentialStatusResponse:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        value = req.api_key.get_secret_value()
+        if not value.strip():
+            raise HTTPException(status_code=400, detail="API key is empty")
+        if len(value) > 65_536:
+            raise HTTPException(status_code=400, detail="API key is too large")
+
+        session, config = _session_credential_config(session_id, kind)
+        try:
+            if kind == "llm" or config.get("model"):
+                enforce_group_base_url_policy(
+                    config.get("base_url"), dashboard_group
+                )
+            secret_id = session_credential_id(dashboard_group, session_id, kind)
+            target = credential_target(config)
+            store_api_key(
+                credential_store,
+                credential_id=secret_id,
+                target=target,
+                value=value,
+            )
+            section = dict(session.get(kind) or {})
+            section.update({
+                "credential_source": "stored",
+                "credential_id": secret_id,
+                "credential_target": target,
+            })
+            session_update_session(
+                rm.dashboard_root, session_id, {kind: section}
+            )
+        except (
+            CredentialStoreError,
+            CredentialConfigurationError,
+            GroupBaseURLPolicyError,
+            ValueError,
+        ) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        finally:
+            value = ""
+        return _session_credential_status_response(session_id, kind)
+
+    @app.delete(
+        "/sessions/{session_id}/credentials/{kind}",
+        response_model=CredentialStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    def delete_session_credential(
+        session_id: str,
+        kind: CredentialKind,
+        request: Request,
+        response: Response,
+    ) -> CredentialStatusResponse:
+        response.headers["Cache-Control"] = "no-store"
+        _require_safe_credential_request(request)
+        session, _config = _session_credential_config(session_id, kind)
+        try:
+            credential_store.delete_secret(
+                session_credential_id(dashboard_group, session_id, kind)
+            )
+            section = dict(session.get(kind) or {})
+            section.update({
+                "credential_source": "none",
+                "credential_id": None,
+                "credential_target": None,
+            })
+            session_update_session(
+                rm.dashboard_root, session_id, {kind: section}
+            )
+        except (CredentialStoreError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return _session_credential_status_response(session_id, kind)
 
     @app.get(
         "/rag-tools",
@@ -623,7 +1170,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             path=req.workspace_path,
             require_selection=True,
         )
-        settings_snapshot = settings_store.load().model_dump(mode="json")
+        settings_snapshot = _effective_settings().model_dump(mode="json")
         try:
             sess = session_create_session(
                 rm.dashboard_root,
@@ -645,7 +1192,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             sess["session_id"],
             {
                 "llm": settings_snapshot.get("llm") or {},
+                "embedding": settings_snapshot.get("embedding") or {},
                 "runner": settings_snapshot.get("runner") or {},
+                "mcp": settings_snapshot.get("mcp") or {},
+                "tools": settings_snapshot.get("tools") or {},
             },
         )
         return SessionDetail(session=sess, messages=[])
@@ -688,33 +1238,70 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail="No session changes provided"
             )
-        if "llm" in patch:
+        for section, settings_type in (
+            ("llm", LLMSettings),
+            ("embedding", EmbeddingSettings),
+        ):
+            if section not in patch:
+                continue
             try:
-                assert_no_raw_api_key(patch["llm"] or {}, context="session.llm")
+                assert_no_raw_api_key(
+                    patch[section] or {}, context=f"session.{section}"
+                )
                 assert_no_credential_metadata(
-                    patch["llm"] or {}, context="session.llm"
+                    patch[section] or {}, context=f"session.{section}"
                 )
             except CredentialConfigurationError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-            llm_patch = patch["llm"] or {}
-            merged_llm = _deep_merge_dicts(
-                existing_session.get("llm") or {}, llm_patch
+            try:
+                model_patch = _canonicalize_inference_provider_patch(
+                    patch[section] or {}
+                )
+            except (GroupBaseURLPolicyError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            merged_model = _deep_merge_dicts(
+                existing_session.get(section) or {}, model_patch
             )
-            if isinstance(llm_patch, dict) and "model_kwargs" in llm_patch:
+            if "model_kwargs" in model_patch:
                 # Treat model_kwargs as a replace-on-write object so users can
                 # remove keys from the JSON editor instead of keeping stale keys.
-                merged_llm["model_kwargs"] = llm_patch.get("model_kwargs") or {}
-            patch["llm"] = merged_llm
-            try:
-                enforce_group_base_url_policy(
-                    merged_llm.get("base_url"), dashboard_group
+                merged_model["model_kwargs"] = (
+                    model_patch.get("model_kwargs") or {}
                 )
-            except GroupBaseURLPolicyError as e:
+            try:
+                settings_type.model_validate(merged_model)
+                enforce_group_base_url_policy(
+                    merged_model.get("base_url"), dashboard_group
+                )
+            except (GroupBaseURLPolicyError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
+            patch[section] = merged_model
         if "runner" in patch:
             patch["runner"] = _deep_merge_dicts(
                 existing_session.get("runner") or {}, patch["runner"] or {}
             )
+        if "mcp" in patch:
+            merged_mcp = _deep_merge_dicts(
+                existing_session.get("mcp") or {}, patch["mcp"] or {}
+            )
+            if "servers" in (patch["mcp"] or {}):
+                merged_mcp["servers"] = patch["mcp"].get("servers") or {}
+            try:
+                MCPSettings.model_validate(merged_mcp)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            patch["mcp"] = merged_mcp
+        if "tools" in patch:
+            merged_tools = _deep_merge_dicts(
+                existing_session.get("tools") or {}, patch["tools"] or {}
+            )
+            try:
+                merged_tools = ToolSettings.model_validate(
+                    merged_tools
+                ).model_dump(mode="json")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            patch["tools"] = merged_tools
 
         sess2 = session_update_session(rm.dashboard_root, session_id, patch)
         msgs = session_read_messages(rm.dashboard_root, session_id, limit=200)
@@ -739,6 +1326,12 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+        for kind in ("llm", "embedding"):
+            with contextlib.suppress(CredentialStoreError, ValueError):
+                credential_store.delete_secret(
+                    session_credential_id(dashboard_group, session_id, kind)
+                )
 
         return Response(status_code=204)
 
@@ -790,15 +1383,31 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         prompt = build_prompt_from_messages(prior, new_user_text=req.text)
 
         # Merge global defaults, then per-session settings, then per-message overrides.
-        s = settings_store.load().model_dump(mode="json")
-        llm = _deep_merge_dicts(
-            s.get("llm") or {}, sess.get("llm") or {}, req.llm or {}
+        s = _effective_settings().model_dump(mode="json")
+        llm = _merge_settings_layers(
+            s.get("llm") or {},
+            sess.get("llm") or {},
+            req.llm or {},
+            replace_keys=("model_kwargs",),
         )
         runner = _deep_merge_dicts(
             s.get("runner") or {}, sess.get("runner") or {}, req.runner or {}
         )
-        embedding = s.get("embedding") or {}
-        mcp = s.get("mcp") or {}
+        embedding = _merge_settings_layers(
+            s.get("embedding") or {},
+            sess.get("embedding") or {},
+            replace_keys=("model_kwargs",),
+        )
+        mcp = _merge_settings_layers(
+            s.get("mcp") or {},
+            sess.get("mcp") or {},
+            replace_keys=("servers",),
+        )
+        tools = _merge_settings_layers(
+            s.get("tools") or {},
+            sess.get("tools") or {},
+            replace_keys=("rag_tools",),
+        )
 
         # Demo agents should work without external credentials.
         if agent_id.startswith("demo_") and "disabled" not in llm:
@@ -808,7 +1417,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         # not leave an unanswered user message in the transcript.
         try:
             await asyncio.to_thread(
-                rm.validate_credentials, llm=llm, embedding=embedding
+                rm.validate_credentials,
+                llm=llm,
+                embedding=embedding,
+                session_id=session_id,
             )
         except (CredentialConfigurationError, CredentialStoreError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -826,7 +1438,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         params.setdefault("prompt", prompt)
 
         agent_init = _agent_init_with_dashboard_defaults(
-            agent_id, req.agent_init
+            agent_id, req.agent_init, tools
         )
         if agent_name is not None:
             agent_init["agent_name"] = agent_name
@@ -949,7 +1561,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
         # Merge with global defaults (apply only if caller didn't provide)
-        s = settings_store.load().model_dump(mode="json")
+        s = _effective_settings().model_dump(mode="json")
         llm = _deep_merge_dicts(s.get("llm") or {}, req.llm or {})
         runner = _deep_merge_dicts(s.get("runner") or {}, req.runner or {})
         embedding = s.get("embedding") or {}
@@ -2523,22 +3135,77 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     logs: { stdout: '', stderr: '' },
     workspaceInfo: null,
 
-    // Panel visibility (left sidebar is always shown)
-    showChat: true,
-    showRunLogs: true,
-    showArtifacts: true,
+    // Panel visibility (left sidebar is always shown). Every dashboard load
+    // starts with the work panels closed so the welcome screen can orient users.
+    showChat: false,
+    showRunLogs: false,
+    showArtifacts: false,
 
     settings: null,
     credentialStatuses: {},
+    inferenceProviders: [],
+    _modelCatalogGeneration: { llm: 0, embedding: 0 },
     _settingsMode: 'global',
     _settingsSessionId: null,
     _settingsSessionTitle: '',
     _openSessionMenu: null,
+    _sessionCreateMenuOpen: false,
     _renderTimers: { stdout: null, stderr: null },
     _logToken: 0,
     _followLogs: { stdout: true, stderr: true },
     _pendingWhilePaused: { stdout: false, stderr: false },
+    _welcomeTaskIndexes: {},
   };
+
+  // Add new examples here. The welcome screen chooses one task from each
+  // group on load; users can rotate the examples without leaving the page.
+  const WELCOME_TASK_LIBRARY = [
+    {
+      agentId: 'chat_agent',
+      label: 'Base',
+      purpose: 'Explore and explain',
+      tasks: [
+        {
+          title: 'Build intuition for Bayesian optimization',
+          prompt: 'Explain Expected Improvement and Upper Confidence Bound. Use one concrete optimization example, compare how the acquisition functions balance exploration and exploitation, and end with practical guidance about when to choose each one.'
+        },
+        {
+          title: 'Making a graph for a presentation',
+          prompt: 'Make a professional, clean PNG visualizing the spacings between the first 10,000 prime numbers. Include clear labels and a short Markdown note explaining the main patterns visible in the plot.'
+        }
+      ]
+    },
+    {
+      agentId: 'execution_agent',
+      label: 'Execute',
+      purpose: 'Analyze and create',
+      tasks: [
+        {
+          title: 'Benchmark coding algorithms',
+          prompt: 'Create a python function that finds the sum of the first N positive integers with a for loop. Time how long it takes to sum the first 10,000 and print the results to the console. Then add a new function that computes the same value using the built-in sum function, no loops. Compare the timing for these two methods on the first 100,000 integers, and check the results match. Finally, add a third function that uses a static formula the compute the same value. Compare the timing for all three methods on the first million integers, and check the results match.'
+        },
+        {
+          title: 'Compare EI and UCB experimentally',
+          prompt: 'Compare Expected Improvement and Upper Confidence Bound for optimizing the six-hump camel function and write a report summarizing the results. The report should include one professional, clean PNG image visualizing the results.'
+        }
+      ]
+    },
+    {
+      agentId: 'planning_executor_workflow',
+      label: 'Plan + Execute',
+      purpose: 'Plan a larger project',
+      tasks: [
+        {
+          title: 'Teach ML through a model comparison',
+          prompt: 'Download the Boston Housing Dataset and compare 5 different machine-learning predictors on hold-out prediction performance. Choose the models to make central ideas from machine learning clear to a student audience. Then write a presentation geared at an undergraduate audience using these results.'
+        },
+        {
+          title: 'Plan and deliver a reproducible data study',
+          prompt: 'Find a small public tabular dataset suitable for teaching classification. Plan and run a reproducible comparison of five models that illuminate different machine-learning ideas, then create an undergraduate-level presentation with a professional results visualization and clear takeaways.'
+        }
+      ]
+    }
+  ];
 
   function escHtml(s) {
     return String(s).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[c]));
@@ -2561,6 +3228,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   function savePref(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
   function loadPref(k, def=null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } }
 
+  function welcomeIsVisible() {
+    return !state.showChat && !state.showRunLogs && !state.showArtifacts;
+  }
+
   function applyPanelVisibility() {
     const app = $('.app');
     const left = $('#leftPanel');
@@ -2568,6 +3239,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const right = $('#rightPanel');
     const leftSplit = $('#leftSplitter');
     const rightSplit = $('#rightSplitter');
+    const welcome = $('#welcomePanel');
 
     const conv = $('#conversationSection');
     const run = $('#runSection');
@@ -2578,12 +3250,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const showRunLogs = !!state.showRunLogs;
     const showArtifacts = !!state.showArtifacts;
     const showMain = (showChat || showRunLogs);
+    const showWelcome = welcomeIsVisible();
 
     // Left sidebar is always visible.
     if (left) left.classList.toggle('hidden', false);
 
     if (main) main.classList.toggle('hidden', !showMain);
     if (right) right.classList.toggle('hidden', !showArtifacts);
+    if (welcome) welcome.classList.toggle('hidden', !showWelcome);
     if (app) app.classList.toggle('mainHidden', !showMain);
 
     if (conv) conv.classList.toggle('hidden', !showChat);
@@ -2609,7 +3283,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     // Splitters only make sense when both adjacent panels are visible.
-    if (leftSplit) leftSplit.classList.toggle('hidden', !showMain);
+    if (leftSplit) leftSplit.classList.toggle('hidden', !(showMain || showWelcome));
     if (rightSplit) rightSplit.classList.toggle('hidden', !showMain || !showArtifacts);
 
     // Keep stable labels and communicate visibility through pressed state.
@@ -2632,6 +3306,94 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     savePref('ursa.ui.showChat', showChat);
     savePref('ursa.ui.showRunLogs', showRunLogs);
     savePref('ursa.ui.showArtifacts', showArtifacts);
+  }
+
+  function selectedWelcomeTasks() {
+    return WELCOME_TASK_LIBRARY.map(group => {
+      const tasks = group.tasks || [];
+      if (!tasks.length) return null;
+      if (!Number.isInteger(state._welcomeTaskIndexes[group.agentId])) {
+        state._welcomeTaskIndexes[group.agentId] = Math.floor(Math.random() * tasks.length);
+      }
+      const index = state._welcomeTaskIndexes[group.agentId] % tasks.length;
+      return { ...group, ...tasks[index] };
+    }).filter(Boolean);
+  }
+
+  function rotateWelcomeTasks() {
+    for (const group of WELCOME_TASK_LIBRARY) {
+      const tasks = group.tasks || [];
+      if (tasks.length < 2) continue;
+      const current = Number.isInteger(state._welcomeTaskIndexes[group.agentId])
+        ? state._welcomeTaskIndexes[group.agentId]
+        : 0;
+      state._welcomeTaskIndexes[group.agentId] = (current + 1) % tasks.length;
+    }
+    renderWelcomeTasks();
+  }
+
+  function openComposerDraft(agentId, prompt) {
+    state.selectedComposerAgentId = String(agentId || '');
+    state.showChat = true;
+    applyPanelVisibility();
+    renderComposerAgentSelect();
+    const input = $('#messageInput');
+    if (input) {
+      input.value = String(prompt || '');
+      requestAnimationFrame(() => {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    }
+  }
+
+  async function useWelcomeTask(task) {
+    if (!task) return;
+    clearActiveSessionForDraft(task.agentId);
+    await startSession(task.agentId, '', { draftPrompt: task.prompt });
+  }
+
+  function renderWelcomeTasks() {
+    const list = $('#welcomeTaskList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    for (const task of selectedWelcomeTasks()) {
+      const agent = state.agentsById.get(task.agentId);
+      if (!agent) continue;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'welcomeTaskCard';
+      btn.title = `Start with ${agent.display_name || task.label}`;
+      btn.onclick = () => useWelcomeTask(task);
+
+      const meta = document.createElement('div');
+      meta.className = 'welcomeTaskMeta';
+      meta.innerHTML = `<span class="welcomeTaskAgent">${escHtml(task.label || agent.display_name)}</span><span>${escHtml(task.purpose)}</span>`;
+
+      const title = document.createElement('div');
+      title.className = 'welcomeTaskTitle';
+      title.textContent = task.title;
+
+      const prompt = document.createElement('div');
+      prompt.className = 'welcomeTaskPrompt';
+      prompt.textContent = task.prompt;
+
+      const action = document.createElement('div');
+      action.className = 'welcomeTaskAction';
+      action.innerHTML = '<span>Use this prompt</span><span aria-hidden="true">→</span>';
+
+      btn.appendChild(meta);
+      btn.appendChild(title);
+      btn.appendChild(prompt);
+      btn.appendChild(action);
+      list.appendChild(btn);
+    }
+
+    if (!list.children.length) {
+      list.innerHTML = '<div class="muted">Suggested tasks will appear when agents are available.</div>';
+    }
   }
 
   function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
@@ -3323,42 +4085,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     };
   }
 
-  function chooseNewSessionType() {
-    return new Promise((resolve) => {
-      const modal = $('#newSessionTypeModal');
-      const namedBtn = $('#newSessionNamedBtn');
-      const nonPersistentBtn = $('#newSessionNonPersistentBtn');
-      const closeBtn = $('#closeNewSessionTypeBtn');
-      const backdrop = $('#newSessionTypeBackdrop');
-      if (!modal || !namedBtn || !nonPersistentBtn || !closeBtn || !backdrop) {
-        resolve('nonpersistent');
-        return;
-      }
-
-      const cleanup = (choice) => {
-        modal.classList.remove('open');
-        namedBtn.onclick = null;
-        nonPersistentBtn.onclick = null;
-        closeBtn.onclick = null;
-        backdrop.onclick = null;
-        document.removeEventListener('keydown', onKeydown);
-        resolve(choice);
-      };
-
-      const onKeydown = (e) => {
-        if (e.key === 'Escape') cleanup(null);
-      };
-
-      namedBtn.onclick = () => cleanup('named');
-      nonPersistentBtn.onclick = () => cleanup('nonpersistent');
-      closeBtn.onclick = () => cleanup(null);
-      backdrop.onclick = () => cleanup(null);
-      document.addEventListener('keydown', onKeydown);
-      modal.classList.add('open');
-      namedBtn.focus();
-    });
-  }
-
   function chooseWorkspaceSelection({ title='Choose a workspace', currentPath='' } = {}) {
     return new Promise((resolve) => {
       const modal = $('#workspaceChoiceModal');
@@ -3427,116 +4153,133 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     });
   }
 
-  function renderAgents() {
-    const list = $('#agentList');
-    if (!list) return;
-    list.innerHTML = '';
+  function composerAgentId() {
+    return String(state.selectedComposerAgentId || 'chat_agent').trim() || 'chat_agent';
+  }
 
-    const groupPill = $('#dashboardGroupPill');
-    if (groupPill) groupPill.textContent = `Group: ${state.dashboardGroup || 'default'}`;
+  function composerBehaviorLabel(agent) {
+    const fullName = String(agent?.display_name || agent?.agent_id || '');
+    return fullName.replace(/\s+(Agent|Workflow)$/i, '');
+  }
 
-    const wrap = document.createElement('div');
-    wrap.className = 'sessionStartWrap';
+  function promptForPersistentAgentName() {
+    const name = prompt('Enter a name for the persistent agent');
+    if (name === null) return null;
+    const trimmed = String(name || '').trim();
+    if (!trimmed) {
+      alert('Agent name cannot be empty.');
+      return null;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
+      alert('Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number.');
+      return null;
+    }
+    return trimmed;
+  }
 
-    const form = document.createElement('div');
-    form.className = 'sessionStartOption';
-    form.innerHTML = `
-      <div class="sessionStartOptionTitle">New or temporary agent</div>
-      <!-- <div class="sessionStartOptionCopy">Create a named agent you can return to, or begin a non-persistent session.</div> -->
-      <div class="sessionStartOptionCopy"> </div>
-      <button class="btn sessionStartAction" id="createNewSessionBtn" type="button">Choose session type</button>
-    `;
-    wrap.appendChild(form);
+  function clearActiveSessionForDraft(agentId='chat_agent') {
+    state.activeSessionId = null;
+    state.activeSession = null;
+    state.workspaceInfo = null;
+    state.selectedComposerAgentId = state.agentsById.has(agentId)
+      ? agentId
+      : (state.agentsById.has('chat_agent') ? 'chat_agent' : state.agents[0]?.agent_id || '');
+    state._sessionCreateMenuOpen = false;
+    savePref('ursa.ui.activeSessionId', '');
+    clearArtifactPreview();
+    clearLogs();
+    renderSessions();
+    renderActiveSession();
+    renderWorkspace([]);
+  }
+
+  function openBlankComposer() {
+    clearActiveSessionForDraft('chat_agent');
+    state.showChat = true;
+    applyPanelVisibility();
+    renderComposerAgentSelect();
+    renderSessionCreateMenu();
+    requestAnimationFrame(() => $('#messageInput')?.focus());
+  }
+
+  function renderSessionCreateMenu() {
+    const button = $('#sessionCreateMenuBtn');
+    const menu = $('#sessionCreateMenu');
+    if (!button || !menu) return;
+
+    const hasSession = !!state.activeSessionId;
+    button.classList.toggle('hidden', hasSession);
+    button.setAttribute('aria-expanded', String(state._sessionCreateMenuOpen && !hasSession));
+    if (hasSession) state._sessionCreateMenuOpen = false;
+    menu.classList.toggle('open', state._sessionCreateMenuOpen && !hasSession);
+    menu.innerHTML = '';
+    if (hasSession) return;
+
+    const heading = document.createElement('div');
+    heading.className = 'sessionCreateMenuHead';
+    heading.innerHTML = `<strong>Persistent agents</strong><span>Using ${escHtml(composerBehaviorLabel(state.agentsById.get(composerAgentId())) || composerAgentId())}</span>`;
+    menu.appendChild(heading);
+
+    const persistent = document.createElement('button');
+    persistent.type = 'button';
+    persistent.className = 'sessionCreateOption';
+    persistent.innerHTML = '<span class="sessionCreateIcon">＋</span><span><strong>Create persistent agent</strong><small>Name an agent you can return to later</small></span>';
+    persistent.onclick = async () => {
+      const name = promptForPersistentAgentName();
+      if (!name) return;
+      state._sessionCreateMenuOpen = false;
+      renderSessionCreateMenu();
+      await startSession(composerAgentId(), name);
+    };
+    menu.appendChild(persistent);
 
     const divider = document.createElement('div');
-    divider.className = 'sessionStartDivider';
-    divider.innerHTML = '<span>or</span>';
-    wrap.appendChild(divider);
+    divider.className = 'sessionCreateDivider';
+    divider.textContent = 'Use an existing persistent agent';
+    menu.appendChild(divider);
 
-    const existing = document.createElement('div');
-    existing.className = 'sessionStartOption';
-    const items = (state.agentNames || []);
-    existing.innerHTML = `
-      <div class="sessionStartOptionTitle">Existing named agent</div>
-      <!-- <div class="sessionStartOptionCopy">Start a new session with an agent you have worked with before.</div> -->
-      <div class="sessionStartOptionCopy"> </div>
-      <!-- <label class="agentSearchLabel" for="agentSearchInput">Agent name</label> -->
-      <input class="input sessionAgentSearch" id="agentSearchInput" placeholder="Search named agents..." autocomplete="off" />
-      <div class="agentSearchResults" id="agentSearchResults"></div>
-    `;
+    const search = document.createElement('input');
+    search.className = 'input sessionCreateSearch';
+    search.placeholder = 'Search persistent agents…';
+    search.autocomplete = 'off';
+    menu.appendChild(search);
 
-    const search = existing.querySelector('#agentSearchInput');
-    const listWrap = existing.querySelector('#agentSearchResults');
+    const results = document.createElement('div');
+    results.className = 'sessionCreateResults';
+    menu.appendChild(results);
 
-    function draw(filterText='') {
-      const q = String(filterText || '').trim().toLowerCase();
-      listWrap.innerHTML = '';
-      if (!q) {
-        listWrap.innerHTML = items.length
-          ? '<div class="small muted">Type a name, then select an agent to start a session.</div>'
-          : '<div class="small muted">No named agents yet. Create one using the option above.</div>';
+    const draw = (value='') => {
+      const query = String(value || '').trim().toLowerCase();
+      const items = (state.agentNames || []).filter(item => !query || String(item.agent_name || '').toLowerCase().includes(query));
+      results.innerHTML = '';
+      if (!items.length) {
+        results.innerHTML = `<div class="sessionCreateEmpty">${query ? 'No matching persistent agents.' : 'No persistent agents yet.'}</div>`;
         return;
       }
-      const filtered = items.filter(item => String(item.agent_name || '').toLowerCase().includes(q));
-      if (!filtered.length) {
-        listWrap.innerHTML = '<div class="small muted">No matching named agents.</div>';
-        return;
+      for (const item of items.slice(0, 12)) {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'sessionCreateAgent';
+        option.innerHTML = `<span>${escHtml(item.agent_name)}</span><small>${escHtml(fmtTime(item.updated_at))}</small>`;
+        option.onclick = async () => {
+          state._sessionCreateMenuOpen = false;
+          renderSessionCreateMenu();
+          await startSession(composerAgentId(), item.agent_name);
+        };
+        results.appendChild(option);
       }
-      for (const item of filtered) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'agentBtn';
-        btn.onclick = () => startSession('', item.agent_name);
+    };
 
-        const top = document.createElement('div');
-        top.className = 'row';
-        const name = document.createElement('div');
-        name.className = 'agentName';
-        name.textContent = item.agent_name;
-        top.appendChild(name);
-        const start = document.createElement('span');
-        start.className = 'pill action';
-        start.textContent = 'Start session';
-        top.appendChild(start);
+    search.oninput = () => draw(search.value);
+    draw();
 
-        const desc = document.createElement('div');
-        desc.className = 'agentDesc';
-        desc.textContent = `${fmtTime(item.updated_at)}`;
-
-        btn.appendChild(top);
-        btn.appendChild(desc);
-        listWrap.appendChild(btn);
-      }
-    }
-
-    search.oninput = () => draw(search.value || '');
-    draw('');
-    wrap.appendChild(existing);
-    list.appendChild(wrap);
-
-    const createBtn = $('#createNewSessionBtn');
-    if (createBtn) {
-      createBtn.onclick = async () => {
-        const sessionType = await chooseNewSessionType();
-        if (sessionType === null) return;
-        if (sessionType === 'nonpersistent') {
-          await startSession('', '');
-          return;
-        }
-        const name = prompt('Enter the new agent name');
-        if (name === null) return;
-        const trimmed = String(name || '').trim();
-        if (!trimmed) {
-          alert('Agent name cannot be empty.');
-          return;
-        }
-        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
-          alert('Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number.');
-          return;
-        }
-        await startSession('', trimmed);
-      };
-    }
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state._sessionCreateMenuOpen = !state._sessionCreateMenuOpen;
+      renderSessionCreateMenu();
+      if (state._sessionCreateMenuOpen) requestAnimationFrame(() => $('#sessionCreateMenu input')?.focus());
+    };
   }
 
 
@@ -3657,7 +4400,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     if (!state.sessions.length) {
-        list.innerHTML = '<div class="muted">No sessions yet. Choose an option above to start one.</div>';
+        list.innerHTML = '<div class="muted">No sessions yet. Open Chat to begin a new conversation.</div>';
     }
   }
 
@@ -3688,7 +4431,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!state.activeSession) {
         if (title) title.textContent = 'No session selected';
         if (meta) meta.textContent = '';
-        if (msgs) msgs.innerHTML = '<div class="muted">Start a new session or select an existing session from the panel on the left.</div>';
+        if (msgs) msgs.innerHTML = '<div class="emptyChatState"><strong>Start a new conversation</strong><span>Type a message below for a non-persistent session, or use + to choose a persistent agent.</span></div>';
         if (wsTitle) wsTitle.textContent = 'Session artifacts';
 
         if (badge) {
@@ -3703,6 +4446,8 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         renderWorkspacePath();
         clearRunView();
         updateComposerState();
+        renderComposerAgentSelect();
+        renderSessionCreateMenu();
         return;
     }
 
@@ -3785,6 +4530,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     renderComposerAgentSelect();
+    renderSessionCreateMenu();
     msgs.scrollTop = msgs.scrollHeight;
 
     showSessionLogs(state.activeSession).catch(err => {
@@ -3805,9 +4551,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!state.selectedComposerAgentId && state.agents.length) {
       state.selectedComposerAgentId = state.agents[0].agent_id;
     }
-    renderAgents();
     renderSessions();
     renderComposerAgentSelect();
+    renderSessionCreateMenu();
+    renderWelcomeTasks();
     await refreshAgentManagement();
   }
 
@@ -3817,7 +4564,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     renderSessions();
   }
 
-  async function startSession(agentId, agentName='') {
+  async function startSession(agentId, agentName='', options={}) {
     try {
       const workspace = await chooseWorkspaceSelection({
         title: 'Choose a workspace for this session',
@@ -3829,11 +4576,17 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       payload.workspace_mode = workspace.workspace_mode;
       if (workspace.workspace_path) payload.workspace_path = workspace.workspace_path;
       const res = await api('POST', '/sessions', payload);
+      if (payload.agent_id) state.selectedComposerAgentId = payload.agent_id;
       await refreshAgents();
       await refreshSessions();
       await loadSession(res.session.session_id);
+      if (options.draftPrompt) {
+        openComposerDraft(payload.agent_id || res.session.agent_id, options.draftPrompt);
+      }
+      return res;
     } catch (e) {
       alert(String(e && e.message ? e.message : e));
+      return null;
     }
   }
 
@@ -3878,6 +4631,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state.activeSessionId = sessionId;
     savePref('ursa.ui.activeSessionId', sessionId);
     state.activeSession = await api('GET', `/sessions/${encodeURIComponent(sessionId)}`);
+    state.selectedComposerAgentId = state.activeSession?.session?.agent_id || state.selectedComposerAgentId;
+    state.showChat = true;
+    applyPanelVisibility();
     renderSessions();
     renderActiveSession();
     updateComposerState();
@@ -3998,17 +4754,88 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
   }
 
+  function composerAgentTooltipElement() {
+    let tooltip = $('#composerAgentTooltip');
+    if (tooltip) return tooltip;
+    tooltip = document.createElement('div');
+    tooltip.id = 'composerAgentTooltip';
+    tooltip.className = 'composerAgentTooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(tooltip);
+    window.addEventListener('resize', hideComposerAgentTooltip);
+    document.addEventListener('scroll', hideComposerAgentTooltip, true);
+    return tooltip;
+  }
+
+  function showComposerAgentTooltip(button, agent) {
+    const tooltip = composerAgentTooltipElement();
+    const label = composerBehaviorLabel(agent) || agent.agent_id || 'Behavior';
+    const description = agent.description || `Use ${agent.display_name || agent.agent_id}`;
+    tooltip.replaceChildren();
+    const title = document.createElement('strong');
+    title.className = 'composerAgentTooltipTitle';
+    title.textContent = label;
+    const copy = document.createElement('span');
+    copy.className = 'composerAgentTooltipCopy';
+    copy.textContent = description;
+    tooltip.append(title, copy);
+    tooltip.classList.add('visible');
+    tooltip.setAttribute('aria-hidden', 'false');
+
+    const buttonRect = button.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const margin = 12;
+    const gap = 10;
+    const centeredLeft = buttonRect.left + (buttonRect.width - tooltipRect.width) / 2;
+    const left = Math.min(
+      Math.max(margin, centeredLeft),
+      window.innerWidth - tooltipRect.width - margin,
+    );
+    let top = buttonRect.top - tooltipRect.height - gap;
+    if (top < margin) top = buttonRect.bottom + gap;
+    tooltip.style.left = `${Math.max(margin, left)}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function hideComposerAgentTooltip() {
+    const tooltip = $('#composerAgentTooltip');
+    if (!tooltip) return;
+    tooltip.classList.remove('visible');
+    tooltip.setAttribute('aria-hidden', 'true');
+  }
+
   function renderComposerAgentSelect() {
-    const sel = $('#composerAgentType');
-    if (!sel) return;
+    const wrap = $('#composerAgentType');
+    if (!wrap) return;
     const agents = state.agents.slice().sort((a,b) => (a.display_name||a.agent_id).localeCompare(b.display_name||b.agent_id));
-    sel.innerHTML = agents.map(a => `<option value="${escHtml(a.agent_id)}">${escHtml(a.display_name || a.agent_id)}</option>`).join('');
     const activeAgentId = state.activeSession?.session?.agent_id || '';
     const target = state.selectedComposerAgentId || activeAgentId || agents[0]?.agent_id || '';
-    if (target) sel.value = target;
-    sel.onchange = () => {
-      state.selectedComposerAgentId = String(sel.value || '');
-    };
+    if (target) state.selectedComposerAgentId = target;
+    wrap.innerHTML = '';
+
+    for (const agent of agents) {
+      const id = String(agent.agent_id || '');
+      const selected = id === state.selectedComposerAgentId;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'composerAgentButton' + (selected ? ' selected' : '');
+      btn.textContent = composerBehaviorLabel(agent) || id;
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', String(selected));
+      btn.setAttribute('aria-label', `${agent.display_name || id}: ${agent.description || ''}`);
+      btn.addEventListener('mouseenter', () => showComposerAgentTooltip(btn, agent));
+      btn.addEventListener('mouseleave', hideComposerAgentTooltip);
+      btn.addEventListener('focus', () => showComposerAgentTooltip(btn, agent));
+      btn.addEventListener('blur', hideComposerAgentTooltip);
+      btn.onclick = () => {
+        hideComposerAgentTooltip();
+        state.selectedComposerAgentId = id;
+        renderComposerAgentSelect();
+        renderSessionCreateMenu();
+      };
+      wrap.appendChild(btn);
+    }
   }
 
   async function setSessionWorkspace(selection) {
@@ -4050,14 +4877,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   function updateComposerState() {
     const ta = $('#messageInput');
     const btn = $('#sendMsgBtn');
-    const ready = !!state.activeSessionId;
     if (ta) {
-      ta.disabled = !ready;
-      ta.placeholder = ready
+      ta.disabled = false;
+      ta.placeholder = state.activeSessionId
         ? 'Message the agent...'
-        : 'Create a session to start chatting';
+        : 'Ask URSA anything…';
     }
-    if (btn) btn.disabled = !ready;
+    if (btn) btn.disabled = false;
+    renderSessionCreateMenu();
   }
 
   function showSendError(message) {
@@ -4075,20 +4902,24 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   async function sendMessage() {
-    if (!state.activeSessionId) return;
     const ta = $('#messageInput');
     const text = (ta && ta.value || '').trim();
     if (!text) return;
-    if (!(await ensureSessionWorkspaceConfigured())) return;
 
     const sendBtn = $('#sendMsgBtn');
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      const agentId = String($('#composerAgentType')?.value || state.selectedComposerAgentId || state.activeSession?.session?.agent_id || '').trim();
+      const agentId = String(state.selectedComposerAgentId || state.activeSession?.session?.agent_id || 'chat_agent').trim();
+      if (!state.activeSessionId) {
+        const created = await startSession(agentId, '', { draftPrompt: text });
+        if (!created) return;
+      }
+      if (!(await ensureSessionWorkspaceConfigured())) return;
       await api('POST', `/sessions/${encodeURIComponent(state.activeSessionId)}/message`, { text, agent_id: agentId || undefined });
       state.selectedComposerAgentId = agentId || state.selectedComposerAgentId;
-      if (ta) ta.value = '';
+      const activeInput = $('#messageInput');
+      if (activeInput) activeInput.value = '';
       await loadSession(state.activeSessionId);
       await refreshSessions();
       await refreshAgents();
@@ -4128,6 +4959,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     return out;
   }
 
+  function _mergeSettingsObjects(base, override, replaceKeys=[]) {
+    const merged = _deepMergeObjects(base, override);
+    for (const key of replaceKeys) {
+      if (override && Object.prototype.hasOwnProperty.call(override, key)) {
+        merged[key] = _cloneJson(override[key]);
+      }
+    }
+    return merged;
+  }
+
   function _jsonObjectFromTextarea(sel, label, allowEmpty=true) {
     const el = $(sel);
     const txt = (el?.value || '').trim();
@@ -4162,23 +5003,14 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     state._settingsSessionTitle = session?.title || '';
     const title = $('#settingsModalTitle');
     const sub = $('#settingsModalSubtitle');
-    const uiBtn = document.querySelector('.settingsNavBtn[data-settings-section="ui"]');
-    const mcpBtn = document.querySelector('.settingsNavBtn[data-settings-section="mcp"]');
-    $$('.globalCredentialOnly').forEach(el => {
-      el.style.display = mode === 'session' ? 'none' : '';
-    });
     if (mode === 'session') {
       if (title) title.textContent = 'Session settings';
-      if (sub) sub.textContent = `Applies to this session only: ${session?.title || session?.session_id || ''}`;
-      if (uiBtn) uiBtn.style.display = 'none';
-      if (mcpBtn) mcpBtn.style.display = 'none';
+      if (sub) sub.textContent = `Run settings apply to this session: ${session?.title || session?.session_id || ''}. Theme and agent management remain dashboard-wide.`;
       setSettingsSection('llm');
     } else {
-      if (title) title.textContent = 'Settings';
-      if (sub) sub.textContent = 'Global defaults for new sessions and runs.';
-      if (uiBtn) uiBtn.style.display = '';
-      if (mcpBtn) mcpBtn.style.display = '';
-      setSettingsSection('ui');
+      if (title) title.textContent = 'Model and Agent Settings';
+      if (sub) sub.textContent = 'Dashboard defaults. User, environment, and launch configuration may take precedence.';
+      setSettingsSection('llm');
     }
   }
 
@@ -4282,7 +5114,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (!confirm('Remove MCP server ' + name + '?')) return;
     delete servers[name];
     clearMcpEditor();
-    setMcpStatus('Removed (staged). Click Save to persist.');
+    setMcpStatus('Removed (staged). Click Update to persist.');
     renderMcpServers();
   }
 
@@ -4321,7 +5153,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         btn.textContent = 'Add';
         btn.onclick = () => {
           state._ragTools = Array.from(new Set([...(state._ragTools || []), item.name])).sort();
-          setRagToolStatus('Added ' + item.name + ' (staged). Click Save to persist.');
+          setRagToolStatus('Added ' + item.name + ' (staged). Click Update to persist.');
           renderRagTools();
         };
         row.appendChild(label);
@@ -4348,7 +5180,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         btn.textContent = 'Remove';
         btn.onclick = () => {
           state._ragTools = (state._ragTools || []).filter(x => x !== name);
-          setRagToolStatus('Removed ' + name + ' (staged). Click Save to persist.');
+          setRagToolStatus('Removed ' + name + ' (staged). Click Update to persist.');
           renderRagTools();
         };
         row.appendChild(label);
@@ -4382,6 +5214,30 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     document.documentElement.setAttribute('data-theme', resolved);
   }
 
+  function updateThemeButton() {
+    const value = $('#set_theme')?.value || 'system';
+    const label = value === 'dark' ? 'Dark' : value === 'light' ? 'Light' : 'System';
+    const btn = $('#cycleThemeBtn');
+    if (btn) {
+      btn.innerHTML = `<span aria-hidden="true">${value === 'dark' ? '☾' : value === 'light' ? '☀' : '◐'}</span><span>Theme: ${label}</span>`;
+      btn.title = 'Change dashboard theme';
+    }
+  }
+
+  function cycleThemeSetting() {
+    const input = $('#set_theme');
+    if (!input) return;
+    const values = ['system', 'light', 'dark'];
+    const current = values.indexOf(input.value || 'system');
+    input.value = values[(current + 1) % values.length];
+    applyTheme(input.value);
+    updateThemeButton();
+    const saved = $('#settingsSaved');
+    if (saved) {
+      saved.textContent = 'Theme preview. Click Update to keep it.';
+    }
+  }
+
   function renderCredentialStatus(kind) {
     const status = state.credentialStatuses?.[kind] || {};
     const el = $(`#set_${kind}_credential_status`);
@@ -4392,6 +5248,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
     if (status.source === 'stored') {
       el.textContent = status.usable ? 'Key saved securely.' : 'No usable saved key.';
+      return;
+    }
+    if (status.source === 'keyring') {
+      el.textContent = status.usable ? 'Using the key saved in your URSA config. Edit it under Default config.' : 'The URSA config key is missing or not approved for this endpoint.';
       return;
     }
     if (status.source === 'environment') {
@@ -4414,9 +5274,18 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     renderCredentialStatus(kind);
   }
 
+  function credentialApiPath(kind=null) {
+    const sessionPrefix = state._settingsMode === 'session' && state._settingsSessionId
+      ? `/sessions/${encodeURIComponent(state._settingsSessionId)}`
+      : '';
+    return kind
+      ? `${sessionPrefix}/credentials/${encodeURIComponent(kind)}`
+      : `${sessionPrefix}/credentials/status`;
+  }
+
   async function refreshCredentialStatuses() {
     try {
-      state.credentialStatuses = await api('GET', '/credentials/status');
+      state.credentialStatuses = await api('GET', credentialApiPath());
     } catch (e) {
       state.credentialStatuses = {};
       for (const kind of ['llm', 'embedding']) {
@@ -4432,14 +5301,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   async function removeStoredCredential(kind) {
     if (!confirm(`Remove the saved ${kind === 'llm' ? 'LLM' : 'embedding'} API key?`)) return;
     try {
-      state.credentialStatuses[kind] = await api('DELETE', `/credentials/${kind}`);
+      state.credentialStatuses[kind] = await api('DELETE', credentialApiPath(kind));
       const source = $(`#set_${kind}_credential_source`);
       if (source) source.value = 'none';
       const keyInput = $(`#set_${kind}_api_key`);
       if (keyInput) keyInput.value = '';
       updateCredentialControls(kind);
-      const res = await api('GET', '/settings');
-      state.settings = res.settings || state.settings;
+      if (state._settingsMode === 'global') {
+        const res = await api('GET', '/settings');
+        state.settings = res.settings || state.settings;
+      }
       await refreshCredentialStatuses();
       updateCredentialControls('llm');
       updateCredentialControls('embedding');
@@ -4448,27 +5319,170 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
   }
 
+  function inferenceProviderControls(kind) {
+    return {
+      select: $(`#set_${kind}_inference_provider`),
+      baseUrl: $(kind === 'llm' ? '#set_base_url' : '#set_embedding_base_url'),
+      model: $(kind === 'llm' ? '#set_model' : '#set_embedding_model'),
+      options: $(`#set_${kind}_model_options`),
+      refresh: $(`#refresh_${kind}_models`),
+      status: $(`#set_${kind}_provider_status`),
+      credentialSource: $(`#set_${kind}_credential_source`),
+      apiKeyEnv: $(kind === 'llm' ? '#set_api_key_env' : '#set_embedding_api_key_env'),
+    };
+  }
+
+  function renderInferenceProviderOptions(kind, selectedName='') {
+    const controls = inferenceProviderControls(kind);
+    if (!controls.select) return;
+    controls.select.innerHTML = '';
+    const direct = document.createElement('option');
+    direct.value = '';
+    direct.textContent = 'Direct / custom endpoint';
+    controls.select.appendChild(direct);
+    for (const provider of state.inferenceProviders || []) {
+      const option = document.createElement('option');
+      option.value = provider.name;
+      option.textContent = provider.base_url
+        ? `${provider.name} — ${provider.base_url}`
+        : `${provider.name} — provider default`;
+      option.disabled = provider.allowed === false;
+      controls.select.appendChild(option);
+    }
+    if (selectedName && !(state.inferenceProviders || []).some(item => item.name === selectedName)) {
+      const unavailable = document.createElement('option');
+      unavailable.value = selectedName;
+      unavailable.textContent = `${selectedName} — unavailable`;
+      controls.select.appendChild(unavailable);
+    }
+    controls.select.value = selectedName || '';
+  }
+
+  async function refreshInferenceProviders() {
+    try {
+      const result = await api('GET', '/inference-providers');
+      state.inferenceProviders = result.providers || [];
+    } catch (error) {
+      state.inferenceProviders = [];
+      for (const kind of ['llm', 'embedding']) {
+        const status = inferenceProviderControls(kind).status;
+        if (status) status.textContent = `Provider configuration unavailable: ${error.message}`;
+      }
+    }
+  }
+
+  function stageInferenceProvider(kind, { discover=true, userInitiated=false }={}) {
+    const controls = inferenceProviderControls(kind);
+    const providerName = controls.select?.value || '';
+    const provider = (state.inferenceProviders || []).find(item => item.name === providerName);
+    if (!providerName || !provider) {
+      if (controls.baseUrl) controls.baseUrl.readOnly = false;
+      if (controls.refresh) controls.refresh.disabled = true;
+      if (controls.options) controls.options.replaceChildren();
+      if (controls.status) {
+        controls.status.textContent = providerName
+          ? 'This provider is no longer available. Choose another provider or switch to Direct / custom endpoint.'
+          : 'Direct endpoint mode. Enter a Base URL and model manually.';
+      }
+      return;
+    }
+    if (controls.baseUrl) {
+      controls.baseUrl.value = provider.base_url || '';
+      controls.baseUrl.readOnly = true;
+    }
+    if (controls.refresh) controls.refresh.disabled = provider.allowed === false;
+    if (provider.allowed === false) {
+      if (controls.status) controls.status.textContent = provider.policy_error || 'This provider is not allowed for the dashboard group.';
+      if (controls.options) controls.options.replaceChildren();
+      return;
+    }
+    if (userInitiated && provider.api_key_env) {
+      if (controls.credentialSource) controls.credentialSource.value = 'environment';
+      if (controls.apiKeyEnv) controls.apiKeyEnv.value = provider.api_key_env;
+      updateCredentialControls(kind);
+    } else if (userInitiated && provider.credential_source === 'keyring') {
+      if (controls.credentialSource) controls.credentialSource.value = 'keyring';
+      updateCredentialControls(kind);
+    } else if (userInitiated && provider.credential_source === 'none') {
+      if (controls.credentialSource) controls.credentialSource.value = 'none';
+      if (controls.apiKeyEnv) controls.apiKeyEnv.value = '';
+      updateCredentialControls(kind);
+    }
+    const endpoint = provider.base_url || 'the provider default endpoint';
+    const credentialNote = provider.api_key_env
+      ? ` Credential: ${provider.api_key_env}.`
+      : provider.credential_source === 'keyring'
+        ? ' Credential: your securely stored URSA config key.'
+        : provider.credential_source === 'configured'
+          ? ' Model discovery uses the config credential; dashboard runs use the API key source below.'
+          : '';
+    if (controls.status) controls.status.textContent = `${provider.name} uses ${endpoint}.${credentialNote}`;
+    if (discover) refreshProviderModels(kind);
+  }
+
+  async function refreshProviderModels(kind) {
+    const controls = inferenceProviderControls(kind);
+    const providerName = controls.select?.value || '';
+    if (!providerName) {
+      stageInferenceProvider(kind, { discover: false });
+      return;
+    }
+    const generation = (state._modelCatalogGeneration[kind] || 0) + 1;
+    state._modelCatalogGeneration[kind] = generation;
+    if (controls.options) controls.options.replaceChildren();
+    if (controls.refresh) controls.refresh.disabled = true;
+    if (controls.status) controls.status.textContent = `Loading models from ${providerName}…`;
+    try {
+      const result = await api(
+        'GET',
+        `/inference-provider-models?provider=${encodeURIComponent(providerName)}&kind=${encodeURIComponent(kind === 'embedding' ? 'embedding' : 'chat')}`,
+      );
+      if (generation !== state._modelCatalogGeneration[kind]) return;
+      const models = result.models || [];
+      if (controls.options) {
+        for (const model of models) {
+          const option = document.createElement('option');
+          option.value = model.qualified_name || model.name || '';
+          option.label = model.name || option.value;
+          controls.options.appendChild(option);
+        }
+      }
+      if (controls.status) {
+        controls.status.textContent = models.length
+          ? `${models.length} model${models.length === 1 ? '' : 's'} available from ${providerName}. You can also enter a model manually.`
+          : `${providerName} did not advertise any models. You can still enter one manually.`;
+      }
+    } catch (error) {
+      if (generation !== state._modelCatalogGeneration[kind]) return;
+      if (controls.status) controls.status.textContent = `Could not list models: ${error.message} You can still enter one manually.`;
+    } finally {
+      if (generation === state._modelCatalogGeneration[kind] && controls.refresh) controls.refresh.disabled = false;
+    }
+  }
+
   async function loadSettings(opts={}) {
+    defaultConfigDraft = null;
+    $('#settingsModal').setAttribute('aria-hidden', 'false');
     const mode = opts.mode || state._settingsMode || 'global';
     const session = opts.session || null;
     const res = await api('GET', '/settings');
     state.settings = res.settings || {};
+    const saved = $('#settingsSaved');
+    if (saved) saved.textContent = '';
     applyTheme(state.settings?.ui?.theme || 'system');
     setSettingsModalMode(mode, session);
 
     const globalLlm = state.settings.llm || {};
     const globalEmbedding = state.settings.embedding || {};
-    const globalRunner = state.settings.runner || {};
-    const llm = mode === 'session' ? _deepMergeObjects(globalLlm, session?.llm || {}) : globalLlm;
-    const embedding = globalEmbedding;
-    const runner = mode === 'session' ? _deepMergeObjects(globalRunner, session?.runner || {}) : globalRunner;
-    const mcp = state.settings.mcp || {};
-    const tools = state.settings.tools || {};
+    const llm = mode === 'session' ? _mergeSettingsObjects(globalLlm, session?.llm || {}, ['model_kwargs']) : globalLlm;
+    const embedding = mode === 'session' ? _mergeSettingsObjects(globalEmbedding, session?.embedding || {}, ['model_kwargs']) : globalEmbedding;
+    const mcp = mode === 'session' ? _mergeSettingsObjects(state.settings.mcp || {}, session?.mcp || {}, ['servers']) : (state.settings.mcp || {});
+    const tools = mode === 'session' ? _mergeSettingsObjects(state.settings.tools || {}, session?.tools || {}, ['rag_tools']) : (state.settings.tools || {});
 
     // Settings-related entries
     const ui = state.settings.ui || {};
-    $('#set_stdout_buffer_lines').value = ui.stdout_buffer_lines ?? 20000;
     $('#set_theme').value = ui.theme || 'system';
+    updateThemeButton();
 
     $('#set_base_url').value = llm.base_url || '';
     $('#set_model').value = llm.model || '';
@@ -4486,10 +5500,15 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const embeddingModelKwargs = embedding.model_kwargs || {};
     $('#set_embedding_model_kwargs').value = Object.keys(embeddingModelKwargs).length ? JSON.stringify(embeddingModelKwargs, null, 2) : '';
 
-    $('#set_timeout').value = runner.timeout_seconds ?? '';
+    await refreshInferenceProviders();
+    renderInferenceProviderOptions('llm', llm.inference_provider || '');
+    renderInferenceProviderOptions('embedding', embedding.inference_provider || '');
+    stageInferenceProvider('llm');
+    stageInferenceProvider('embedding');
+
     updateCredentialControls('llm');
     updateCredentialControls('embedding');
-    if (mode === 'global') await refreshCredentialStatuses();
+    await refreshCredentialStatuses();
 
     // MCP is global-only.
     state._mcpServers = _cloneJson(mcp.servers || {});
@@ -4609,61 +5628,48 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       embeddingModelKwargs = _jsonObjectFromTextarea('#set_embedding_model_kwargs', 'Embedding model kwargs');
     } catch (e) {
       alert(e.message || String(e));
-      return;
+      return false;
     }
 
     let llmKey = '';
     let embeddingKey = '';
-    if (state._settingsMode === 'global') {
-      llmKey = $('#set_llm_api_key').value || '';
-      embeddingKey = $('#set_embedding_api_key').value || '';
-      const llmSource = $('#set_llm_credential_source').value || 'none';
-      const embeddingSource = $('#set_embedding_credential_source').value || 'none';
-      const embeddingConfigured = Boolean(($('#set_embedding_model').value || '').trim());
-      if (llmSource === 'stored' && !llmKey && !state.credentialStatuses?.llm?.configured) {
-        alert('Enter an LLM API key before selecting secure storage.');
-        return;
-      }
-      if (embeddingConfigured && embeddingSource === 'stored' && !embeddingKey && !state.credentialStatuses?.embedding?.configured) {
-        alert('Enter an embedding API key before selecting secure storage.');
-        return;
-      }
-      if (embeddingConfigured && embeddingSource === 'llm' && !state.credentialStatuses?.llm?.configured) {
-        alert('Save an LLM API key before reusing it for embeddings.');
-        return;
-      }
+    llmKey = $('#set_llm_api_key').value || '';
+    embeddingKey = $('#set_embedding_api_key').value || '';
+    const llmSource = $('#set_llm_credential_source').value || 'none';
+    const embeddingSource = $('#set_embedding_credential_source').value || 'none';
+    const embeddingConfigured = Boolean(($('#set_embedding_model').value || '').trim());
+    if (llmSource === 'stored' && !llmKey && !state.credentialStatuses?.llm?.configured) {
+      alert('Enter an LLM API key before selecting secure storage.');
+      return false;
+    }
+    if (embeddingConfigured && embeddingSource === 'stored' && !embeddingKey && !state.credentialStatuses?.embedding?.configured) {
+      alert('Enter an embedding API key before selecting secure storage.');
+      return false;
+    }
+    if (embeddingConfigured && embeddingSource === 'llm' && !state.credentialStatuses?.llm?.configured && !llmKey) {
+      alert('Enter an LLM API key before reusing it for embeddings.');
+      return false;
     }
 
     const llmPatch = {
+      inference_provider: ($('#set_llm_inference_provider').value || '').trim() || null,
       base_url: ($('#set_base_url').value || '').trim() || null,
       model: ($('#set_model').value || '').trim() || null,
       api_key_env: ($('#set_api_key_env').value || '').trim() || null,
+      credential_source: llmKey ? 'none' : llmSource,
       model_kwargs: modelKwargs,
     };
-    if (state._settingsMode === 'global') {
-      llmPatch.credential_source = llmKey ? 'none' : ($('#set_llm_credential_source').value || 'none');
-    }
 
-    const common = {
+    const scopedSettings = {
       llm: {
         ...llmPatch,
       },
-      runner: {
-        timeout_seconds: ($('#set_timeout').value === '' ? null : Number($('#set_timeout').value)),
-      },
-    };
-
-    const patch = state._settingsMode === 'session' ? common : {
-      ui: {
-        theme: ($('#set_theme').value || 'system'),
-        stdout_buffer_lines: ($('#set_stdout_buffer_lines').value === '' ? null : Number($('#set_stdout_buffer_lines').value)),
-      },
-      ...common,
       embedding: {
+        inference_provider: ($('#set_embedding_inference_provider').value || '').trim() || null,
         base_url: ($('#set_embedding_base_url').value || '').trim() || null,
         model: ($('#set_embedding_model').value || '').trim() || null,
         api_key_env: ($('#set_embedding_api_key_env').value || '').trim() || null,
-        credential_source: embeddingKey ? 'none' : ($('#set_embedding_credential_source').value || 'none'),
+        credential_source: embeddingKey ? 'none' : embeddingSource,
         model_kwargs: embeddingModelKwargs,
       },
       mcp: {
@@ -4672,6 +5678,13 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       tools: {
         rag_tools: Array.from(new Set(state._ragTools || [])).sort(),
       }
+    };
+    const theme = ($('#set_theme').value || 'system');
+    const patch = state._settingsMode === 'session' ? scopedSettings : {
+      ui: {
+        theme,
+      },
+      ...scopedSettings,
     };
 
     // Remove nulls to avoid overwriting with null unless explicitly intended.
@@ -4683,7 +5696,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       for (const [k,v] of Object.entries(o)) {
         const p = path ? (path + '.' + k) : k;
         if (v === undefined || (typeof v === 'number' && Number.isNaN(v))) continue;
-        if (v === null && p !== 'llm.base_url' && !p.startsWith('embedding.')) continue;
+        if (v === null && p !== 'llm.base_url' && p !== 'llm.inference_provider' && !p.startsWith('embedding.')) continue;
         if (typeof v === 'object' && !Array.isArray(v)) {
           const c = compact(v, p);
           const empty = c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0;
@@ -4696,48 +5709,57 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     }
 
     const cleaned = compact(patch);
+    let credentialSaveError = null;
     if (state._settingsMode === 'session') {
-      if (!state._settingsSessionId) return;
+      if (!state._settingsSessionId) return false;
       const res = await api('PATCH', `/sessions/${encodeURIComponent(state._settingsSessionId)}`, cleaned);
-      state.activeSession = res;
-      await refreshSessions();
-      if (state.activeSessionId === state._settingsSessionId) await loadSession(state._settingsSessionId);
+      if (state.activeSessionId === state._settingsSessionId) state.activeSession = res;
+      if (theme !== (state.settings?.ui?.theme || 'system')) {
+        const themeRes = await api('PATCH', '/settings', { patch: { ui: { theme } } });
+        state.settings = themeRes.settings || state.settings;
+      }
     } else {
       const res = await api('PATCH', '/settings', { patch: cleaned });
       state.settings = res.settings || {};
-      let credentialSaveError = null;
-      try {
-        if (llmKey) {
-          state.credentialStatuses.llm = await api('PUT', '/credentials/llm', { api_key: llmKey });
-        }
-        if (embeddingKey) {
-          state.credentialStatuses.embedding = await api('PUT', '/credentials/embedding', { api_key: embeddingKey });
-        }
-      } catch (e) {
-        credentialSaveError = e;
-        alert('Settings were saved, but the API key could not be stored: ' + e.message);
-      } finally {
-        llmKey = '';
-        embeddingKey = '';
-        $('#set_llm_api_key').value = '';
-        $('#set_embedding_api_key').value = '';
+    }
+    try {
+      if (llmKey) {
+        state.credentialStatuses.llm = await api('PUT', credentialApiPath('llm'), { api_key: llmKey });
       }
-      await refreshCredentialStatuses();
+      if (embeddingKey) {
+        state.credentialStatuses.embedding = await api('PUT', credentialApiPath('embedding'), { api_key: embeddingKey });
+      }
+    } catch (e) {
+      credentialSaveError = e;
+      alert('Settings were saved, but the API key could not be stored: ' + e.message);
+    } finally {
+      llmKey = '';
+      embeddingKey = '';
+      $('#set_llm_api_key').value = '';
+      $('#set_embedding_api_key').value = '';
+    }
+    await refreshCredentialStatuses();
+    if (state._settingsMode === 'global') {
       const refreshed = await api('GET', '/settings');
       state.settings = refreshed.settings || state.settings;
       applyTheme(state.settings?.ui?.theme || 'system');
-      await refreshSessions();
-      if (credentialSaveError) return;
+    } else if (state.activeSessionId === state._settingsSessionId) {
+      await loadSession(state._settingsSessionId);
     }
+    await refreshSessions();
+    if (credentialSaveError) return false;
 
     const saved = $('#settingsSaved');
     if (saved) {
-      saved.textContent = 'Saved.';
+      saved.textContent = 'Updated.';
       setTimeout(() => { saved.textContent = ''; }, 1500);
     }
+    return true;
   }
 
   function setSettingsSection(section) {
+    state._settingsSection = section;
+    $('#cycleThemeBtn')?.classList.toggle('hidden', section === 'defaults');
     $$('.settingsNavBtn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.settingsSection === section);
     });
@@ -4748,7 +5770,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
   function setupSettingsNav() {
     $$('.settingsNavBtn').forEach(btn => {
-        btn.onclick = () => setSettingsSection(btn.dataset.settingsSection);
+        btn.onclick = async () => {
+          setSettingsSection(btn.dataset.settingsSection);
+          if (btn.dataset.settingsSection === 'defaults' && !defaultConfigDraft) await loadDefaultConfig();
+        };
     });
   }
 
@@ -4772,14 +5797,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   function setupUi() {
-    // New panel toggles (sidebar is always visible)
-    // Migrate old prefs if present.
-    const oldHideMain = loadPref('ursa.ui.hideMain', null);
-    const oldHideRight = loadPref('ursa.ui.hideRight', null);
-
-    state.showChat = !!loadPref('ursa.ui.showChat', oldHideMain === null ? true : !oldHideMain);
-    state.showRunLogs = !!loadPref('ursa.ui.showRunLogs', oldHideMain === null ? true : !oldHideMain);
-    state.showArtifacts = !!loadPref('ursa.ui.showArtifacts', oldHideRight === null ? true : !oldHideRight);
+    // Always use the welcome screen as the dashboard's landing state. Panel
+    // choices still apply for the rest of the current page visit.
+    state.showChat = false;
+    state.showRunLogs = false;
+    state.showArtifacts = false;
 
     applyPanelVisibility();
     setupLogFollowState();
@@ -4792,6 +5814,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
     const tArt = $('#toggleArtifactsBtn');
     if (tArt) tArt.onclick = () => { state.showArtifacts = !state.showArtifacts; applyPanelVisibility(); };
+
+    const refreshWelcome = $('#refreshWelcomeTasksBtn');
+    if (refreshWelcome) refreshWelcome.onclick = rotateWelcomeTasks;
+    const startBlank = $('#startBlankChatBtn');
+    if (startBlank) startBlank.onclick = openBlankComposer;
 
     $('#refreshSessionsBtn').onclick = async () => { await refreshSessions(); };
     $('#refreshFilesBtn').onclick = async () => { await refreshWorkspace(); };
@@ -4874,8 +5901,18 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
       modal.classList.add('open');
       await loadSettings({ mode: 'global' });
     };
-    $('#closeSettingsBtn').onclick = () => modal.classList.remove('open');
-    $('#settingsBackdrop').onclick = () => modal.classList.remove('open');
+    const cancelSettings = () => {
+      applyTheme(state.settings?.ui?.theme || 'system');
+      $$('#settingsModal input[type="password"]').forEach(input => { input.value = ''; });
+      defaultConfigDraft = null;
+      lastConfigTest = null;
+      const saved = $('#settingsSaved');
+      if (saved) saved.textContent = '';
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+    };
+    $('#closeSettingsBtn').onclick = cancelSettings;
+    $('#settingsBackdrop').onclick = cancelSettings;
 
     const mAdd = $('#mcpAddUpdateBtn');
     if (mAdd) mAdd.onclick = upsertMcpServerFromEditor;
@@ -4885,18 +5922,46 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     if (mClr) mClr.onclick = clearMcpEditor;
     const ragRefresh = $('#ragRefreshBtn');
     if (ragRefresh) ragRefresh.onclick = refreshRagTools;
+    $('#set_llm_inference_provider').onchange = () => stageInferenceProvider('llm', { userInitiated: true });
+    $('#set_embedding_inference_provider').onchange = () => stageInferenceProvider('embedding', { userInitiated: true });
+    $('#refresh_llm_models').onclick = () => refreshProviderModels('llm');
+    $('#refresh_embedding_models').onclick = () => refreshProviderModels('embedding');
     $('#set_llm_credential_source').onchange = () => updateCredentialControls('llm');
     $('#set_embedding_credential_source').onchange = () => updateCredentialControls('embedding');
     $('#set_llm_remove_key').onclick = () => removeStoredCredential('llm');
     $('#set_embedding_remove_key').onclick = () => removeStoredCredential('embedding');
+    $('#cycleThemeBtn').onclick = cycleThemeSetting;
 
-    $('#saveSettingsBtn').onclick = saveSettings;
+    $('#saveSettingsBtn').onclick = async () => {
+      const button = $('#saveSettingsBtn');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Updating…';
+      }
+      try {
+        if (state._settingsSection === 'defaults') {
+          if (await saveDefaultConfig()) { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); }
+        } else if (await saveSettings()) modal.classList.remove('open');
+        if (!modal.classList.contains('open')) modal.setAttribute('aria-hidden', 'true');
+      } catch (e) {
+        alert('Could not update settings: ' + (e && e.message ? e.message : String(e)));
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Update';
+        }
+      }
+    };
 
     document.addEventListener('click', (e) => {
-      if (!state._openSessionMenu) return;
-      if (e.target && e.target.closest && e.target.closest('.sessionMenuWrap')) return;
-      state._openSessionMenu = null;
-      renderSessions();
+      if (state._openSessionMenu && !(e.target && e.target.closest && e.target.closest('.sessionMenuWrap'))) {
+        state._openSessionMenu = null;
+        renderSessions();
+      }
+      if (state._sessionCreateMenuOpen && !(e.target && e.target.closest && e.target.closest('.sessionCreateMenuWrap'))) {
+        state._sessionCreateMenuOpen = false;
+        renderSessionCreateMenu();
+      }
     });
   }
 
@@ -4910,14 +5975,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     await refreshAgents();
     await refreshSessions();
 
-    // Restore last selected session if possible; otherwise select most recent.
-    const remembered = loadPref('ursa.ui.activeSessionId', null);
-    if (!state.activeSessionId && state.sessions.length) {
-      const exists = remembered && state.sessions.some(s => s.session_id === remembered);
-      await loadSession(exists ? remembered : state.sessions[0].session_id);
-    } else if (!state.activeSessionId) {
-      renderActiveSession();
-    }
+    // Sessions remain available in the sidebar, but none is silently restored:
+    // suggested tasks should never inherit an earlier conversation by accident.
+    renderActiveSession();
+    setupOnboarding();
 
     // periodic refresh
     setInterval(() => { refreshSessions().catch(() => {}); }, 5000);
@@ -4946,7 +6007,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 :root[data-theme="dark"] .btn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .histItem { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .sessActBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
-:root[data-theme="dark"] .agentBtn { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .fileItem { background: #1f242b; color: var(--text); border-color: var(--border); }
 :root[data-theme="dark"] .fileDl { background: #1f242b; color: #8ab4ff; border-color: var(--border); }
 :root[data-theme="dark"] .messages { background: #171b20; border-color: var(--border); }
@@ -4961,8 +6021,6 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 :root[data-theme="dark"] .settingsNavBtn.active { background: #233247; border-color: #355070; }
 :root[data-theme="dark"] .settingsNavBtn { color: #b7bda6; }
 :root[data-theme="dark"] .settingsNavBtn.active { color: #eef4ff; }
-:root[data-theme="dark"] .sessionStartOption { background: rgba(255,255,255,0.05); }
-:root[data-theme="dark"] #dashboardGroupPill { background: rgba(255,255,255,0.05); }
 :root {
   --bg: #ffffff;
   --panel: rgba(250, 250, 250, 0.92);
@@ -4983,7 +6041,7 @@ body::before {
   background-image: var(--ursa-logo-url);
   background-repeat: no-repeat;
   background-position: center;
-  background-size: min(70vmin, 820px) auto;
+  background-size: cover;
   opacity: 0.05;
   pointer-events: none;
   z-index: 0;
@@ -5120,6 +6178,43 @@ body::before {
   max-width: none;
 }
 
+.welcomePanel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: clamp(24px, 5vw, 36px);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  background:
+    radial-gradient(circle at 50% 16%, rgba(11,87,208,0.08), transparent 38%),
+    transparent;
+}
+.welcomeContent { width: min(1040px, 100%); margin: auto; }
+.welcomeEyebrow { color: #0b57d0; font-size: 12px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
+.welcomeContent h1 { margin: 10px 0 12px; font-size: clamp(34px, 5vw, 58px); line-height: 1.04; letter-spacing: -0.035em; }
+.welcomeLead { max-width: 720px; margin: 0; color: var(--muted); font-size: clamp(16px, 1.8vw, 20px); line-height: 1.55; }
+.welcomeSectionHead { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: clamp(28px, 5vh, 52px) 0 14px; }
+.welcomeSectionTitle { font-size: 18px; font-weight: 720; margin-bottom: 3px; }
+.welcomeRefresh { flex: 0 0 auto; }
+.welcomeTaskGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.welcomeTaskCard { min-width: 0; min-height: 268px; display: flex; flex-direction: column; gap: 13px; padding: 18px; text-align: left; color: var(--text); background: rgba(255,255,255,0.92); border: 1px solid var(--border); border-radius: 16px; cursor: pointer; font: inherit; box-shadow: 0 4px 18px rgba(29,39,51,0.05); transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
+.welcomeTaskCard:hover, .welcomeTaskCard:focus-visible { transform: translateY(-2px); border-color: rgba(11,87,208,0.55); box-shadow: 0 10px 28px rgba(29,39,51,0.11); outline: none; }
+.welcomeTaskMeta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 11px; font-weight: 650; }
+.welcomeTaskAgent { padding: 4px 8px; color: #0b57d0; background: rgba(11,87,208,0.08); border-radius: 999px; }
+.welcomeTaskTitle { font-size: 17px; font-weight: 730; line-height: 1.3; }
+.welcomeTaskPrompt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.welcomeTaskAction { margin-top: auto; display: flex; align-items: center; justify-content: space-between; color: #0b57d0; font-size: 13px; font-weight: 700; }
+.welcomeFooter { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 20px; padding: 20px 0 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 15px; line-height: 1.45; }
+.welcomeFooter > div { display: grid; gap: 3px; }
+.welcomeFooter strong { color: var(--text); font-size: 16px; }
+.welcomeBlankAction { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; font-weight: 700; }
+:root[data-theme="dark"] .welcomePanel { background: radial-gradient(circle at 50% 16%, rgba(138,180,255,0.09), transparent 38%), transparent; }
+:root[data-theme="dark"] .welcomeEyebrow, :root[data-theme="dark"] .welcomeTaskAction { color: #8ab4ff; }
+:root[data-theme="dark"] .welcomeTaskCard { background: rgba(28,32,38,0.92); box-shadow: 0 4px 18px rgba(0,0,0,0.18); }
+:root[data-theme="dark"] .welcomeTaskCard:hover, :root[data-theme="dark"] .welcomeTaskCard:focus-visible { border-color: rgba(138,180,255,0.65); box-shadow: 0 10px 28px rgba(0,0,0,0.30); }
+:root[data-theme="dark"] .welcomeTaskAgent { color: #8ab4ff; background: rgba(138,180,255,0.10); }
+
 .topbar { display:flex; align-items:center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .topbarCol { flex-direction: column; align-items: stretch; justify-content: flex-start; }
 .topbarCol > .row { width: 100%; }
@@ -5162,23 +6257,6 @@ body::before {
 .btn.primary { background: #0b57d0; border-color: #0b57d0; color: #fff; }
 .btn.danger { border-color: #cc3a3a; color: #cc3a3a; }
 .btn.danger:hover { background: rgba(204,58,58,0.06); }
-
-.sessionStartWrap { display: flex; flex-direction: column; }
-.sessionStartHeader { margin-bottom: 8px; }
-.sessionStartOption { border: 1px solid var(--border); border-radius: 11px; padding: 11px; background: #f4f5f6; }
-.sessionStartOptionTitle { font-size: 14px; font-weight: 700; line-height: 1.25; }
-.sessionStartOptionCopy { margin: 4px 0 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }
-.sessionStartAction { width: 100%; font-weight: 450; }
-.sessionStartDivider { display: flex; align-items: center; gap: 8px; margin: 5px 3px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-.sessionStartDivider::before, .sessionStartDivider::after { content: ""; height: 1px; flex: 1 1 auto; background: var(--border); }
-.agentSearchLabel { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; font-weight: 650; }
-.sessionAgentSearch { width: 100%; }
-.agentSearchResults { margin-top: 9px; }
-.agentSearchResults .agentBtn:last-child { margin-bottom: 0; }
-
-.agentBtn { width: 100%; text-align: left; border: 1px solid var(--border); background: #fff; padding: 10px; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
-.agentName { font-weight: 650; }
-.agentDesc { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.3; }
 
 .pill { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--muted); }
 .pill.action { color: #0b57d0; border-color: rgba(11,87,208,0.35); }
@@ -5227,6 +6305,8 @@ body::before {
   padding: 10px;
   background: #fff;
 }
+.emptyChatState { height: 100%; min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; box-sizing: border-box; text-align: center; color: var(--muted); }
+.emptyChatState strong { color: var(--text); font-size: 18px; }
 
 .msgRow { margin-bottom: 12px; }
 .sendError { color: #dc2626; background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.4); border-radius: 8px; padding: 8px 10px; margin: 8px 0; white-space: pre-wrap; }
@@ -5243,8 +6323,52 @@ body::before {
 .bubble.user { background: #eef5ff; }
 
 .composer { margin-top: 10px; }
+.composerBehaviorPicker { flex: 1 1 auto; min-width: 0; }
+.composerAgentLabel { margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.035em; text-transform: uppercase; white-space: nowrap; }
+.composerAgentLabel .muted { font-weight: 500; letter-spacing: 0; text-transform: none; }
+.composerAgentButtons { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.composerAgentButton { border: 1px solid var(--border); background: transparent; color: var(--muted); padding: 5px 8px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 650; line-height: 1.15; transition: color 120ms ease, border-color 120ms ease, background 120ms ease; }
+.composerAgentButton:hover { color: var(--text); border-color: #aaa; }
+.composerAgentButton.selected { color: #0b57d0; border-color: rgba(11,87,208,0.42); background: rgba(11,87,208,0.08); }
+:root[data-theme="dark"] .composerAgentButton:hover { border-color: #737b87; }
+:root[data-theme="dark"] .composerAgentButton.selected { color: #8ab4ff; border-color: rgba(138,180,255,0.50); background: rgba(138,180,255,0.10); }
+.composerAgentTooltip { position: fixed; z-index: 300; visibility: hidden; width: min(340px, calc(100vw - 24px)); box-sizing: border-box; padding: 12px 14px 13px; border: 1px solid rgba(17,24,39,0.16); border-radius: 12px; background: rgba(255,255,255,0.98); color: #252a32; box-shadow: 0 16px 38px rgba(15,23,42,0.18), 0 3px 10px rgba(15,23,42,0.10); opacity: 0; transform: translateY(4px); pointer-events: none; text-align: left; transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease; }
+.composerAgentTooltip.visible { visibility: visible; opacity: 1; transform: translateY(0); }
+.composerAgentTooltipTitle { display: block; margin-bottom: 4px; color: #111827; font-size: 13px; font-weight: 750; line-height: 1.25; letter-spacing: 0.01em; }
+.composerAgentTooltipCopy { display: block; font-size: 14px; font-weight: 450; line-height: 1.48; }
+:root[data-theme="dark"] .composerAgentTooltip { border-color: #49515d; background: rgba(35,40,48,0.98); color: #dce2ea; box-shadow: 0 18px 44px rgba(0,0,0,0.40), 0 3px 10px rgba(0,0,0,0.26); }
+:root[data-theme="dark"] .composerAgentTooltipTitle { color: #f3f6fa; }
 textarea, input, select { font: inherit; box-sizing: border-box; }
 textarea { width: 100%; min-height: 90px; resize: vertical; padding: 10px; border-radius: 10px; border: 1px solid var(--border); }
+.composerInputShell { border: 1px solid var(--border); border-radius: 14px; background: #fff; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.composerInputShell:focus-within { border-color: rgba(11,87,208,0.65); box-shadow: 0 0 0 2px rgba(11,87,208,0.10); }
+.composerInputShell textarea { display: block; min-height: 92px; padding: 12px 13px 4px; border: 0; border-radius: 14px 14px 0 0; background: transparent; outline: none; }
+.composerInputFooter { min-height: 48px; display: flex; align-items: flex-end; gap: 9px; padding: 5px 7px 7px; }
+.composerSendButton { flex: 0 0 auto; }
+.composerBelow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 7px; }
+.sessionCreateMenuWrap { position: relative; flex: 0 0 auto; }
+.composerPlusButton { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: #f3f4f6; color: var(--muted); cursor: pointer; font: inherit; font-size: 22px; font-weight: 350; line-height: 1; }
+.composerPlusButton:hover, .composerPlusButton[aria-expanded="true"] { color: var(--text); border-color: #aaa; background: #e9ebee; }
+.sessionCreateMenu { display: none; position: absolute; left: 0; bottom: calc(100% + 10px); z-index: 100; width: min(370px, calc(100vw - 80px)); max-height: min(460px, 68vh); overflow: auto; padding: 9px; border: 1px solid var(--border); border-radius: 14px; background: var(--panelSolid); box-shadow: 0 18px 50px rgba(0,0,0,0.20); }
+.sessionCreateMenu.open { display: block; }
+.sessionCreateMenuHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 7px 8px 10px; }
+.sessionCreateMenuHead span { color: var(--muted); font-size: 11px; text-align: right; }
+.sessionCreateOption, .sessionCreateAgent { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px; border: 0; border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; font: inherit; text-align: left; }
+.sessionCreateOption:hover, .sessionCreateAgent:hover { background: rgba(11,87,208,0.08); }
+.sessionCreateOption > span:last-child { display: grid; gap: 2px; }
+.sessionCreateOption small, .sessionCreateAgent small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.sessionCreateIcon { width: 28px; height: 28px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; color: #0b57d0; font-size: 17px; }
+.sessionCreateDivider { margin: 8px 7px 7px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: 0.055em; text-transform: uppercase; }
+.sessionCreateSearch { width: 100%; margin-bottom: 6px; }
+.sessionCreateResults { max-height: 170px; overflow: auto; }
+.sessionCreateAgent { justify-content: space-between; }
+.sessionCreateAgent span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessionCreateAgent small { flex: 0 0 auto; }
+.sessionCreateEmpty { padding: 10px 9px; color: var(--muted); font-size: 12px; }
+:root[data-theme="dark"] .composerInputShell { background: #171b20; }
+:root[data-theme="dark"] .composerPlusButton { background: #252b33; }
+:root[data-theme="dark"] .composerPlusButton:hover, :root[data-theme="dark"] .composerPlusButton[aria-expanded="true"] { border-color: #737b87; background: #303741; }
+:root[data-theme="dark"] .sessionCreateIcon { color: #8ab4ff; }
 
 .logDetails { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #fff; margin-bottom: 10px; }
 .logDetails:last-child { margin-bottom: 0; }
@@ -5306,11 +6430,6 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   height: auto;
   gap: 14px;
 }
-.modalActions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
 .workspaceChoiceBody { display: grid; gap: 14px; }
 .workspaceChoiceSection {
   border: 1px solid var(--border);
@@ -5324,7 +6443,6 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
 .workspaceChoiceError { min-height: 1.25em; color: #b3261e; }
 :root[data-theme="dark"] .workspaceChoiceError { color: #ffb4ab; }
 @media (max-width: 560px) {
-  .modalActions { grid-template-columns: 1fr; }
   .workspaceChoiceInputRow { grid-template-columns: 1fr; }
 }
 
@@ -5368,18 +6486,30 @@ pre.plain { margin:0; white-space: pre; overflow:auto; font-family: var(--mono);
   background: #eef5ff;
   border-color: #c9daf8;
 }
+.settingsFooter { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.themeCycleBtn { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .fieldRow { display:grid; grid-template-columns: 170px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
 .fieldHelp { display: grid; grid-template-columns: 170px 1fr; gap: 8px; margin: -2px 0 12px; }
 .fieldHelpText { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .label { color: var(--muted); font-size: 12px; }
 .input { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); }
+.input[readonly] { color: var(--muted); background: rgba(0,0,0,0.025); cursor: default; }
+.modelPickerRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: center; }
+.modelPickerRow .input { min-width: 0; width: 100%; }
+.modelRefreshBtn { padding: 8px 11px; white-space: nowrap; }
+:root[data-theme="dark"] .input[readonly] { background: rgba(255,255,255,0.035); }
 textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 @media (max-width: 1100px) {
+  .welcomeTaskGrid { grid-template-columns: 1fr; }
+  .welcomePanel { align-items: flex-start; }
+  .welcomeTaskCard { min-height: 0; }
   .workspace { display:none; }
 }
 @media (max-width: 820px) {
   .sidebar { display:none; }
+  .welcomePanel { padding: 28px 18px; }
+  .welcomeSectionHead, .welcomeFooter { align-items: flex-start; flex-direction: column; }
 }
 """
 
@@ -5418,9 +6548,56 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             headers={"Cache-Control": "no-cache"},
         )
 
+    def _environment_run_task(run_id: str) -> str | None:
+        """Read the full task from known, run-local files only."""
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        for filename in ("task.json", "launch.json"):
+            path = paths.run_dir / filename
+            if not path.is_file():
+                continue
+            with contextlib.suppress(Exception):
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("prompt") is not None:
+                    prompt = data["prompt"]
+                    if isinstance(prompt, str):
+                        return prompt
+                    return json.dumps(prompt, indent=2, ensure_ascii=False)
+        return None
+
+    def _environment_type_for_rerun(
+        run_id: str, manifest: dict[str, Any]
+    ) -> str | None:
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        launch_path = paths.run_dir / "launch.json"
+        with contextlib.suppress(Exception):
+            launch = json.loads(launch_path.read_text(encoding="utf-8"))
+            launch_type = str(launch.get("environment_type") or "")
+            if launch_type in {"agent_team", "agent_symposium"}:
+                return launch_type
+        manifest_type = str(manifest.get("environment_type") or "").lower()
+        if "symposium" in manifest_type:
+            return "agent_symposium"
+        if "team" in manifest_type:
+            return "agent_team"
+        return None
+
+    def _environment_run_can_rerun(
+        run_id: str, manifest: dict[str, Any]
+    ) -> bool:
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        return bool(
+            (paths.run_dir / "environment.yaml").is_file()
+            and _environment_type_for_rerun(run_id, manifest)
+            and _environment_run_task(run_id) is not None
+        )
+
     def _environment_run_manifest_for_dashboard(run_id: str) -> dict[str, Any]:
         manifest = read_environment_run_manifest(dashboard_group, run_id)
         paths = get_environment_run_paths(dashboard_group, run_id)
+        full_task = _environment_run_task(run_id)
+        if full_task is not None:
+            manifest["task"] = full_task
+        manifest["can_rerun"] = _environment_run_can_rerun(run_id, manifest)
         manifest.setdefault("paths", {})
         manifest["paths"].update({
             "run_dir": str(paths.run_dir),
@@ -5446,7 +6623,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 req.config_yaml,
                 group=dashboard_group,
             )
-            settings = settings_store.load().model_dump(mode="json")
+            settings = _effective_settings().model_dump(mode="json")
             llm = settings.get("llm") or {}
             runner = settings.get("runner") or {}
             await asyncio.to_thread(
@@ -5527,6 +6704,43 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             raise HTTPException(
                 status_code=404, detail="Run not found"
             ) from exc
+
+    @app.get(
+        "/environment-runs/{run_id}/rerun-template",
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_environment_rerun_template(run_id: str) -> dict[str, Any]:
+        try:
+            manifest = read_environment_run_manifest(dashboard_group, run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Run not found"
+            ) from exc
+        paths = get_environment_run_paths(dashboard_group, run_id)
+        config_path = paths.run_dir / "environment.yaml"
+        environment_type = _environment_type_for_rerun(run_id, manifest)
+        prompt = _environment_run_task(run_id)
+        if not config_path.is_file() or not environment_type or prompt is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This run does not contain the full configuration and task "
+                    "needed to start it again."
+                ),
+            )
+        config_yaml = config_path.read_text(encoding="utf-8")
+        if len(config_yaml) > 500_000 or len(prompt) > 500_000:
+            raise HTTPException(
+                status_code=409,
+                detail="This run is too large to prefill in the environment launcher.",
+            )
+        return {
+            "source_run_id": run_id,
+            "environment_name": manifest.get("environment_name") or run_id,
+            "environment_type": environment_type,
+            "config_yaml": config_yaml,
+            "prompt": prompt,
+        }
 
     @app.post(
         "/environment-runs/{run_id}/cancel",
@@ -5676,6 +6890,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
     )
     async def ui_environment_runs() -> HTMLResponse:
         runs = list_environment_run_manifests(dashboard_group)
+        for run in runs:
+            run_id = str(run.get("run_id") or "")
+            run["can_rerun"] = bool(
+                run_id and _environment_run_can_rerun(run_id, run)
+            )
         return HTMLResponse(
             render_environment_runs_page(
                 dashboard_group=dashboard_group,
@@ -5740,7 +6959,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         logo_img_style = "" if str(logo_img_src).strip() else "display:none"
 
         environment_runs_button = (
-            '<a class="sidebarNavAction" href="/ui/environment-runs">'
+            '<a class="sidebarNavAction" id="environmentRunsLink" href="/ui/environment-runs">'
             '<svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true">'
             '<path d="M4 19V9m8 10V5m8 14v-7"/>'
             '<path d="M2 19h20"/>'
@@ -5765,15 +6984,15 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <div class="panelControls">
           <div class="controlLabel">Visible panels</div>
           <div class="panelToggleGroup" role="group" aria-label="Visible dashboard panels">
-            <button class="panelToggle" id="toggleChatBtn" type="button" aria-pressed="true" title="Hide chat panel">
+            <button class="panelToggle" id="toggleChatBtn" type="button" aria-pressed="false" title="Show chat panel">
               <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
               <span>Chat</span>
             </button>
-            <button class="panelToggle" id="toggleLogsBtn" type="button" aria-pressed="true" title="Hide logs panel">
+            <button class="panelToggle" id="toggleLogsBtn" type="button" aria-pressed="false" title="Show logs panel">
               <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 4 4-4 4m6 0h8"/><rect x="2" y="3" width="20" height="18" rx="3"/></svg>
               <span>Logs</span>
             </button>
-            <button class="panelToggle" id="toggleArtifactsBtn" type="button" aria-pressed="true" title="Hide artifacts panel">
+            <button class="panelToggle" id="toggleArtifactsBtn" type="button" aria-pressed="false" title="Show artifacts panel">
               <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
               <span>Artifacts</span>
             </button>
@@ -5782,19 +7001,11 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
         <nav class="sidebarNav" aria-label="Dashboard actions">
           <button class="sidebarNavAction" id="openSettingsBtn" type="button">
             <svg class="controlIcon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 8.95 4.6 1.7 1.7 0 0 0 9.97 3.04V3h4v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06L19.77 7l-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03H21v4h-.08A1.7 1.7 0 0 0 19.4 15z"/></svg>
-            <span>Settings</span>
+            <span>Model and Agent Settings</span>
           </button>
           {environment_runs_button}
         </nav>
       </div>
-    </div>
-
-    <div class="section">
-      <div class="row sessionStartHeader">
-        <div class="sectionHead" style="margin:0">Start a session</div>
-        <span class="pill" id="dashboardGroupPill">Group: default</span>
-      </div>
-      <div id="agentList"></div>
     </div>
 
     <div class="section">
@@ -5807,6 +7018,28 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
   </div>
 
   <div class="splitter" id="leftSplitter" title="Drag to resize"></div>
+
+  <main class="welcomePanel" id="welcomePanel">
+    <div class="welcomeContent">
+      <div class="welcomeEyebrow">Scientific work, from question to artifact</div>
+      <h1>Welcome to URSA</h1>
+      <p class="welcomeLead">Choose an example to see how each agent approaches a different kind of work.</p>
+
+      <div class="welcomeSectionHead">
+        <button class="welcomeGuideLink" id="startWalkthroughBtn" type="button">Take a guided tour</button>
+        <button class="btn welcomeRefresh" id="refreshWelcomeTasksBtn" type="button" title="Show different examples">New examples</button>
+      </div>
+      <div class="welcomeTaskGrid" id="welcomeTaskList"></div>
+
+      <div class="welcomeFooter">
+        <div>
+          <strong>Prefer to begin from scratch?</strong>
+          <span>Open a blank chat and start typing. Your first message begins a non-persistent session by default.</span>
+        </div>
+        <button class="btn primary welcomeBlankAction" id="startBlankChatBtn" type="button">Open a blank chat <span aria-hidden="true">→</span></button>
+      </div>
+    </div>
+  </main>
 
   <div class="main" id="mainPanel">
     <div class="topbar">
@@ -5829,18 +7062,24 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       <div class="section conversation" id="conversationSection">
         <div class="messages" id="sessionMessages"></div>
         <div class="composer">
-          <div class="row" style="justify-content:space-between; align-items:center; margin: 8px 0; gap: 8px; flex-wrap: wrap;">
-            <div class="muted small">Ctrl/⌘ + Enter to send</div>
-            <div class="row" style="gap:8px; justify-content:flex-end; align-items:center; margin-left:auto;">
-              <label class="muted small" for="composerAgentType">Agent type</label>
-              <select id="composerAgentType" style="min-width:220px"></select>
+          <div class="composerInputShell">
+            <textarea id="messageInput" placeholder="Ask URSA anything…"></textarea>
+            <div class="composerInputFooter">
+              <div class="sessionCreateMenuWrap">
+                <button class="composerPlusButton" id="sessionCreateMenuBtn" type="button" aria-label="Persistent agent options" aria-expanded="false" title="Persistent agent options">+</button>
+                <div class="sessionCreateMenu" id="sessionCreateMenu"></div>
+              </div>
+              <div class="composerBehaviorPicker">
+                <div class="composerAgentLabel">Choose behavior <span class="muted">· Hover for details</span> · Use (+) to utilize persistent agents</div>
+                <div class="composerAgentButtons" id="composerAgentType" role="radiogroup" aria-label="Behavior for this message"></div>
+              </div>
+              <button class="btn primary composerSendButton" id="sendMsgBtn" type="button">Send</button>
             </div>
           </div>
-          <textarea id="messageInput" placeholder="Create a session to start chatting" disabled></textarea>
-          <div class="row" style="margin-top: 8px">
-            <button class="btn primary" id="sendMsgBtn" type="button" disabled>Send</button>
-            <div class="muted small" id="runStatus"></div>
-            <a class="muted small" href="/ui/workspace" style="margin-left:auto">Run workspace browser</a>
+          <div class="composerBelow">
+            <span class="muted small">Ctrl/⌘ + Enter to send</span>
+            <span class="muted small" id="runStatus"></span>
+            <a class="muted small" href="/ui/workspace">Run workspace browser</a>
           </div>
         </div>
       </div>
@@ -5900,24 +7139,6 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 
 
-<div class="modal" id="newSessionTypeModal" aria-hidden="true">
-  <div class="backdrop" id="newSessionTypeBackdrop"></div>
-  <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="newSessionTypeTitle">
-    <div class="topbar">
-      <div>
-        <div class="title" id="newSessionTypeTitle">Start New Session</div>
-        <div class="muted small">Choose how this session should be created.</div>
-      </div>
-      <button class="btn" id="closeNewSessionTypeBtn" type="button">Close</button>
-    </div>
-    <div class="modalActions">
-      <button class="btn primary" id="newSessionNamedBtn" type="button">New Named Agent Session</button>
-      <button class="btn" id="newSessionNonPersistentBtn" type="button">Non-persistent Session</button>
-    </div>
-  </div>
-</div>
-
-
 <div class="modal" id="workspaceChoiceModal" aria-hidden="true">
   <div class="backdrop" id="workspaceChoiceBackdrop"></div>
   <div class="modalCard smallModalCard" role="dialog" aria-modal="true" aria-labelledby="workspaceChoiceTitle">
@@ -5955,64 +7176,35 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
 <div class="modal" id="settingsModal" aria-hidden="true">
   <div class="backdrop" id="settingsBackdrop"></div>
-  <div class="modalCard">
+  <div class="modalCard" role="dialog" aria-labelledby="settingsModalTitle">
     <div class="topbar">
       <div>
-        <div class="title" id="settingsModalTitle">Settings</div>
-        <div class="muted small" id="settingsModalSubtitle">Global defaults for new sessions and runs.</div>
+        <div class="title" id="settingsModalTitle">Model and Agent Settings</div>
+        <div class="muted small" id="settingsModalSubtitle">Dashboard defaults. User, environment, and launch configuration may take precedence.</div>
       </div>
-      <button class="btn" id="closeSettingsBtn" type="button">Close</button>
     </div>
 
     <div class="settingsShell">
       <div class="settingsNav">
-        <button class="settingsNavBtn active" data-settings-section="ui" type="button">User Interface</button>
-        <button class="settingsNavBtn" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn active" data-settings-section="llm" type="button">LLM</button>
+        <button class="settingsNavBtn" data-settings-section="defaults" type="button">Default config</button>
         <button class="settingsNavBtn" data-settings-section="embedding" type="button">Embedding/RAG</button>
-        <button class="settingsNavBtn" data-settings-section="agents" type="button">Agent management</button>
+        <button class="settingsNavBtn" data-settings-section="agents" data-settings-scope="global" type="button">Agent management</button>
         <button class="settingsNavBtn" data-settings-section="tools" type="button">RAG tools</button>
         <button class="settingsNavBtn" data-settings-section="mcp" type="button">MCP tools</button>
-        <button class="settingsNavBtn" data-settings-section="runner" type="button">Runner</button>
       </div>
 
       <div class="settingsContent">
-        <div class="settingsPane" data-settings-pane="ui">
-          <div class="section">
-            <div class="sectionHead">User Interface</div>
-            <div class="fieldRow">
-            <div class="label">Theme</div>
-            <select class="input" id="set_theme">
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-            </select>
-            </div>
-            <div class="fieldHelp">
-              <div></div>
-              <div class="fieldHelpText">
-                Follow your OS/browser theme, or force light or dark mode for the dashboard.
-              </div>
-            </div>
-            <div class="fieldRow">
-              <div class="label">STDOUT buffer lines</div>
-              <input class="input" id="set_stdout_buffer_lines" type="number" min="5000" step="100" />
-            </div>
-            <div class="fieldHelp">
-              <div></div>
-              <div class="fieldHelpText">
-              Number of log lines kept in the browser for the STDOUT pane. Higher values preserve more scrollback but can make the page heavier for very long runs.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="settingsPane hidden" data-settings-pane="llm">
+        {CONFIG_EDITOR_HTML}
+        <div class="settingsPane" data-settings-pane="llm">
           <div class="section">
             <div class="sectionHead">LLM</div>
+            <div class="fieldRow"><div class="label">Inference provider</div><select class="input" id="set_llm_inference_provider"><option value="">Direct / custom endpoint</option></select></div>
+            <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_llm_provider_status">Choose a configured provider or continue using a direct endpoint.</div></div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_base_url" placeholder="Model Provider Default" /></div>
-            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_model" placeholder="openai:gpt-5.4-mini" /></div>
+            <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_model" list="set_llm_model_options" placeholder="openai:gpt-5.4-mini" /><datalist id="set_llm_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_llm_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
             <div class="globalCredentialOnly">
-              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_llm_credential_source"><option value="stored">Secure system storage</option><option value="keyring">URSA config key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_llm_stored_fields">
                 <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_llm_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
                 <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_llm_remove_key" type="button">Remove saved key</button></div></div>
@@ -6029,10 +7221,12 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
           <div class="section">
             <div class="sectionHead">Embedding / RAG</div>
             <div class="muted small" style="margin: 2px 0 10px">Configure the embedding model used by RAG agents and persisted RAG tools. The dashboard stores only non-secret settings.</div>
+            <div class="fieldRow"><div class="label">Inference provider</div><select class="input" id="set_embedding_inference_provider"><option value="">Direct / custom endpoint</option></select></div>
+            <div class="fieldHelp"><div></div><div class="fieldHelpText" id="set_embedding_provider_status">Choose a configured provider or continue using a direct endpoint.</div></div>
             <div class="fieldRow"><div class="label">Base URL</div><input class="input" id="set_embedding_base_url" placeholder="Model Provider Default" /></div>
-            <div class="fieldRow"><div class="label">Model</div><input class="input" id="set_embedding_model" placeholder="openai:text-embedding-3-large" /></div>
+            <div class="fieldRow"><div class="label">Model</div><div class="modelPickerRow"><input class="input" id="set_embedding_model" list="set_embedding_model_options" placeholder="openai:text-embedding-3-large" /><datalist id="set_embedding_model_options"></datalist><button class="btn modelRefreshBtn" id="refresh_embedding_models" type="button" title="Refresh models from this provider">Refresh</button></div></div>
             <div class="globalCredentialOnly">
-              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
+              <div class="fieldRow"><div class="label">API key source</div><select class="input" id="set_embedding_credential_source"><option value="stored">Secure system storage</option><option value="keyring">URSA config key</option><option value="llm">Reuse saved LLM key</option><option value="environment">Environment variable</option><option value="none">No API key</option></select></div>
               <div id="set_embedding_stored_fields">
                 <div class="fieldRow"><div class="label">API key</div><input class="input" id="set_embedding_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter to save or replace" /></div>
                 <div class="fieldRow"><div></div><div class="row" style="justify-content:flex-start"><button class="btn danger" id="set_embedding_remove_key" type="button">Remove saved key</button></div></div>
@@ -6042,13 +7236,6 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
             </div>
             <div class="fieldRow"><div class="label">Model kwargs</div><textarea class="input" id="set_embedding_model_kwargs" rows="7" placeholder='{{"dimensions":1024}}' style="font-family: var(--mono);"></textarea></div>
             <div class="muted small" style="margin: 2px 0 10px">Additional JSON object passed to LangChain init_embeddings. Explicit fields above still take precedence for model and base_url.</div>
-          </div>
-        </div>
-
-        <div class="settingsPane hidden" data-settings-pane="runner">
-          <div class="section">
-            <div class="sectionHead">Runner</div>
-            <div class="fieldRow"><div class="label">Timeout (seconds)</div><input class="input" id="set_timeout" type="number" min="1" placeholder="(none)" /></div>
           </div>
         </div>
 
@@ -6064,7 +7251,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
               <div class="label">Selected RAG tools</div>
               <div>
                 <div id="ragSelectedList"></div>
-                <div class="muted small" style="margin-top:6px">These tools are staged until you click Save.</div>
+                <div class="muted small" style="margin-top:6px">These tools are staged until you click Update.</div>
               </div>
             </div>
 
@@ -6124,11 +7311,14 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
       </div>
     </div>
 
-    <div class="row" style="gap: 10px">
+    <div class="row settingsFooter" style="gap: 10px">
+      <input id="set_theme" type="hidden" value="system" />
+      <button class="btn themeCycleBtn" id="cycleThemeBtn" type="button"><span aria-hidden="true">◐</span><span>Theme: System</span></button>
       <div class="muted small" id="settingsUpdated"></div>
       <div class="muted small" id="settingsSaved"></div>
-      <div style="margin-left:auto">
-        <button class="btn primary" id="saveSettingsBtn" type="button">Save</button>
+      <div class="row" style="margin-left:auto; gap:8px">
+        <button class="btn" id="closeSettingsBtn" type="button">Cancel</button>
+        <button class="btn primary" id="saveSettingsBtn" type="button">Update</button>
       </div>
     </div>
   </div>
@@ -6139,18 +7329,22 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         """
 
+        dashboard_js = DASHBOARD_JS.replace(
+            "  init().catch", ONBOARDING_JS + "\n  init().catch"
+        )
         html_doc = f"""<!doctype html>
 <html lang=\"en\">
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>URSA Dashboard</title>
-  <style>{DASHBOARD_CSS}</style>
+  <style>{DASHBOARD_CSS}{ONBOARDING_CSS}</style>
   {logo_inline}
 </head>
 <body>
 {body}
-<script>{DASHBOARD_JS}</script>
+{ONBOARDING_HTML}
+<script>{dashboard_js}</script>
 </body>
 </html>"""
         return HTMLResponse(

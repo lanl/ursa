@@ -27,7 +27,7 @@ def main(
         file_okay=True,
         dir_okay=False,
         resolve_path=True,
-        help="YAML/JSON URSA config whose llm_model settings initialize the dashboard LLM endpoint.",
+        help="YAML/JSON URSA config whose model settings and inference providers initialize the dashboard.",
     ),
     use_web: bool = typer.Option(
         False,

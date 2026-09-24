@@ -319,6 +319,17 @@ class EnvironmentEventRecorder(BaseCallbackHandler):
         manifest.setdefault("created_at", now)
         if task is not None:
             manifest["task_preview"] = _preview(task)
+            task_path = self.paths.run_dir / "task.json"
+            task_path.write_text(
+                json.dumps(
+                    {"prompt": task},
+                    indent=2,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+            manifest["task_path"] = "task.json"
         if error:
             manifest["error"] = error
         self.paths.manifest_path.write_text(
