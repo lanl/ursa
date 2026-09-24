@@ -2,11 +2,27 @@ from __future__ import annotations
 
 import io
 import os
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
 import ursa_dashboard.worker_main as worker_main
+from ursa.agents.base import AgentWithTools
 from ursa_dashboard.worker_main import _init_embedding, _init_llm
+
+
+def test_dashboard_discovers_tools_in_composed_agent_nodes() -> None:
+    tool_agent = object.__new__(AgentWithTools)
+    legacy_wrapper = SimpleNamespace(executor=tool_agent)
+    workflow = SimpleNamespace(
+        agent_nodes=MappingProxyType({
+            "executor": tool_agent,
+            "nested": legacy_wrapper,
+        }),
+        execution_agent=tool_agent,
+    )
+
+    assert worker_main._agent_with_tools_targets(workflow) == [tool_agent]
 
 
 def test_dashboard_worker_omits_null_base_url_for_provider_default(

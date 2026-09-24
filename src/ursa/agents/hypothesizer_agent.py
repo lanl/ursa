@@ -47,14 +47,12 @@ class HypothesizerState(TypedDict, total=False):
 DEFAULT_HYPOTHESIS_EXPERIENCE = "hypothesis_space.md"
 
 
-class HypothesizerAgent(BaseAgent[HypothesizerState]):
-    """Maintain a persistent, shareable hypothesis space.
+class HypothesizerGraphMixin:
+    """Reusable graph behavior for persistent hypothesis-space maintenance.
 
-    Unlike the legacy/current-review workflow, this agent tracks alternative
-    hypotheses, relative likelihoods, and evidence for/against each hypothesis.
-    The full artifact is stored in ``den/experiences/<experience_filename>`` so
-    other agents can bring it back into context with ``read_experience`` even if
-    conversational context has been summarized away.
+    The mixin deliberately does not compile or own a graph. Standalone and
+    composite agents can therefore use the same hypothesis update behavior while
+    sharing the containing agent's model, workspace, callbacks, and persistence.
     """
 
     state_type = HypothesizerState
@@ -433,10 +431,33 @@ Requirements:
             last_updated=now,
         )
 
-    def _build_graph(self):
-        self.add_node(self.update_hypothesis_space, "update_hypothesis_space")
-        self.graph.set_entry_point("update_hypothesis_space")
-        self.graph.set_finish_point("update_hypothesis_space")
+    def _populate_hypothesizer_graph(self, builder) -> None:
+        """Add the hypothesizer node to ``builder`` without compiling it."""
+        builder.add_node(
+            "update_hypothesis_space",
+            self._wrap_node(
+                self.update_hypothesis_space,
+                "update_hypothesis_space",
+                "hypothesizer",
+            ),
+        )
+        builder.set_entry_point("update_hypothesis_space")
+        builder.set_finish_point("update_hypothesis_space")
+
+    def _build_graph(self) -> None:
+        self._populate_hypothesizer_graph(self.graph)
+
+
+class HypothesizerAgent(HypothesizerGraphMixin, BaseAgent[HypothesizerState]):
+    """Maintain a persistent, shareable hypothesis space.
+
+    The agent tracks alternative hypotheses, relative likelihoods, and evidence
+    for and against each hypothesis. The full artifact is stored in
+    ``den/experiences/<experience_filename>`` so other URSA behaviors can read
+    it back into context.
+    """
+
+    state_type = HypothesizerState
 
 
 class LegacyHypothesizerAgentWarning(DeprecationWarning):

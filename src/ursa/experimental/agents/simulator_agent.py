@@ -1,18 +1,21 @@
 from pathlib import Path
-from typing import Annotated, Optional, TypedDict
+from typing import Annotated, Any, Optional, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
+from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import (
     AIMessage,
+    AnyMessage,
     HumanMessage,
+    SystemMessage,
 )
-from langchain_core.tools import ToolRuntime, tool
 from langgraph.graph.message import add_messages
+from langgraph.types import Overwrite
 
 from ursa.agents import ChatAgent, RAGAgent
 from ursa.agents.base import BaseAgent
+from ursa.agents.chat_agent import ChatState
 from ursa.prompt_library.execution_prompts import recap_prompt
-from ursa.util import Checkpointer
 from ursa.util.events import AgentEvents, ToolEvents
 
 documenter_prompt = """
@@ -76,13 +79,13 @@ You are responsible for carrying out the users request accurately, safely, and t
 """
 
 
-class State(TypedDict):
-    messages: Annotated[list, add_messages]
+class State(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
     code_files: list[str]
     goal: str
 
 
-class SimulatorAgent(BaseAgent):
+class SimulatorAgent(BaseAgent[State]):
     state_type = State
 
     def __init__(
@@ -92,34 +95,37 @@ class SimulatorAgent(BaseAgent):
         log_state: bool = False,
         use_web: bool = False,
         workspace: Optional[Path | str] = None,
-        checkpointer=Checkpointer,
-        thread_id=str,
+        checkpointer=None,
+        thread_id: str | None = None,
         **kwargs,
     ):
-        super().__init__(llm, workspace=workspace, **kwargs)
+        super().__init__(
+            llm,
+            workspace=Path(workspace) if workspace is not None else None,
+            checkpointer=checkpointer,
+            thread_id=thread_id,
+            **kwargs,
+        )
         self.documenter_prompt = documenter_prompt
         self.runner_prompt = runner_prompt
         self.recap_prompt = recap_prompt
         self.log_state = log_state
-        self.thread_id = thread_id
         self.embedding = embedding
         self.use_web = use_web
-        self.llm = llm
         self.documenter = ChatAgent(
-            llm=self.llm,
-            workspace=workspace,
-            checkpointer=checkpointer,
-            thread_id=self.thread_id + "_documenter",
+            llm=llm,
+            workspace=self.workspace,
+            group=self.group,
+            thread_id=self.thread_id,
+            enable_metrics=False,
         )
         self.runner = ChatAgent(
-            llm=self.llm,
-            workspace=workspace,
-            checkpointer=checkpointer,
-            thread_id=self.thread_id + "_runner",
+            llm=llm,
+            workspace=self.workspace,
+            group=self.group,
+            thread_id=self.thread_id,
+            enable_metrics=False,
         )
-
-        self.documenter.executor_prompt = self.documenter_prompt
-        self.runner.executor_prompt = self.runner_prompt
 
         self.runner.safe_codes = [
             "All standard programming languages and tools for compiling and running codes and the associated files available in your workspace."
@@ -191,24 +197,79 @@ class SimulatorAgent(BaseAgent):
         else:
             return "Tool Failed: No RAG database available."
 
-    # Define the function that calls the model
-    def _documenter(self, state: State) -> State:
-        goal = state["messages"][-1].text
-        AgentEvents(agent=self.name, config=self.build_config()).emit(
+    @staticmethod
+    def _latest_human_text(messages: list[Any]) -> str:
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                return message.text
+        raise ValueError("SimulatorAgent requires a human request message.")
+
+    @staticmethod
+    def _without_internal_prompt(
+        messages: list[AnyMessage], prompt: str
+    ) -> list[AnyMessage]:
+        if (
+            messages
+            and isinstance(messages[0], SystemMessage)
+            and messages[0].text.strip() == prompt.strip()
+        ):
+            return messages[1:]
+        return messages
+
+    def _documenter_input(
+        self,
+        state: State,
+    ) -> ChatState:
+        self.events().emit(
             "Beginning documentation assessment",
             stage="document",
         )
-        response = self.documenter.invoke(state)
-        return {"messages": response["messages"], "goal": goal}
+        return cast(
+            ChatState,
+            {
+                "messages": Overwrite([
+                    SystemMessage(content=self.documenter_prompt),
+                    *state["messages"],
+                ])
+            },
+        )
 
-    # Define the function that calls the model
-    def _runner(self, state: State) -> State:
-        AgentEvents(agent=self.name, config=self.build_config()).emit(
+    def _documenter_output(self, state: ChatState) -> State:
+        messages = self._without_internal_prompt(
+            list(state["messages"]), self.documenter_prompt
+        )
+        return cast(
+            State,
+            {
+                "messages": Overwrite(messages),
+                "goal": self._latest_human_text(messages),
+            },
+        )
+
+    def _runner_input(
+        self,
+        state: State,
+    ) -> ChatState:
+        self.events().emit(
             "Beginning simulation",
             stage="simulate",
         )
-        response = self.runner.invoke(state["goal"])
-        return {"messages": response["messages"]}
+        return cast(
+            ChatState,
+            {
+                "messages": Overwrite([
+                    SystemMessage(content=self.runner_prompt),
+                    HumanMessage(content=state["goal"]),
+                ])
+            },
+        )
+
+    def _runner_output(self, state: ChatState) -> State:
+        return {
+            "messages": self._without_internal_prompt(
+                list(state["messages"]), self.runner_prompt
+            )
+        }
 
     # Define the function that calls the model
     def _summarize(self, state: State) -> State:
@@ -252,12 +313,24 @@ class SimulatorAgent(BaseAgent):
         if self.log_state:
             save_state = state.copy()
             save_state["messages"] = updated_messages
-            self.write_state(self.workspace / "combined_agent.json", save_state)
+            self.write_state(
+                str(self.workspace / "combined_agent.json"), dict(save_state)
+            )
         return {"messages": updated_messages}
 
     def _build_graph(self):
-        self.add_node(self._documenter)
-        self.add_node(self._runner)
+        self.add_agent_node(
+            "_documenter",
+            self.documenter,
+            input_fn=self._documenter_input,
+            output_fn=self._documenter_output,
+        )
+        self.add_agent_node(
+            "_runner",
+            self.runner,
+            input_fn=self._runner_input,
+            output_fn=self._runner_output,
+        )
         self.add_node(self._summarize)
 
         # Set the entrypoint as `agent`

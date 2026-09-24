@@ -49,7 +49,7 @@ from langchain_core.messages import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import add_messages
 from langgraph.runtime import Runtime
-from langgraph.types import Overwrite
+from langgraph.types import Command, Overwrite
 from pydantic import BaseModel, Field
 
 from ursa.agents.base import AgentContext, AgentWithTools, BaseAgent
@@ -294,7 +294,10 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         merge gives review a stable request for the current invoke instead of the
         first human message in the entire persisted conversation.
         """
-        normalized = dict(super()._normalize_inputs(inputs))
+        normalized_input = super()._normalize_inputs(inputs)
+        if isinstance(normalized_input, Command):
+            return normalized_input
+        normalized = dict(normalized_input)
         user_request = self._first_human_message_text(
             normalized.get("messages", [])
         )
@@ -376,7 +379,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.tool_llm.invoke(
-                messages, self.build_config(tags=["agent"])
+                messages, self.nested_config(config, tags=["agent"])
             )
             new_state["messages"].append(response)
         except Exception as e:  # noqa: BLE001
@@ -449,7 +452,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
             self.llm,
             ReviewAssessment,
             review_messages,
-            config=self.build_config(tags=["review"]),
+            config=self.nested_config(config, tags=["review"]),
             context="execution review assessment",
             fallback=ReviewAssessment(
                 is_complete=True,
@@ -534,14 +537,14 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         try:
             response = self.llm.invoke(
                 input=new_state["messages"],
-                config=self.build_config(tags=["recap"]),
+                config=self.nested_config(config, tags=["recap"]),
             )
             response_content = response.text
         except Exception:
             try:
                 response = self.tool_llm.invoke(
                     input=new_state["messages"],
-                    config=self.build_config(tags=["recap"]),
+                    config=self.nested_config(config, tags=["recap"]),
                 )
                 response_content = response.text
             except Exception as e:
@@ -567,48 +570,42 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 self.write_state("execution_agent.json", new_state)
             return {"messages": [recap_message, response]}
 
-    def _build_graph(self):
-        """Construct and compile the agent's LangGraph state machine."""
-
-        # Keep self.llm unbound for summary/recap calls. The executor loop uses a
-        # separate tool-bound model so provider-specific tool transcripts cannot
-        # leak into summarization history.
-        self.tool_llm = self.tool_llm.bind_tools(self.tools.values())
-
-        # Register nodes:
-        # - "agent": LLM planning/execution step
-        # - "action": tool dispatch (run_command, write_code, etc.)
-        # - "review": structured completeness review before final recap
-        # - "recap": summary/finalization step
-        self.add_node(self.query_executor, "agent")
-        self.add_node(self.tool_node, "action")
-        self.add_node(self.review_work, "review")
-        self.add_node(self.recap, "recap")
-
-        # Set entrypoint: execution starts with the "agent" node.
-        self.graph.set_entry_point("agent")
-
-        # From "agent", either continue with tools or review the completed work,
-        # based on presence of tool calls in the last message.
-        self.graph.add_conditional_edges(
+    def _populate_execution_graph(self, builder) -> None:
+        """Add executor nodes and edges to ``builder`` without compiling it."""
+        builder.add_node(
             "agent",
-            self._wrap_cond(should_continue, "should_continue", "execution"),
+            self._wrap_node(self.query_executor, "agent", "executor"),
+        )
+        builder.add_node(
+            "action", self._wrap_node(self.tool_node, "action", "executor")
+        )
+        builder.add_node(
+            "review",
+            self._wrap_node(self.review_work, "review", "executor"),
+        )
+        builder.add_node(
+            "recap", self._wrap_node(self.recap, "recap", "executor")
+        )
+        builder.set_entry_point("agent")
+        builder.add_conditional_edges(
+            "agent",
+            self._wrap_cond(should_continue, "should_continue", "executor"),
             {"continue": "action", "review": "review"},
         )
-
-        # After tools run, return control to the agent for the next step.
-        self.graph.add_edge("action", "agent")
-
-        # After review, either ask the executor to continue with review feedback or
-        # finish with the recap node.
-        self.graph.add_conditional_edges(
+        builder.add_edge("action", "agent")
+        builder.add_conditional_edges(
             "review",
-            self._wrap_cond(review_complete, "review_complete", "execution"),
+            self._wrap_cond(review_complete, "review_complete", "executor"),
             {"continue": "agent", "recap": "recap"},
         )
+        builder.set_finish_point("recap")
 
-        # The graph completes at the "recap" node.
-        self.graph.set_finish_point("recap")
+    def _build_graph(self) -> None:
+        """Construct the standalone executor graph."""
+        # Always bind a fresh model copy. Graphs can be rebuilt when tools change;
+        # rebinding an already bound runnable is provider-dependent.
+        self.tool_llm = self.llm.model_copy().bind_tools(self.tools.values())
+        self._populate_execution_graph(self.graph)
 
     def format_result(self, state: ExecutionState) -> str:
         return state["messages"][-1].text

@@ -1,7 +1,9 @@
 import subprocess
 
 import pytest
+from langchain_core.messages import AIMessage
 
+from tests.composite_helpers import CompositeFakeModel
 from ursa.agents.lammps_agent import LammpsAgent
 
 
@@ -80,3 +82,27 @@ def test_run_lammps_emits_terminal_event_for_cpu_and_gpu(
     assert captured["kwargs"]["cwd"] == tmp_path
     assert result["run_returncode"] == 1
     assert result["run_history"][-1]["attempt"] == 1
+
+
+def test_result_summarizer_is_a_retained_child_subgraph(monkeypatch, tmp_path):
+    monkeypatch.setattr("ursa.agents.lammps_agent.working", True)
+    model = CompositeFakeModel(messages=iter([AIMessage(content="summary")]))
+    agent = LammpsAgent(
+        model,
+        workspace=tmp_path,
+        enable_metrics=False,
+    )
+
+    assert agent.result_summarizer.workspace == tmp_path
+    assert agent.agent_nodes["_summarize"] is agent.result_summarizer
+    assert [name for name, _ in agent.compiled_graph.get_subgraphs()] == [
+        "_summarize"
+    ]
+
+    child_input = agent._summarizer_input({"simulation_task": "Run copper"})
+    assert child_input["current_user_request"].startswith(
+        "You are part of a larger scientific workflow"
+    )
+    assert "Run copper" in child_input["messages"].value[0].text
+    assert agent._summarizer_output({"messages": []}) == {}
+    agent.close()

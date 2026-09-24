@@ -86,11 +86,6 @@ class BaseWorkflow(ABC):
         Args:
             inputs: Optional positional input to the agent. If provided, all non-control
                 keyword arguments will be rejected to avoid ambiguity.
-            raw_debug: If True, displays raw telemetry data for debugging purposes.
-            save_json: If True, saves telemetry data as JSON.
-            metrics_path: Optional file path where telemetry metrics should be saved.
-            save_raw_snapshot: If True, saves a raw snapshot of the telemetry data.
-            save_raw_records: If True, saves raw telemetry records.
             config: Optional configuration dictionary to override default settings.
             **kwargs: Additional keyword arguments that can be either:
                 - Input parameters (when no positional input is provided)

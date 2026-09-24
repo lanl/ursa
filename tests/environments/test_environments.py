@@ -80,6 +80,15 @@ class RecordingOrganizer(RecordingMember):
         return {"final": f"organizer synthesis from {str(prompt)[:60]}"}
 
 
+class FailingMember(RecordingMember):
+    """Member that always raises, to exercise symposium fault containment."""
+
+    def invoke(self, prompt, **kwargs):
+        self.invocations.append(str(prompt))
+        self.workspaces_seen.append(self.workspace)
+        raise RuntimeError("member exploded")
+
+
 class AsyncRecordingMember(RecordingMember):
     def invoke(self, prompt, **kwargs):  # pragma: no cover - should not run
         raise AssertionError("async environment path should use ainvoke")
@@ -594,3 +603,91 @@ def test_result_to_text_extracts_common_result_shapes():
         == "last message"
     )
     assert result_to_text("plain") == "plain"
+
+
+def test_symposium_contains_member_failure_without_aborting_run(tmp_path):
+    config = {
+        "name": "resilient_symposium",
+        "organizer": {
+            "name": "organizer",
+            "role": "synth",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        "members": [
+            {
+                "name": "healthy",
+                "role": "reliable solver",
+                "agent": "tests.environments.test_environments.RecordingMember",
+            },
+            {
+                "name": "broken",
+                "role": "unreliable solver",
+                "agent": "tests.environments.test_environments.FailingMember",
+            },
+        ],
+        "revision_rounds": 1,
+        "workspace": str(tmp_path),
+    }
+    symposium = AgentSymposiumEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+
+    # The run must complete even though `broken` raises in every phase.
+    result = symposium.invoke("problem with an unreliable participant")
+
+    assert set(result["initial_writeups"]) == {"healthy", "broken"}
+    # Healthy sibling work is preserved verbatim.
+    assert "saw" in result["initial_writeups"]["healthy"]
+    # The failing member's contribution is recorded as contained failure text.
+    broken_text = result["initial_writeups"]["broken"]
+    assert "failed the initial_work phase" in broken_text
+    assert "RuntimeError" in broken_text
+    # Review + revision still ran and synthesis was produced.
+    assert set(result["final_writeups"]) == {"healthy", "broken"}
+    assert "organizer synthesis" in result["final"]
+
+
+def test_symposium_failure_events_are_emitted_per_phase(tmp_path):
+    config = {
+        "name": "failure_events_symposium",
+        "organizer": {
+            "name": "organizer",
+            "role": "synth",
+            "agent": "tests.environments.test_environments.RecordingOrganizer",
+        },
+        "members": [
+            {
+                "name": "broken",
+                "role": "unreliable solver",
+                "agent": "tests.environments.test_environments.FailingMember",
+            },
+        ],
+        "revision_rounds": 1,
+        "workspace": str(tmp_path),
+    }
+    symposium = AgentSymposiumEnvironment(
+        llm=fake_llm(), config=config, persist_members=False
+    )
+    seen: list[str] = []
+
+    async def run():
+        events = symposium._events({"callbacks": []})
+        original = events.aemit
+
+        async def capture(*args, **kwargs):
+            event_type = kwargs.get("event_type")
+            if event_type:
+                seen.append(event_type)
+            return await original(*args, **kwargs)
+
+        events.aemit = capture  # type: ignore[method-assign]
+        symposium._events = lambda config: events  # type: ignore[method-assign]
+        return await symposium.ainvoke("failing task")
+
+    result = asyncio.run(run())
+
+    assert result["final"]
+    assert "initial_work_failed" in seen
+    # The symposium as a whole must NOT report failure.
+    assert "symposium_failed" not in seen
+    assert "symposium_completed" in seen
