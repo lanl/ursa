@@ -44,6 +44,7 @@ def render_environment_runs_page(
     runs: Sequence[Mapping[str, Any]],
     team_starter_yaml: str,
     symposium_starter_yaml: str,
+    elo_starter_yaml: str,
 ) -> str:
     sorted_runs = sorted(runs, key=_run_sort_key, reverse=True)
     cards = []
@@ -53,13 +54,17 @@ def render_environment_runs_page(
         name = _escape(run.get("environment_name", "Environment"))
         env_type_raw = str(run.get("environment_type", ""))
         env_type = _escape(env_type_raw)
-        env_label = (
-            "Team"
-            if "team" in env_type_raw.lower()
-            else "Symposium"
-            if "symposium" in env_type_raw.lower()
-            else "Environment"
-        )
+        if "team" in env_type_raw.lower():
+            env_label = "Team"
+
+        elif "symposium" in env_type_raw.lower():
+            env_label = "Symposium"
+
+        elif "elo" in env_type_raw.lower():
+            env_label = "Elo"
+
+        else:
+            env_label = "Environment"
         status = _escape(run.get("status", "unknown"))
         status_class = _status_class(run.get("status"))
         updated = _escape(run.get("updated_at", ""))
@@ -97,14 +102,17 @@ def render_environment_runs_page(
     body = "".join(cards) or (
         "<div class='empty'><div class='empty-icon'>✦</div>"
         "<h2>No environment runs yet</h2>"
-        "<p>Create a team or symposium here, or continue using "
+        "<p>Create a team, symposium, or Elo environment, or continue using "
         "<code>run_with_visualization</code> from Python.</p>"
         "<div class='empty-actions'><button class='btn primary' data-create='agent_team'>"
         "Create a team</button><button class='btn' data-create='agent_symposium'>"
-        "Create a symposium</button></div></div>"
+        "Create a symposium</button>"
+        "<button class='btn' data-create='agent_elo'>"
+        "Create an Elo environment</button></div></div>"
     )
     team_json = json.dumps(team_starter_yaml)
     symposium_json = json.dumps(symposium_starter_yaml)
+    elo_json = json.dumps(elo_starter_yaml)
     run_count = len(sorted_runs)
     active_count = sum(
         1
@@ -229,13 +237,14 @@ def render_environment_runs_page(
         <a class='btn' href='/ui'><svg class='icon' viewBox='0 0 24 24' aria-hidden='true'><path d='m15 18-6-6 6-6'/></svg>Dashboard</a>
         <button class='btn' data-create='agent_symposium'>New symposium</button>
         <button class='btn' data-create='agent_team'>New team</button>
+        <button class='btn' data-create='agent_elo'>New Elo</button>
       </div>
     </div>
     <section class='toolbar' aria-label='Run filters'>
       <div class='filters'>
         <div class='search-wrap'><svg class='icon' viewBox='0 0 24 24' aria-hidden='true'><circle cx='11' cy='11' r='7'/><path d='m20 20-4-4'/></svg><input class='input' id='runSearch' type='search' placeholder='Search runs or tasks…' aria-label='Search environment runs' /></div>
         <select class='input' id='statusFilter' aria-label='Filter by status'><option value=''>All statuses</option><option value='queued'>Queued</option><option value='starting'>Starting</option><option value='running'>Running</option><option value='succeeded'>Succeeded</option><option value='failed'>Failed</option><option value='cancelled'>Cancelled</option></select>
-        <select class='input' id='typeFilter' aria-label='Filter by environment type'><option value=''>All types</option><option value='team'>Teams</option><option value='symposium'>Symposia</option></select>
+        <select class='input' id='typeFilter' aria-label='Filter by environment type'><option value=''>All types</option><option value='team'>Teams</option><option value='symposium'>Symposia</option><option value='elo'>Elo</option></select>
       </div>
       <div class='summary-pills'><span class='summary-pill'>{run_count} run{"s" if run_count != 1 else ""}</span><span class='summary-pill active' id='activeCount'>{active_count} active</span></div>
     </section>
@@ -258,6 +267,7 @@ def render_environment_runs_page(
   (() => {{
     const TEAM_YAML = {team_json};
     const SYMPOSIUM_YAML = {symposium_json};
+    const ELO_YAML = {elo_json};
     const modal = document.getElementById('environmentModal');
     const yamlInput = document.getElementById('environmentYaml');
     const runIdInput = document.getElementById('environmentRunId');
@@ -277,31 +287,84 @@ def render_environment_runs_page(
       return data;
     }}
     function payload() {{ return {{environment_type:environmentType, config_yaml:yamlInput.value, prompt:promptInput.value, run_id:runIdInput.value.trim() || null, replace_existing:document.getElementById('replaceExisting').checked}}; }}
-    function openModal(type, template=null) {{
-      environmentType = type; if (modal.hidden) priorFocus = document.activeElement;
+    function openModal(type) {{
+      environmentType = type;
+      priorFocus = document.activeElement;
+      if (modal.hidden) priorFocus = document.activeElement;
+    
       const symposium = type === 'agent_symposium';
+      const elo = type === 'agent_elo';
       const repeated = !!template?.source_run_id;
-      document.getElementById('environmentModalTitle').textContent = repeated ? (symposium ? 'Run symposium again' : 'Run team again') : (symposium ? 'New symposium' : 'New team');
-      document.getElementById('environmentModalCopy').textContent = repeated ? 'Review the copied configuration and task before launching an independent new run.' : (symposium ? 'Configure independent participants, peer review, and the task.' : 'Configure the team, its members, and the task it should complete.');
-      launchBtn.textContent = symposium ? 'Launch symposium' : 'Launch team';
-      yamlInput.value = template && 'config_yaml' in template ? template.config_yaml : (symposium ? SYMPOSIUM_YAML : TEAM_YAML);
-      runIdInput.value = ''; promptInput.value = template?.prompt || ''; document.getElementById('replaceExisting').checked = false;
-      setMessage(repeated && !template.loading ? `Copied from ${{template.source_run_id}}. A fresh Run ID will be generated unless you provide one.` : '');
-      modal.hidden = false; document.body.style.overflow = 'hidden'; (repeated ? promptInput : yamlInput).focus();
+
+      if (repeated) {{
+        document.getElementById('environmentModalTitle').textContent = elo 
+          ? 'Run Elo again' 
+          : (symposium ? 'Run symposium again' : 'Run team again');
+      }} else {{
+        document.getElementById('environmentModalTitle').textContent = elo 
+          ? 'New Elo environment' 
+          : (symposium ? 'New symposium' : 'New team');
+      }}
+
+      if (repeated) {{
+        document.getElementById('environmentModalCopy').textContent = 
+          'Review the copied configuration and task before launching an independent new run.';
+      }} else if (elo) {{
+        document.getElementById('environmentModalCopy').textContent = 
+          'Configure evolutionary competitors and the task.';
+      }} else if (symposium) {{
+        document.getElementById('environmentModalCopy').textContent = 
+          'Configure independent participants, peer review, and the task.';
+      }} else {{
+        document.getElementById('environmentModalCopy').textContent = 
+          'Configure the team, its members, and the task it should complete.';
+      }}
+
+      launchBtn.textContent = elo 
+        ? 'Launch Elo' 
+        : (symposium ? 'Launch symposium' : 'Launch team');
+
+      // Set YAML Configuration Input
+      yamlInput.value = template && 'config_yaml' in template 
+        ? template.config_yaml 
+        : (elo ? ELO_YAML : (symposium ? SYMPOSIUM_YAML : TEAM_YAML));
+
+      // Reset Form Fields
+      runIdInput.value = '';
+      promptInput.value = template?.prompt || '';
+      document.getElementById('replaceExisting').checked = false;
+
+      setMessage(repeated && !template.loading 
+        ? `Copied from ${{template.source_run_id}}. A fresh Run ID will be generated unless you provide one.` 
+        : ''
+      );
+
+      modal.hidden = false;
+      document.body.style.overflow = 'hidden';
+      (repeated ? promptInput : yamlInput).focus();
     }}
     async function openRerun(runId, trigger=null) {{
-      const cardType = trigger?.closest('.run-card')?.dataset.type === 'symposium' ? 'agent_symposium' : 'agent_team';
+      const cardRunType = trigger?.closest('.run-card')?.dataset.type;
+      const cardType = cardRunType === 'symposium' 
+        ? 'agent_symposium' 
+        : (cardRunType === 'elo' ? 'agent_elo' : 'agent_team');
+
       openModal(cardType, {{source_run_id:runId, config_yaml:'', prompt:'', loading:true}});
-      validateBtn.disabled = true; launchBtn.disabled = true; setMessage('Loading the previous configuration and full task…');
+      validateBtn.disabled = true; 
+      launchBtn.disabled = true; 
+      setMessage('Loading the previous configuration and full task…');
+
       try {{
         const response = await fetch(`/environment-runs/${{encodeURIComponent(runId)}}/rerun-template`);
-        let data = {{}}; try {{ data = await response.json(); }} catch (_) {{}}
+        let data = {{}}; 
+        try {{ data = await response.json(); }} catch (_) {{}}
         if (!response.ok) throw new Error(data.detail || `Unable to load run (${{response.status}})`);
         openModal(data.environment_type, data);
       }} catch (error) {{
         setMessage(error.message, 'error');
       }} finally {{
-        validateBtn.disabled = false; launchBtn.disabled = false;
+        validateBtn.disabled = false; 
+        launchBtn.disabled = false;
       }}
     }}
     function closeModal() {{ modal.hidden = true; document.body.style.overflow = ''; setMessage(''); if (priorFocus) priorFocus.focus(); }}
@@ -661,7 +724,7 @@ function readableType(type) {
     symposium_started:'Symposium started', symposium_completed:'Symposium completed', symposium_failed:'Symposium failed',
     symposium_phase_started:'Phase started', symposium_phase_completed:'Phase completed', initial_work_started:'Initial work started', initial_work_completed:'Initial work completed',
     review_round_started:'Review round started', review_round_completed:'Review round completed', revision_round_started:'Revision round started', revision_round_completed:'Revision round completed',
-    synthesis_started:'Synthesis started', synthesis_completed:'Final synthesis completed', tool_search:'Tool search', tool_execute:'Tool execution', tool_write:'File write', tool_safety_check:'Tool safety check'
+    synthesis_started:'Synthesis started', synthesis_completed:'Final synthesis completed', tool_search:'Tool search', tool_execute:'Tool execution', tool_write:'File write', tool_safety_check:'Tool safety check', elo_started:'Elo run started', elo_completed:'Elo run completed', elo_failed:'Elo run failed', generation_started:'Generation started', generation_completed:'Generation completed', member_started:'Member started', member_completed:'Member completed', member_timed_out:'Member timed out', member_failed:'Member failed', pairings_declared:'Pairings created', match_started:'Match started', match_completed:'Match completed', member_eliminated:'Member eliminated', child_created:'Child created',   
   };
   return labels[type] || String(type || 'event').replaceAll('_',' ').replace(/^./, c => c.toUpperCase());
 }
@@ -751,14 +814,77 @@ function eventVisibleInTimeline(e, index) {
   return eventMatchesParticipant(e, selectedParticipant, index);
 }
 function eventSearchText(e, index) { return [e.event_type, e.message, e.stage, e.phase, sourceTargetText(e, index), text(payload(e))].join(' ').toLowerCase(); }
-function extractTopology() { const ev = events.find(e => e.event_type === 'topology_declared' && payload(e).topology) || events.find(e => payload(e).topology); return ev ? payload(ev).topology : null; }
+function extractTopology() {
+  const topologies = events
+    .filter(e => e.event_type === 'topology_declared' && payload(e).topology)
+    .map(e => payload(e).topology);
+
+  if (!topologies.length) {
+    const fallback = events.find(e => payload(e).topology);
+    return fallback ? payload(fallback).topology : null;
+  }
+
+  const nodes = new Map();
+  const edges = new Map();
+
+  for (const top of topologies) {
+    for (const node of top.nodes || []) {
+      const id = String(node.id || node.name);
+      nodes.set(id, node);
+    }
+    for (const edge of top.edges || []) {
+      const key = [edge.source, edge.target, edge.kind || ''].join('|');
+      edges.set(key, edge);
+    }
+  }
+
+  const latest = topologies[topologies.length - 1];
+  return {
+    ...latest,
+    nodes: [...nodes.values()],
+    edges: [...edges.values()],
+  };
+}
+
 function extractFullTask() {
   if (manifest.task != null) return text(manifest.task);
-  for (const e of events) { const p = payload(e); if (p.task != null) return text(p.task); }
+  for (const e of events) {
+    const p = payload(e);
+    if (p.task != null) return text(p.task);
+  }
   return manifest.task_preview || '';
 }
-function extractTaskPreview() { return manifest.task_preview || extractFullTask(); }
-function durationFromEvents() { for (let i = events.length - 1; i >= 0; i--) { const p = payload(events[i]); if (p.elapsed_seconds != null && ['team_completed','symposium_completed'].includes(events[i].event_type)) return Number(p.elapsed_seconds); } const ns = events.map(e => Number(e.monotonic_timestamp_ns)).filter(n => Number.isFinite(n)); if (ns.length > 1) return (Math.max(...ns) - Math.min(...ns)) / 1e9; return null; }
+
+function extractTaskPreview() {
+  return manifest.task_preview || extractFullTask();
+}
+
+function extractFinal() {
+  const preferred = ['elo_completed', 'team_completed', 'symposium_completed', 'synthesis_completed'];
+  for (const type of preferred) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const p = payload(events[i]);
+      if (events[i].event_type === type && (p.result || p.final)) return text(p.result || p.final);
+    }
+  }
+  for (let i = events.length - 1; i >= 0; i--) {
+    const p = payload(events[i]);
+    if (p.result && String(events[i].event_type || '').endsWith('_completed')) return text(p.result);
+  }
+  return '';
+}
+
+function durationFromEvents() {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const p = payload(events[i]);
+    if (p.elapsed_seconds != null && ['elo_completed', 'team_completed', 'symposium_completed'].includes(events[i].event_type)) {
+      return Number(p.elapsed_seconds);
+    }
+  }
+  const ns = events.map(e => Number(e.monotonic_timestamp_ns)).filter(n => Number.isFinite(n));
+  if (ns.length > 1) return (Math.max(...ns) - Math.min(...ns)) / 1e9;
+  return null;
+}
 function workspacePaths() {
   const paths = [];
   const add = (p) => { if (p && typeof p === 'string' && p.startsWith('/')) paths.push(p); };
