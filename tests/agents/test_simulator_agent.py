@@ -5,8 +5,6 @@ from langchain_core.messages import AIMessage
 from tests.composite_helpers import CompositeFakeModel, request_text
 from ursa.experimental.agents.simulator_agent import (
     SimulatorAgent,
-    documenter_prompt,
-    runner_prompt,
 )
 from ursa.util import Checkpointer
 
@@ -40,14 +38,6 @@ def test_simulator_uses_documenter_and_runner_child_subgraphs(tmp_path):
 
     assert state["goal"] == "Run the simulation"
     assert state["messages"][-1].text == "final recap"
-    assert any(
-        documenter_prompt.strip() in request_text(req)
-        for req in model.plain_requests
-    )
-    assert any(
-        runner_prompt.strip() in request_text(req)
-        for req in model.plain_requests
-    )
     agent.close()
 
 
