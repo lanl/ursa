@@ -6,22 +6,23 @@ from pathlib import Path
 
 from ursa.skills.discovery import discover_skills
 
-_INTRO = (
-    "Skills are loaded from `.agents/skills/` in the directory URSA was "
-    "started in, and from `~/.agents/skills/`. A project skill shadows a user "
-    "skill with the same name."
-)
+_INTRO = """
+Skills are loaded from `.agents/skills/` in the directory URSA was \
+started in, and from `~/.agents/skills/`. A project skill shadows a user \
+skill with the same name.
+""".strip()
 
-_USAGE = (
-    "Type `$` in the prompt to pick a skill, or write `$name` directly. You "
-    "can also just describe the task: URSA loads a matching skill on its own."
-)
+_USAGE = """
+Type `$` in the prompt to pick a skill, or write `$name` directly. You \
+can also just describe the task: URSA loads a matching skill on its own.
+""".strip()
 
-_EMPTY = (
-    "No skills found yet.\n\n"
-    "Ask URSA to create one and it will use the bundled `skill-creation` "
-    "skill to write it for you."
-)
+_EMPTY = """
+No skills found yet.
+
+Ask URSA to create one and it will use the bundled `skill-creation` skill to \
+write it for you.
+""".strip()
 
 
 def _cell(text: str) -> str:
