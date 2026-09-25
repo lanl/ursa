@@ -274,7 +274,9 @@ class AgentEloEnvironment(BaseEnvironment):
     # ------------------------------------------------------------------
 
     # Keep checking live population sizes after reproduction and on restart.
-    _validate_population_size = staticmethod(AgentEloConfig.validate_population_size)
+    _validate_population_size = staticmethod(
+        AgentEloConfig.validate_population_size
+    )
 
     @classmethod
     def from_yaml(
