@@ -1,7 +1,8 @@
 """References to secrets stored outside configuration files."""
 
+from copy import deepcopy
 from os import environ
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from pydantic import (
     AfterValidator,
@@ -29,6 +30,35 @@ class SecretReference(BaseModel):
 
     env: Annotated[str | None, AfterValidator(_non_blank)] = None
     keyring: bool | Annotated[str, AfterValidator(_non_blank)] | None = None
+
+    def model_merge(self, other: Self | dict[str, Any]) -> Self:
+        """Merge a higher-priority reference without combining its sources."""
+        if isinstance(other, SecretReference):
+            updates = other.model_dump(mode="python", exclude_unset=True)
+            update_fields = set(other.model_fields_set)
+        else:
+            updates = deepcopy(other)
+            update_fields = set(updates)
+
+        superseded_field = None
+        has_env = updates.get("env") is not None
+        has_keyring = updates.get("keyring") not in (None, False)
+        if has_env and not has_keyring:
+            updates["keyring"] = None
+            superseded_field = "keyring"
+        elif has_keyring and not has_env:
+            updates["env"] = None
+            superseded_field = "env"
+
+        merged = type(self).model_validate({
+            **self.model_dump(mode="python"),
+            **updates,
+        })
+        fields_set = self.model_fields_set | update_fields
+        if superseded_field is not None:
+            fields_set.discard(superseded_field)
+        merged.__pydantic_fields_set__ = fields_set
+        return merged
 
     @classmethod
     def maybe_validate(cls, value: Any, **kwargs) -> Any:
