@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping, Self
+from typing import Any, Self
 
 import yaml
 from langchain.chat_models import BaseChatModel, init_chat_model
@@ -57,7 +58,7 @@ class EnvironmentMemberConfig:
         inference_providers: Mapping[str, InferenceProviderConfig]
         | None = None,
         group: str = "default",
-    ) -> "EnvironmentMemberConfig":
+    ) -> EnvironmentMemberConfig:
         raw = dict(data)
         model = raw.get("model")
         if isinstance(model, Mapping):
@@ -99,7 +100,7 @@ class AgentTeamConfig:
     defaults: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "AgentTeamConfig":
+    def from_mapping(cls, data: Mapping[str, Any]) -> AgentTeamConfig:
         raw = dict(data)
         providers = _inference_providers(raw.get("inference_providers") or {})
         raw["inference_providers"] = providers
@@ -137,7 +138,7 @@ class AgentSymposiumConfig:
     revision_rounds: int = 1
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "AgentSymposiumConfig":
+    def from_mapping(cls, data: Mapping[str, Any]) -> AgentSymposiumConfig:
         raw = dict(data)
         providers = _inference_providers(raw.get("inference_providers") or {})
         raw["inference_providers"] = providers

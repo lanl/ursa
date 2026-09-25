@@ -102,6 +102,7 @@ nav:
       - Hypothesizer Agent: agents/hypothesizer.md
       - LAMMPS Agent: agents/lammps.md
       - Planning Agent: agents/planning.md
+  - Skills: skills/index.md
   - Environments:
       - Overview: environments/index.md
       - Agent Teams: environments/agent-teams.md

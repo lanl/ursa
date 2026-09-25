@@ -38,6 +38,7 @@ AGENT_LABELS = {
 
 COMMAND_CHOICES = {
     "agents": "Configured agents, descriptions, options, and tools",
+    "skills": "Discovered skills, their scope, and where they came from",
     "exit": "Quit URSA gracefully",
     "status": "Tokens, models, endpoints, group, and MCP servers",
     "keymap": "Complete keyboard map",
@@ -309,7 +310,6 @@ def _reasoning_trace(chunk: Any) -> str | None:
                     "reasoning",
                     "reasoning_summary",
                     "thinking",
-                }:
-                    if trace := " ".join(text(block).split()):
-                        return trace[-500:]
+                } and (trace := " ".join(text(block).split())):
+                    return trace[-500:]
     return None

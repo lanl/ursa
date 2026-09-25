@@ -36,6 +36,7 @@ print(agent.format_result(state))
 |-----------|------|---------|-------------|
 | `llm` | `BaseChatModel` | required | Language model used for chat and tool selection. |
 | `use_web` | `bool` | `False` | When true, adds web, OSTI, and arXiv search tools. |
+| `use_skills` | `bool` | `True` | When true, adds the `skill` tool and expands `$skill-name` references in prompts. See [Skills](../skills/index.md). |
 | `**kwargs` | `dict` | `{}` | Passed to `BaseAgent` / `AgentWithTools`, including workspace, persistence, group, RAG tool, MCP, and checkpoint-related options. |
 
 ## Default tools
@@ -60,6 +61,15 @@ When `use_web=True`, it also binds:
 - `run_arxiv_search`
 
 If persistent RAG tools are configured through `rag_tools`, `AgentWithTools` can expose those as additional tools. MCP tools can also be attached in the TUI when MCP servers are configured.
+
+When at least one skill is discovered, `ChatAgent` also binds:
+
+- `skill` — load the instructions for one discovered [skill](../skills/index.md).
+
+The tool's description lists every discovered skill, so the model can activate
+one on its own when your request matches. Writing `$skill-name` in a prompt asks
+for that skill explicitly: `format_query` appends a directive to call the same
+`skill` tool, so both routes deliver identical instructions.
 
 ## Graph behavior
 

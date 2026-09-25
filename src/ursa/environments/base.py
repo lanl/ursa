@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
@@ -125,7 +126,7 @@ class BaseEnvironment(BaseWorkflow):
                 return await result
             return result
 
-        invoke = getattr(member, "invoke")
+        invoke = member.invoke
         return await asyncio.to_thread(invoke, prompt, **kwargs)
 
 

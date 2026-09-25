@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Optional, TypedDict
+from typing import Annotated, TypedDict
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -91,7 +91,7 @@ class SimulatorAgent(BaseAgent):
         embedding=None,
         log_state: bool = False,
         use_web: bool = False,
-        workspace: Optional[Path | str] = None,
+        workspace: Path | str | None = None,
         checkpointer=Checkpointer,
         thread_id=str,
         **kwargs,
