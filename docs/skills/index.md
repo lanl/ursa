@@ -11,8 +11,8 @@ URSA discovers skills from two roots:
 
 | Root | Scope | Use for |
 |---|---|---|
-| `.agents/skills/` in the directory URSA was started in | project | Conventions for one repository or study |
-| `~/.agents/skills/` | user | Habits that follow you everywhere |
+| `.ursa/skills/` in the directory URSA was started in | project | Conventions for one repository or study |
+| `~/.ursa/skills/` | user | Habits that follow you everywhere |
 
 A project skill shadows a user skill of the same name, so a repository can pin
 its own version of a skill you also keep globally.
@@ -24,7 +24,7 @@ the project you are working on.
 ## Layout
 
 ```
-.agents/skills/write-python/
+.ursa/skills/write-python/
 ├── SKILL.md          # required
 ├── reference.md      # optional supporting material
 └── scripts/check.sh  # optional helper scripts
@@ -79,7 +79,7 @@ it was loaded from.
 ## Creating a skill
 
 URSA ships a `skill-creation` skill and writes it to
-`~/.agents/skills/skill-creation/SKILL.md` on first launch, so the fastest route
+`~/.ursa/skills/skill-creation/SKILL.md` on first launch, so the fastest route
 is to ask:
 
 ```text

@@ -12,7 +12,7 @@ from ursa.cli.tui.widgets import (
 
 
 def write_skill(root, name, description):
-    path = root / ".agents" / "skills" / name / "SKILL.md"
+    path = root / ".ursa" / "skills" / name / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"---\ndescription: {description}\n---\n\nDo {name}.\n",
@@ -117,7 +117,7 @@ async def test_skills_command_shows_the_catalog(project):
         )
         assert "$write-python" in app.screen.content
         assert "House style for Python" in app.screen.content
-        assert str(project / ".agents" / "skills") in app.screen.content
+        assert str(project / ".ursa" / "skills") in app.screen.content
 
 
 async def test_skills_command_explains_an_empty_catalog(project):

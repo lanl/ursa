@@ -16,7 +16,7 @@ def _load_dotenv():
 
 @pytest.fixture(autouse=True)
 def _isolated_home(monkeypatch, tmp_path_factory):
-    # Skills are discovered under ~/.agents/skills and HITL materializes the
+    # Skills are discovered under ~/.ursa/skills and HITL materializes the
     # bundled skill there, so an unisolated home would both leak the developer's
     # own skills into tool descriptions and write into their real home.
     home = tmp_path_factory.mktemp("home")

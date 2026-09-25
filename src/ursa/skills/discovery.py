@@ -6,8 +6,8 @@ the instruction text handed to the model.
 
 Skills are discovered from two roots, in ascending order of precedence:
 
-* ``~/.agents/skills`` - user skills, available in every workspace.
-* ``<cwd>/.agents/skills`` - project skills, which shadow user skills by name.
+* ``~/.ursa/skills`` - user skills, available in every workspace.
+* ``<cwd>/.ursa/skills`` - project skills, which shadow user skills by name.
 """
 
 import logging
@@ -19,7 +19,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-AGENTS_DIRNAME = ".agents"
+URSA_DIRNAME = ".ursa"
 SKILLS_SUBDIR = "skills"
 SKILL_FILENAME = "SKILL.md"
 
@@ -61,19 +61,19 @@ def is_valid_skill_name(name: str) -> bool:
 
 
 def user_skills_root() -> Path:
-    """Return the user-wide skills root, ``~/.agents/skills``."""
-    return Path.home() / AGENTS_DIRNAME / SKILLS_SUBDIR
+    """Return the user-wide skills root, ``~/.ursa/skills``."""
+    return Path.home() / URSA_DIRNAME / SKILLS_SUBDIR
 
 
 def project_skills_root(project_root: Path | None = None) -> Path:
-    """Return ``<project_root>/.agents/skills``, defaulting to the cwd.
+    """Return ``<project_root>/.ursa/skills``, defaulting to the cwd.
 
     The process working directory is used rather than the configured workspace
     so that project skills are still found when the workspace is a throwaway
     temporary directory.
     """
     base = Path.cwd() if project_root is None else Path(project_root)
-    return base / AGENTS_DIRNAME / SKILLS_SUBDIR
+    return base / URSA_DIRNAME / SKILLS_SUBDIR
 
 
 def split_frontmatter(text: str) -> tuple[dict, str]:

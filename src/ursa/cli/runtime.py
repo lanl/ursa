@@ -187,7 +187,7 @@ class HITL:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
         # Skills: materialize the bundled `skill-creation` skill into
-        # ~/.agents/skills on every launch, so the agent can always author new
+        # ~/.ursa/skills on first launch, so the agent can always author new
         # skills. Done here rather than in the TUI so the `exec`, MCP server,
         # and dashboard entry points get it too. Never raises, and never
         # overwrites a file the user has edited. See ursa.skills.bundled.

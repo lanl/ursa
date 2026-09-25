@@ -20,7 +20,7 @@ def home(monkeypatch, tmp_path):
 
 
 def write_skill(root, name, description, body="Do the thing."):
-    path = root / ".agents" / "skills" / name / "SKILL.md"
+    path = root / ".ursa" / "skills" / name / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     front = "---\n"
     if description is not None:
@@ -31,13 +31,13 @@ def write_skill(root, name, description, body="Do the thing."):
 
 
 def test_roots_use_home_and_given_project_dir(home, tmp_path):
-    assert user_skills_root() == home / ".agents" / "skills"
-    assert project_skills_root(tmp_path) == tmp_path / ".agents" / "skills"
+    assert user_skills_root() == home / ".ursa" / "skills"
+    assert project_skills_root(tmp_path) == tmp_path / ".ursa" / "skills"
 
 
 def test_project_root_defaults_to_cwd(home, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert project_skills_root() == tmp_path / ".agents" / "skills"
+    assert project_skills_root() == tmp_path / ".ursa" / "skills"
 
 
 def test_discovers_user_and_project_skills(home, tmp_path):
@@ -70,14 +70,14 @@ def test_missing_roots_yield_no_skills(home, tmp_path):
 
 
 def test_directory_without_skill_file_is_ignored(home, tmp_path):
-    (tmp_path / ".agents" / "skills" / "empty").mkdir(parents=True)
+    (tmp_path / ".ursa" / "skills" / "empty").mkdir(parents=True)
     write_skill(tmp_path, "real", "Real skill")
 
     assert list(discover_skills(tmp_path)) == ["real"]
 
 
 def test_malformed_frontmatter_still_loads_with_placeholder(home, tmp_path):
-    path = tmp_path / ".agents" / "skills" / "broken" / "SKILL.md"
+    path = tmp_path / ".ursa" / "skills" / "broken" / "SKILL.md"
     path.parent.mkdir(parents=True)
     path.write_text("---\n: : not: yaml\n---\n\nBody text\n", encoding="utf-8")
 
@@ -96,7 +96,7 @@ def test_missing_description_gets_placeholder(home, tmp_path):
 
 
 def test_file_without_frontmatter_is_all_instructions(home, tmp_path):
-    path = tmp_path / ".agents" / "skills" / "bare" / "SKILL.md"
+    path = tmp_path / ".ursa" / "skills" / "bare" / "SKILL.md"
     path.parent.mkdir(parents=True)
     path.write_text("Just instructions.\n", encoding="utf-8")
 
@@ -126,7 +126,7 @@ def test_oversized_instructions_are_truncated(home, tmp_path):
 
 
 def test_non_utf8_bytes_do_not_break_discovery(home, tmp_path):
-    path = tmp_path / ".agents" / "skills" / "binary" / "SKILL.md"
+    path = tmp_path / ".ursa" / "skills" / "binary" / "SKILL.md"
     path.parent.mkdir(parents=True)
     path.write_bytes(b"---\ndescription: Latin\n---\n\ncaf\xe9\n")
 

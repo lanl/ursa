@@ -19,7 +19,7 @@ def home(monkeypatch, tmp_path):
 
 
 def write_skill(root, name, description, body="Do the thing."):
-    path = root / ".agents" / "skills" / name / "SKILL.md"
+    path = root / ".ursa" / "skills" / name / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"---\ndescription: {description}\n---\n\n{body}\n", encoding="utf-8"

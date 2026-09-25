@@ -5,8 +5,8 @@ from pathlib import Path
 from ursa.skills.discovery import discover_skills
 
 _INTRO = """
-Skills are loaded from `.agents/skills/` in the directory URSA was \
-started in, and from `~/.agents/skills/`. A project skill shadows a user \
+Skills are loaded from `.ursa/skills/` in the directory URSA was \
+started in, and from `~/.ursa/skills/`. A project skill shadows a user \
 skill with the same name.
 """.strip()
 

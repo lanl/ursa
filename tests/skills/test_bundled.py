@@ -18,7 +18,7 @@ def home(monkeypatch, tmp_path):
 
 
 def skill_path(home):
-    return home / ".agents" / "skills" / SKILL_CREATION_NAME / "SKILL.md"
+    return home / ".ursa" / "skills" / SKILL_CREATION_NAME / "SKILL.md"
 
 
 def test_creates_skill_creation_on_first_launch(home, tmp_path):
@@ -58,7 +58,7 @@ def test_existing_file_is_never_overwritten(home):
 
     assert (
         write_bundled_skill(
-            home / ".agents" / "skills",
+            home / ".ursa" / "skills",
             SKILL_CREATION_NAME,
             "Ignored description",
             "Ignored body",

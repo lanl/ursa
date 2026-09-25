@@ -30,15 +30,15 @@ A skill is a folder containing `SKILL.md`. URSA loads skills from two roots:
 
 | Root | Scope | Use for |
 |---|---|---|
-| `.agents/skills/` in the working directory | project | Conventions for one repository or study |
-| `~/.agents/skills/` | user | Habits that follow the user everywhere |
+| `.ursa/skills/` in the working directory | project | Conventions for one repository or study |
+| `~/.ursa/skills/` | user | Habits that follow the user everywhere |
 
 A project skill shadows a user skill of the same name.
 
 ## Layout
 
 ```
-.agents/skills/write-python/
+.ursa/skills/write-python/
 ├── SKILL.md          # required
 ├── reference.md      # optional supporting material
 └── scripts/check.sh  # optional helper scripts
@@ -84,7 +84,7 @@ Rules that matter:
 ## Procedure for creating a skill
 
 1. Decide the scope. Project-specific conventions go in
-   `.agents/skills/`; personal habits go in `~/.agents/skills/`.
+   `.ursa/skills/`; personal habits go in `~/.ursa/skills/`.
 2. Pick a short kebab-case name and create
    `<root>/<name>/SKILL.md`.
 3. Write the frontmatter `name` and `description` first, then the body.
@@ -127,7 +127,7 @@ def write_bundled_skill(
 
 
 def ensure_bundled_skills() -> list[Path]:
-    """Materialize bundled skills under ``~/.agents/skills``.
+    """Materialize bundled skills under ``~/.ursa/skills``.
 
     Called once per launch. Never raises: a read-only or unusable home
     directory must not stop URSA from starting.
