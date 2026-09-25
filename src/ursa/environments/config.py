@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import yaml
 from langchain.chat_models import BaseChatModel, init_chat_model
