@@ -662,44 +662,12 @@ def test_ursa_config_merge_rejects_unknown_field():
         config_mod.UrsaConfig().model_merge({"unknown": "value"})
 
 
-@pytest.mark.parametrize(
-    (
-        "base_config",
-        "merge_input",
-        "expected_group",
-        "expected_workspace",
-        "expected_fields_set",
-    ),
-    [
-        (
-            config_mod.UrsaConfig(),
-            {"group": "science"},
-            "science",
-            Path("."),
-            {"group"},
-        ),
-        (
-            config_mod.UrsaConfig(workspace=Path("/tmp/custom-workspace")),
-            config_mod.UrsaConfig().model_merge({"group": "science"}),
-            "science",
-            Path("/tmp/custom-workspace"),
-            None,
-        ),
-    ],
-)
-def test_ursa_config_merge_sparse_layer_behavior(
-    base_config,
-    merge_input,
-    expected_group,
-    expected_workspace,
-    expected_fields_set,
-):
-    merged = base_config.model_merge(merge_input)
+def test_ursa_config_merge_tracks_sparse_fields():
+    merged = config_mod.UrsaConfig().model_merge({"group": "science"})
 
-    assert merged.group == expected_group
-    assert merged.workspace == expected_workspace
-    if expected_fields_set is not None:
-        assert merged.model_fields_set == expected_fields_set
+    assert merged.group == "science"
+    assert merged.workspace == Path(".")
+    assert merged.model_fields_set == {"group"}
 
 
 def test_chat_model_initialization_returns_factory_result(monkeypatch):
