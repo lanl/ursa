@@ -2,12 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from ursa.skills import bundled
 from ursa.skills.bundled import (
-    BUNDLED_VERSION,
-    CHECKSUM_KEY,
     SKILL_CREATION_NAME,
-    VERSION_KEY,
     ensure_bundled_skills,
     write_bundled_skill,
 )
@@ -32,9 +28,11 @@ def test_creates_skill_creation_on_first_launch(home, tmp_path):
     metadata, body = split_frontmatter(
         skill_path(home).read_text(encoding="utf-8")
     )
-    assert metadata["name"] == SKILL_CREATION_NAME
+    assert metadata == {
+        "name": SKILL_CREATION_NAME,
+        "description": metadata["description"],
+    }
     assert metadata["description"]
-    assert metadata[VERSION_KEY] >= 1
     assert "SKILL.md" in body
 
 
@@ -53,39 +51,7 @@ def test_bundled_skill_is_discoverable(home, tmp_path):
     assert "skill" in catalog[SKILL_CREATION_NAME].description.lower()
 
 
-def ship_new_version(monkeypatch, home):
-    monkeypatch.setattr(bundled, "BUNDLED_VERSION", BUNDLED_VERSION + 1)
-    return write_bundled_skill(
-        home / ".agents" / "skills",
-        SKILL_CREATION_NAME,
-        "New description",
-        "New body",
-    )
-
-
-def test_locally_edited_skill_is_left_alone_on_version_bump(home, monkeypatch):
-    ensure_bundled_skills()
-    path = skill_path(home)
-    original = path.read_text(encoding="utf-8")
-    path.write_text(original + "\nMy own extra rule.\n", encoding="utf-8")
-    edited = path.read_text(encoding="utf-8")
-
-    assert ship_new_version(monkeypatch, home) is None
-    assert path.read_text(encoding="utf-8") == edited
-
-
-def test_unmodified_skill_is_rewritten_on_version_bump(home, monkeypatch):
-    ensure_bundled_skills()
-    path = skill_path(home)
-
-    assert ship_new_version(monkeypatch, home) == path
-    metadata, body = split_frontmatter(path.read_text(encoding="utf-8"))
-    assert metadata["description"] == "New description"
-    assert body.strip() == "New body"
-    assert metadata[VERSION_KEY] == BUNDLED_VERSION + 1
-
-
-def test_same_version_is_not_rewritten(home):
+def test_existing_file_is_never_overwritten(home):
     ensure_bundled_skills()
     path = skill_path(home)
     before = path.read_text(encoding="utf-8")
@@ -102,6 +68,16 @@ def test_same_version_is_not_rewritten(home):
     assert path.read_text(encoding="utf-8") == before
 
 
+def test_local_edits_survive_a_later_launch(home):
+    ensure_bundled_skills()
+    path = skill_path(home)
+    edited = path.read_text(encoding="utf-8") + "\nMy own extra rule.\n"
+    path.write_text(edited, encoding="utf-8")
+
+    assert ensure_bundled_skills() == []
+    assert path.read_text(encoding="utf-8") == edited
+
+
 def test_user_authored_skill_of_same_name_is_never_touched(home):
     path = skill_path(home)
     path.parent.mkdir(parents=True)
@@ -112,17 +88,6 @@ def test_user_authored_skill_of_same_name_is_never_touched(home):
     assert ensure_bundled_skills() == []
     metadata, _ = split_frontmatter(path.read_text(encoding="utf-8"))
     assert metadata == {"description": "Mine"}
-    assert VERSION_KEY not in metadata
-
-
-def test_checksum_is_recorded_so_edits_can_be_detected(home):
-    ensure_bundled_skills()
-
-    metadata, _ = split_frontmatter(
-        skill_path(home).read_text(encoding="utf-8")
-    )
-
-    assert len(metadata[CHECKSUM_KEY]) == 64
 
 
 def test_unwritable_home_does_not_raise(monkeypatch, tmp_path):

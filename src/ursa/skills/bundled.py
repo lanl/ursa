@@ -3,31 +3,19 @@
 The bundled text lives here as a module constant rather than as package data so
 that no ``[tool.setuptools.package-data]`` entry is required to ship it.
 
-A bundled file records the version it was written from plus a checksum of its
-own body. On launch the file is rewritten only when the shipped version differs
-*and* the on-disk body still matches that checksum, so local edits are never
-silently discarded.
+A bundled file is written once, when it is not already on disk, and is never
+overwritten afterwards. Local edits to it and a user's own skill of the same
+name are therefore both left alone.
 """
 
-from __future__ import annotations
-
-import hashlib
 import logging
 from pathlib import Path
 
 import yaml
 
-from ursa.skills.discovery import (
-    SKILL_FILENAME,
-    split_frontmatter,
-    user_skills_root,
-)
+from ursa.skills.discovery import SKILL_FILENAME, user_skills_root
 
 logger = logging.getLogger(__name__)
-
-BUNDLED_VERSION = 1
-VERSION_KEY = "ursa-bundled-version"
-CHECKSUM_KEY = "ursa-bundled-checksum"
 
 SKILL_CREATION_NAME = "skill-creation"
 SKILL_CREATION_DESCRIPTION = (
@@ -108,61 +96,33 @@ one. Read the current file with `read_file` before editing it.
 """
 
 
-def _checksum(body: str) -> str:
-    return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()
-
-
 def render_bundled_skill(name: str, description: str, body: str) -> str:
-    """Render a bundled skill file, stamped with its version and checksum."""
-    normalized = body.strip()
+    """Render a bundled skill file."""
     frontmatter = yaml.safe_dump(
-        {
-            "name": name,
-            "description": description,
-            VERSION_KEY: BUNDLED_VERSION,
-            CHECKSUM_KEY: _checksum(normalized),
-        },
+        {"name": name, "description": description},
         sort_keys=False,
         allow_unicode=True,
         width=10**6,
     )
-    return f"---\n{frontmatter}---\n\n{normalized}\n"
+    return f"---\n{frontmatter}---\n\n{body.strip()}\n"
 
 
 def write_bundled_skill(
     root: Path, name: str, description: str, body: str
 ) -> Path | None:
-    """Materialize one bundled skill, preserving any local edits.
+    """Write one bundled skill if it is not already on disk.
 
-    Returns the written path, or None when the file was intentionally left
-    alone.
+    Returns the written path, or None when the file already exists.
     """
     path = root / name / SKILL_FILENAME
-    desired = render_bundled_skill(name, description, body)
-
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(desired, encoding="utf-8")
-        logger.debug("Created bundled skill %s", path)
-        return path
-
-    existing = path.read_text(encoding="utf-8", errors="replace")
-    try:
-        metadata, on_disk_body = split_frontmatter(existing)
-    except yaml.YAMLError:
-        metadata, on_disk_body = {}, existing
-
-    if VERSION_KEY not in metadata:
-        # A skill of this name that URSA did not write. It belongs to the user.
-        return None
-    if metadata.get(CHECKSUM_KEY) != _checksum(on_disk_body):
-        logger.info("Leaving locally modified skill untouched: %s", path)
-        return None
-    if metadata.get(VERSION_KEY) == BUNDLED_VERSION:
+    if path.exists():
         return None
 
-    path.write_text(desired, encoding="utf-8")
-    logger.info("Updated bundled skill %s to version %s", path, BUNDLED_VERSION)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        render_bundled_skill(name, description, body), encoding="utf-8"
+    )
+    logger.debug("Created bundled skill %s", path)
     return path
 
 
@@ -181,6 +141,6 @@ def ensure_bundled_skills() -> list[Path]:
             SKILL_CREATION_BODY,
         )
         return [written] if written is not None else []
-    except Exception:  # noqa: BLE001 - startup must never fail on this
+    except Exception:
         logger.warning("Could not materialize bundled skills", exc_info=True)
         return []

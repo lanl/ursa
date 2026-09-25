@@ -1,5 +1,3 @@
-# ruff: noqa: TID251
-
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence

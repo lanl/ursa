@@ -310,7 +310,6 @@ def _reasoning_trace(chunk: Any) -> str | None:
                     "reasoning",
                     "reasoning_summary",
                     "thinking",
-                }:
-                    if trace := " ".join(text(block).split()):
-                        return trace[-500:]
+                } and (trace := " ".join(text(block).split())):
+                    return trace[-500:]
     return None

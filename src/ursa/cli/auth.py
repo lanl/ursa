@@ -118,9 +118,10 @@ def _iter_secrets(
                 )
                 continue
             child_default = default_username
-            if path in {("inference_providers",), ("mcp_servers",)}:
-                child_default = str(name)
-            elif child_default is None:
+            if (
+                path in {("inference_providers",), ("mcp_servers",)}
+                or child_default is None
+            ):
                 child_default = str(name)
             yield from _iter_secrets(item, (*path, str(name)), child_default)
         return

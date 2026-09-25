@@ -1,7 +1,5 @@
 """Markdown rendering of the skill catalog for the TUI's ``/skills`` page."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from ursa.skills.discovery import discover_skills

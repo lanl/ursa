@@ -78,8 +78,8 @@ it was loaded from.
 
 ## Creating a skill
 
-URSA ships a `skill-creation` skill and materializes it into
-`~/.agents/skills/skill-creation/SKILL.md` on every launch, so the fastest route
+URSA ships a `skill-creation` skill and writes it to
+`~/.agents/skills/skill-creation/SKILL.md` on first launch, so the fastest route
 is to ask:
 
 ```text
@@ -89,10 +89,9 @@ Create a skill that captures how we run simulations in this repo $skill-creation
 Or write the file yourself; discovery re-reads both roots on each use, so a new
 skill is available immediately without restarting URSA.
 
-The bundled copy records the version it was written from and a checksum of its
-own body. URSA rewrites it when a newer version ships, but only while the body
-still matches that checksum — once you edit it, it is yours and URSA leaves it
-alone. A hand-written `skill-creation` of your own is never touched.
+URSA only writes that file when it is not already there, so any edit you make to
+it is permanent, and a hand-written `skill-creation` of your own is never
+touched.
 
 ## Disabling skills
 

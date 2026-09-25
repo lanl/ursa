@@ -875,5 +875,5 @@ def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
     if console.is_terminal:
         console.print(RichMarkdown(response))
     else:
-        print(response, file=output)  # noqa: T201
+        print(response, file=output)
     return response

@@ -9,7 +9,7 @@ import re
 import shutil
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated, Any, NotRequired, Optional, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 from urllib.parse import quote, urlparse
 
 import feedparser
@@ -279,7 +279,7 @@ class BaseAcquisitionAgent(BaseAgent):
     def _filter_hit(self, hit: dict[str, Any]) -> bool:
         return True
 
-    def _postprocess_text(self, text: str, local_path: Optional[str]) -> str:
+    def _postprocess_text(self, text: str, local_path: str | None) -> str:
         # Default: optionally add image descriptions for PDFs
         if (
             self.process_images

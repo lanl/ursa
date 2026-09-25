@@ -10,8 +10,6 @@ Skills are discovered from two roots, in ascending order of precedence:
 * ``<cwd>/.agents/skills`` - project skills, which shadow user skills by name.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from dataclasses import dataclass

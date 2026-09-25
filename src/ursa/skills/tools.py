@@ -7,8 +7,6 @@ the skills present when the agent was built, which is what lets the model
 activate a skill on its own from the conversation.
 """
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from pathlib import Path
 

@@ -248,9 +248,9 @@ class Turn(Static):
             )
             await self._replace_or_mount(key, card)
         self._mark_summary(summary_kind, card)
-        if isinstance(card, AgentEventCard):
-            card.update_event(payload)
-        elif isinstance(card, SearchEventCard):
+        if isinstance(card, AgentEventCard) or isinstance(
+            card, SearchEventCard
+        ):
             card.update_event(payload)
         else:
             detail = payload.get("error") or payload.get("preview")

@@ -7,8 +7,6 @@ avoids the mid-conversation ``SystemMessage`` that ``_sanitize_history`` in
 ``ursa.agents.base`` strips out.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import Mapping
 from pathlib import Path
