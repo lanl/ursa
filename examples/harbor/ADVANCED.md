@@ -51,6 +51,22 @@ For a direct run, add:
 --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment
 ```
 
+The adapter supports Harbor's static `public` and `no-network` modes on
+SingularityCE 3.6.2. Set the baseline policy in `task.toml`:
+
+```toml
+[environment]
+network_mode = "no-network"
+```
+
+`no-network` starts the task as a named Singularity instance with an isolated
+`none` network. Network allowlists and `[agent]` or `[verifier]` policies that
+differ from the environment baseline are rejected because SingularityCE 3.6.2
+cannot enforce them securely. See Harbor's
+[network-policy reference](https://docs.harborframework.com/core-concepts/tasks/network-policies#network-modes)
+and Singularity's
+[networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
+
 Set `[environment].workdir` in `task.toml` when a Dockerfile computes
 `WORKDIR` from an environment variable or inherits a non-root workdir from its
 base image. The task setting takes precedence over image metadata; the

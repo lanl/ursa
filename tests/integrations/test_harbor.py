@@ -1,9 +1,7 @@
 import asyncio
 import json
-import os
 import sqlite3
 import subprocess
-from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +12,13 @@ harbor = pytest.importorskip("harbor")
 from harbor.environments.singularity import (  # noqa: E402
     singularity as harbor_singularity,
 )
-from harbor.models.task.config import MCPServerConfig  # noqa: E402
+from harbor.models.task.config import (  # noqa: E402
+    EnvironmentConfig,
+    MCPServerConfig,
+    NetworkMode,
+    NetworkPolicy,
+)
+from harbor.models.trial.paths import TrialPaths  # noqa: E402
 
 from ursa.agents import BaseAgent  # noqa: E402
 from ursa.agents.base import AgentWithTools  # noqa: E402
@@ -130,6 +134,8 @@ def test_singularity_uses_a_shared_default_cache(tmp_path, monkeypatch):
 
     def fake_init(_self, *args, **kwargs):
         received.append(kwargs["singularity_image_cache_dir"])
+        _self._phase_network_policies = []
+        _self.session_id = "test"
 
     monkeypatch.setattr(
         harbor_singularity.SingularityEnvironment, "__init__", fake_init
@@ -177,91 +183,6 @@ def test_singularity_uses_docker_workdir_semantics(tmp_path):
     dockerfile.write_text("FROM scratch\nWORKDIR $APP_DIR\n")
     with pytest.raises(ValueError, match="cannot resolve variables"):
         environment._resolve_workdir()
-
-
-def test_singularity_bootstrap_mounts_are_idempotent():
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    environment._mounts = []
-
-    environment._ensure_bootstrap_mounts()
-    environment._ensure_bootstrap_mounts()
-
-    targets = [mount["target"] for mount in environment._mounts]
-    assert targets == [
-        "/staging/bootstrap-upstream.sh",
-        "/staging/bootstrap.sh",
-    ]
-    assert all(Path(mount["source"]).is_file() for mount in environment._mounts)
-
-
-@pytest.mark.parametrize(
-    ("version", "expected"),
-    [
-        ("3.9", "https://bootstrap.pypa.io/pip/3.9/get-pip.py"),
-        ("3.10", "https://bootstrap.pypa.io/get-pip.py"),
-        (None, "https://bootstrap.pypa.io/get-pip.py"),
-    ],
-)
-def test_singularity_bootstrap_selects_compatible_get_pip(
-    tmp_path, version, expected
-):
-    upstream = tmp_path / "upstream.sh"
-    upstream.write_text(
-        "#!/bin/bash\n"
-        "printf '%s\\n' https://bootstrap.pypa.io/get-pip.py \"$1\"\n"
-    )
-    wrapper = Path(
-        "src/ursa/integrations/harbor_singularity_bootstrap.sh"
-    ).resolve()
-    env = os.environ | {
-        "_URSA_HARBOR_UPSTREAM_BOOTSTRAP": str(upstream),
-        "_URSA_HARBOR_PATCHED_BOOTSTRAP": str(tmp_path / "patched.sh"),
-    }
-    if version is None:
-        env["_URSA_HARBOR_SYSTEM_PYTHON"] = str(tmp_path / "missing-python")
-    else:
-        env["_URSA_HARBOR_PYTHON_VERSION"] = version
-
-    result = subprocess.run(
-        ["/bin/sh", wrapper, "argument"],
-        check=True,
-        capture_output=True,
-        env=env,
-        text=True,
-    )
-
-    assert result.stdout.splitlines() == [expected, "argument"]
-
-
-def test_singularity_bootstrap_installs_python39_distutils(tmp_path):
-    upstream = tmp_path / "upstream.sh"
-    upstream.write_text("#!/bin/bash\nprintf upstream\\n\n")
-    python = tmp_path / "python3"
-    python.write_text("#!/bin/sh\nexit 1\n")
-    python.chmod(0o755)
-    marker = tmp_path / "apt-arguments"
-    apt_get = tmp_path / "apt-get"
-    apt_get.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >>{marker}\n")
-    apt_get.chmod(0o755)
-    wrapper = Path(
-        "src/ursa/integrations/harbor_singularity_bootstrap.sh"
-    ).resolve()
-    env = os.environ | {
-        "PATH": f"{tmp_path}:{os.environ['PATH']}",
-        "_URSA_HARBOR_PYTHON_VERSION": "3.9",
-        "_URSA_HARBOR_SYSTEM_PYTHON": str(python),
-        "_URSA_HARBOR_UPSTREAM_BOOTSTRAP": str(upstream),
-        "_URSA_HARBOR_PATCHED_BOOTSTRAP": str(tmp_path / "patched.sh"),
-    }
-
-    subprocess.run(["/bin/sh", wrapper], check=True, env=env)
-
-    assert marker.read_text().splitlines() == [
-        "update -qq",
-        "install -y -qq python3-distutils",
-    ]
 
 
 def test_factory_rejects_unrelated_class(tmp_path):
@@ -1244,38 +1165,313 @@ async def test_apptainer_only_installation_is_supported(tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.asyncio
-async def test_apptainer_shim_is_used_for_harbor_server(tmp_path, monkeypatch):
+def _network_environment(
+    tmp_path,
+    *,
+    network_policy=None,
+    phase_network_policies=(),
+    **kwargs,
+):
+    environment_dir = tmp_path / "environment"
+    environment_dir.mkdir(parents=True, exist_ok=True)
+    (environment_dir / "Dockerfile").write_text("FROM scratch\n")
+    return DockerfileSingularityEnvironment(
+        environment_dir=environment_dir,
+        environment_name="test",
+        session_id="trial__env",
+        trial_paths=TrialPaths(tmp_path / "trial"),
+        task_env_config=EnvironmentConfig(),
+        network_policy=network_policy,
+        phase_network_policies=phase_network_policies,
+        **kwargs,
+    )
+
+
+def test_singularity_advertises_only_static_network_isolation():
     environment = DockerfileSingularityEnvironment.__new__(
         DockerfileSingularityEnvironment
     )
-    environment._force_pull = False
-    environment._mounts = []
-    environment._validate_definition = lambda: None
-    environment._runtime = lambda: "/usr/bin/apptainer"
 
-    async def fake_build(force_build):
-        return tmp_path / "image.sif"
+    capabilities = environment.capabilities
 
-    async def fake_start_server():
-        shim = Path(os.environ["PATH"].split(os.pathsep, 1)[0]) / "singularity"
-        assert shim.resolve() == Path("/usr/bin/apptainer")
-        assert environment._singularity_no_mount == "home,tmp,bind-paths"
-        assert any(
-            mount.get("target") == "/etc/resolv.conf"
-            for mount in environment._mounts
+    assert capabilities.mounted
+    assert capabilities.disable_internet
+    assert not capabilities.network_allowlist
+    assert not capabilities.dynamic_network_policy
+
+
+def test_singularity_accepts_no_network_policy(tmp_path):
+    environment = _network_environment(
+        tmp_path,
+        network_policy=NetworkPolicy(network_mode=NetworkMode.NO_NETWORK),
+    )
+
+    assert environment._network_policy.network_mode == NetworkMode.NO_NETWORK
+
+
+def test_singularity_rejects_allowlist_policy(tmp_path):
+    with pytest.raises(ValueError, match="network_mode='allowlist'"):
+        _network_environment(
+            tmp_path,
+            network_policy=NetworkPolicy(
+                network_mode=NetworkMode.ALLOWLIST,
+                allowed_hosts=["example.com"],
+            ),
         )
 
+
+def test_singularity_rejects_dynamic_phase_policy(tmp_path):
+    with pytest.raises(ValueError, match="cannot change network policy"):
+        _network_environment(
+            tmp_path,
+            network_policy=NetworkPolicy(network_mode=NetworkMode.PUBLIC),
+            phase_network_policies=[
+                NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+            ],
+        )
+
+
+def test_singularity_accepts_identical_phase_policy(tmp_path):
+    public = NetworkPolicy(network_mode=NetworkMode.PUBLIC)
+
+    environment = _network_environment(
+        tmp_path,
+        network_policy=public,
+        phase_network_policies=[public],
+    )
+
+    assert environment._phase_network_policies == [public]
+
+
+@pytest.mark.parametrize("value", ["bind-paths", "home,bind-paths"])
+def test_singularity_36_rejects_unsupported_no_mount(tmp_path, value):
+    with pytest.raises(ValueError, match="Singularity 3.6"):
+        _network_environment(
+            tmp_path,
+            singularity_no_mount=value,
+        )
+
+
+def _instance_test_environment(tmp_path, network_mode=NetworkMode.PUBLIC):
+    environment = DockerfileSingularityEnvironment.__new__(
+        DockerfileSingularityEnvironment
+    )
+    environment._startup_timeout_sec = 300
+    environment._mounts = []
+    environment._workdir = "/workspace"
+    environment._sif_path = tmp_path / "image.sif"
+    environment._staging_dir = tmp_path / "staging"
+    environment._staging_dir.mkdir()
+    environment._instance_name = "ursatestinstance"
+    environment._instance_started = False
+    environment._network_policy = NetworkPolicy(network_mode=network_mode)
+    environment._memory_limit_exceeded = None
+    environment._force_pull = False
+    environment.logger = SimpleNamespace(
+        debug=lambda *_args: None,
+        warning=lambda *_args: None,
+    )
+    environment._runtime = lambda: "/usr/bin/singularity"
+    return environment
+
+
+def test_singularity_public_instance_uses_36_flags(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+
+    command = environment._instance_start_command()
+
+    assert command[:3] == [
+        "/usr/bin/singularity",
+        "instance",
+        "start",
+    ]
+    assert "--fakeroot" in command
+    assert "--containall" in command
+    assert "--no-home" in command
+    assert "--writable-tmpfs" in command
+    assert "--pwd" not in command
+    assert "--no-mount" not in command
+    assert "--net" not in command
+    assert command[-2:] == [
+        str(environment._sif_path),
+        environment._instance_name,
+    ]
+
+
+def test_singularity_no_network_uses_none_network(tmp_path):
+    environment = _instance_test_environment(
+        tmp_path, network_mode=NetworkMode.NO_NETWORK
+    )
+
+    command = environment._instance_start_command()
+
+    network_index = command.index("--net")
+    assert command[network_index : network_index + 3] == [
+        "--net",
+        "--network",
+        "none",
+    ]
+
+
+def test_singularity_instance_mounts_staging_and_configured_binds(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._mounts = [
+        {"type": "bind", "source": "/host/logs", "target": "/logs"},
+        {"type": "volume", "source": "ignored", "target": "/ignored"},
+    ]
+
+    command = environment._instance_start_command()
+
+    binds = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-B"
+    ]
+    assert binds == [
+        f"{environment._staging_dir}:/staging",
+        "/host/logs:/logs",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_singularity_start_exec_and_stop_use_one_instance(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._staging_dir = None
+    environment._validate_definition = lambda: None
+    commands = []
+
+    async def fake_build(_force_build):
+        return tmp_path / "image.sif"
+
+    async def fake_run(*command):
+        commands.append(command)
+
     async def fake_upload():
-        pass
+        assert environment._instance_started
+        assert environment._staging_dir is not None
 
     monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
-    monkeypatch.setattr(environment, "_start_server", fake_start_server)
+    monkeypatch.setattr(environment, "_run", fake_run)
     monkeypatch.setattr(
         environment, "_upload_environment_dir_after_start", fake_upload
     )
 
     await environment.start(force_build=False)
+    await environment.stop(delete=False)
+
+    assert commands[0][0:3] == (
+        "/usr/bin/singularity",
+        "instance",
+        "start",
+    )
+    assert commands[1] == (
+        "/usr/bin/singularity",
+        "exec",
+        "--cleanenv",
+        "--pwd",
+        "/workspace",
+        "instance://ursatestinstance",
+        "true",
+    )
+    assert commands[2] == (
+        "/usr/bin/singularity",
+        "instance",
+        "stop",
+        "--force",
+        "ursatestinstance",
+    )
+    assert environment._staging_dir is None
+
+
+@pytest.mark.asyncio
+async def test_apptainer_instance_uses_runtime_directly(tmp_path, monkeypatch):
+    environment = _instance_test_environment(tmp_path)
+    environment._staging_dir = None
+    environment._runtime = lambda: "/usr/bin/apptainer"
+    environment._validate_definition = lambda: None
+    commands = []
+
+    async def fake_build(_force_build):
+        return tmp_path / "image.sif"
+
+    async def fake_run(*command):
+        commands.append(command)
+
+    async def fake_upload():
+        pass
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
+    monkeypatch.setattr(environment, "_run", fake_run)
+    monkeypatch.setattr(
+        environment, "_upload_environment_dir_after_start", fake_upload
+    )
+
+    await environment.start(force_build=False)
+
+    assert commands[0][0:3] == (
+        "/usr/bin/apptainer",
+        "instance",
+        "start",
+    )
+    assert commands[1][0] == "/usr/bin/apptainer"
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_start_cleans_instance_and_staging(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._staging_dir = None
+    environment._validate_definition = lambda: None
+    commands = []
+
+    async def fake_build(_force_build):
+        return tmp_path / "image.sif"
+
+    async def fake_run(*command):
+        commands.append(command)
+        if command[1] == "exec":
+            raise RuntimeError("readiness failed")
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
+    monkeypatch.setattr(environment, "_run", fake_run)
+
+    with pytest.raises(RuntimeError, match="readiness failed"):
+        await environment.start(force_build=False)
+
+    assert commands[-1][1:3] == ("instance", "stop")
+    assert environment._staging_dir is None
+    assert not environment._instance_started
+
+
+@pytest.mark.asyncio
+async def test_singularity_startup_timeout_cleans_possible_instance(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._staging_dir = None
+    environment._startup_timeout_sec = 0.01
+    environment._validate_definition = lambda: None
+    commands = []
+
+    async def fake_build(_force_build):
+        return tmp_path / "image.sif"
+
+    async def fake_run(*command):
+        commands.append(command)
+        if command[1:3] == ("instance", "start"):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
+    monkeypatch.setattr(environment, "_run", fake_run)
+
+    with pytest.raises(TimeoutError, match="did not become ready"):
+        await environment.start(force_build=False)
+
+    assert commands[-1][1:3] == ("instance", "stop")
+    assert environment._staging_dir is None
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
@@ -1284,438 +1480,6 @@ def test_singularity_rejects_invalid_startup_timeout(timeout):
         DockerfileSingularityEnvironment(
             singularity_startup_timeout_sec=timeout
         )
-
-
-def _startup_test_environment(tmp_path, timeout=300):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    environment._startup_timeout_sec = timeout
-    environment._mounts = []
-    environment._singularity_no_mount = None
-    environment._workdir = "/app"
-    environment._sif_path = tmp_path / "image.sif"
-    environment.environment_dir = tmp_path
-    environment._server_process = None
-    environment._stream_task = None
-    environment._http_client = None
-    environment._memory_watchdog_task = None
-    environment._memory_limit_bytes = None
-    environment._staging_dir = None
-    environment.logger = SimpleNamespace(
-        debug=lambda *_args: None,
-        warning=lambda *_args: None,
-    )
-
-    class ReservedSocket:
-        def close(self):
-            pass
-
-    environment._reserve_port = lambda: (ReservedSocket(), 32123)
-
-    async def stream_output():
-        await asyncio.Event().wait()
-
-    environment._stream_server_output = stream_output
-    return environment
-
-
-@pytest.mark.asyncio
-async def test_singularity_startup_can_exceed_sixty_polls(
-    tmp_path, monkeypatch
-):
-    environment = _startup_test_environment(tmp_path)
-    launches = []
-
-    class Process:
-        pid = 12345
-        returncode = None
-
-    async def create_process(*command, **_kwargs):
-        launches.append(command)
-        return Process()
-
-    class Client:
-        calls = 0
-
-        async def get(self, _url):
-            self.calls += 1
-            if self.calls <= 61:
-                raise harbor_singularity.httpx.RequestError("not ready")
-            return SimpleNamespace(status_code=200)
-
-        async def aclose(self):
-            pass
-
-    client = Client()
-    original_sleep = asyncio.sleep
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-    monkeypatch.setattr(
-        harbor_singularity.httpx, "AsyncClient", lambda **_kwargs: client
-    )
-    monkeypatch.setattr(asyncio, "sleep", lambda _delay: original_sleep(0))
-
-    await environment._start_server()
-
-    assert len(launches) == 1
-    assert client.calls == 62
-    assert "--no-mount" in launches[0]
-    assert launches[0].count(str(environment._sif_path)) == 1
-    environment._stream_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await environment._stream_task
-
-
-@pytest.mark.asyncio
-async def test_singularity_failed_startup_is_cleaned_before_retry(
-    tmp_path, monkeypatch
-):
-    environment = _startup_test_environment(tmp_path)
-    processes = []
-
-    class Process:
-        def __init__(self, pid, returncode):
-            self.pid = pid
-            self.returncode = returncode
-
-        def terminate(self):
-            self.returncode = -15
-
-        def kill(self):
-            self.returncode = -9
-
-        async def wait(self):
-            return self.returncode
-
-    async def create_process(*_command, **_kwargs):
-        process = Process(20000 + len(processes), 1 if not processes else None)
-        processes.append(process)
-        return process
-
-    class Client:
-        def __init__(self, ready):
-            self.ready = ready
-            self.closed = False
-
-        async def get(self, _url):
-            if self.ready:
-                return SimpleNamespace(status_code=200)
-            raise harbor_singularity.httpx.RequestError("not ready")
-
-        async def aclose(self):
-            self.closed = True
-
-    clients = []
-
-    def make_client(**_kwargs):
-        client = Client(ready=bool(clients))
-        clients.append(client)
-        return client
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-    monkeypatch.setattr(harbor_singularity.httpx, "AsyncClient", make_client)
-    monkeypatch.setattr(environment, "_process_start_time", lambda _pid: None)
-
-    await environment._start_server()
-
-    assert len(processes) == 2
-    assert clients[0].closed
-    assert environment._server_process is processes[1]
-    environment._stream_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await environment._stream_task
-
-
-@pytest.mark.asyncio
-async def test_singularity_failed_attempt_reaps_real_descendant(tmp_path):
-    child_file = tmp_path / "startup-child.pid"
-    process = await asyncio.create_subprocess_exec(
-        "bash",
-        "-c",
-        f"sleep 30 & echo $! > {child_file}; wait",
-    )
-    for _ in range(100):
-        if child_file.is_file():
-            break
-        await asyncio.sleep(0.01)
-    child_pid = int(child_file.read_text())
-    environment = _startup_test_environment(tmp_path)
-    environment._server_process = process
-
-    await environment._cleanup_server_attempt(
-        process.pid, environment._process_start_time(process.pid)
-    )
-
-    assert process.returncode is not None
-    assert not Path(f"/proc/{child_pid}").exists()
-
-
-@pytest.mark.asyncio
-async def test_singularity_failed_attempt_does_not_signal_mismatched_process(
-    tmp_path, monkeypatch
-):
-    environment = _startup_test_environment(tmp_path)
-
-    class Process:
-        pid = 23457
-        returncode = None
-
-        def terminate(self):
-            pytest.fail("reused parent PID must not be terminated")
-
-    environment._server_process = Process()
-    await environment._cleanup_server_attempt(23456, "old-identity")
-
-
-@pytest.mark.asyncio
-async def test_singularity_failed_attempt_rejects_reused_same_pid(
-    tmp_path, monkeypatch
-):
-    environment = _startup_test_environment(tmp_path)
-
-    class Process:
-        pid = 23456
-        returncode = None
-
-        def terminate(self):
-            pytest.fail("reused same-number PID must not be terminated")
-
-    environment._server_process = Process()
-    monkeypatch.setattr(
-        environment, "_process_start_time", lambda _pid: "new-identity"
-    )
-    monkeypatch.setattr(
-        environment,
-        "_descendant_processes",
-        lambda _pid: pytest.fail("reused PID must not be traversed"),
-    )
-    monkeypatch.setattr(
-        "os.kill",
-        lambda *_args: pytest.fail("reused PID must not receive raw signals"),
-    )
-
-    await environment._cleanup_server_attempt(23456, "old-identity")
-
-
-@pytest.mark.asyncio
-async def test_singularity_failed_attempt_reaps_unidentified_parent(
-    tmp_path, monkeypatch
-):
-    environment = _startup_test_environment(tmp_path)
-
-    class Process:
-        pid = 23456
-        returncode = None
-        terminated = False
-        waited = False
-
-        def terminate(self):
-            self.terminated = True
-            self.returncode = -15
-
-        async def wait(self):
-            self.waited = True
-            return self.returncode
-
-    process = Process()
-    environment._server_process = process
-    monkeypatch.setattr(
-        environment,
-        "_descendant_processes",
-        lambda _pid: pytest.fail(
-            "parent without a captured identity must not be traversed"
-        ),
-    )
-    monkeypatch.setattr(
-        "os.kill",
-        lambda *_args: pytest.fail(
-            "parent without a captured identity must not use raw PID signals"
-        ),
-    )
-
-    await environment._cleanup_server_attempt(23456, None)
-
-    assert process.terminated
-    assert process.waited
-
-
-@pytest.mark.asyncio
-async def test_singularity_cancelled_startup_runs_attempt_cleanup(
-    tmp_path, monkeypatch
-):
-    environment = _startup_test_environment(tmp_path)
-    request_started = asyncio.Event()
-    release_request = asyncio.Event()
-    cleaned = asyncio.Event()
-
-    class Process:
-        pid = 23456
-        returncode = None
-
-    async def create_process(*_command, **_kwargs):
-        return Process()
-
-    class Client:
-        async def get(self, _url):
-            request_started.set()
-            await release_request.wait()
-
-        async def aclose(self):
-            pass
-
-    async def cleanup(pid, start_time):
-        assert (pid, start_time) == (23456, "identity")
-        cleaned.set()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-    monkeypatch.setattr(
-        harbor_singularity.httpx,
-        "AsyncClient",
-        lambda **_kwargs: Client(),
-    )
-    monkeypatch.setattr(
-        environment, "_process_start_time", lambda _pid: "identity"
-    )
-    monkeypatch.setattr(environment, "_cleanup_server_attempt", cleanup)
-
-    startup = asyncio.create_task(environment._start_server())
-    await request_started.wait()
-    startup.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await startup
-    assert cleaned.is_set()
-    assert environment._staging_dir is None
-
-
-@pytest.mark.asyncio
-async def test_singularity_stop_reaps_orphaned_helpers(tmp_path):
-    child_file = tmp_path / "child.pid"
-    process = await asyncio.create_subprocess_exec(
-        "bash",
-        "-c",
-        f"sleep 30 & echo $! > {child_file}; wait",
-    )
-    for _ in range(100):
-        if child_file.is_file():
-            break
-        await asyncio.sleep(0.01)
-    child_pid = int(child_file.read_text())
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    environment._server_process = process
-    environment._http_client = None
-    environment._memory_watchdog_task = None
-    environment._stream_task = None
-    environment._staging_dir = None
-    environment._sif_path = tmp_path / "image.sif"
-    environment.logger = SimpleNamespace(
-        debug=lambda *_args: None,
-        warning=lambda *_args: None,
-    )
-
-    await environment.stop(delete=False)
-
-    assert process.returncode is not None
-    assert not Path(f"/proc/{child_pid}").exists()
-
-
-@pytest.mark.asyncio
-async def test_singularity_cleanup_does_not_signal_a_reused_pid(monkeypatch):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    signals = []
-    monkeypatch.setattr(
-        environment,
-        "_process_start_time",
-        lambda _pid: "new-process",
-    )
-    monkeypatch.setattr("os.kill", lambda pid, sig: signals.append((pid, sig)))
-
-    await environment._terminate_processes({123: "old-process"})
-
-    assert signals == []
-
-
-@pytest.mark.asyncio
-async def test_singularity_stop_runs_upstream_cleanup_when_reap_is_cancelled(
-    monkeypatch,
-):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    environment._server_process = SimpleNamespace(pid=123)
-    reaping = asyncio.Event()
-    upstream_stopped = asyncio.Event()
-    reap_calls = 0
-
-    monkeypatch.setattr(environment, "_process_start_time", lambda _pid: "1")
-    monkeypatch.setattr(environment, "_descendant_processes", lambda _pid: {})
-
-    async def fake_terminate(_processes):
-        nonlocal reap_calls
-        reap_calls += 1
-        if reap_calls == 1:
-            reaping.set()
-            await asyncio.Event().wait()
-
-    async def fake_upstream_stop(_self, _delete):
-        upstream_stopped.set()
-
-    monkeypatch.setattr(environment, "_terminate_processes", fake_terminate)
-    monkeypatch.setattr(
-        "harbor.environments.singularity.singularity.SingularityEnvironment.stop",
-        fake_upstream_stop,
-    )
-
-    task = asyncio.create_task(environment.stop(delete=False))
-    await reaping.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert upstream_stopped.is_set()
-
-
-@pytest.mark.asyncio
-async def test_singularity_stop_reaps_descendants_created_during_cleanup(
-    monkeypatch,
-):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    environment._server_process = SimpleNamespace(pid=123)
-    snapshots = iter(({1: "first"}, {2: "late"}))
-    reaped = []
-
-    monkeypatch.setattr(environment, "_process_start_time", lambda _pid: "1")
-    monkeypatch.setattr(
-        environment,
-        "_descendant_processes",
-        lambda _pid: next(snapshots),
-    )
-
-    async def fake_terminate(processes):
-        reaped.append(dict(processes))
-
-    async def fake_upstream_stop(_self, _delete):
-        pass
-
-    monkeypatch.setattr(environment, "_terminate_processes", fake_terminate)
-    monkeypatch.setattr(
-        "harbor.environments.singularity.singularity.SingularityEnvironment.stop",
-        fake_upstream_stop,
-    )
-
-    await environment.stop(delete=False)
-
-    assert reaped == [
-        {1: "first"},
-        {1: "first", 2: "late"},
-        {1: "first", 2: "late"},
-    ]
 
 
 @pytest.mark.asyncio
@@ -1732,109 +1496,153 @@ async def test_singularity_build_command_reaps_process_on_cancellation():
         await asyncio.wait_for(task, timeout=2)
 
 
-@pytest.mark.asyncio
-async def test_singularity_defers_unbounded_exec_timeout_to_harbor(monkeypatch):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
-    timeouts = []
-    commands = []
+def _exec_test_environment(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._instance_started = True
+    environment._merge_env = lambda env: env
+    environment._resolve_user = lambda user: user
+    return environment
 
-    async def fake_exec(
-        self, command, cwd=None, env=None, timeout_sec=None, user=None
-    ):
-        commands.append(command)
-        timeouts.append(timeout_sec)
-        return SimpleNamespace(return_code=0, stdout="", stderr="")
 
-    monkeypatch.setattr(
-        "harbor.environments.singularity.singularity.SingularityEnvironment.exec",
-        fake_exec,
-    )
+def test_apptainer_exec_env_uses_native_prefix(tmp_path, monkeypatch):
+    environment = _exec_test_environment(tmp_path)
+    environment._runtime = lambda: "/usr/bin/apptainer"
+    monkeypatch.setenv("SINGULARITYENV_OLD", "remove")
+    monkeypatch.setenv("APPTAINERENV_OLD", "remove")
 
-    await environment.exec("true")
-    await environment.exec("true", timeout_sec=12)
+    runtime_env = environment._runtime_environment({"TOKEN": "secret"})
 
-    assert timeouts == [7 * 24 * 60 * 60, 12]
-    assert all("</dev/null" in command for command in commands)
+    assert runtime_env["APPTAINERENV_TOKEN"] == "secret"
+    assert "SINGULARITYENV_TOKEN" not in runtime_env
+    assert "SINGULARITYENV_OLD" not in runtime_env
+    assert "APPTAINERENV_OLD" not in runtime_env
 
 
 @pytest.mark.asyncio
-async def test_singularity_exec_closes_inherited_stdin(monkeypatch):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
+async def test_singularity_exec_uses_instance_and_closes_stdin(
+    tmp_path, monkeypatch
+):
+    environment = _exec_test_environment(tmp_path)
+    calls = []
 
-    async def fake_exec(
-        self, command, cwd=None, env=None, timeout_sec=None, user=None
-    ):
-        process = await asyncio.create_subprocess_exec(
-            "bash",
-            "-c",
-            command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
+    class Process:
+        pid = 12345
+        returncode = 0
+
+        async def communicate(self):
+            return b"done", b""
+
+    async def create_process(*command, **kwargs):
+        calls.append((command, kwargs))
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+
+    first = await environment.exec(
+        "printf done",
+        cwd="/workspace/project",
+        env={"TOKEN": "value with spaces"},
+        user="agent",
+    )
+    second = await environment.exec("true")
+
+    assert first.return_code == 0
+    assert first.stdout == "done"
+    assert second.return_code == 0
+    assert len(calls) == 2
+    for command, kwargs in calls:
+        assert command[:2] == (
+            "/usr/bin/singularity",
+            "exec",
         )
-        try:
-            await asyncio.wait_for(process.wait(), timeout=1)
-        finally:
-            assert process.stdin is not None
-            process.stdin.close()
-            if process.returncode is None:
-                process.terminate()
-                await process.wait()
-        assert process.stdout is not None
-        stdout = await process.stdout.read()
-        return SimpleNamespace(
-            return_code=process.returncode,
-            stdout=stdout.decode(),
-            stderr="",
-        )
-
-    monkeypatch.setattr(
-        "harbor.environments.singularity.singularity.SingularityEnvironment.exec",
-        fake_exec,
-    )
-
-    result = await environment.exec(
-        "read -r value || true; printf done", timeout_sec=1
-    )
-
-    assert result.return_code == 0
-    assert result.stdout == "done"
+        assert "instance://ursatestinstance" in command
+        assert kwargs["stdin"] == asyncio.subprocess.DEVNULL
+        assert "--cleanenv" in command
+    shell_command = calls[0][0][-1]
+    assert "/workspace/project" in shell_command
+    assert "TOKEN=value with spaces" not in shell_command
+    assert "su agent" in shell_command
+    assert calls[0][1]["env"]["SINGULARITYENV_TOKEN"] == "value with spaces"
+    assert "SINGULARITYENV_TOKEN" not in calls[1][1]["env"]
 
 
 @pytest.mark.asyncio
-async def test_singularity_cancellation_terminates_remote_process(monkeypatch):
-    environment = DockerfileSingularityEnvironment.__new__(
-        DockerfileSingularityEnvironment
-    )
+async def test_singularity_exec_timeout_returns_124_and_cleans_remote(
+    tmp_path, monkeypatch
+):
+    environment = _exec_test_environment(tmp_path)
+    release = asyncio.Event()
+    cleaned = []
+
+    class Process:
+        pid = 12345
+        returncode = None
+
+        async def communicate(self):
+            await release.wait()
+            return b"partial", b""
+
+    process = Process()
+
+    async def create_process(*_command, **_kwargs):
+        return process
+
+    async def cleanup(received_process, pid_file):
+        cleaned.append(pid_file)
+        assert received_process is process
+        process.returncode = -15
+        release.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(environment, "_cleanup_exec_process", cleanup)
+
+    result = await environment.exec("sleep 30", timeout_sec=0.01)
+
+    assert result.return_code == 124
+    assert result.stdout == "partial"
+    assert "timed out" in result.stderr
+    assert len(cleaned) == 1
+
+
+@pytest.mark.asyncio
+async def test_singularity_exec_cancellation_cleans_remote(
+    tmp_path, monkeypatch
+):
+    environment = _exec_test_environment(tmp_path)
     started = asyncio.Event()
-    commands = []
+    release = asyncio.Event()
+    cleaned = asyncio.Event()
 
-    async def fake_exec(
-        self, command, cwd=None, env=None, timeout_sec=None, user=None
-    ):
-        commands.append(command)
-        if len(commands) == 1:
+    class Process:
+        pid = 12345
+        returncode = None
+
+        async def communicate(self):
             started.set()
-            await asyncio.Event().wait()
-        return SimpleNamespace(return_code=0, stdout="", stderr="")
+            await release.wait()
+            return b"", b""
 
-    monkeypatch.setattr(
-        "harbor.environments.singularity.singularity.SingularityEnvironment.exec",
-        fake_exec,
-    )
+    process = Process()
+
+    async def create_process(*_command, **_kwargs):
+        return process
+
+    async def cleanup(received_process, _pid_file):
+        assert received_process is process
+        process.returncode = -15
+        release.set()
+        cleaned.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(environment, "_cleanup_exec_process", cleanup)
     task = asyncio.create_task(environment.exec("sleep 30"))
     await started.wait()
 
     task.cancel()
+
     with pytest.raises(asyncio.CancelledError):
         await task
-
-    assert len(commands) == 2
-    assert "descendants" in commands[1]
-    assert "kill -TERM" in commands[1]
+    assert cleaned.is_set()
 
 
 @pytest.mark.asyncio

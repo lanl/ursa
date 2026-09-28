@@ -23,5 +23,4 @@ uv run --project "$repo_root/examples/harbor" --python 3.12 harbor run \
   --agent-kwarg "ursa_source_dir=$repo_root" \
   --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment \
   --environment-kwarg "singularity_image_cache_dir=$cache_dir" \
-  --environment-kwarg singularity_no_mount=home,tmp \
   --jobs-dir "$jobs_dir" --n-concurrent 1 --yes
