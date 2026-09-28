@@ -8854,6 +8854,7 @@ fm = [
     { name = "torch" },
 ]
 harbor = [
+    { name = "filelock" },
     { name = "harbor", marker = "python_full_version >= '3.12'" },
     { name = "pathspec", version = "0.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "pathspec", version = "1.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -8917,6 +8918,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.120.0" },
     { name = "fastmcp", specifier = "~=3.0" },
     { name = "filelock", specifier = ">=3.20.3,<4.0" },
+    { name = "filelock", marker = "extra == 'harbor'", specifier = ">=3.19.1,<4" },
     { name = "harbor", marker = "python_full_version >= '3.12' and extra == 'harbor'", specifier = ">=0.22.0,<0.23" },
     { name = "jsonargparse", specifier = ">=4.45.0" },
     { name = "justext", specifier = ">=3.0.1,<4.0.0" },
