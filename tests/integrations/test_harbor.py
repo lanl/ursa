@@ -95,7 +95,7 @@ def _singularity_env(
     runtime="singularity",
 ):
     environment_dir = tmp_path / "environment"
-    environment_dir.mkdir()
+    environment_dir.mkdir(parents=True)
     (environment_dir / "Dockerfile").write_text("FROM scratch\n")
     environment = DockerfileSingularityEnvironment.__new__(
         DockerfileSingularityEnvironment
@@ -123,6 +123,32 @@ def _singularity_env(
     )
     monkeypatch.setattr(environment, "_run", fake_run)
     return environment, commands
+
+
+def test_singularity_uses_a_shared_default_cache(tmp_path, monkeypatch):
+    received = []
+
+    def fake_init(_self, *args, **kwargs):
+        received.append(kwargs["singularity_image_cache_dir"])
+
+    monkeypatch.setattr(
+        harbor_singularity.SingularityEnvironment, "__init__", fake_init
+    )
+    monkeypatch.delenv("URSA_HARBOR_SIF_CACHE", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
+
+    DockerfileSingularityEnvironment()
+    configured = tmp_path / "configured-cache"
+    monkeypatch.setenv("URSA_HARBOR_SIF_CACHE", str(configured))
+    DockerfileSingularityEnvironment()
+    explicit = tmp_path / "explicit-cache"
+    DockerfileSingularityEnvironment(singularity_image_cache_dir=explicit)
+
+    assert received == [
+        tmp_path / "xdg-cache" / "ursa" / "harbor" / "sif",
+        configured,
+        explicit,
+    ]
 
 
 def test_singularity_uses_docker_workdir_semantics(tmp_path):
@@ -390,7 +416,7 @@ def test_runtime_config_externalizes_secrets_from_all_layers(
         "    api_key:\n"
         "      keyring: true\n"
         "emb_model:\n"
-        "  model: text-embedding-3-small\n"
+        "  model: openai:text-embedding-3-small\n"
         "  api_key:\n"
         "    env: EMBEDDING_TOKEN\n"
     )
@@ -491,7 +517,7 @@ def test_harbor_model_accepts_an_explicit_model_provider(tmp_path):
 
     runtime_config, _ = agent._runtime_config()
 
-    assert runtime_config["llm_model"]["model"] == "gemma4:latest"
+    assert runtime_config["llm_model"]["model"] == "ollama:gemma4:latest"
     assert runtime_config["llm_model"]["model_provider"] == "ollama"
     assert runtime_config["llm_model"]["inference_provider"] == "ollama"
 
@@ -1085,6 +1111,121 @@ async def test_singularity_builds_with_buildah(tmp_path, monkeypatch):
     assert commands[1][0:2] == ("/usr/bin/buildah", "push")
     assert commands[1][3].startswith("docker-archive:")
     assert commands[-1][0:3] == ("/usr/bin/buildah", "rmi", "--force")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_builds_use_private_builder_tags(
+    tmp_path, monkeypatch
+):
+    first, _ = _singularity_env(
+        tmp_path / "first", monkeypatch, builders=("buildah",)
+    )
+    second, _ = _singularity_env(
+        tmp_path / "second", monkeypatch, builders=("buildah",)
+    )
+    commands = []
+    images = set()
+    warnings = []
+    pushes = 0
+    both_pushed = asyncio.Event()
+
+    async def fake_run(*command):
+        nonlocal pushes
+        commands.append(command)
+        if command[0:2] == ("/usr/bin/buildah", "build"):
+            tag = command[command.index("--tag") + 1]
+            images.add(tag)
+        elif command[0:2] == ("/usr/bin/buildah", "push"):
+            tag = command[2]
+            if tag not in images:
+                raise RuntimeError("image not known")
+            pushes += 1
+            if pushes == 2:
+                both_pushed.set()
+            await both_pushed.wait()
+        elif command[0:3] == ("/usr/bin/buildah", "rmi", "--force"):
+            tag = command[3]
+            if tag not in images:
+                raise RuntimeError("image not known")
+            images.remove(tag)
+        elif command[0:2] == ("/usr/bin/singularity", "build"):
+            Path(command[2]).write_text("sif")
+
+    logger = SimpleNamespace(
+        warning=lambda *args: warnings.append(args),
+    )
+    first._run = fake_run
+    first.logger = logger
+    second._run = fake_run
+    second.logger = logger
+
+    await asyncio.gather(
+        first._build_dockerfile_sif(force_build=False),
+        second._build_dockerfile_sif(force_build=False),
+    )
+
+    build_tags = [
+        command[command.index("--tag") + 1]
+        for command in commands
+        if command[0:2] == ("/usr/bin/buildah", "build")
+    ]
+    pushed_tags = {
+        command[2]
+        for command in commands
+        if command[0:2] == ("/usr/bin/buildah", "push")
+    }
+    removed_tags = {
+        command[3]
+        for command in commands
+        if command[0:3] == ("/usr/bin/buildah", "rmi", "--force")
+    }
+    assert len(build_tags) == len(set(build_tags)) == 2
+    assert pushed_tags == removed_tags == set(build_tags)
+    assert not images
+    assert not warnings
+
+
+@pytest.mark.asyncio
+async def test_concurrent_builds_share_one_cached_sif(tmp_path, monkeypatch):
+    first, _ = _singularity_env(
+        tmp_path / "first", monkeypatch, builders=("buildah",)
+    )
+    second, _ = _singularity_env(
+        tmp_path / "second", monkeypatch, builders=("buildah",)
+    )
+    shared_cache = tmp_path / "shared-cache"
+    first._image_cache_dir = shared_cache
+    second._image_cache_dir = shared_cache
+    commands = []
+    build_started = asyncio.Event()
+    release_build = asyncio.Event()
+
+    async def fake_run(*command):
+        commands.append(command)
+        if command[0:2] == ("/usr/bin/buildah", "build"):
+            build_started.set()
+            await release_build.wait()
+        elif command[0:2] == ("/usr/bin/singularity", "build"):
+            Path(command[2]).write_text("sif")
+
+    first._run = fake_run
+    second._run = fake_run
+    first_build = asyncio.create_task(first._build_dockerfile_sif(False))
+    await build_started.wait()
+    second_build = asyncio.create_task(second._build_dockerfile_sif(False))
+    release_build.set()
+
+    first_result, second_result = await asyncio.gather(
+        first_build, second_build
+    )
+
+    builder_commands = [
+        command
+        for command in commands
+        if command[0:2] == ("/usr/bin/buildah", "build")
+    ]
+    assert first_result == second_result
+    assert len(builder_commands) == 1
 
 
 @pytest.mark.asyncio
