@@ -7,10 +7,12 @@ import hashlib
 import math
 import os
 import platform
+import re
 import secrets
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 from contextlib import suppress
@@ -95,6 +97,98 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         if runtime is None:
             raise RuntimeError("Apptainer or Singularity is required")
         return runtime
+
+    @classmethod
+    @override
+    def preflight(cls) -> None:
+        """Verify the runtime and a Dockerfile builder before queueing work."""
+        try:
+            runtime = cls._runtime()
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+
+        help_checks = (
+            (
+                ("instance", "start", "--help"),
+                (
+                    "--fakeroot",
+                    "--containall",
+                    "--no-home",
+                    "--writable-tmpfs",
+                    "--net",
+                    "--network",
+                ),
+            ),
+            (("exec", "--help"), ("--cleanenv", "--pwd")),
+            (("instance", "stop", "--help"), ("--force",)),
+        )
+        for arguments, required_options in help_checks:
+            command = [runtime, *arguments]
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise SystemExit(
+                    f"Could not inspect the Singularity runtime: {exc}"
+                ) from exc
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout).strip()
+                raise SystemExit(
+                    f"Singularity runtime check failed ({' '.join(command)}): "
+                    f"{detail or f'exit code {result.returncode}'}"
+                )
+            help_text = f"{result.stdout}\n{result.stderr}"
+            missing = [
+                option
+                for option in required_options
+                if re.search(
+                    rf"(?<![\w-]){re.escape(option)}(?![\w-])",
+                    help_text,
+                )
+                is None
+            ]
+            if missing:
+                raise SystemExit(
+                    f"{Path(runtime).name} does not support required options: "
+                    + ", ".join(missing)
+                )
+
+        builders = [
+            (name, path)
+            for name in ("buildah", "podman", "docker")
+            if (path := shutil.which(name)) is not None
+        ]
+        if not builders:
+            raise SystemExit(
+                "Building Harbor Dockerfiles requires buildah, podman, or docker"
+            )
+        failures: list[str] = []
+        for name, path in builders:
+            try:
+                result = subprocess.run(
+                    [path, "info"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                failures.append(f"{name}: {exc}")
+                continue
+            if result.returncode == 0:
+                return
+            detail = (result.stderr or result.stdout).strip()
+            failures.append(
+                f"{name}: {detail or f'exit code {result.returncode}'}"
+            )
+        raise SystemExit(
+            "No usable Dockerfile builder found. " + "; ".join(failures)
+        )
 
     @override
     def _validate_definition(self) -> None:
