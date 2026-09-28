@@ -497,6 +497,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "instruction": instruction,
             "workspace": self._workspace,
             "metrics_path": f"{self.environment_logs_dir}/ursa-metrics.json",
+            "log_path": f"{self.environment_logs_dir}/ursa.log",
             "artifacts_dir": str(EnvironmentPaths.artifacts_dir),
         }
         encoded = base64.urlsafe_b64encode(

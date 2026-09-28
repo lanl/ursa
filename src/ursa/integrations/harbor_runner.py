@@ -10,8 +10,55 @@ import signal
 import sqlite3
 import sys
 import traceback
+from collections.abc import Iterator
+from contextlib import (
+    contextmanager,
+    redirect_stderr,
+    redirect_stdout,
+    suppress,
+)
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
+
+
+class _Tee:
+    """Write text to the runner stream and its durable Harbor log."""
+
+    def __init__(self, stream: TextIO, log: TextIO) -> None:
+        self._stream = stream
+        self._log = log
+
+    def write(self, text: str) -> int:
+        self._stream.write(text)
+        self._log.write(text)
+        self.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+        self._log.flush()
+
+    def isatty(self) -> bool:
+        return self._stream.isatty()
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    @property
+    def encoding(self) -> str | None:
+        return self._stream.encoding
+
+
+@contextmanager
+def _capture_output(log_path: Path) -> Iterator[None]:
+    """Tee runner stdout and stderr into Harbor's mounted agent logs."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8", buffering=1) as log:
+        with (
+            redirect_stdout(_Tee(sys.stdout, log)),
+            redirect_stderr(_Tee(sys.stderr, log)),
+        ):
+            yield
 
 
 def _import_symbol(path: str) -> Any:
@@ -123,12 +170,13 @@ def _close_checkpoint(checkpointer: Any) -> None:
         raise failure
 
 
-def main(encoded: str) -> None:
+def _run(config: dict[str, Any]) -> None:
     from ursa.agents import BaseAgent
     from ursa.cli.config import UrsaConfig, load_config_file
     from ursa.util import Checkpointer
+    from ursa.util.events import configure_event_logging
 
-    config = json.loads(base64.urlsafe_b64decode(encoded).decode())
+    configure_event_logging(rich=False)
     agent_class = _import_symbol(config["agent_import_path"])
     if not isinstance(agent_class, type) or not issubclass(
         agent_class, BaseAgent
@@ -194,6 +242,19 @@ def main(encoded: str) -> None:
             if failure is None:
                 raise
             traceback.print_exc(file=sys.stderr)
+
+
+def main(encoded: str) -> None:
+    config = json.loads(base64.urlsafe_b64decode(encoded).decode())
+    log_path = Path(config["log_path"])
+    try:
+        with _capture_output(log_path):
+            _run(config)
+    except BaseException:
+        with suppress(OSError):
+            with log_path.open("a", encoding="utf-8") as log:
+                traceback.print_exc(file=log)
+        raise
 
 
 if __name__ == "__main__":
