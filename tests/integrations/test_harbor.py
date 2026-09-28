@@ -1,7 +1,10 @@
 import asyncio
+import base64
 import json
+import shlex
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,9 +33,13 @@ from ursa.integrations.harbor import (  # noqa: E402
 )
 from ursa.integrations.harbor_runner import (  # noqa: E402
     _attach_mcp_tools,
+    _capture_output,
     _close_checkpoint,
     _export_checkpoint,
     _usage,
+)
+from ursa.integrations.harbor_runner import (  # noqa: E402
+    main as _runner_main,
 )
 from ursa.integrations.harbor_singularity import (  # noqa: E402
     DockerfileSingularityEnvironment,
@@ -91,6 +98,41 @@ def test_usage_leaves_missing_event_usage_unknown(tmp_path):
     }
 
 
+def test_runner_output_is_teeed_to_harbor_log(tmp_path, capsys):
+    log_path = tmp_path / "agent" / "ursa.log"
+
+    with _capture_output(log_path):
+        print("agent stdout")
+        print("agent stderr", file=sys.stderr)
+
+    captured = capsys.readouterr()
+    assert captured.out == "agent stdout\n"
+    assert captured.err == "agent stderr\n"
+    assert log_path.read_text().splitlines() == [
+        "agent stdout",
+        "agent stderr",
+    ]
+
+
+def test_runner_failure_is_written_to_harbor_log(tmp_path, monkeypatch):
+    log_path = tmp_path / "agent" / "ursa.log"
+    encoded = base64.urlsafe_b64encode(
+        json.dumps({"log_path": str(log_path)}).encode()
+    ).decode()
+
+    def fail(_config):
+        raise RuntimeError("agent failed")
+
+    monkeypatch.setattr("ursa.integrations.harbor_runner._run", fail)
+
+    with pytest.raises(RuntimeError, match="agent failed"):
+        _runner_main(encoded)
+
+    text = log_path.read_text()
+    assert "Traceback" in text
+    assert "RuntimeError: agent failed" in text
+
+
 def _singularity_env(
     tmp_path,
     monkeypatch,
@@ -127,6 +169,109 @@ def _singularity_env(
     )
     monkeypatch.setattr(environment, "_run", fake_run)
     return environment, commands
+
+
+def _singularity_preflight_result(command, *, builder_returncode=0):
+    arguments = tuple(command[1:])
+    help_text = {
+        ("instance", "start", "--help"): (
+            "--fakeroot --containall --no-home --writable-tmpfs --net --network"
+        ),
+        ("exec", "--help"): "--cleanenv --pwd",
+        ("instance", "stop", "--help"): "--force",
+    }
+    if arguments in help_text:
+        return SimpleNamespace(
+            returncode=0, stdout=help_text[arguments], stderr=""
+        )
+    if arguments == ("info",):
+        return SimpleNamespace(
+            returncode=builder_returncode,
+            stdout="",
+            stderr="builder unavailable" if builder_returncode else "",
+        )
+    raise AssertionError(f"Unexpected preflight command: {command}")
+
+
+def test_singularity_preflight_accepts_runtime_and_builder(monkeypatch):
+    commands = []
+
+    def which(name):
+        return {
+            "apptainer": "/usr/bin/apptainer",
+            "buildah": "/usr/bin/buildah",
+        }.get(name)
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return _singularity_preflight_result(command)
+
+    monkeypatch.setattr("shutil.which", which)
+    monkeypatch.setattr("subprocess.run", run)
+
+    DockerfileSingularityEnvironment.preflight()
+
+    assert commands[-1] == ["/usr/bin/buildah", "info"]
+
+
+def test_singularity_preflight_rejects_missing_runtime(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    with pytest.raises(SystemExit, match="Apptainer or Singularity"):
+        DockerfileSingularityEnvironment.preflight()
+
+
+def test_singularity_preflight_rejects_incompatible_runtime(monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/bin/apptainer" if name == "apptainer" else None,
+    )
+
+    def run(command, **_kwargs):
+        result = _singularity_preflight_result(command)
+        if command[1:4] == ["instance", "start", "--help"]:
+            result.stdout = result.stdout.replace("--network", "")
+        return result
+
+    monkeypatch.setattr("subprocess.run", run)
+
+    with pytest.raises(SystemExit, match="required options.*--network"):
+        DockerfileSingularityEnvironment.preflight()
+
+
+def test_singularity_preflight_rejects_missing_builder(monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/bin/singularity" if name == "singularity" else None,
+    )
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **_kwargs: _singularity_preflight_result(command),
+    )
+
+    with pytest.raises(SystemExit, match="requires buildah, podman, or docker"):
+        DockerfileSingularityEnvironment.preflight()
+
+
+def test_singularity_preflight_rejects_unusable_builder(monkeypatch):
+    def which(name):
+        return {
+            "singularity": "/usr/bin/singularity",
+            "docker": "/usr/bin/docker",
+        }.get(name)
+
+    monkeypatch.setattr("shutil.which", which)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **_kwargs: _singularity_preflight_result(
+            command, builder_returncode=1
+        ),
+    )
+
+    with pytest.raises(
+        SystemExit, match="No usable.*docker: builder unavailable"
+    ):
+        DockerfileSingularityEnvironment.preflight()
 
 
 def test_singularity_uses_a_shared_default_cache(tmp_path, monkeypatch):
@@ -706,9 +851,11 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
     agent._secret_env = {"URSA_HARBOR_SECRET_0": "resolved-on-host"}
     observed_timeout = object()
     observed_env = None
+    observed_command = None
 
     async def fake_exec_as_agent(*args, **kwargs):
-        nonlocal observed_env, observed_timeout
+        nonlocal observed_command, observed_env, observed_timeout
+        observed_command = kwargs["command"]
         observed_timeout = kwargs["timeout_sec"]
         observed_env = kwargs["env"]
         return SimpleNamespace(
@@ -722,6 +869,10 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
 
     assert observed_timeout is None
     assert observed_env["URSA_HARBOR_SECRET_0"] == "resolved-on-host"
+    assert observed_command is not None
+    encoded = shlex.split(observed_command)[-1]
+    payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
+    assert payload["log_path"] == "/logs/agent/ursa.log"
 
 
 @pytest.mark.asyncio
