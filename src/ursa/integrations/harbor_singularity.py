@@ -19,16 +19,16 @@ from typing import override
 
 from filelock import AsyncFileLock
 from harbor.environments.base import ExecResult
-from harbor.environments.singularity import singularity as harbor_singularity
+from harbor.environments.capabilities import EnvironmentCapabilities
 from harbor.environments.singularity.singularity import SingularityEnvironment
+from harbor.models.task.config import NetworkMode
 from pathspec import GitIgnoreSpec
 
 
 class DockerfileSingularityEnvironment(SingularityEnvironment):
-    """Build ``environment/Dockerfile`` and cache the resulting SIF image."""
+    """Build a Dockerfile and run it as a Singularity 3.6 instance."""
 
-    _runtime_path_lock = asyncio.Lock()
-    _harbor_owned_timeout_sec = 7 * 24 * 60 * 60
+    _supported_no_mounts = frozenset({"home", "tmp"})
 
     def __init__(
         self,
@@ -47,8 +47,34 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             kwargs["singularity_image_cache_dir"] = (
                 self._default_image_cache_dir()
             )
+        no_mount = kwargs.get("singularity_no_mount")
+        if no_mount:
+            requested = {part.strip() for part in no_mount.split(",")}
+            unsupported = requested - self._supported_no_mounts
+            if unsupported:
+                values = ", ".join(sorted(unsupported))
+                raise ValueError(
+                    "Singularity 3.6 cannot disable these mount types: "
+                    f"{values}. Only 'home' and 'tmp' are supported."
+                )
+
         super().__init__(*args, **kwargs)
+        for policy in self._phase_network_policies:
+            if policy != self._network_policy:
+                raise ValueError(
+                    "Singularity 3.6 cannot change network policy after start"
+                )
         self._startup_timeout_sec = singularity_startup_timeout_sec
+        identity = hashlib.sha256(self.session_id.encode()).hexdigest()[:16]
+        self._instance_name = f"ursa{identity}{secrets.token_hex(4)}"
+        self._instance_started = False
+
+    @property
+    @override
+    def capabilities(self) -> EnvironmentCapabilities:
+        # Singularity 3.6 can create an isolated network namespace, but cannot
+        # securely enforce allowlists or switch a running instance's network.
+        return EnvironmentCapabilities(mounted=True, disable_internet=True)
 
     @staticmethod
     def _default_image_cache_dir() -> Path:
@@ -62,27 +88,6 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             else Path.home() / ".cache"
         )
         return root / "ursa" / "harbor" / "sif"
-
-    def _ensure_bootstrap_mounts(self) -> None:
-        """Overlay Harbor's bootstrap with compatibility for older Python."""
-        targets = {mount.get("target") for mount in self._mounts}
-        resources = (
-            (
-                Path(harbor_singularity.__file__).parent / "bootstrap.sh",
-                "/staging/bootstrap-upstream.sh",
-            ),
-            (
-                Path(__file__).with_name("harbor_singularity_bootstrap.sh"),
-                "/staging/bootstrap.sh",
-            ),
-        )
-        for source, target in resources:
-            if target not in targets:
-                self._mounts.append({
-                    "type": "bind",
-                    "source": str(source),
-                    "target": target,
-                })
 
     @staticmethod
     def _runtime() -> str:
@@ -211,10 +216,26 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             finally:
                 temporary.unlink(missing_ok=True)
 
+    @staticmethod
+    async def _terminate_host_process(
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        if process.returncode is not None:
+            return
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+
     async def _run(self, *command: str) -> None:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
@@ -226,14 +247,7 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         try:
             stdout, stderr = await process.communicate()
         except asyncio.CancelledError:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except TimeoutError:
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
+            await self._terminate_host_process(process)
             raise
         if process.returncode:
             detail = stderr.decode(errors="replace") or stdout.decode(
@@ -243,311 +257,206 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
                 f"Command failed ({' '.join(command)}): {detail}"
             )
 
-    @staticmethod
-    def _process_start_time(pid: int) -> str | None:
-        """Return Linux's stable identity component for a live process."""
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text()
-            _, separator, fields = stat.rpartition(") ")
-            return fields.split()[19] if separator else None
-        except (IndexError, OSError):
-            return None
-
-    @classmethod
-    def _descendant_processes(cls, pid: int) -> dict[int, str]:
-        """Return current descendants keyed by PID and process start time."""
-        descendants: dict[int, str] = {}
-        pending = [pid]
-        while pending:
-            parent = pending.pop()
-            for children_file in Path(f"/proc/{parent}/task").glob(
-                "*/children"
-            ):
-                with suppress(OSError):
-                    for value in children_file.read_text().split():
-                        child = int(value)
-                        if child not in descendants:
-                            if (
-                                start_time := cls._process_start_time(child)
-                            ) is None:
-                                continue
-                            descendants[child] = start_time
-                            pending.append(child)
-        return descendants
-
-    async def _terminate_processes(self, processes: dict[int, str]) -> None:
-        """Terminate only the captured container helper processes."""
-        for process_signal in (signal.SIGTERM, signal.SIGKILL):
-            processes = {
-                pid: start_time
-                for pid, start_time in processes.items()
-                if self._process_start_time(pid) == start_time
-            }
-            for pid in processes:
-                with suppress(ProcessLookupError, PermissionError):
-                    os.kill(pid, process_signal)
-            for _ in range(20):
-                processes = {
-                    pid: start_time
-                    for pid, start_time in processes.items()
-                    if self._process_start_time(pid) == start_time
-                }
-                if not processes:
-                    return
-                await asyncio.sleep(0.1)
-        if processes:
-            self.logger.warning(
-                "Could not terminate Singularity helper processes: %s",
-                sorted(processes),
+    async def _build_dockerfile_sif(self, force_build: bool) -> Path:
+        output = await self._dockerfile_cache_path()
+        self._image_cache_dir.mkdir(parents=True, exist_ok=True)
+        if not force_build and await self._is_valid_sif(output):
+            return output
+        async with AsyncFileLock(output.with_suffix(".lock")):
+            if not force_build and await self._is_valid_sif(output):
+                return output
+            builders = [
+                builder
+                for name in ("buildah", "podman", "docker")
+                if (builder := shutil.which(name)) is not None
+            ]
+            if not builders:
+                raise RuntimeError(
+                    "Building a Dockerfile for Singularity requires buildah, "
+                    "podman, or docker"
+                )
+            temporary = output.with_suffix(".tmp.sif")
+            failures = []
+            for candidate in builders:
+                try:
+                    await self._build_with(
+                        candidate, output, temporary, force_build
+                    )
+                    return output
+                except RuntimeError as exc:
+                    failures.append(str(exc))
+            raise RuntimeError(
+                "No container builder succeeded: " + "; ".join(failures)
             )
 
-    async def _cleanup_server_attempt(
-        self, server_pid: int, server_start_time: str | None
-    ) -> None:
-        """Clean one failed startup without orphaning runtime helpers."""
-        descendants: dict[int, str] = {}
+    @property
+    def _instance_ref(self) -> str:
+        return f"instance://{self._instance_name}"
+
+    def _instance_exec_prefix(self, cwd: str | None = None) -> list[str]:
+        return [
+            self._runtime(),
+            "exec",
+            "--cleanenv",
+            "--pwd",
+            cwd or self._workdir,
+            self._instance_ref,
+        ]
+
+    def _instance_start_command(self) -> list[str]:
+        if self._staging_dir is None or self._sif_path is None:
+            raise RuntimeError("Singularity instance is not prepared")
+        command = [
+            self._runtime(),
+            "instance",
+            "start",
+            "--fakeroot",
+            "--containall",
+            "--no-home",
+            "--writable-tmpfs",
+        ]
+        if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
+            command.extend(["--net", "--network", "none"])
+        command.extend(["-B", f"{self._staging_dir}:/staging"])
+        for mount in self._mounts:
+            if mount.get("type") != "bind":
+                continue
+            if mount.get("target") == "/staging":
+                raise ValueError(
+                    "/staging is reserved by the Harbor environment"
+                )
+            command.extend([
+                "-B",
+                f"{mount['source']}:{mount['target']}",
+            ])
+        command.extend([str(self._sif_path), self._instance_name])
+        return command
+
+    async def _stop_instance(self, *, warn: bool) -> None:
         try:
-            if (
-                server_start_time is not None
-                and self._process_start_time(server_pid) == server_start_time
-            ):
-                descendants.update(self._descendant_processes(server_pid))
-            await self._terminate_processes(descendants)
+            await self._run(
+                self._runtime(),
+                "instance",
+                "stop",
+                "--force",
+                self._instance_name,
+            )
+        except RuntimeError as exc:
+            if warn:
+                self.logger.warning(
+                    "Failed to stop Singularity instance %s: %s",
+                    self._instance_name,
+                    exc,
+                )
         finally:
-            try:
-                if (
-                    server_start_time is not None
-                    and self._process_start_time(server_pid)
-                    == server_start_time
-                ):
-                    descendants.update(self._descendant_processes(server_pid))
-                await self._terminate_processes(descendants)
-            finally:
-                process = self._server_process
-                current_start_time = self._process_start_time(server_pid)
-                if (
-                    process is not None
-                    and process.returncode is None
-                    and process.pid == server_pid
-                    and (
-                        server_start_time is None
-                        or current_start_time == server_start_time
-                    )
-                ):
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=5)
-                    except TimeoutError:
-                        if (
-                            process.pid == server_pid
-                            and process.returncode is None
-                            and (
-                                server_start_time is None
-                                or self._process_start_time(server_pid)
-                                == server_start_time
-                            )
-                        ):
-                            process.kill()
-                            await process.wait()
-                if (
-                    server_start_time is not None
-                    and self._process_start_time(server_pid)
-                    == server_start_time
-                ):
-                    descendants.update(self._descendant_processes(server_pid))
-                await self._terminate_processes(descendants)
-                if self._stream_task is not None:
-                    self._stream_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await self._stream_task
-                    self._stream_task = None
-                if self._http_client is not None:
-                    await self._http_client.aclose()
-                    self._http_client = None
+            self._instance_started = False
 
     @override
-    async def _start_server(self) -> None:
-        """Start Harbor's server with a configurable readiness deadline."""
-        await self._cleanup_server_resources()
-
+    async def start(self, force_build: bool) -> None:
+        if sys.platform == "win32":
+            raise RuntimeError("Singularity is unavailable on Windows")
+        self._validate_definition()
+        self._sif_path = await self._build_dockerfile_sif(
+            force_build or self._force_pull
+        )
         self._staging_dir = Path(
-            tempfile.mkdtemp(prefix="singularity_staging_")
+            tempfile.mkdtemp(prefix="ursa-harbor-singularity-")
         )
         self._staging_dir.chmod(0o755)
-        upstream_dir = Path(harbor_singularity.__file__).parent
-        staging_server = self._staging_dir / "_hbexec.py"
-        shutil.copy(upstream_dir / "server.py", staging_server)
-        bootstrap_script = self._staging_dir / "bootstrap.sh"
-        shutil.copy(upstream_dir / "bootstrap.sh", bootstrap_script)
-        bootstrap_script.chmod(0o755)
+        try:
+            async with asyncio.timeout(self._startup_timeout_sec):
+                await self._run(*self._instance_start_command())
+                self._instance_started = True
+                await self._run(*self._instance_exec_prefix(), "true")
+            await self._upload_environment_dir_after_start()
+        except TimeoutError as exc:
+            await self._stop_instance(warn=False)
+            self._cleanup_staging()
+            raise TimeoutError(
+                "Singularity instance did not become ready within "
+                f"{self._startup_timeout_sec:g} seconds"
+            ) from exc
+        except BaseException:
+            # An interrupted instance-start command can still leave an instance
+            # behind, so cleanup is attempted before start reports success.
+            await self._stop_instance(warn=False)
+            self._cleanup_staging()
+            raise
 
-        last_error: Exception | None = None
-        for port_attempt in range(3):
-            attempt_error: Exception | None = None
-            reserved_socket, port = self._reserve_port()
-            self._server_port = port
-            env_files_dir = self.environment_dir / "files"
-            bind_mounts = ["-B", f"{self._staging_dir}:/staging"]
-            for mount in self._mounts:
-                if mount.get("type") == "bind":
-                    bind_mounts.extend([
-                        "-B",
-                        f"{mount['source']}:{mount['target']}",
-                    ])
-            if env_files_dir.exists():
-                bind_mounts.extend([
-                    "-B",
-                    f"{env_files_dir}:/staging/env_files",
-                ])
-
-            no_mount_args: list[str] = []
-            singularity_no_mount = self._singularity_no_mount
-            if singularity_no_mount is None:
-                singularity_no_mount = "home,tmp,bind-paths"
-            if singularity_no_mount:
-                for part in singularity_no_mount.split(","):
-                    if part := part.strip():
-                        no_mount_args.extend(["--no-mount", part])
-
-            bootstrap_cmd = [
-                "bash",
-                "-c",
-                'exec /staging/bootstrap.sh "$@"',
-                "bash",
-                self._workdir,
-                "/staging/_hbexec.py",
-                "--port",
-                str(port),
-                "--workdir",
-                self._workdir,
-            ]
-            command = [
-                "singularity",
-                "exec",
-                *no_mount_args,
-                "--pwd",
-                self._workdir,
-                "--writable-tmpfs",
-                "--fakeroot",
-                "--containall",
-                "--pid",
-                *bind_mounts,
-                str(self._sif_path),
-                *bootstrap_cmd,
-            ]
-            reserved_socket.close()
-            self._server_process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            server_pid = self._server_process.pid
-            server_start_time = self._process_start_time(server_pid)
-            self._stream_task = asyncio.create_task(
-                self._stream_server_output()
-            )
-            self._http_client = harbor_singularity.httpx.AsyncClient(
-                timeout=30.0
-            )
-            deadline = (
-                asyncio.get_running_loop().time() + self._startup_timeout_sec
-            )
-            server_ready = False
-            cancelled = False
-            try:
-                while asyncio.get_running_loop().time() < deadline:
-                    try:
-                        response = await self._http_client.get(
-                            f"http://localhost:{port}/health"
-                        )
-                        if response.status_code == 200:
-                            if self._server_process.returncode is not None:
-                                attempt_error = RuntimeError(
-                                    f"Port collision on {port}: health check "
-                                    "succeeded but our server process died."
-                                )
-                                break
-                            server_ready = True
-                            break
-                    except harbor_singularity.httpx.RequestError:
-                        pass
-                    if self._server_process.returncode is not None:
-                        attempt_error = RuntimeError(
-                            f"Server process died on port {port}. Check "
-                            "trial.log for server output."
-                        )
-                        break
-                    await asyncio.sleep(1)
-                if server_ready:
-                    if self._memory_limit_bytes is not None:
-                        self._memory_watchdog_task = asyncio.create_task(
-                            self._memory_watchdog()
-                        )
-                    return
-                if attempt_error is None:
-                    attempt_error = TimeoutError(
-                        "Singularity server did not become ready within "
-                        f"{self._startup_timeout_sec:g} seconds "
-                        f"(attempt {port_attempt + 1}/3)"
-                    )
-                last_error = attempt_error
-            except asyncio.CancelledError:
-                cancelled = True
-                raise
-            finally:
-                if not server_ready:
-                    cleanup = asyncio.create_task(
-                        self._cleanup_server_attempt(
-                            server_pid, server_start_time
-                        )
-                    )
-                    try:
-                        await asyncio.shield(cleanup)
-                    except asyncio.CancelledError:
-                        await cleanup
-                        raise
-                    finally:
-                        if cancelled and self._staging_dir is not None:
-                            shutil.rmtree(self._staging_dir, ignore_errors=True)
-                            self._staging_dir = None
-
-        await self._cleanup_server_resources()
-        raise last_error or RuntimeError(
-            "Failed to start Singularity FastAPI server after 3 attempts"
-        )
+    def _cleanup_staging(self) -> None:
+        if self._staging_dir is not None:
+            shutil.rmtree(self._staging_dir, ignore_errors=True)
+            self._staging_dir = None
 
     @override
     async def stop(self, delete: bool) -> None:
-        """Stop the container and reap helpers before they can be orphaned."""
-        server_pid = (
-            self._server_process.pid
-            if self._server_process is not None
-            else None
-        )
-        server_start_time = (
-            self._process_start_time(server_pid)
-            if server_pid is not None
-            else None
-        )
-        descendants: dict[int, str] = {}
         try:
-            if server_pid is not None and server_start_time is not None:
-                descendants.update(self._descendant_processes(server_pid))
-            await self._terminate_processes(descendants)
+            if self._instance_started:
+                await self._stop_instance(warn=True)
         finally:
-            try:
-                if (
-                    server_pid is not None
-                    and self._process_start_time(server_pid)
-                    == server_start_time
-                ):
-                    descendants.update(self._descendant_processes(server_pid))
-                await self._terminate_processes(descendants)
-            finally:
-                try:
-                    await super().stop(delete)
-                finally:
-                    await self._terminate_processes(descendants)
+            self._cleanup_staging()
+        if delete:
+            self.logger.debug(
+                "Singularity image preserved at %s for reuse", self._sif_path
+            )
+
+    def _exec_shell_command(
+        self,
+        command: str,
+        cwd: str | None,
+        user: str | int | None,
+        pid_file: str,
+    ) -> str:
+        command = f"cd {shlex.quote(cwd or self._workdir)} && {command}"
+        resolved_user = self._resolve_user(user)
+        if resolved_user is not None:
+            if isinstance(resolved_user, int):
+                user_arg = f"$(getent passwd {resolved_user} | cut -d: -f1)"
+            else:
+                user_arg = shlex.quote(str(resolved_user))
+            command = f"su {user_arg} -s /bin/bash -c {shlex.quote(command)}"
+        quoted_pid_file = shlex.quote(pid_file)
+        return (
+            f"echo $$ > {quoted_pid_file}; "
+            f"trap 'rm -f {quoted_pid_file}' EXIT; "
+            f"{command}"
+        )
+
+    def _runtime_environment(
+        self, env: dict[str, str] | None
+    ) -> dict[str, str]:
+        runtime_env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("SINGULARITYENV_", "APPTAINERENV_"))
+        }
+        prefix = (
+            "APPTAINERENV_"
+            if Path(self._runtime()).name == "apptainer"
+            else "SINGULARITYENV_"
+        )
+        for key, value in (self._merge_env(env) or {}).items():
+            if not key or "=" in key or "\0" in key or "\0" in value:
+                raise ValueError(f"Invalid environment variable: {key!r}")
+            runtime_env[f"{prefix}{key}"] = value
+        return runtime_env
+
+    async def _cleanup_exec_process(
+        self,
+        process: asyncio.subprocess.Process,
+        pid_file: str,
+    ) -> None:
+        cleanup = asyncio.create_task(
+            self._run(
+                *self._instance_exec_prefix(),
+                "bash",
+                "-c",
+                self._terminate_process_tree_command(pid_file),
+            )
+        )
+        with suppress(Exception, asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=10)
+        await self._terminate_host_process(process)
 
     @override
     async def exec(
@@ -558,39 +467,77 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         timeout_sec: int | None = None,
         user: str | int | None = None,
     ) -> ExecResult:
-        # The HTTP server otherwise lets subprocesses inherit the Apptainer
-        # launch terminal. Non-interactive installers may try to read it and
-        # be suspended by job control instead of returning an error.
-        command = f"bash -c {shlex.quote(command)} </dev/null"
-        # The upstream transport otherwise imposes a hidden 600-second limit
-        # when Harbor owns the surrounding agent-phase timeout.
-        if timeout_sec is not None:
-            return await super().exec(command, cwd, env, timeout_sec, user)
+        if not self._instance_started:
+            raise RuntimeError("Singularity environment not started")
+        if self._memory_limit_exceeded:
+            raise RuntimeError(self._memory_limit_exceeded)
+
         pid_file = f"/tmp/harbor-exec-{secrets.token_hex(8)}.pid"
-        quoted_pid_file = shlex.quote(pid_file)
-        command = (
-            f"echo $$ > {quoted_pid_file}; "
-            f"trap 'rm -f {quoted_pid_file}' EXIT; "
-            f"{command}"
-        )
+        shell_command = self._exec_shell_command(command, cwd, user, pid_file)
+        runtime_command = [
+            *self._instance_exec_prefix(cwd),
+            "bash",
+            "-c",
+            shell_command,
+        ]
         try:
-            return await super().exec(
-                command,
-                cwd,
-                env,
-                self._harbor_owned_timeout_sec,
-                user,
+            process = await asyncio.create_subprocess_exec(
+                *runtime_command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+                env=self._runtime_environment(env),
             )
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not execute command in Singularity: {exc}"
+            ) from exc
+
+        communication = asyncio.create_task(process.communicate())
+        timed_out = False
+        try:
+            if timeout_sec is None:
+                stdout, stderr = await communication
+            else:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.shield(communication), timeout=timeout_sec
+                )
+        except TimeoutError:
+            timed_out = True
+            await self._cleanup_exec_process(process, pid_file)
+            stdout, stderr = await communication
         except asyncio.CancelledError:
             cleanup = asyncio.create_task(
-                super().exec(
-                    self._terminate_process_tree_command(pid_file),
-                    timeout_sec=10,
-                )
+                self._cleanup_exec_process(process, pid_file)
             )
-            with suppress(Exception, asyncio.CancelledError):
+            with suppress(asyncio.CancelledError):
                 await asyncio.shield(cleanup)
+            with suppress(Exception, asyncio.CancelledError):
+                await asyncio.shield(communication)
             raise
+
+        stdout_text = stdout.decode(errors="replace")
+        stderr_text = stderr.decode(errors="replace")
+        return_code = (
+            process.returncode if process.returncode is not None else 1
+        )
+        if timed_out:
+            return_code = 124
+            timeout_message = f"Command timed out after {timeout_sec} seconds"
+            stderr_text = "\n".join(
+                part for part in (stderr_text.rstrip(), timeout_message) if part
+            )
+        if return_code != 0:
+            error_output = stderr_text or stdout_text or "<no output>"
+            self.logger.debug(
+                "Command exited with rc=%s: %s", return_code, error_output
+            )
+        return ExecResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            return_code=return_code,
+        )
 
     @staticmethod
     def _terminate_process_tree_command(pid_file: str) -> str:
@@ -613,86 +560,6 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             'kill -KILL $children "$pid" 2>/dev/null || true; '
             f"rm -f {quoted_pid_file}; fi"
         )
-
-    async def _build_dockerfile_sif(self, force_build: bool) -> Path:
-        output = await self._dockerfile_cache_path()
-        self._image_cache_dir.mkdir(parents=True, exist_ok=True)
-        if not force_build and await self._is_valid_sif(output):
-            return output
-        async with AsyncFileLock(output.with_suffix(".lock")):
-            if not force_build and await self._is_valid_sif(output):
-                return output
-            builders = [
-                builder
-                for name in ("buildah", "podman", "docker")
-                if (builder := shutil.which(name)) is not None
-            ]
-            if not builders:
-                raise RuntimeError(
-                    "Building a Dockerfile for Singularity requires buildah, podman, or docker"
-                )
-            temporary = output.with_suffix(".tmp.sif")
-            failures = []
-            for candidate in builders:
-                try:
-                    await self._build_with(
-                        candidate, output, temporary, force_build
-                    )
-                    return output
-                except RuntimeError as exc:
-                    failures.append(str(exc))
-            raise RuntimeError(
-                "No container builder succeeded: " + "; ".join(failures)
-            )
-
-    @override
-    async def start(self, force_build: bool) -> None:
-        if sys.platform == "win32":
-            raise RuntimeError("Singularity is unavailable on Windows")
-        if getattr(self, "_singularity_no_mount", None) is None:
-            self._singularity_no_mount = "home,tmp,bind-paths"
-        no_mounts = {
-            item.strip() for item in self._singularity_no_mount.split(",")
-        }
-        self._ensure_bootstrap_mounts()
-        resolver = Path("/etc/resolv.conf")
-        mounts = getattr(self, "_mounts", [])
-        if (
-            "bind-paths" in no_mounts
-            and resolver.is_file()
-            and not any(
-                mount.get("target") == str(resolver) for mount in mounts
-            )
-        ):
-            mounts.append({
-                "type": "bind",
-                "source": str(resolver),
-                "target": str(resolver),
-            })
-            self._mounts = mounts
-        self._validate_definition()
-        self._sif_path = await self._build_dockerfile_sif(
-            force_build or self._force_pull
-        )
-        runtime = self._runtime()
-        if Path(runtime).name == "singularity":
-            await self._start_server()
-        else:
-            # Harbor currently spells the executable as ``singularity`` in
-            # its server startup. Supply a scoped compatibility shim until
-            # Harbor exposes a runtime-command hook.
-            async with self._runtime_path_lock:
-                with tempfile.TemporaryDirectory(
-                    prefix="ursa-harbor-apptainer-"
-                ) as shim_dir:
-                    Path(shim_dir, "singularity").symlink_to(runtime)
-                    old_path = os.environ.get("PATH", "")
-                    os.environ["PATH"] = f"{shim_dir}{os.pathsep}{old_path}"
-                    try:
-                        await self._start_server()
-                    finally:
-                        os.environ["PATH"] = old_path
-        await self._upload_environment_dir_after_start()
 
 
 __all__ = ["DockerfileSingularityEnvironment"]
