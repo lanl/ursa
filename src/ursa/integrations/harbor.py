@@ -216,6 +216,22 @@ class UrsaHarborAgent(BaseInstalledAgent):
             self._reject_environment_interpolation(layer)
         return layers
 
+    @staticmethod
+    def _qualify_tagged_models(config: dict[str, Any]) -> None:
+        """Keep normalized model tags valid for URSA's provider parser."""
+        for field_name in ("llm_model", "emb_model"):
+            model_config = config.get(field_name)
+            if not isinstance(model_config, dict):
+                continue
+            model = model_config.get("model")
+            model_provider = model_config.get("model_provider")
+            if (
+                isinstance(model, str)
+                and ":" in model
+                and isinstance(model_provider, str)
+            ):
+                model_config["model"] = f"{model_provider}:{model}"
+
     def _runtime_config(self) -> tuple[dict[str, Any], dict[str, str]]:
         config = UrsaConfig().model_merge(*self._config_layers())
         harbor_config = self._harbor_config(config)
@@ -231,10 +247,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
             }
 
         config_data = config.model_dump(mode="python", exclude_unset=True)
+        self._qualify_tagged_models(config_data)
         projected, secret_env = externalize_secret_references(config_data)
         runtime_config = UrsaConfig.model_validate(projected).model_dump(
             mode="json", exclude_none=True, exclude_unset=True
         )
+        self._qualify_tagged_models(runtime_config)
         return runtime_config, secret_env
 
     @classmethod

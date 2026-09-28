@@ -373,6 +373,17 @@ def test_qualified_model_tag_is_parsed_with_inference_provider():
     assert cfg.model_provider == "ollama"
 
 
+def test_model_merge_does_not_reparse_a_qualified_model_tag():
+    merged = config_mod.ChatModelConfig().model_merge({
+        "model": "ollama:gemma4:latest",
+        "inference_provider": "ollama",
+    })
+
+    assert merged.model == "gemma4:latest"
+    assert merged.model_provider == "ollama"
+    assert merged.inference_provider == "ollama"
+
+
 def test_model_merge_keeps_provider_defaults_resolvable():
     config = config_mod.UrsaConfig().model_merge({
         "llm_model": {"model": "openai:gpt-5.4"}

@@ -17,13 +17,11 @@ from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import override
 
+from filelock import AsyncFileLock
 from harbor.environments.base import ExecResult
 from harbor.environments.singularity import singularity as harbor_singularity
 from harbor.environments.singularity.singularity import SingularityEnvironment
 from pathspec import GitIgnoreSpec
-
-if sys.platform != "win32":
-    import fcntl
 
 
 class DockerfileSingularityEnvironment(SingularityEnvironment):
@@ -45,8 +43,25 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             raise ValueError(
                 "singularity_startup_timeout_sec must be positive and finite"
             )
+        if not kwargs.get("singularity_image_cache_dir"):
+            kwargs["singularity_image_cache_dir"] = (
+                self._default_image_cache_dir()
+            )
         super().__init__(*args, **kwargs)
         self._startup_timeout_sec = singularity_startup_timeout_sec
+
+    @staticmethod
+    def _default_image_cache_dir() -> Path:
+        configured = os.environ.get("URSA_HARBOR_SIF_CACHE")
+        if configured:
+            return Path(configured).expanduser()
+        cache_home = os.environ.get("XDG_CACHE_HOME")
+        root = (
+            Path(cache_home).expanduser()
+            if cache_home
+            else Path.home() / ".cache"
+        )
+        return root / "ursa" / "harbor" / "sif"
 
     def _ensure_bootstrap_mounts(self) -> None:
         """Overlay Harbor's bootstrap with compatibility for older Python."""
@@ -151,7 +166,7 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         force_build: bool,
     ) -> None:
         builder_name = Path(builder).name
-        tag = f"ursa-harbor-{output.stem}-{builder_name}"
+        tag = f"ursa-harbor-{output.stem}-{builder_name}-{secrets.token_hex(8)}"
         pull_args = ["--pull"] if force_build else []
         if builder_name == "buildah":
             remove_command = (builder, "rmi", "--force", tag)
@@ -604,16 +619,7 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         self._image_cache_dir.mkdir(parents=True, exist_ok=True)
         if not force_build and await self._is_valid_sif(output):
             return output
-        lock_file = output.with_suffix(".lock").open("w")
-        try:
-            while True:
-                try:
-                    fcntl.flock(
-                        lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
-                    )
-                    break
-                except BlockingIOError:
-                    await asyncio.sleep(0.1)
+        async with AsyncFileLock(output.with_suffix(".lock")):
             if not force_build and await self._is_valid_sif(output):
                 return output
             builders = [
@@ -638,9 +644,6 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             raise RuntimeError(
                 "No container builder succeeded: " + "; ".join(failures)
             )
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            lock_file.close()
 
     @override
     async def start(self, force_build: bool) -> None:

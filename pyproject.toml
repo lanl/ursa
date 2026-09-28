@@ -108,6 +108,7 @@ metric_plots = [
 ]
 harbor = [
     "harbor>=0.22.0,<0.23; python_version >= '3.12'",
+    "filelock>=3.19.1,<4",
     "pathspec>=0.12.1,<2",
 ]
 
