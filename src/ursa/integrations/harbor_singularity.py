@@ -274,10 +274,7 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
 
     @override
     def _validate_definition(self) -> None:
-        if not self._dockerfile_path.is_file():
-            raise FileNotFoundError(
-                f"Singularity environment requires {self._dockerfile_path}"
-            )
+        config = None
         if self._uses_compose:
             if shutil.which("singularity") is None:
                 raise RuntimeError(
@@ -295,6 +292,14 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
                     "singularity-compose cannot provide sidecar networking "
                     "while Harbor network_mode is 'no-network'"
                 )
+        main = config["services"]["main"] if config is not None else {}
+        if (
+            not ({"build", "image"} & set(main))
+            and not self._dockerfile_path.is_file()
+        ):
+            raise FileNotFoundError(
+                f"Singularity environment requires {self._dockerfile_path}"
+            )
 
     def _compose_paths(self) -> list[Path]:
         paths = []
@@ -539,11 +544,6 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
                 "singularity-compose does not support these fields on service "
                 f"{name!r}: {fields}"
             )
-        if name == "main" and ({"build", "image"} & set(service)):
-            raise ValueError(
-                "Docker Compose service 'main' may override runtime settings "
-                "but its image is always built from environment/Dockerfile"
-            )
         if name != "main" and not ({"build", "image"} & set(service)):
             raise ValueError(
                 f"Docker Compose sidecar {name!r} requires 'build' or 'image'"
@@ -755,8 +755,14 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         """Resolve task overrides and Dockerfile WORKDIR instructions."""
         if self.task_env_config.workdir is not None:
             return self.task_env_config.workdir
+        dockerfile_path = self._dockerfile_path
+        compose_build = self._main_compose_build_inputs()
+        if compose_build is not None:
+            dockerfile_path = compose_build[0]
+        elif not dockerfile_path.is_file():
+            return "/"
         workdir = PurePosixPath("/")
-        for line in self._dockerfile_path.read_text().splitlines():
+        for line in dockerfile_path.read_text().splitlines():
             instruction = line.strip()
             if instruction.upper().startswith("FROM "):
                 workdir = PurePosixPath("/")
@@ -1069,6 +1075,33 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         )
         return dockerfile, context, args, build.get("target")
 
+    def _main_compose_build_inputs(
+        self,
+    ) -> tuple[Path, Path, tuple[str, ...], str | None] | None:
+        if not self._uses_compose:
+            return None
+        build = self._load_compose_config()["services"]["main"].get("build")
+        if build is None:
+            return None
+        return self._compose_build_inputs(build)
+
+    async def _build_main_sif(self, force_build: bool) -> Path | None:
+        build = self._main_compose_build_inputs()
+        if build is None and self._uses_compose:
+            main = self._load_compose_config()["services"]["main"]
+            if "image" in main:
+                return None
+        if build is None:
+            return await self._build_dockerfile_sif(force_build)
+        dockerfile, context, build_args, target = build
+        return await self._build_dockerfile_sif(
+            force_build,
+            dockerfile_path=dockerfile,
+            context_dir=context,
+            build_args=build_args,
+            target=target,
+        )
+
     @classmethod
     def _read_compose_env_file(cls, path: Path) -> dict[str, str]:
         environment: dict[str, str] = {}
@@ -1160,9 +1193,10 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         force_build: bool,
     ) -> str:
         if service_name == "main":
-            if self._sif_path is None:
-                raise RuntimeError("Main Singularity image is not prepared")
-            return str(self._sif_path)
+            if "build" in service or "image" not in service:
+                if self._sif_path is None:
+                    raise RuntimeError("Main Singularity image is not prepared")
+                return str(self._sif_path)
         if "build" in service:
             dockerfile, context, build_args, target = (
                 self._compose_build_inputs(service["build"])
@@ -1430,7 +1464,7 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
         if sys.platform == "win32":
             raise RuntimeError("Singularity is unavailable on Windows")
         self._validate_definition()
-        self._sif_path = await self._build_dockerfile_sif(
+        self._sif_path = await self._build_main_sif(
             force_build or self._force_pull
         )
         self._staging_dir = Path(
