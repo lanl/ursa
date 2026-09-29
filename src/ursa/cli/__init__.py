@@ -33,6 +33,7 @@ from ursa.cli.groups import (
     show_group,
     update_group,
 )
+from ursa.cli.harbor import add_harbor_subcommands
 from ursa.cli.print_config import add_print_config_argument, print_config
 from ursa.cli.rag_management import (
     RAG_COMMANDS,
@@ -142,6 +143,9 @@ def build_parser() -> ArgumentParser:
     # Credential management commands
     add_auth_subcommands(subparsers)
 
+    # Harbor integration commands
+    add_harbor_subcommands(subparsers)
+
     add_self_subcommands(subparsers)
 
     exec_parser = ArgumentParser()
@@ -202,6 +206,13 @@ def main(args=None):
         case "auth":
             auth_config = cfg.auth
             command_config = auth_config[auth_config.subcommand]
+            command_values = command_config.as_dict()
+            handler = command_values.pop("handler")
+            handler(**command_values)
+            return
+        case "harbor":
+            harbor_config = cfg.harbor
+            command_config = harbor_config[harbor_config.subcommand]
             command_values = command_config.as_dict()
             handler = command_values.pop("handler")
             handler(**command_values)
