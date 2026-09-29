@@ -621,6 +621,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._instance_name = f"ursa{identity}{secrets.token_hex(4)}"
         self._compose_identity = f"{identity[:8]}{secrets.token_hex(4)}"
         self._instance_started = False
+        self._warned_user_switch_without_fakeroot = False
         self._compose_project_dir: Path | None = None
         self._compose_file: Path | None = None
         self._compose_instances: dict[str, list[str]] = {}
@@ -1427,15 +1428,26 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         resolve_default_user: bool = True,
     ) -> str:
         command = f"cd {shlex.quote(cwd or default_cwd or self._workdir)} && {command}"
-        # A rootless Singularity instance can only execute as the invoking
-        # host user. Attempting to honor Harbor's requested image user with
-        # ``su`` prompts for a container password and prevents every command
-        # from starting. User switching is available only in fakeroot mode.
-        resolved_user = None
-        if self._fakeroot:
-            resolved_user = (
-                self._resolve_user(user) if resolve_default_user else user
-            )
+        requested_user = (
+            self._resolve_user(user) if resolve_default_user else user
+        )
+        resolved_user = requested_user
+        if not self._fakeroot:
+            # A rootless Singularity instance can only execute as the invoking
+            # host user. Attempting to honor Harbor's requested image user with
+            # ``su`` prompts for a container password and prevents every
+            # command from starting.
+            resolved_user = None
+            if requested_user is not None and not getattr(
+                self, "_warned_user_switch_without_fakeroot", False
+            ):
+                self.logger.warning(
+                    "Singularity fakeroot is disabled; cannot switch to "
+                    "requested container user %r, so commands will run as "
+                    "the invoking host user",
+                    requested_user,
+                )
+                self._warned_user_switch_without_fakeroot = True
         if resolved_user is not None:
             if isinstance(resolved_user, int):
                 user_arg = f"$(getent passwd {resolved_user} | cut -d: -f1)"
