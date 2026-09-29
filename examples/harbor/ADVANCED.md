@@ -54,6 +54,49 @@ For a direct run, add:
 --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment
 ```
 
+### Multi-container tasks
+
+Add Harbor's standard `environment/docker-compose.yaml` to start sidecars with
+[`singularity-compose`](https://singularityhub.github.io/singularity-compose/).
+The reserved `main` service is still built from `environment/Dockerfile`; list
+only its overrides, such as `depends_on`, in the Compose file. Sidecars may use
+an OCI `image` or a Dockerfile `build`:
+
+```yaml
+services:
+  main:
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ./api
+    command: [python, server.py]
+    expose:
+      - "8000"
+```
+
+The adapter translates the subset that `singularity-compose` can represent:
+images, Dockerfile builds (`context`, `dockerfile`, `args`, and `target`), list
+form `depends_on`, commands, bind mounts, TCP `host:container` ports,
+`deploy.replicas`, `environment`, and `env_file`. Sidecars are reachable by
+their Harbor service name. Harbor's per-service artifact collection is also
+supported.
+
+Unsupported Compose fields fail before launch. In particular,
+`singularity-compose` cannot represent healthchecks or conditional
+`depends_on`, named volumes, custom Compose networks, entrypoints, resource
+limits, or privilege/capability settings. See Harbor's
+[multi-container task guide](https://docs.harborframework.com/core-concepts/tasks/multi-container)
+and the
+[`singularity-compose` 2.0 specification](https://github.com/singularityhub/singularity-compose/blob/master/docs/spec/spec-2.0.md)
+before porting a Docker Compose task.
+
+Multi-container tasks require the `singularity` command because
+`singularity-compose` 0.1.19 does not invoke `apptainer`. The `ursa-ai[harbor]`
+extra installs `singularity-compose`; the host must still provide
+SingularityCE 3.6.2 and its fakeroot CNI network configuration.
+
 The adapter supports Harbor's static `public` and `no-network` modes on
 SingularityCE 3.6.2. Set the baseline policy in `task.toml`:
 
@@ -63,9 +106,11 @@ network_mode = "no-network"
 ```
 
 `no-network` starts the task as a named Singularity instance with an isolated
-`none` network. Network allowlists and `[agent]` or `[verifier]` policies that
-differ from the environment baseline are rejected because SingularityCE 3.6.2
-cannot enforce them securely. See Harbor's
+`none` network. It is not available to multi-container tasks because
+`singularity-compose` cannot preserve communication between sidecars while
+isolating the project from external networks. Network allowlists and `[agent]`
+or `[verifier]` policies that differ from the environment baseline are rejected
+because SingularityCE 3.6.2 cannot enforce them securely. See Harbor's
 [network-policy reference](https://docs.harborframework.com/core-concepts/tasks/network-policies#network-modes)
 and Singularity's
 [networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
