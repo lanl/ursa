@@ -30,6 +30,7 @@ from harbor.environments.capabilities import (
 )
 from harbor.models.environment_type import EnvironmentType
 from harbor.models.task.config import NetworkMode
+from harbor.models.trial.paths import EnvironmentPaths
 from harbor.utils.env import resolve_env_vars
 from pathspec import GitIgnoreSpec
 
@@ -1292,6 +1293,21 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         layout = self._staging_dir / "overlay-layout"
         for directory in (layout / "upper", layout / "work"):
             directory.mkdir(parents=True)
+            directory.chmod(0o777)
+        writable_paths = (
+            EnvironmentPaths.solution_dir,
+            EnvironmentPaths.tests_dir,
+            EnvironmentPaths.default_skills_dir,
+            PurePosixPath(self._workdir),
+        )
+        for target in writable_paths:
+            if not target.is_absolute():
+                raise ValueError(
+                    f"Singularity writable path must be absolute: {target}"
+                )
+            relative = target.relative_to("/")
+            directory = layout / "upper" / relative
+            directory.mkdir(parents=True, exist_ok=True)
             directory.chmod(0o777)
         overlay = self._staging_dir / "overlay.img"
         overlay.touch()
