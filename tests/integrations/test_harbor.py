@@ -1452,6 +1452,114 @@ services:
     assert "TASK_TOKEN=host-token" in main_env
 
 
+@pytest.mark.asyncio
+async def test_singularity_compose_main_build_can_change_context(
+    tmp_path, monkeypatch
+):
+    task_dir = tmp_path / "task"
+    environment_dir = task_dir / "environment"
+    tests_dir = task_dir / "tests"
+    environment_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (environment_dir / "Dockerfile").write_text(
+        "FROM scratch\nWORKDIR /default\n"
+    )
+    verifier_dockerfile = tests_dir / "Dockerfile"
+    verifier_dockerfile.write_text(
+        "FROM scratch\nCOPY tests/verify.py /opt/verify.py\n"
+        "WORKDIR /workspace\n"
+    )
+    (tests_dir / "verify.py").write_text("print('ok')\n")
+    compose_path = tests_dir / "docker-compose.yaml"
+    compose_path.write_text(
+        """
+services:
+  main:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+      args:
+        VERIFY: enabled
+"""
+    )
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: (
+            f"/usr/bin/{name}"
+            if name in {"singularity", "singularity-compose", "buildah"}
+            else None
+        ),
+    )
+
+    environment = DockerfileSingularityEnvironment(
+        environment_dir=environment_dir,
+        environment_name="test",
+        session_id="trial__verifier",
+        trial_paths=TrialPaths(tmp_path / "trial"),
+        task_env_config=EnvironmentConfig(),
+        extra_docker_compose=[compose_path],
+    )
+    builds = []
+
+    async def build(force_build, **kwargs):
+        builds.append((force_build, kwargs))
+        return tmp_path / "main.sif"
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", build)
+
+    assert await environment._build_main_sif(False) == tmp_path / "main.sif"
+    assert environment._workdir == "/workspace"
+    assert builds == [
+        (
+            False,
+            {
+                "dockerfile_path": verifier_dockerfile,
+                "context_dir": task_dir,
+                "build_args": ("VERIFY=enabled",),
+                "target": None,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_main_can_use_prebuilt_image(
+    tmp_path, monkeypatch
+):
+    environment_dir = tmp_path / "environment"
+    environment_dir.mkdir()
+    (environment_dir / "docker-compose.yaml").write_text(
+        """
+services:
+  main:
+    image: ubuntu:24.04
+"""
+    )
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: (
+            f"/usr/bin/{name}"
+            if name in {"singularity", "singularity-compose", "buildah"}
+            else None
+        ),
+    )
+
+    environment = DockerfileSingularityEnvironment(
+        environment_dir=environment_dir,
+        environment_name="test",
+        session_id="trial__env",
+        trial_paths=TrialPaths(tmp_path / "trial"),
+        task_env_config=EnvironmentConfig(),
+    )
+    main = environment._load_compose_config()["services"]["main"]
+
+    assert await environment._build_main_sif(False) is None
+    assert await environment._compose_image("main", main, False) == (
+        "docker://ubuntu:24.04"
+    )
+    assert environment._workdir == "/"
+
+
 def test_singularity_compose_rejects_unsupported_service_fields(
     tmp_path, monkeypatch
 ):

@@ -58,13 +58,18 @@ For a direct run, add:
 
 Add Harbor's standard `environment/docker-compose.yaml` to start sidecars with
 [`singularity-compose`](https://singularityhub.github.io/singularity-compose/).
-The reserved `main` service is still built from `environment/Dockerfile`; list
-only its overrides, such as `depends_on`, in the Compose file. Sidecars may use
-an OCI `image` or a Dockerfile `build`:
+The reserved `main` service defaults to `environment/Dockerfile`, but it may
+use an OCI `image` or a `build` with a different context, Dockerfile, build
+arguments, or target. This also works in verifier overlays such as
+`tests/docker-compose.yaml`, where paths are relative to the overlay file.
+Sidecars support the same `image` and `build` forms:
 
 ```yaml
 services:
   main:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
     depends_on:
       - api
 
