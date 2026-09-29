@@ -109,13 +109,21 @@ def _normalize_compose_service(
             f"Docker Compose build on service {name!r} must be a path or mapping"
         )
 
-    if not isinstance(service.get("command", ""), (str, list)):
+    command = service.get("command", "")
+    if not isinstance(command, (str, list)) or (
+        isinstance(command, list)
+        and not all(isinstance(argument, str) for argument in command)
+    ):
         raise ValueError(
-            f"Docker Compose command on service {name!r} must be a string or list"
+            f"Docker Compose command on service {name!r} must contain only strings"
         )
-    if not isinstance(service.get("environment", {}), (dict, list)):
+    environment = service.get("environment", {})
+    if not isinstance(environment, (dict, list)) or (
+        isinstance(environment, list)
+        and not all(isinstance(entry, str) for entry in environment)
+    ):
         raise ValueError(
-            f"Docker Compose environment on service {name!r} must be a mapping or list"
+            f"Docker Compose environment on service {name!r} must contain only strings"
         )
 
     deploy = service.get("deploy")
@@ -142,8 +150,10 @@ def _normalize_compose_service(
         for entry in entries:
             required = True
             if isinstance(entry, dict):
-                if set(entry) - {"path", "required"} or not isinstance(
-                    entry.get("path"), str
+                if (
+                    set(entry) - {"path", "required"}
+                    or not isinstance(entry.get("path"), str)
+                    or not isinstance(entry.get("required", True), bool)
                 ):
                     raise ValueError(
                         "singularity-compose cannot represent env_file options "
@@ -175,6 +185,13 @@ def _normalize_compose_service(
                     f"depends_on conditions on service {name!r}"
                 )
         service["depends_on"] = list(depends_on)
+    elif depends_on is not None and (
+        not isinstance(depends_on, list)
+        or not all(isinstance(dependency, str) for dependency in depends_on)
+    ):
+        raise ValueError(
+            f"Docker Compose depends_on on service {name!r} must be a list of names"
+        )
 
     volumes = service.get("volumes")
     if isinstance(volumes, list):
@@ -271,6 +288,26 @@ def _load_docker_compose(paths: list[Path]) -> dict[str, Any]:
                 f"Docker Compose service {name!r} depends on unknown services: "
                 + ", ".join(sorted(unknown))
             )
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            cycle = visiting[visiting.index(name) :] + [name]
+            raise ValueError(
+                "Docker Compose dependency cycle: " + " -> ".join(cycle)
+            )
+        if name in visited:
+            return
+        visiting.append(name)
+        for dependency in services[name].get("depends_on", []):
+            visit(dependency)
+        visiting.pop()
+        visited.add(name)
+
+    for name in services:
+        visit(name)
     return config
 
 
@@ -397,7 +434,14 @@ def _compose_volumes(
     if service_name == "main":
         for mount in main_mounts:
             if mount.get("type") != "bind":
-                continue
+                raise ValueError(
+                    "Singularity supports only Harbor bind mounts, got "
+                    f"{mount.get('type')!r}"
+                )
+            if mount.get("read_only"):
+                raise ValueError(
+                    "singularity-compose cannot preserve read-only Harbor mounts"
+                )
             target = str(mount["target"])
             if target in targets or target == "/staging":
                 raise ValueError(
@@ -637,6 +681,17 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
 
     @override
     def _validate_definition(self) -> None:
+        unsupported_mounts = [
+            mount for mount in self._mounts if mount.get("type") != "bind"
+        ]
+        if unsupported_mounts:
+            raise ValueError("Singularity supports only Harbor bind mounts")
+        if self._uses_compose and any(
+            mount.get("read_only") for mount in self._mounts
+        ):
+            raise ValueError(
+                "singularity-compose cannot preserve read-only Harbor mounts"
+            )
         config = None
         if self._uses_compose:
             config = self._load_compose_config()
@@ -1069,9 +1124,11 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self._compose_file is None or self._compose_project_dir is None:
             raise RuntimeError("Singularity Compose project is not prepared")
         executable = shutil.which("singularity-compose")
-        assert executable is not None, (
-            "singularity-compose is missing install `ursa-ai[harbor]`"
-        )
+        if executable is None:
+            raise RuntimeError(
+                "Docker Compose tasks require singularity-compose; "
+                "install `ursa-ai[harbor]`"
+            )
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -1161,15 +1218,15 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         command.extend(["-B", f"{self._staging_dir}:/staging"])
         for mount in self._mounts:
             if mount.get("type") != "bind":
-                continue
+                raise ValueError("Singularity supports only Harbor bind mounts")
             if mount.get("target") == "/staging":
                 raise ValueError(
                     "/staging is reserved by the Harbor environment"
                 )
-            command.extend([
-                "-B",
-                f"{mount['source']}:{mount['target']}",
-            ])
+            bind = f"{mount['source']}:{mount['target']}"
+            if mount.get("read_only"):
+                bind += ":ro"
+            command.extend(["-B", bind])
         command.extend([str(self._sif_path), self._instance_name])
         return command
 
@@ -1224,6 +1281,22 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         finally:
             self._instance_started = False
 
+    async def _cleanup_failed_start(self) -> None:
+        """Best-effort runtime cleanup without masking the startup error."""
+        try:
+            if self._uses_compose:
+                if self._compose_file is not None:
+                    await self._stop_compose(warn=True)
+            else:
+                await self._stop_instance(warn=True)
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to clean up Singularity startup: %s", exc
+            )
+        finally:
+            self._cleanup_compose_project()
+            self._cleanup_staging()
+
     @override
     async def start(self, force_build: bool) -> None:
         if sys.platform == "win32":
@@ -1241,7 +1314,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     await self._prepare_compose_project(
                         force_build or self._force_pull
                     )
-                    await self._run_compose("check")
                     lock_path = self._compose_start_lock_path()
                     lock_path.parent.mkdir(parents=True, exist_ok=True)
                     async with AsyncFileLock(lock_path):
@@ -1253,13 +1325,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 await self._run(*self._instance_exec_prefix(), "true")
             await self._upload_environment_dir_after_start()
         except TimeoutError as exc:
-            if self._uses_compose:
-                if self._compose_file is not None:
-                    await self._stop_compose(warn=False)
-                self._cleanup_compose_project()
-            else:
-                await self._stop_instance(warn=False)
-            self._cleanup_staging()
+            await self._cleanup_failed_start()
             raise TimeoutError(
                 "Singularity instance did not become ready within "
                 f"{self._startup_timeout_sec:g} seconds"
@@ -1267,13 +1333,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         except BaseException:
             # An interrupted instance-start command can still leave an instance
             # behind, so cleanup is attempted before start reports success.
-            if self._uses_compose:
-                if self._compose_file is not None:
-                    await self._stop_compose(warn=False)
-                self._cleanup_compose_project()
-            else:
-                await self._stop_instance(warn=False)
-            self._cleanup_staging()
+            await self._cleanup_failed_start()
             raise
 
     def _cleanup_staging(self) -> None:
@@ -1310,7 +1370,12 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             self._workdir,
             f"instance://{self._instance_name}",
         ]
-        os.execvp(command[0], command)
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("SINGULARITYENV_", "APPTAINERENV_"))
+        }
+        os.execvpe(command[0], command, environment)
 
     def _exec_shell_command(
         self,
@@ -1711,6 +1776,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if not instances:
             raise ValueError(f"Unknown Docker Compose service: {service!r}")
         await self._run_compose("stop", "--timeout", "0", *instances)
+        if service == "main":
+            self._instance_started = False
 
     @staticmethod
     def _terminate_process_tree_command(pid_file: str) -> str:
