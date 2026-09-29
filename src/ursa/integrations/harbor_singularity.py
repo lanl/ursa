@@ -500,6 +500,7 @@ async def docker_compose_to_singularity_compose(
     main_environment: Mapping[str, str] | None = None,
     main_mounts: Sequence[Mapping[str, Any]] = (),
     network_mode: NetworkMode = NetworkMode.PUBLIC,
+    fakeroot: bool = True,
 ) -> dict[str, list[str]]:
     """Convert one or more Docker Compose files into a singularity-compose file."""
     paths = (
@@ -523,13 +524,16 @@ async def docker_compose_to_singularity_compose(
             name,
             _compose_environment(name, service, main_environment or {}),
         )
+        start_options = ["containall", "no-home"]
+        if fakeroot:
+            start_options.insert(0, "fakeroot")
         instance: dict[str, Any] = {
             "image": await image_resolver(name, service),
             "network": {
                 "allocate_ip": network_mode != NetworkMode.NO_NETWORK,
                 "enable": True,
             },
-            "start": {"options": ["fakeroot", "containall", "no-home"]},
+            "start": {"options": start_options},
         }
         if network_mode == NetworkMode.NO_NETWORK:
             instance["network"]["type"] = "none"
@@ -577,6 +581,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         *args,
         singularity_image_cache_dir: Path | str | None = None,
         singularity_force_pull: bool = False,
+        singularity_fakeroot: bool = True,
         singularity_no_mount: str | None = None,
         singularity_startup_timeout_sec: float = 300,
         **kwargs,
@@ -600,6 +605,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             else self._default_image_cache_dir()
         )
         self._force_pull = singularity_force_pull
+        self._fakeroot = singularity_fakeroot
         self._runtime_path: str | None = None
         super().__init__(*args, **kwargs)
         for policy in self._phase_network_policies:
@@ -1148,6 +1154,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             main_environment=self._startup_env(),
             main_mounts=self._mounts,
             network_mode=self._network_policy.network_mode,
+            fakeroot=self._fakeroot,
         )
         self._instance_name = self._compose_instances["main"][0]
 
@@ -1239,11 +1246,12 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             self._instance_runtime(),
             "instance",
             "start",
-            "--fakeroot",
             "--containall",
             "--no-home",
             "--writable-tmpfs",
         ]
+        if self._fakeroot:
+            command.insert(3, "--fakeroot")
         if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
             command.extend(["--net", "--network", "none"])
         command.extend(["-B", f"{self._staging_dir}:/staging"])
