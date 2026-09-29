@@ -8,7 +8,6 @@ import importlib
 import inspect
 import json
 import signal
-import sqlite3
 import sys
 import traceback
 from collections.abc import Iterator
@@ -122,10 +121,11 @@ def _agent_config(
     options = dict(
         config.agent_config.get(key, config.agent_config.get(snake, {}))
     )
-    if (
-        use_web is not None
-        and "use_web" in inspect.signature(agent_class).parameters
-    ):
+    supports_web = "use_web" in options or any(
+        "use_web" in inspect.signature(base).parameters
+        for base in agent_class.__mro__
+    )
+    if use_web is not None and supports_web:
         options["use_web"] = use_web
     return options
 
@@ -141,27 +141,6 @@ async def _attach_mcp_tools(agent: Any, mcp_servers: dict[str, Any]) -> None:
             f"{type(agent).__name__} cannot use the configured Harbor MCP servers"
         )
     await agent.add_mcp_tools(start_mcp_client(mcp_servers))
-
-
-def _export_checkpoint(agent: Any, artifacts_dir: Path) -> Path:
-    """Snapshot the agent's live checkpoint database into Harbor artifacts."""
-    destination = artifacts_dir / "ursa" / "checkpointer.db"
-    checkpointer = getattr(agent, "checkpointer", None)
-    connection = getattr(checkpointer, "conn", None)
-    if connection is not None:
-        database = connection.execute("PRAGMA database_list").fetchone()
-        source = Path(database[2])
-    else:
-        source = agent.den / "db" / "checkpointer.db"
-    if source.resolve() == destination.resolve():
-        return destination
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with (
-        sqlite3.connect(source) as source_db,
-        sqlite3.connect(destination) as destination_db,
-    ):
-        source_db.backup(destination_db)
-    return destination
 
 
 def _close_checkpoint(checkpointer: Any) -> None:
@@ -238,7 +217,6 @@ def _run(config: dict[str, Any]) -> None:
             save_json=True,
             metrics_path=str(metrics_path),
         )
-        _export_checkpoint(agent, artifacts_dir)
         result = agent.format_result(output)
         sys.stdout.write(
             "URSA_HARBOR_RESULT="
@@ -260,7 +238,9 @@ def _run(config: dict[str, Any]) -> None:
             traceback.print_exc(file=sys.stderr)
 
 
-def main(encoded: str) -> None:
+def main(encoded: str | None = None) -> None:
+    if encoded is None:
+        encoded = sys.argv[1]
     config = json.loads(base64.urlsafe_b64decode(encoded).decode())
     log_path = Path(config["log_path"])
     try:

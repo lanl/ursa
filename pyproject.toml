@@ -61,6 +61,7 @@ classifiers = [
 
 [project.scripts]
 ursa = "ursa.cli:main"
+ursa-harbor-runner = "ursa.integrations.harbor_runner:main"
 ursa-dashboard = "ursa_dashboard.main:app"
 
 [project.urls]
@@ -141,7 +142,6 @@ pycodestyle.max-doc-length = 80
 [tool.setuptools.package-data]
 ursa = [
     "cli/tui/*.tcss",
-    "integrations/*.sh",
     "observability/pricing.json",
 ]
 ursa_dashboard = ["logo/logo.png"]

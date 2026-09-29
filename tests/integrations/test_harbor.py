@@ -36,9 +36,9 @@ from ursa.integrations.harbor_runner import (  # noqa: E402
     _attach_mcp_tools,
     _capture_output,
     _close_checkpoint,
-    _export_checkpoint,
     _usage,
 )
+from ursa.integrations.harbor_runner import _run as _runner_run  # noqa: E402
 from ursa.integrations.harbor_runner import (  # noqa: E402
     main as _runner_main,
 )
@@ -133,6 +133,21 @@ def test_runner_failure_is_written_to_harbor_log(tmp_path, monkeypatch):
     text = log_path.read_text()
     assert "Traceback" in text
     assert "RuntimeError: agent failed" in text
+
+
+def test_runner_console_entrypoint_reads_encoded_argument(
+    tmp_path, monkeypatch
+):
+    log_path = tmp_path / "agent" / "ursa.log"
+    payload = {"log_path": str(log_path), "instruction": "task"}
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    received = []
+    monkeypatch.setattr("ursa.integrations.harbor_runner._run", received.append)
+    monkeypatch.setattr(sys, "argv", ["ursa-harbor-runner", encoded])
+
+    _runner_main()
+
+    assert received == [payload]
 
 
 def _singularity_env(
@@ -303,6 +318,7 @@ def test_runtime_config_uses_default_stack_with_harbor_last(
         logs_dir=tmp_path / "logs",
         model_name="openai/gpt-5.4-nano",
         config_file=config_file,
+        config_only=False,
         mcp_servers=[
             MCPServerConfig(
                 name="tools",
@@ -342,6 +358,7 @@ def test_runtime_config_uses_ursa_config_path_discovery(tmp_path, monkeypatch):
         logs_dir=tmp_path / "logs",
         model_name="openai/gpt-5.4-nano",
         config_file=config_file,
+        config_only=False,
     )
 
     runtime_config, _ = agent._runtime_config()
@@ -368,7 +385,6 @@ def test_runtime_config_only_uses_supplied_file_before_harbor(
         logs_dir=tmp_path / "logs",
         model_name="openai/gpt-5.4-nano",
         config_file=config_file,
-        config_only="true",
     )
 
     runtime_config, _ = agent._runtime_config()
@@ -421,6 +437,10 @@ def test_runner_web_policy_overrides_nested_agent_config():
         def __init__(self):
             pass
 
+    class ForwardingWebAgent(WebAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
     config = SimpleNamespace(
         agent_config={
             "web": {"use_web": True},
@@ -429,6 +449,9 @@ def test_runner_web_policy_overrides_nested_agent_config():
     )
 
     assert _agent_config(config, WebAgent, use_web=False)["use_web"] is False
+    assert _agent_config(config, ForwardingWebAgent, use_web=False) == {
+        "use_web": False
+    }
     assert _agent_config(config, AgentWithoutWeb, use_web=False) == {
         "custom": "value"
     }
@@ -477,6 +500,7 @@ def test_runtime_config_externalizes_secrets_from_all_layers(
         logs_dir=tmp_path / "logs",
         model_name="openai/gpt-5.4-nano",
         config_file=config_file,
+        config_only=False,
     )
 
     runtime_config, secret_env = agent._runtime_config()
@@ -659,18 +683,14 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     assert "sha256sum -c" in commands[0]
     assert "case $(uname -m)" in commands[0]
     assert "/opt/uv/uv python install 3.13" in commands[0]
-    assert any(
-        "uv venv --managed-python --python 3.13" in command
-        and "sys.version_info[:2] == (3, 13)" in command
-        for command in commands
-    )
-    assert any(
-        "uv pip install" in command
-        and "ursa-ai[image]==1.2" in command
-        and "numpy" in command
-        and "scipy" in command
-        for command in commands
-    )
+    install_command = commands[1]
+    assert "uv tool install --force --python 3.13" in install_command
+    assert "UV_TOOL_BIN_DIR=/usr/local/bin" in install_command
+    assert "ursa-ai[image]==1.2" in install_command
+    assert "--with numpy" in install_command
+    assert "--with scipy" in install_command
+    assert 'command -v ursa)" = /usr/local/bin/ursa' in install_command
+    assert "test -x /usr/local/bin/ursa-harbor-runner" in install_command
     runtime_config, destination, mode = uploads[0]
     assert destination == "/tmp/ursa-config.json"
     assert mode == 0o600
@@ -740,6 +760,16 @@ def test_install_spec_path_must_be_a_python_project(tmp_path):
         )
 
 
+def test_install_spec_defaults_to_current_checkout(tmp_path):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+    )
+
+    assert agent.ursa_install_spec == Path(__file__).resolve().parents[2]
+
+
 @pytest.mark.parametrize(
     "install_spec",
     [
@@ -759,6 +789,27 @@ def test_install_requirement_is_not_treated_as_a_path(tmp_path, install_spec):
     )
 
     assert agent.ursa_install_spec == install_spec
+
+
+@pytest.mark.parametrize(
+    "install_spec",
+    [
+        "git+https://github.com/harbor-framework/ursa.git@main",
+        "https://example.com/ursa.whl",
+    ],
+)
+def test_install_extras_use_a_named_direct_reference(tmp_path, install_spec):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+        ursa_install_spec=install_spec,
+        ursa_extras="image,harbor",
+    )
+
+    assert agent._install_target(install_spec) == (
+        f"ursa-ai[image,harbor] @ {install_spec}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -917,6 +968,7 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
     assert observed_timeout is None
     assert observed_env["URSA_HARBOR_SECRET_0"] == "resolved-on-host"
     assert observed_command is not None
+    assert "exec /usr/local/bin/ursa-harbor-runner" in observed_command
     encoded = shlex.split(observed_command)[-1]
     payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
     assert payload["log_path"] == "/logs/agent/ursa.log"
@@ -1126,41 +1178,6 @@ async def test_mcp_servers_attach_to_tool_capable_agent(monkeypatch):
     assert received == [expected_client]
 
 
-def test_checkpoint_is_exported_to_harbor_artifacts(tmp_path):
-    class Agent:
-        den = tmp_path / "den"
-
-    checkpoint = Agent.den / "db" / "checkpointer.db"
-    checkpoint.parent.mkdir(parents=True)
-    with sqlite3.connect(checkpoint) as database:
-        database.execute("CREATE TABLE checkpoints (value TEXT)")
-        database.execute("INSERT INTO checkpoints VALUES ('saved')")
-
-    exported = _export_checkpoint(Agent(), tmp_path / "artifacts")
-
-    assert exported == tmp_path / "artifacts" / "ursa" / "checkpointer.db"
-    with sqlite3.connect(exported) as database:
-        assert database.execute("SELECT value FROM checkpoints").fetchone() == (
-            "saved",
-        )
-
-
-def test_checkpoint_already_in_artifacts_is_not_copied(tmp_path):
-    destination = tmp_path / "artifacts" / "ursa" / "checkpointer.db"
-    destination.parent.mkdir(parents=True)
-    connection = sqlite3.connect(destination)
-    connection.execute("CREATE TABLE checkpoints (value TEXT)")
-
-    class Checkpointer:
-        conn = connection
-
-    class Agent:
-        checkpointer = Checkpointer()
-
-    assert _export_checkpoint(Agent(), tmp_path / "artifacts") == destination
-    connection.close()
-
-
 def test_checkpoint_close_flushes_an_integral_database(tmp_path):
     destination = tmp_path / "checkpointer.db"
     connection = sqlite3.connect(destination)
@@ -1193,6 +1210,115 @@ def test_checkpoint_close_is_attempted_when_flush_fails():
         _close_checkpoint(SimpleNamespace(conn=connection))
 
     assert connection.closed
+
+
+def test_runner_orchestrates_agent_and_artifacts(tmp_path, monkeypatch, capsys):
+    artifacts = tmp_path / "artifacts"
+    checkpoint_path = artifacts / "ursa" / "checkpointer.db"
+    checkpoint_path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(checkpoint_path)
+    connection.execute("CREATE TABLE checkpoints (value TEXT)")
+    checkpointer = SimpleNamespace(conn=connection)
+    constructed = {}
+    events = []
+
+    class FakeAgent(BaseAgent):
+        def __init__(self, *, use_web=True, **kwargs):
+            constructed.update(kwargs)
+            constructed["use_web"] = use_web
+            self.checkpointer = kwargs["checkpointer"]
+
+        def _build_graph(self):
+            pass
+
+        def format_result(self, output):
+            return {"answer": output}
+
+    def invoke(_self, instruction, **kwargs):
+        assert instruction == "solve it"
+        assert kwargs["save_json"] is True
+        Path(kwargs["metrics_path"]).write_text(
+            '{"totals": {"input_tokens": 3, "output_tokens": 2}}'
+        )
+        return "agent output"
+
+    monkeypatch.setattr(FakeAgent, "invoke", invoke)
+
+    runtime_config = SimpleNamespace(
+        workspace=None,
+        resolve=lambda: runtime_config,
+        llm_model=SimpleNamespace(init_chat_model=lambda: "llm"),
+        agent_name="runner",
+        group="benchmark",
+        thread_id="thread",
+        rag_tools=None,
+        emb_model=None,
+        agent_config={"fake": {"use_web": True}},
+        mcp_servers={},
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor_runner._import_symbol",
+        lambda path: FakeAgent
+        if path == "example:FakeAgent"
+        else pytest.fail(f"unexpected import path: {path}"),
+    )
+
+    def load_config(path):
+        assert path == config_file
+        return {"config": "loaded"}
+
+    def validate_config(_cls, data):
+        assert data == {"config": "loaded"}
+        return runtime_config
+
+    def make_checkpointer(path, *, db_dir):
+        assert path == artifacts
+        assert db_dir == "ursa"
+        return checkpointer
+
+    monkeypatch.setattr("ursa.cli.config.load_config_file", load_config)
+    monkeypatch.setattr(
+        UrsaConfig,
+        "model_validate",
+        classmethod(validate_config),
+    )
+    monkeypatch.setattr(
+        "ursa.util.Checkpointer.from_workspace",
+        make_checkpointer,
+    )
+    monkeypatch.setattr(
+        "ursa.util.events.configure_event_logging",
+        lambda *, rich: events.append(rich),
+    )
+    config_file = tmp_path / "ursa.json"
+    config_file.write_text("{}")
+    metrics = tmp_path / "logs" / "metrics.json"
+
+    _runner_run({
+        "agent_import_path": "example:FakeAgent",
+        "config_file": str(config_file),
+        "workspace": str(tmp_path / "workspace"),
+        "metrics_path": str(metrics),
+        "artifacts_dir": str(artifacts),
+        "instruction": "solve it",
+        "use_web": False,
+    })
+
+    payload = json.loads(
+        capsys.readouterr().out.removeprefix("URSA_HARBOR_RESULT=")
+    )
+    assert payload == {
+        "result": {"answer": "agent output"},
+        "n_input_tokens": 3,
+        "n_output_tokens": 2,
+        "cost_usd": None,
+    }
+    assert constructed["llm"] == "llm"
+    assert constructed["workspace"] == tmp_path / "workspace"
+    assert constructed["checkpointer"] is checkpointer
+    assert constructed["use_web"] is False
+    assert checkpoint_path.is_file()
+    assert events == [False]
 
 
 @pytest.mark.asyncio
@@ -1288,6 +1414,37 @@ async def test_singularity_builds_with_buildah(tmp_path, monkeypatch):
     assert commands[1][0:2] == ("/usr/bin/buildah", "push")
     assert commands[1][3].startswith("docker-archive:")
     assert commands[-1][0:3] == ("/usr/bin/buildah", "rmi", "--force")
+
+
+@pytest.mark.asyncio
+async def test_singularity_build_requires_an_oci_builder(tmp_path, monkeypatch):
+    environment, _ = _singularity_env(tmp_path, monkeypatch, builders=())
+
+    with pytest.raises(
+        RuntimeError, match="requires buildah, podman, or docker"
+    ):
+        await environment._build_dockerfile_sif(force_build=False)
+
+
+@pytest.mark.asyncio
+async def test_singularity_build_reports_all_builder_failures_and_cleans_tags(
+    tmp_path, monkeypatch
+):
+    environment, commands = _singularity_env(
+        tmp_path,
+        monkeypatch,
+        builders=("buildah", "docker"),
+        fail=lambda command: command[1] == "build"
+        and command[0] != "/usr/bin/singularity",
+    )
+
+    with pytest.raises(RuntimeError, match="No container builder succeeded"):
+        await environment._build_dockerfile_sif(force_build=False)
+
+    assert any(command[1:3] == ("rmi", "--force") for command in commands)
+    assert any(
+        command[1:4] == ("image", "rm", "--force") for command in commands
+    )
 
 
 @pytest.mark.asyncio
@@ -1480,6 +1637,57 @@ async def test_docker_compose_conversion_is_file_to_file(tmp_path):
     assert instances["main"][0].endswith("1")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_list", [False, True])
+async def test_docker_compose_conversion_reads_env_files(tmp_path, use_list):
+    env_file = tmp_path / "task.env"
+    env_file.write_text("FROM_FILE=loaded\nOVERRIDE=old\n")
+    env_files = (
+        [
+            "./task.env",
+            {"path": "./missing.env", "required": False},
+        ]
+        if use_list
+        else "./task.env"
+    )
+    source = tmp_path / "docker-compose.yaml"
+    source.write_text(
+        yaml.safe_dump({
+            "services": {
+                "main": {
+                    "image": "busybox:latest",
+                    "env_file": env_files,
+                    "environment": {"OVERRIDE": "new"},
+                }
+            }
+        })
+    )
+    destination = tmp_path / "project" / "singularity-compose.yml"
+    staging = tmp_path / "staging"
+    staging.mkdir()
+
+    async def resolve_image(_name, _service):
+        return "docker://busybox:latest"
+
+    await docker_compose_to_singularity_compose(
+        source,
+        destination,
+        identity="test",
+        image_resolver=resolve_image,
+        staging_dir=staging,
+    )
+
+    generated = yaml.safe_load(destination.read_text())
+    main = generated["instances"][next(iter(generated["instances"]))]
+    mounted_env = next(
+        Path(volume.split(":", 1)[0])
+        for volume in main["volumes"]
+        if volume.endswith(":/.singularity.d/env/91-ursa-compose.sh")
+    ).read_text()
+    assert "export FROM_FILE=loaded" in mounted_env
+    assert "export OVERRIDE=new" in mounted_env
+
+
 def test_singularity_compose_merges_overlays_after_normalizing_paths(
     tmp_path, monkeypatch
 ):
@@ -1605,34 +1813,31 @@ async def test_singularity_compose_dependency_invokes_runtime_shim(
 
 
 @pytest.mark.asyncio
-async def test_singularity_file_converter_reads_compose_source(
+async def test_singularity_file_converter_reads_current_compose_source(
     tmp_path, monkeypatch
 ):
-    loads = 0
-    safe_load = yaml.safe_load
-
-    def count_loads(content):
-        nonlocal loads
-        loads += 1
-        return safe_load(content)
-
-    monkeypatch.setattr(yaml, "safe_load", count_loads)
     environment = _compose_environment(
         tmp_path,
         monkeypatch,
         "services: {main: {image: busybox:latest}}\n",
     )
-    cached = environment._load_compose_config()
+    compose_path = environment.environment_dir / "docker-compose.yaml"
+    assert environment._load_compose_config()["services"]["main"]["image"] == (
+        "busybox:latest"
+    )
+    compose_path.write_text("services: {main: {image: alpine:latest}}\n")
+    assert environment._load_compose_config()["services"]["main"]["image"] == (
+        "alpine:latest"
+    )
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
 
     try:
-        assert loads == 1
-        assert environment._load_compose_config() is cached
         assert await environment._build_main_sif(False) is None
         await environment._prepare_compose_project(force_build=False)
-        assert environment._load_compose_config() is cached
-        assert loads == 2
+        generated = yaml.safe_load(environment._compose_file.read_text())
+        main = generated["instances"][environment._compose_key("main")]
+        assert main["image"] == "docker://alpine:latest"
     finally:
         environment._cleanup_compose_project()
 
@@ -1839,6 +2044,21 @@ services:
     assert environment._workdir == "/"
 
 
+def test_singularity_compose_image_ignores_unrelated_dockerfile_workdir(
+    tmp_path, monkeypatch
+):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services: {main: {image: ubuntu:24.04}}\n",
+    )
+    (environment.environment_dir / "Dockerfile").write_text(
+        "FROM scratch\nWORKDIR /not-the-compose-workdir\n"
+    )
+
+    assert environment._resolve_workdir() == "/"
+
+
 def test_singularity_compose_rejects_unsupported_service_fields(
     tmp_path, monkeypatch
 ):
@@ -1872,6 +2092,46 @@ services:
     image: busybox:latest
 """,
         )
+
+
+@pytest.mark.parametrize(
+    ("compose", "message"),
+    [
+        (
+            "services: {main: {build: {context: ., network: host}}}\n",
+            "build fields.*network",
+        ),
+        (
+            "services: {main: {deploy: {resources: {}}}}\n",
+            "only deploy.replicas",
+        ),
+        (
+            "services: {main: {deploy: {replicas: 0}}}\n",
+            "replicas.*positive integer",
+        ),
+        (
+            "services: {main: {depends_on: [missing]}}\n",
+            "depends on unknown services.*missing",
+        ),
+        (
+            "services: {main: {volumes: ['./data:/data:ro']}}\n",
+            "only writable bind mounts",
+        ),
+        (
+            "services: {main: {volumes: ['named:/data']}}\n",
+            "only writable bind mounts",
+        ),
+        (
+            "services: {main: {ports: ['8000:8000/udp']}}\n",
+            "only TCP published ports",
+        ),
+    ],
+)
+def test_singularity_compose_rejects_discarded_semantics(
+    tmp_path, monkeypatch, compose, message
+):
+    with pytest.raises(ValueError, match=message):
+        _compose_environment(tmp_path, monkeypatch, compose)
 
 
 def test_singularity_compose_normalizes_supported_long_syntax(
@@ -2004,6 +2264,104 @@ services:
 
     assert any("down" in command for command, _cwd in commands)
     assert environment._compose_project_dir is None
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_serializes_concurrent_startup(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    environments = [
+        _compose_environment(
+            tmp_path / name,
+            monkeypatch,
+            "services: {main: {}}\n",
+        )
+        for name in ("first", "second")
+    ]
+    active = 0
+    maximum_active = 0
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    for environment in environments:
+
+        async def build(_force, *, root=environment.environment_dir):
+            result = root / "main.sif"
+            result.write_text("main")
+            return result
+
+        async def run(*command, cwd=None, env=None, owner=environment):
+            nonlocal active, maximum_active
+            if (
+                Path(command[0]).name != "singularity-compose"
+                or command[-1] != "up"
+            ):
+                return
+            active += 1
+            maximum_active = max(maximum_active, active)
+            if not first_started.is_set():
+                first_started.set()
+                await release_first.wait()
+            hosts = owner._compose_project_dir / "etc.hosts"
+            hosts.write_text(
+                f"10.22.0.2\t{owner._compose_instances['main'][0]}\n"
+            )
+            active -= 1
+
+        async def upload():
+            pass
+
+        monkeypatch.setattr(environment, "_build_dockerfile_sif", build)
+        monkeypatch.setattr(environment, "_run", run)
+        monkeypatch.setattr(
+            environment, "_upload_environment_dir_after_start", upload
+        )
+
+    starts = [
+        asyncio.create_task(environment.start(force_build=False))
+        for environment in environments
+    ]
+    await first_started.wait()
+    await asyncio.sleep(0)
+    release_first.set()
+    await asyncio.gather(*starts)
+
+    assert maximum_active == 1
+    await asyncio.gather(
+        *(environment.stop(delete=False) for environment in environments)
+    )
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_stop_cleans_sidecars_after_main_stops(
+    tmp_path, monkeypatch
+):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services: {main: {}, api: {image: busybox:latest}}\n",
+    )
+    environment._compose_project_dir = tmp_path / "project"
+    environment._compose_project_dir.mkdir()
+    environment._compose_file = environment._compose_project_dir / "compose.yml"
+    environment._compose_file.write_text("instances: {}\n")
+    environment._compose_instances = {"main": ["main1"], "api": ["api1"]}
+    environment._instance_started = True
+    commands = []
+
+    async def run_compose(*command):
+        commands.append(command)
+
+    monkeypatch.setattr(environment, "_run_compose", run_compose)
+
+    await environment.stop_service("main")
+    await environment.stop(delete=False)
+
+    assert commands == [
+        ("stop", "--timeout", "0", "main1"),
+        ("down", "--timeout", "0"),
+    ]
 
 
 def _network_environment(
@@ -2233,6 +2591,38 @@ async def test_singularity_cancelled_download_cleans_staging(
     assert not list(environment._staging.iterdir())
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("directory", [False, True])
+async def test_singularity_compose_downloads_from_sidecar(
+    tmp_path, monkeypatch, directory
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._compose_instances = {"main": ["main1"], "api": ["api1"]}
+
+    async def service_exec(command, *, service):
+        assert service == "api"
+        staged = environment._staging / shlex.split(command)[-1].split("/")[-1]
+        if directory:
+            staged.mkdir()
+            (staged / "result.txt").write_text("sidecar directory")
+        else:
+            staged.write_text("sidecar file")
+        return SimpleNamespace(return_code=0, stdout="", stderr="")
+
+    monkeypatch.setattr(environment, "service_exec", service_exec)
+    target = tmp_path / "download"
+
+    if directory:
+        await environment.service_download_dir("/output", target, service="api")
+        assert (target / "result.txt").read_text() == "sidecar directory"
+    else:
+        await environment.service_download_file(
+            "/output.txt", target, service="api"
+        )
+        assert target.read_text() == "sidecar file"
+    assert not list(environment._staging.iterdir())
+
+
 def test_singularity_public_instance_uses_36_flags(tmp_path):
     environment = _instance_test_environment(tmp_path)
 
@@ -2289,6 +2679,43 @@ def test_singularity_instance_mounts_staging_and_configured_binds(tmp_path):
         f"{environment._staging_dir}:/staging",
         "/host/logs:/logs",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ["singularity", "apptainer"])
+async def test_singularity_attach_execs_shell_in_main_instance(
+    tmp_path, monkeypatch, runtime
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._instance_started = True
+    environment._instance_name = "compose-main1"
+    environment._runtime_path = f"/usr/bin/{runtime}"
+    calls = []
+    monkeypatch.setattr(
+        os,
+        "execvp",
+        lambda executable, command: calls.append((executable, command)),
+    )
+
+    await environment.attach()
+
+    expected = [
+        f"/usr/bin/{runtime}",
+        "shell",
+        "--cleanenv",
+        "--pwd",
+        "/workspace",
+        "instance://compose-main1",
+    ]
+    assert calls == [(f"/usr/bin/{runtime}", expected)]
+
+
+@pytest.mark.asyncio
+async def test_singularity_attach_requires_running_instance(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+
+    with pytest.raises(RuntimeError, match="not running"):
+        await environment.attach()
 
 
 @pytest.mark.asyncio
@@ -2534,6 +2961,34 @@ async def test_singularity_compose_stops_every_service_replica(
     await environment.stop_service("api")
 
     assert commands == [("stop", "--timeout", "0", "api1", "api2")]
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_down_falls_back_to_direct_instance_stop(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._compose_instances = {
+        "main": ["main1"],
+        "api": ["api1", "api2"],
+    }
+    commands = []
+
+    async def run_compose(*_command):
+        raise RuntimeError("compose down failed")
+
+    async def run(*command):
+        commands.append(command)
+
+    monkeypatch.setattr(environment, "_run_compose", run_compose)
+    monkeypatch.setattr(environment, "_run", run)
+
+    await environment._stop_compose(warn=True)
+
+    assert {command[-1] for command in commands} == {"main1", "api1", "api2"}
+    assert all(
+        command[1:4] == ("instance", "stop", "--force") for command in commands
+    )
 
 
 @pytest.mark.asyncio

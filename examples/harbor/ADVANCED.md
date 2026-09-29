@@ -20,10 +20,10 @@ Git-ignored files and common secret files:
 
 ## Choose the URSA config stack
 
-By default the adapter merges URSA's system config, user config, and the file
-passed as `config_file`, then applies Harbor's model and MCP settings last. Add
-`--agent-kwarg config_only=true` to skip the system and user layers. The
-supplied file is still merged below Harbor's settings.
+By default the adapter merges only the file passed as `config_file`, then
+applies Harbor's model and MCP settings last. Set
+`--agent-kwarg config_only=false` to include URSA's system and user config
+layers first. The supplied file is still merged below Harbor's settings.
 
 Secret references are resolved on the host, including keyring references. The
 adapter passes generated environment references only to the URSA runner; it

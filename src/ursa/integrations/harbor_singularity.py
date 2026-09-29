@@ -44,6 +44,7 @@ _COMPOSE_SERVICE_FIELDS = frozenset({
     "ports",
     "volumes",
 })
+_COMPOSE_BUILD_FIELDS = frozenset({"args", "context", "dockerfile", "target"})
 
 
 def _merge_compose(base: dict[str, Any], overlay: dict[str, Any]) -> None:
@@ -78,10 +79,61 @@ def _normalize_compose_service(
     build = service.get("build")
     if isinstance(build, str):
         service["build"] = _compose_path(build, base_dir)
-    elif isinstance(build, dict) and isinstance(
-        context := build.get("context", "."), str
-    ):
+    elif isinstance(build, dict):
+        unsupported = set(build) - _COMPOSE_BUILD_FIELDS
+        if unsupported:
+            raise ValueError(
+                "singularity-compose does not support these build fields on "
+                f"service {name!r}: {', '.join(sorted(unsupported))}"
+            )
+        context = build.get("context", ".")
+        if not isinstance(context, str):
+            raise ValueError(
+                f"Docker Compose build context on service {name!r} must be a string"
+            )
         build["context"] = _compose_path(context, base_dir)
+        if not isinstance(build.get("dockerfile", "Dockerfile"), str):
+            raise ValueError(
+                f"Docker Compose dockerfile on service {name!r} must be a string"
+            )
+        if not isinstance(build.get("target", ""), str):
+            raise ValueError(
+                f"Docker Compose build target on service {name!r} must be a string"
+            )
+        if not isinstance(build.get("args", {}), (dict, list)):
+            raise ValueError(
+                f"Docker Compose build args on service {name!r} must be a mapping or list"
+            )
+    elif build is not None:
+        raise ValueError(
+            f"Docker Compose build on service {name!r} must be a path or mapping"
+        )
+
+    if not isinstance(service.get("command", ""), (str, list)):
+        raise ValueError(
+            f"Docker Compose command on service {name!r} must be a string or list"
+        )
+    if not isinstance(service.get("environment", {}), (dict, list)):
+        raise ValueError(
+            f"Docker Compose environment on service {name!r} must be a mapping or list"
+        )
+
+    deploy = service.get("deploy")
+    if deploy is not None:
+        if not isinstance(deploy, dict) or set(deploy) - {"replicas"}:
+            raise ValueError(
+                "singularity-compose supports only deploy.replicas on service "
+                f"{name!r}"
+            )
+        replicas = deploy.get("replicas", 1)
+        if (
+            not isinstance(replicas, int)
+            or isinstance(replicas, bool)
+            or replicas < 1
+        ):
+            raise ValueError(
+                f"Docker Compose replicas on service {name!r} must be a positive integer"
+            )
 
     env_files = service.get("env_file")
     if env_files is not None:
@@ -143,17 +195,32 @@ def _normalize_compose_service(
             volumes[index] = f"{volume['source']}:{volume['target']}"
         for index, volume in enumerate(volumes):
             if not isinstance(volume, str) or volume.count(":") != 1:
-                continue
+                raise ValueError(
+                    "singularity-compose supports only writable bind mounts "
+                    f"on service {name!r}: {volume!r}"
+                )
             source, target = volume.split(":", 1)
-            if source.startswith(("/", ".", "~")):
-                source = _compose_path(source, base_dir)
+            if not source.startswith(("/", ".", "~")) or not target.startswith(
+                "/"
+            ):
+                raise ValueError(
+                    "singularity-compose supports only writable bind mounts "
+                    f"on service {name!r}: {volume!r}"
+                )
+            source = _compose_path(source, base_dir)
             volumes[index] = f"{source}:{target}"
 
     ports = service.get("ports")
     if isinstance(ports, list):
         for index, port in enumerate(ports):
             if not isinstance(port, dict):
-                ports[index] = str(port)
+                port = str(port)
+                if re.fullmatch(r"[0-9]+:[0-9]+", port) is None:
+                    raise ValueError(
+                        "singularity-compose supports only TCP published ports "
+                        f"on service {name!r}: {port!r}"
+                    )
+                ports[index] = port
                 continue
             if (
                 set(port) - {"protocol", "published", "target"}
@@ -196,6 +263,14 @@ def _load_docker_compose(paths: list[Path]) -> dict[str, Any]:
             _normalize_compose_service(name, service, path.parent)
         _merge_compose(config, overlay)
     config["services"].setdefault("main", {})
+    services = config["services"]
+    for name, service in services.items():
+        unknown = set(service.get("depends_on", [])) - set(services)
+        if unknown:
+            raise ValueError(
+                f"Docker Compose service {name!r} depends on unknown services: "
+                + ", ".join(sorted(unknown))
+            )
     return config
 
 
@@ -450,7 +525,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             else self._default_image_cache_dir()
         )
         self._force_pull = singularity_force_pull
-        self._compose_config: dict[str, Any] | None = None
         self._runtime_path: str | None = None
         super().__init__(*args, **kwargs)
         for policy in self._phase_network_policies:
@@ -529,6 +603,16 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         return root / "ursa" / "harbor" / "sif"
 
     @staticmethod
+    def _compose_start_lock_path() -> Path:
+        cache_home = os.environ.get("XDG_CACHE_HOME")
+        root = (
+            Path(cache_home).expanduser()
+            if cache_home
+            else Path.home() / ".cache"
+        )
+        return root / "ursa" / "harbor" / "singularity-compose.lock"
+
+    @staticmethod
     def _runtime() -> str:
         runtime = shutil.which("apptainer") or shutil.which("singularity")
         if runtime is None:
@@ -583,11 +667,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         return paths
 
     def _load_compose_config(self) -> dict[str, Any]:
-        cached = getattr(self, "_compose_config", None)
-        if cached is not None:
-            return cached
-        self._compose_config = _load_docker_compose(self._compose_paths())
-        return self._compose_config
+        return _load_docker_compose(self._compose_paths())
 
     @override
     def _resolve_workdir(self) -> str:
@@ -595,13 +675,16 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self.task_env_config.workdir is not None:
             return self.task_env_config.workdir
         dockerfile_path = self._dockerfile_path
-        compose_build = (
-            self._load_compose_config()["services"]["main"].get("build")
+        main = (
+            self._load_compose_config()["services"]["main"]
             if self._uses_compose
-            else None
+            else {}
         )
+        compose_build = main.get("build")
         if compose_build is not None:
             dockerfile_path = self._compose_build_paths(compose_build)[0]
+        elif self._uses_compose and "image" in main:
+            return "/"
         elif not dockerfile_path.is_file():
             return "/"
         workdir = PurePosixPath("/")
@@ -1045,10 +1128,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._compose_file = None
         self._compose_instances = {}
 
-    @property
-    def _instance_ref(self) -> str:
-        return f"instance://{self._instance_name}"
-
     def _instance_exec_prefix(
         self,
         cwd: str | None = None,
@@ -1117,10 +1196,31 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         try:
             await self._run_compose("down", "--timeout", "0")
         except RuntimeError as exc:
-            if warn:
+            failures = []
+            for instance in {
+                instance
+                for instances in self._compose_instances.values()
+                for instance in instances
+            }:
+                try:
+                    await self._run(
+                        self._instance_runtime(),
+                        "instance",
+                        "stop",
+                        "--force",
+                        instance,
+                    )
+                except RuntimeError as stop_exc:
+                    failures.append(str(stop_exc))
+            if failures and warn:
                 self.logger.warning(
-                    "Failed to stop singularity-compose project: %s", exc
+                    "Failed to stop singularity-compose project (%s) and "
+                    "instances (%s)",
+                    exc,
+                    "; ".join(failures),
                 )
+            if failures and not warn:
+                raise
         finally:
             self._instance_started = False
 
@@ -1128,7 +1228,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     async def start(self, force_build: bool) -> None:
         if sys.platform == "win32":
             raise RuntimeError("Singularity is unavailable on Windows")
-        self._validate_definition()
         self._sif_path = await self._build_main_sif(
             force_build or self._force_pull
         )
@@ -1143,7 +1242,10 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                         force_build or self._force_pull
                     )
                     await self._run_compose("check")
-                    await self._run_compose("up")
+                    lock_path = self._compose_start_lock_path()
+                    lock_path.parent.mkdir(parents=True, exist_ok=True)
+                    async with AsyncFileLock(lock_path):
+                        await self._run_compose("up")
                     self._add_compose_service_aliases()
                 else:
                     await self._run(*self._instance_start_command())
@@ -1183,7 +1285,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     async def stop(self, delete: bool) -> None:
         try:
             if self._uses_compose:
-                if self._compose_file is not None and self._instance_started:
+                if self._compose_file is not None:
                     await self._stop_compose(warn=True)
             elif self._instance_started:
                 await self._stop_instance(warn=True)
@@ -1194,6 +1296,21 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             self.logger.debug(
                 "Singularity image preserved at %s for reuse", self._sif_path
             )
+
+    @override
+    async def attach(self) -> None:
+        """Replace this process with an interactive shell in the main instance."""
+        if not self._instance_started:
+            raise RuntimeError("Singularity instance is not running")
+        command = [
+            self._instance_runtime(),
+            "shell",
+            "--cleanenv",
+            "--pwd",
+            self._workdir,
+            f"instance://{self._instance_name}",
+        ]
+        os.execvp(command[0], command)
 
     def _exec_shell_command(
         self,
@@ -1458,12 +1575,20 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     async def download_file(
         self, source_path: str, target_path: Path | str
     ) -> None:
+        await self._download_file(source_path, target_path, self.exec)
+
+    async def _download_file(
+        self,
+        source_path: str,
+        target_path: Path | str,
+        execute: Callable[[str], Awaitable[ExecResult]],
+    ) -> None:
         target = Path(target_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         staged = self._transfer_staging_path(Path(source_path).name)
         try:
             self._remove_staging_path(staged)
-            result = await self.exec(
+            result = await execute(
                 f"cp {shlex.quote(source_path)} "
                 f"{shlex.quote('/staging/' + staged.name)}"
             )
@@ -1478,12 +1603,20 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     async def download_dir(
         self, source_dir: str, target_dir: Path | str
     ) -> None:
+        await self._download_dir(source_dir, target_dir, self.exec)
+
+    async def _download_dir(
+        self,
+        source_dir: str,
+        target_dir: Path | str,
+        execute: Callable[[str], Awaitable[ExecResult]],
+    ) -> None:
         target = Path(target_dir)
         target.mkdir(parents=True, exist_ok=True)
         staged = self._transfer_staging_path(Path(source_dir).name)
         try:
             self._remove_staging_path(staged)
-            result = await self.exec(
+            result = await execute(
                 f"cp -r {shlex.quote(source_dir)} "
                 f"{shlex.quote('/staging/' + staged.name)}"
             )
@@ -1549,23 +1682,11 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self.is_main_service(service):
             await self.download_file(source_path, target_path)
             return
-        if self._staging_dir is None:
-            raise RuntimeError("Singularity staging directory is not prepared")
-        staged_name = f"service-download-{secrets.token_hex(8)}"
-        result = await self.service_exec(
-            f"cp {shlex.quote(source_path)} /staging/{staged_name}",
-            service=service,
+        await self._download_file(
+            source_path,
+            target_path,
+            partial(self.service_exec, service=service),
         )
-        if result.return_code != 0:
-            error = result.stderr or result.stdout or "<no output>"
-            raise RuntimeError(f"Failed to download sidecar file: {error}")
-        staged = self._staging_dir / staged_name
-        target = Path(target_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.copy2(staged, target)
-        finally:
-            staged.unlink(missing_ok=True)
 
     @override
     async def service_download_dir(
@@ -1578,23 +1699,11 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self.is_main_service(service):
             await self.download_dir(source_dir, target_dir)
             return
-        if self._staging_dir is None:
-            raise RuntimeError("Singularity staging directory is not prepared")
-        staged_name = f"service-download-{secrets.token_hex(8)}"
-        result = await self.service_exec(
-            f"cp -r {shlex.quote(source_dir)} /staging/{staged_name}",
-            service=service,
+        await self._download_dir(
+            source_dir,
+            target_dir,
+            partial(self.service_exec, service=service),
         )
-        if result.return_code != 0:
-            error = result.stderr or result.stdout or "<no output>"
-            raise RuntimeError(f"Failed to download sidecar directory: {error}")
-        staged = self._staging_dir / staged_name
-        target = Path(target_dir)
-        try:
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(staged, target, dirs_exist_ok=True)
-        finally:
-            shutil.rmtree(staged, ignore_errors=True)
 
     @override
     async def stop_service(self, service: str) -> None:
@@ -1602,8 +1711,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if not instances:
             raise ValueError(f"Unknown Docker Compose service: {service!r}")
         await self._run_compose("stop", "--timeout", "0", *instances)
-        if service == "main":
-            self._instance_started = False
 
     @staticmethod
     def _terminate_process_tree_command(pid_file: str) -> str:
