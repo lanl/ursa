@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 harbor = pytest.importorskip("harbor")
 
@@ -141,7 +142,7 @@ def _singularity_env(
     runtime="singularity",
 ):
     environment_dir = tmp_path / "environment"
-    environment_dir.mkdir(parents=True)
+    environment_dir.mkdir(parents=True, exist_ok=True)
     (environment_dir / "Dockerfile").write_text("FROM scratch\n")
     environment = DockerfileSingularityEnvironment.__new__(
         DockerfileSingularityEnvironment
@@ -175,7 +176,8 @@ def _singularity_preflight_result(command, *, builder_returncode=0):
     arguments = tuple(command[1:])
     help_text = {
         ("instance", "start", "--help"): (
-            "--fakeroot --containall --no-home --writable-tmpfs --net --network"
+            "--fakeroot --containall --hostname --no-home --bind "
+            "--writable-tmpfs --net --network --network-args"
         ),
         ("exec", "--help"): "--cleanenv --pwd",
         ("instance", "stop", "--help"): "--force",
@@ -190,6 +192,8 @@ def _singularity_preflight_result(command, *, builder_returncode=0):
             stdout="",
             stderr="builder unavailable" if builder_returncode else "",
         )
+    if arguments == ("version",):
+        return SimpleNamespace(returncode=0, stdout="0.1.19\n", stderr="")
     raise AssertionError(f"Unexpected preflight command: {command}")
 
 
@@ -200,6 +204,7 @@ def test_singularity_preflight_accepts_runtime_and_builder(monkeypatch):
         return {
             "apptainer": "/usr/bin/apptainer",
             "buildah": "/usr/bin/buildah",
+            "singularity-compose": "/usr/bin/singularity-compose",
         }.get(name)
 
     def run(command, **_kwargs):
@@ -211,7 +216,24 @@ def test_singularity_preflight_accepts_runtime_and_builder(monkeypatch):
 
     DockerfileSingularityEnvironment.preflight()
 
-    assert commands[-1] == ["/usr/bin/buildah", "info"]
+    assert commands[-1] == ["/usr/bin/singularity-compose", "version"]
+
+
+def test_singularity_preflight_rejects_missing_compose(monkeypatch):
+    def which(name):
+        return {
+            "singularity": "/usr/bin/singularity",
+            "buildah": "/usr/bin/buildah",
+        }.get(name)
+
+    monkeypatch.setattr("shutil.which", which)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **_kwargs: _singularity_preflight_result(command),
+    )
+
+    with pytest.raises(SystemExit, match="require singularity-compose"):
+        DockerfileSingularityEnvironment.preflight()
 
 
 def test_singularity_preflight_rejects_missing_runtime(monkeypatch):
@@ -1316,6 +1338,267 @@ async def test_apptainer_only_installation_is_supported(tmp_path, monkeypatch):
     )
 
 
+def _compose_environment(tmp_path, monkeypatch, compose, *, task_env=None):
+    environment_dir = tmp_path / "environment"
+    environment_dir.mkdir(parents=True, exist_ok=True)
+    (environment_dir / "Dockerfile").write_text("FROM scratch\n")
+    (environment_dir / "docker-compose.yaml").write_text(compose)
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: (
+            f"/usr/bin/{name}"
+            if name in {"singularity", "singularity-compose", "buildah"}
+            else None
+        ),
+    )
+    return DockerfileSingularityEnvironment(
+        environment_dir=environment_dir,
+        environment_name="test",
+        session_id="trial__env",
+        trial_paths=TrialPaths(tmp_path / "trial"),
+        task_env_config=EnvironmentConfig(env=task_env or {}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_translates_supported_services(
+    tmp_path, monkeypatch
+):
+    sidecar = tmp_path / "environment" / "api"
+    sidecar.mkdir(parents=True)
+    (sidecar / "Dockerfile").write_text("FROM scratch\n")
+    monkeypatch.setenv("TASK_TOKEN", "host-token")
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        """
+services:
+  main:
+    depends_on: [api]
+    environment:
+      MAIN_VALUE: compose
+  api:
+    build:
+      context: ./api
+      args:
+        BUILD_VALUE: example
+      target: runtime
+    command: [python, server.py]
+    environment:
+      API_VALUE: sidecar
+    expose: [8000]
+    ports: ["18000:8000"]
+    deploy:
+      replicas: 2
+""",
+        task_env={"TASK_TOKEN": "${TASK_TOKEN}"},
+    )
+    environment._sif_path = tmp_path / "main.sif"
+    environment._sif_path.write_text("main")
+    environment._staging_dir = tmp_path / "staging"
+    environment._staging_dir.mkdir()
+    builds = []
+
+    async def build(_force, **kwargs):
+        builds.append(kwargs)
+        result = tmp_path / "api.sif"
+        result.write_text("api")
+        return result
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", build)
+
+    await environment._prepare_compose_project(force_build=False)
+
+    generated = yaml.safe_load(environment._compose_file.read_text())
+    schema_check = subprocess.run(
+        [
+            str(Path(sys.executable).with_name("singularity-compose")),
+            "--file",
+            str(environment._compose_file),
+            "check",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert schema_check.returncode == 0, schema_check.stderr
+    main_key = environment._compose_key("main")
+    api_key = environment._compose_key("api")
+    main = generated["instances"][main_key]
+    api = generated["instances"][api_key]
+    assert main["depends_on"] == [api_key]
+    assert api["image"] == str(tmp_path / "api.sif")
+    assert api["start"]["args"] == "python server.py"
+    assert api["ports"] == ["18000:8000"]
+    assert api["deploy"] == {"replicas": 2}
+    assert environment._compose_instances["api"] == [
+        f"{api_key}1",
+        f"{api_key}2",
+    ]
+    assert builds == [
+        {
+            "dockerfile_path": sidecar / "Dockerfile",
+            "context_dir": sidecar,
+            "build_args": ("BUILD_VALUE=example",),
+            "target": "runtime",
+        }
+    ]
+    main_env = next(
+        Path(volume.split(":", 1)[0])
+        for volume in main["volumes"]
+        if volume.endswith(":/.singularity.d/env/91-ursa-compose.sh")
+    ).read_text()
+    assert "MAIN_VALUE=compose" in main_env
+    assert "TASK_TOKEN=host-token" in main_env
+
+
+def test_singularity_compose_rejects_unsupported_service_fields(
+    tmp_path, monkeypatch
+):
+    with pytest.raises(ValueError, match="does not support.*healthcheck"):
+        _compose_environment(
+            tmp_path,
+            monkeypatch,
+            """
+services:
+  main:
+    healthcheck:
+      test: [CMD, true]
+""",
+        )
+
+
+def test_singularity_compose_rejects_depends_on_conditions(
+    tmp_path, monkeypatch
+):
+    with pytest.raises(ValueError, match="only service_started"):
+        _compose_environment(
+            tmp_path,
+            monkeypatch,
+            """
+services:
+  main:
+    depends_on:
+      api:
+        condition: service_healthy
+  api:
+    image: busybox:latest
+""",
+        )
+
+
+def test_singularity_compose_normalizes_supported_long_syntax(
+    tmp_path, monkeypatch
+):
+    data = tmp_path / "environment" / "data"
+    data.mkdir(parents=True)
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        """
+services:
+  main:
+    depends_on:
+      api:
+        condition: service_started
+  api:
+    image: busybox:latest
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+    ports:
+      - target: 8000
+        published: "18000"
+        protocol: tcp
+""",
+    )
+
+    config = environment._load_compose_config()
+
+    assert config["services"]["main"]["depends_on"] == ["api"]
+    assert config["services"]["api"]["volumes"] == [f"{data}:/data"]
+    assert config["services"]["api"]["ports"] == ["18000:8000"]
+
+
+def test_singularity_compose_uses_unique_instance_names(tmp_path, monkeypatch):
+    compose = "services: {main: {}}\n"
+    first = _compose_environment(tmp_path / "first", monkeypatch, compose)
+    second = _compose_environment(tmp_path / "second", monkeypatch, compose)
+
+    assert first.session_id == second.session_id
+    assert first._compose_key("main") != second._compose_key("main")
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_start_adds_service_aliases_and_stops(
+    tmp_path, monkeypatch
+):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        """
+services:
+  main:
+    depends_on: [api]
+  api:
+    image: busybox:latest
+""",
+    )
+    commands = []
+
+    async def build(_force):
+        result = tmp_path / "main.sif"
+        result.write_text("main")
+        return result
+
+    async def run(*command, cwd=None, env=None):
+        commands.append((command, cwd))
+        if (
+            Path(command[0]).name == "singularity-compose"
+            and command[-1] == "up"
+        ):
+            hosts = environment._compose_project_dir / "etc.hosts"
+            hosts.write_text(
+                "".join(
+                    f"10.22.0.{index}\t{instance}\n"
+                    for index, instance in enumerate(
+                        (
+                            names[0]
+                            for names in environment._compose_instances.values()
+                        ),
+                        2,
+                    )
+                )
+            )
+
+    async def upload():
+        pass
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", build)
+    monkeypatch.setattr(environment, "_run", run)
+    monkeypatch.setattr(
+        environment, "_upload_environment_dir_after_start", upload
+    )
+
+    await environment.start(force_build=False)
+
+    hosts = (environment._compose_project_dir / "etc.hosts").read_text()
+    assert "\tmain\n" in hosts
+    assert "\tapi\n" in hosts
+    assert environment._instance_started
+    assert len(environment._running_instances) == 2
+    assert any(
+        command[-1] == "up" and cwd == environment._compose_project_dir
+        for command, cwd in commands
+    )
+
+    await environment.stop(delete=False)
+
+    assert any("down" in command for command, _cwd in commands)
+    assert environment._compose_project_dir is None
+
+
 def _network_environment(
     tmp_path,
     *,
@@ -1667,6 +1950,84 @@ def test_apptainer_exec_env_uses_native_prefix(tmp_path, monkeypatch):
     assert "SINGULARITYENV_TOKEN" not in runtime_env
     assert "SINGULARITYENV_OLD" not in runtime_env
     assert "APPTAINERENV_OLD" not in runtime_env
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_sidecar_exec_is_isolated(
+    tmp_path, monkeypatch
+):
+    environment = _exec_test_environment(tmp_path)
+    environment._compose_instances = {
+        "main": ["main1"],
+        "api": ["api1"],
+    }
+    environment._running_instances = {"main1", "api1"}
+    environment.default_user = "agent"
+    environment._merge_env = lambda env: {"PERSISTENT": "bad", **(env or {})}
+    calls = []
+
+    class Process:
+        pid = 12345
+        returncode = 0
+
+        async def communicate(self):
+            return b"sidecar", b""
+
+    async def create_process(*command, **kwargs):
+        calls.append((command, kwargs))
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+
+    result = await environment.service_exec(
+        "printf sidecar", service="api", env={"LOCAL": "yes"}
+    )
+
+    assert result.stdout == "sidecar"
+    command, kwargs = calls[0]
+    assert "instance://api1" in command
+    assert command[command.index("--pwd") + 1] == "/"
+    assert kwargs["env"]["SINGULARITYENV_LOCAL"] == "yes"
+    assert "SINGULARITYENV_PERSISTENT" not in kwargs["env"]
+    assert "su agent" not in command[-1]
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_stops_every_service_replica(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._compose_instances = {
+        "main": ["main1"],
+        "api": ["api1", "api2"],
+    }
+    environment._running_instances = {"main1", "api1", "api2"}
+    commands = []
+
+    async def run(*command):
+        commands.append(command)
+
+    monkeypatch.setattr(environment, "_run", run)
+
+    await environment.stop_service("api")
+
+    assert commands == [
+        (
+            "/usr/bin/singularity",
+            "instance",
+            "stop",
+            "--force",
+            "api1",
+        ),
+        (
+            "/usr/bin/singularity",
+            "instance",
+            "stop",
+            "--force",
+            "api2",
+        ),
+    ]
+    assert environment._running_instances == {"main1"}
 
 
 @pytest.mark.asyncio

@@ -7619,6 +7619,19 @@ wheels = [
 ]
 
 [[package]]
+name = "singularity-compose"
+version = "0.1.19"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyaml" },
+    { name = "spython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c5/20/93dea5bbfee464cc1fc2881ac2ddad45184882beb597aa1009ca994e4479/singularity-compose-0.1.19.tar.gz", hash = "sha256:86ced30ce84a66e481c8ec288b880eea396efd7f8b62257e787c49373f552d38", size = 33241, upload-time = "2024-05-11T19:07:47.343Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/4b/614e4557b76623b007747bb2403627960ef3e0f31f670dcaf29874b7209f/singularity_compose-0.1.19-py3-none-any.whl", hash = "sha256:e5505efc80dfe77e82b7440cbfd38ef3e4458949c6b9abd88eac67baf11f41c3", size = 48017, upload-time = "2024-05-11T19:07:45.671Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7844,6 +7857,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3b/44/6716b257b0aa6bfd51a1b31665d1c205fb12cb5ad56de752dfa15657de2f/sphinxcontrib_serializinghtml-2.0.0.tar.gz", hash = "sha256:e9d912827f872c029017a53f0ef2180b327c3f7fd23c87229f7a8e8b70031d4d", size = 16080, upload-time = "2024-07-29T01:10:09.332Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/a7/d2782e4e3f77c8450f727ba74a8f12756d5ba823d81b941f1b04da9d033a/sphinxcontrib_serializinghtml-2.0.0-py3-none-any.whl", hash = "sha256:6e2cb0eef194e10c27ec0023bfeb25badbbb5868244cf5bc5bdc04e4464bf331", size = 92072, upload-time = "2024-07-29T01:10:08.203Z" },
+]
+
+[[package]]
+name = "spython"
+version = "0.3.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/55/ecc3cfb2168177440d42fdea999a3c64a92e97e1e3fde9884a19408aab4c/spython-0.3.14.tar.gz", hash = "sha256:8ad53ef034395cfa2d8a710cc1c3638e4475e5bbc6a2842d317db8013c2e4188", size = 69164, upload-time = "2024-09-15T00:28:58.14Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/38/8b6fc7a8153cb49eb3a9a13acfa9eeb6cc476e37888781e593e6f02ac05e/spython-0.3.14-py3-none-any.whl", hash = "sha256:72968583e498bc2a51f9acd0ed6bc0d7d1f7ccd491feaba5e2f7d944bc51da3a", size = 109720, upload-time = "2024-09-15T00:28:56.713Z" },
 ]
 
 [[package]]
@@ -8858,6 +8880,7 @@ harbor = [
     { name = "harbor", marker = "python_full_version >= '3.12'" },
     { name = "pathspec", version = "0.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "pathspec", version = "1.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "singularity-compose" },
 ]
 image = [
     { name = "pillow" },
@@ -8953,6 +8976,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.2.0,<15.0" },
     { name = "scipy", marker = "extra == 'metric-plots'", specifier = ">=1.16.2,<2.0.0" },
     { name = "selectolax", specifier = ">=0.4.0,<0.5" },
+    { name = "singularity-compose", marker = "extra == 'harbor'", specifier = ">=0.1.19,<0.2" },
     { name = "textual", extras = ["syntax"], specifier = ">=8.2.8,<9.0" },
     { name = "torch", marker = "extra == 'fm'", specifier = ">=2.9.0" },
     { name = "trafilatura", marker = "extra == 'lammps'", specifier = ">=1.6.1,<1.7" },
