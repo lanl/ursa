@@ -46,11 +46,65 @@ from ursa.integrations.harbor_singularity import (  # noqa: E402
     DockerfileSingularityEnvironment,
     docker_compose_to_singularity_compose,
 )
+from ursa.integrations.harbor_validation import (  # noqa: E402
+    discover_harbor_tasks,
+    validate_harbor_task,
+)
 
 
 def _config(path: Path) -> Path:
     path.write_text("llm_model:\n  model: gpt-4.1-nano\n")
     return path
+
+
+def _harbor_task(tmp_path: Path, *, sidecar: bool = False) -> Path:
+    task = tmp_path / "example-task"
+    (task / "environment").mkdir(parents=True)
+    (task / "tests").mkdir()
+    (task / "instruction.md").write_text("Complete the task.\n")
+    (task / "environment" / "Dockerfile").write_text("FROM scratch\n")
+    (task / "tests" / "Dockerfile").write_text("FROM scratch\n")
+    services = "  main:\n    build: .\n"
+    if sidecar:
+        services += "  database:\n    image: postgres:17\n"
+    (task / "tests" / "docker-compose.yaml").write_text(
+        f"services:\n{services}"
+    )
+    (task / "task.toml").write_text(
+        """schema_version = "1.4"
+
+[task]
+name = "example/task"
+version = "1.0.0"
+description = "Example task"
+
+[verifier]
+environment_mode = "separate"
+
+[verifier.environment]
+network_mode = "no-network"
+
+[environment]
+network_mode = "public"
+"""
+    )
+    return task
+
+
+def test_validate_harbor_task_accepts_supported_definitions(tmp_path):
+    task = _harbor_task(tmp_path)
+
+    validate_harbor_task(task)
+
+    assert discover_harbor_tasks([tmp_path]) == [task]
+    assert discover_harbor_tasks([task / "tests" / "Dockerfile"]) == [task]
+
+
+def test_validate_harbor_task_rejects_no_network_sidecar(tmp_path):
+    task = _harbor_task(tmp_path, sidecar=True)
+
+    with pytest.raises(ValueError, match="sidecar networking"):
+        validate_harbor_task(task)
 
 
 @pytest.fixture(autouse=True)
