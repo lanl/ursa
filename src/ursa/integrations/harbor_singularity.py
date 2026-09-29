@@ -1020,8 +1020,9 @@ class DockerfileSingularityEnvironment(SingularityEnvironment):
             hashlib.sha256(self.session_id.encode()).hexdigest()[:16],
         )
         service_hash = hashlib.sha256(service.encode()).hexdigest()[:6]
-        safe_service = re.sub(r"[^A-Za-z0-9_-]", "_", service)[:24]
-        return f"u{session}_{safe_service}_{service_hash}"
+        safe_service = re.sub(r"[^a-z0-9-]", "-", service.lower())[:24]
+        safe_service = safe_service.rstrip("-")
+        return f"u{session}-{safe_service}-{service_hash}"
 
     @staticmethod
     def _compose_scalar(value: Any) -> str:

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -1636,6 +1637,21 @@ def test_singularity_compose_uses_unique_instance_names(tmp_path, monkeypatch):
 
     assert first.session_id == second.session_id
     assert first._compose_key("main") != second._compose_key("main")
+
+
+def test_singularity_compose_uses_hostname_safe_instance_names(
+    tmp_path, monkeypatch
+):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services: {main: {}}\n",
+    )
+
+    key = environment._compose_key("API_worker.v1-")
+
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", key)
+    assert len(f"{key}1") <= 63
 
 
 @pytest.mark.asyncio
