@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import fnmatch
+import importlib.metadata
 import json
 import re
 import shlex
@@ -52,10 +53,11 @@ class UrsaHarborAgent(BaseInstalledAgent):
         agent_import_path: ``module:Class`` path for the URSA agent. Defaults
             to :class:`ursa.agents.ExecutionAgent`.
         config_file: URSA YAML or JSON configuration file.
-        config_only: Merge only ``config_file`` before Harbor's settings. By
-            default, the system and user config layers are included first.
+        config_only: Merge only ``config_file`` before Harbor's settings. Set
+            false to include the system and user config layers first.
         ursa_install_spec: Package requirement, Git URL, or local Python project
-            directory installed in each task container.
+            directory installed in each task container. Defaults to this URSA
+            checkout or installed version.
         ursa_extras: URSA package extras to install, as a sequence or comma-separated
             string.
         extra_packages: Additional Python packages to install, as a sequence or
@@ -63,8 +65,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
     """
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
-    URSA_PYTHON = "/opt/ursa/bin/python3"
     URSA_PYTHON_VERSION = "3.13"
+    URSA_RUNNER = "/usr/local/bin/ursa-harbor-runner"
     ENV_AUTH_PROVIDERS = frozenset({
         "amazon-bedrock",
         "sagemaker",
@@ -76,8 +78,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
         *args: Any,
         agent_import_path: str = "ursa.agents:ExecutionAgent",
         config_file: str | Path,
-        config_only: bool | str = False,
-        ursa_install_spec: str | Path = "ursa-ai",
+        config_only: bool | str = True,
+        ursa_install_spec: str | Path | None = None,
         ursa_extras: str | Sequence[str] | None = None,
         extra_packages: str | Sequence[str] | None = None,
         **kwargs: Any,
@@ -86,7 +88,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
         self.agent_import_path = agent_import_path
         self.config_file = Path(config_file).expanduser().resolve()
         self.config_only = self._parse_bool(config_only, "config_only")
-        self.ursa_install_spec = self._parse_install_spec(ursa_install_spec)
+        install_spec = (
+            self._default_install_spec()
+            if ursa_install_spec is None
+            else ursa_install_spec
+        )
+        self.ursa_install_spec = self._parse_install_spec(install_spec)
         self.ursa_extras = self._parse_list(ursa_extras)
         self.extra_packages = self._parse_list(extra_packages)
         self._secret_env: dict[str, str] = {}
@@ -110,6 +117,13 @@ class UrsaHarborAgent(BaseInstalledAgent):
         if normalized in {"false", "0", "no"}:
             return False
         raise ValueError(f"{name} must be true or false")
+
+    @staticmethod
+    def _default_install_spec() -> str | Path:
+        checkout = Path(__file__).resolve().parents[3]
+        if (checkout / "pyproject.toml").is_file():
+            return checkout
+        return f"ursa-ai=={importlib.metadata.version('ursa-ai')}"
 
     @staticmethod
     def _parse_install_spec(value: str | Path) -> str | Path:
@@ -145,6 +159,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
             raise ValueError(
                 "ursa_install_spec must not include extras when ursa_extras is set"
             )
+        if "://" in target:
+            return f"ursa-ai[{extras}] @ {target}"
         distribution = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", target)
         if distribution:
             end = distribution.end()
@@ -360,30 +376,16 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 elif source_file.is_file():
                     shutil.copy2(source_file, destination_file)
             return
-        shutil.copytree(
-            source,
-            destination,
-            ignore=shutil.ignore_patterns(
-                ".git",
-                ".venv",
-                ".env",
-                ".env.*",
-                ".netrc",
-                ".pypirc",
-                ".aws",
-                "gcloud",
-                "credentials",
-                "credentials.json",
-                "credentials.yaml",
-                "credentials.yml",
-                "*.key",
-                "*.pem",
-                ".pytest_cache",
-                ".ruff_cache",
-                "__pycache__",
-                "jobs",
-            ),
-        )
+
+        def ignored(directory: str, names: list[str]) -> list[str]:
+            relative = Path(directory).relative_to(source)
+            return [
+                name
+                for name in names
+                if UrsaHarborAgent._is_sensitive_source_path(relative / name)
+            ]
+
+        shutil.copytree(source, destination, ignore=ignored)
 
     @staticmethod
     def _is_sensitive_source_path(path: Path) -> bool:
@@ -450,9 +452,6 @@ class UrsaHarborAgent(BaseInstalledAgent):
         # example, amd64 Terminal-Bench images on an arm64 host). The musl
         # release is statically linked and works both natively and under QEMU.
         uv_version = "0.12.8"
-        python_version_info = tuple(
-            int(part) for part in self.URSA_PYTHON_VERSION.split(".")
-        )
         await self.exec_as_root(
             environment,
             command=(
@@ -507,23 +506,20 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 self._stage_source(install_target, staged_source)
                 await environment.upload_dir(staged_source, remote_source)
             install_target = remote_source
-        await self.exec_as_root(
-            environment,
-            command=(
-                "/opt/uv/uv venv --managed-python --python "
-                f"{self.URSA_PYTHON_VERSION} /opt/ursa && "
-                f'{self.URSA_PYTHON} -c "import sys; '
-                f'assert sys.version_info[:2] == {python_version_info!r}"'
-            ),
-            timeout_sec=600,
+        install_target = self._install_target(install_target)
+        extra_packages = " ".join(
+            f"--with {shlex.quote(package)}" for package in self.extra_packages
         )
-        packages = [self._install_target(install_target), *self.extra_packages]
         await self.exec_as_root(
             environment,
             command=(
-                "/opt/uv/uv pip install --python "
-                f"{self.URSA_PYTHON} "
-                + " ".join(shlex.quote(package) for package in packages)
+                "UV_TOOL_DIR=/opt/ursa-tools "
+                "UV_TOOL_BIN_DIR=/usr/local/bin "
+                "/opt/uv/uv tool install --force --python "
+                f"{self.URSA_PYTHON_VERSION} "
+                f"{extra_packages} {shlex.quote(install_target)} && "
+                'test "$(command -v ursa)" = /usr/local/bin/ursa && '
+                "test -x /usr/local/bin/ursa-harbor-runner"
             ),
             timeout_sec=900,
         )
@@ -564,8 +560,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 environment,
                 command=(
                     f"echo $$ > {runner_pid_file}; "
-                    f"exec {self.URSA_PYTHON} -m ursa.integrations.harbor_runner "
-                    + shlex.quote(encoded)
+                    f"exec {self.URSA_RUNNER} " + shlex.quote(encoded)
                 ),
                 env={**self._model_env, **self._secret_env},
                 cwd=self._workspace,
