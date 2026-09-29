@@ -3087,6 +3087,8 @@ def _instance_test_environment(tmp_path, network_mode=NetworkMode.PUBLIC):
     environment._sif_path = tmp_path / "image.sif"
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
+    environment._overlay_path = tmp_path / "overlay.img"
+    environment._overlay_path.touch()
     environment._instance_name = "ursatestinstance"
     environment._instance_started = False
     environment._network_policy = NetworkPolicy(network_mode=network_mode)
@@ -3281,6 +3283,29 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
 
     assert "--fakeroot" not in command
     assert "--containall" in command
+    assert "--writable-tmpfs" not in command
+    overlay_index = command.index("--overlay")
+    assert command[overlay_index + 1] == str(environment._overlay_path)
+
+
+def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):
+    environment = _instance_test_environment(tmp_path)
+    environment._overlay_path = None
+    environment.task_env_config = SimpleNamespace(storage_mb=128)
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append((command, kwargs))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    environment._prepare_disk_overlay()
+
+    assert environment._overlay_path is not None
+    assert environment._overlay_path.stat().st_size == 128 * 1024 * 1024
+    assert commands[0][0][1:3] == ["-q", "-d"]
+    assert commands[0][1]["check"] is True
+    assert not (environment._staging_dir / "overlay-layout").exists()
 
 
 def test_singularity_no_network_uses_none_network(tmp_path):
