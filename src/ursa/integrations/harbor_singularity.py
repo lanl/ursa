@@ -104,6 +104,17 @@ def _normalize_compose_service(
             raise ValueError(
                 f"Docker Compose build args on service {name!r} must be a mapping or list"
             )
+        build_args = build.get("args", {})
+        if (
+            isinstance(build_args, dict)
+            and not all(isinstance(key, str) for key in build_args)
+        ) or (
+            isinstance(build_args, list)
+            and not all(isinstance(entry, str) for entry in build_args)
+        ):
+            raise ValueError(
+                f"Docker Compose build args on service {name!r} must use string names"
+            )
     elif build is not None:
         raise ValueError(
             f"Docker Compose build on service {name!r} must be a path or mapping"
@@ -118,9 +129,16 @@ def _normalize_compose_service(
             f"Docker Compose command on service {name!r} must contain only strings"
         )
     environment = service.get("environment", {})
-    if not isinstance(environment, (dict, list)) or (
-        isinstance(environment, list)
-        and not all(isinstance(entry, str) for entry in environment)
+    if (
+        not isinstance(environment, (dict, list))
+        or (
+            isinstance(environment, dict)
+            and not all(isinstance(key, str) for key in environment)
+        )
+        or (
+            isinstance(environment, list)
+            and not all(isinstance(entry, str) for entry in environment)
+        )
     ):
         raise ValueError(
             f"Docker Compose environment on service {name!r} must contain only strings"
@@ -162,8 +180,9 @@ def _normalize_compose_service(
                 required = entry.get("required", True)
                 entry = entry["path"]
             if not isinstance(entry, str):
-                normalized.append(entry)
-                continue
+                raise ValueError(
+                    f"Docker Compose env_file on service {name!r} must contain paths"
+                )
             path = _compose_path(entry, base_dir)
             if required or Path(path).is_file():
                 normalized.append(path)
@@ -172,6 +191,10 @@ def _normalize_compose_service(
     depends_on = service.get("depends_on")
     if isinstance(depends_on, dict):
         for dependency, options in depends_on.items():
+            if not isinstance(dependency, str):
+                raise ValueError(
+                    f"Docker Compose depends_on on service {name!r} must use string names"
+                )
             options = options or {}
             if not isinstance(options, dict) or (
                 set(options) - {"condition", "required", "restart"}
@@ -194,6 +217,10 @@ def _normalize_compose_service(
         )
 
     volumes = service.get("volumes")
+    if volumes is not None and not isinstance(volumes, list):
+        raise ValueError(
+            f"Docker Compose volumes on service {name!r} must be a list"
+        )
     if isinstance(volumes, list):
         for index, volume in enumerate(volumes):
             if not isinstance(volume, dict):
@@ -228,6 +255,10 @@ def _normalize_compose_service(
             volumes[index] = f"{source}:{target}"
 
     ports = service.get("ports")
+    if ports is not None and not isinstance(ports, list):
+        raise ValueError(
+            f"Docker Compose ports on service {name!r} must be a list"
+        )
     if isinstance(ports, list):
         for index, port in enumerate(ports):
             if not isinstance(port, dict):

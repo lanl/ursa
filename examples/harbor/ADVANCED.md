@@ -7,12 +7,13 @@ Add URSA extras or other packages with agent kwargs:
 
 ```bash
 --agent-kwarg ursa_extras=image \
---agent-kwarg extra_packages=numpy,scipy
+--agent-kwarg 'extra_packages=["numpy","scipy"]'
 ```
 
-Set `ursa_install_spec` to a package requirement, Git URL, or local project
-directory. A local directory is staged into the task container while excluding
-Git-ignored files and common secret files:
+Set `ursa_install_spec` to a package requirement, Git URL, local project
+directory, or local wheel/sdist archive. Local inputs are staged into the task
+container; project directories exclude Git-ignored files and common secret
+files:
 
 ```bash
 --agent-kwarg ursa_install_spec=/path/to/checkout

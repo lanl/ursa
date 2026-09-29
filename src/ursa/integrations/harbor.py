@@ -56,9 +56,9 @@ class UrsaHarborAgent(BaseInstalledAgent):
         config_file: URSA YAML or JSON configuration file.
         config_only: Merge only ``config_file`` before Harbor's settings. Set
             false to include the system and user config layers first.
-        ursa_install_spec: Package requirement, Git URL, or local Python project
-            directory installed in each task container. Defaults to this URSA
-            checkout or installed version.
+        ursa_install_spec: Package requirement, Git URL, local Python project,
+            or local wheel/sdist installed in each task container. Defaults to
+            this URSA checkout or installed version.
         ursa_extras: URSA package extras to install, as a sequence or comma-separated
             string.
         extra_packages: Additional Python packages to install. Pass one requirement
@@ -95,26 +95,50 @@ class UrsaHarborAgent(BaseInstalledAgent):
             else ursa_install_spec
         )
         self.ursa_install_spec = self._parse_install_spec(install_spec)
-        self.ursa_extras = self._parse_list(ursa_extras, split_commas=True)
-        self.extra_packages = self._parse_list(extra_packages)
+        self.ursa_extras = self._parse_list(
+            ursa_extras, name="ursa_extras", split_commas=True
+        )
+        self.extra_packages = self._parse_list(
+            extra_packages, name="extra_packages"
+        )
         self._secret_env: dict[str, str] = {}
         self._model_env: dict[str, str] = {}
         self._workspace = "/"
 
     @staticmethod
     def _parse_list(
-        value: str | Sequence[str] | None, *, split_commas: bool = False
+        value: str | Sequence[str] | None,
+        *,
+        name: str,
+        split_commas: bool = False,
     ) -> tuple[str, ...]:
         if value is None:
             return ()
-        values = (
-            value.split(",")
-            if isinstance(value, str) and split_commas
-            else [value]
-            if isinstance(value, str)
-            else value
-        )
+        if isinstance(value, str):
+            if split_commas:
+                values = value.split(",")
+            elif value.lstrip().startswith("["):
+                try:
+                    values = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"{name} must be a requirement or JSON array of strings"
+                    ) from exc
+                if not isinstance(values, list):
+                    raise ValueError(
+                        f"{name} must be a requirement or JSON array of strings"
+                    )
+            else:
+                values = [value]
+        else:
+            values = value
+        if not all(isinstance(item, str) for item in values):
+            raise ValueError(f"{name} must contain only strings")
         return tuple(item.strip() for item in values if item.strip())
+
+    @staticmethod
+    def _is_package_archive(path: Path) -> bool:
+        return path.name.endswith((".whl", ".zip", ".tar.gz"))
 
     @staticmethod
     def _parse_bool(value: bool | str, name: str) -> bool:
@@ -143,6 +167,14 @@ class UrsaHarborAgent(BaseInstalledAgent):
                     source = Path(unquote(parsed.path))
                     if (source / "pyproject.toml").is_file():
                         return source.resolve()
+                    if source.is_file() and UrsaHarborAgent._is_package_archive(
+                        source
+                    ):
+                        return source.resolve()
+                    raise ValueError(
+                        "URSA was installed from a local source that is no longer "
+                        "available; pass ursa_install_spec explicitly"
+                    )
                 vcs = provenance.get("vcs_info", {})
                 if isinstance(vcs, dict) and isinstance(vcs.get("vcs"), str):
                     revision = vcs.get("commit_id") or vcs.get(
@@ -173,9 +205,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
         path = path.resolve()
         if not path.exists():
             raise ValueError(f"ursa_install_spec path does not exist: {path}")
-        if not (path / "pyproject.toml").is_file():
+        if path.is_file() and UrsaHarborAgent._is_package_archive(path):
+            return path
+        if not path.is_dir() or not (path / "pyproject.toml").is_file():
             raise ValueError(
-                f"ursa_install_spec is not a Python project: {path}"
+                "ursa_install_spec is not a Python project or wheel/sdist "
+                f"archive: {path}"
             )
         return path
 
@@ -546,14 +581,19 @@ class UrsaHarborAgent(BaseInstalledAgent):
             )
         install_target = self.ursa_install_spec
         if isinstance(install_target, Path):
-            remote_source = "/tmp/ursa-source"
-            with tempfile.TemporaryDirectory(
-                prefix="ursa-harbor-source-"
-            ) as temp_dir:
-                staged_source = Path(temp_dir) / "ursa"
-                self._stage_source(install_target, staged_source)
-                await environment.upload_dir(staged_source, remote_source)
-            install_target = remote_source
+            if install_target.is_file():
+                remote_source = f"/tmp/{install_target.name}"
+                await environment.upload_file(install_target, remote_source)
+                install_target = f"file://{remote_source}"
+            else:
+                remote_source = "/tmp/ursa-source"
+                with tempfile.TemporaryDirectory(
+                    prefix="ursa-harbor-source-"
+                ) as temp_dir:
+                    staged_source = Path(temp_dir) / "ursa"
+                    self._stage_source(install_target, staged_source)
+                    await environment.upload_dir(staged_source, remote_source)
+                install_target = remote_source
         install_target = self._install_target(install_target)
         extra_packages = " ".join(
             f"--with {shlex.quote(package)}" for package in self.extra_packages

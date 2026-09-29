@@ -921,6 +921,125 @@ def test_install_extras_extend_an_existing_named_direct_reference(tmp_path):
     assert agent.extra_packages == ("numpy>=1.26,<3",)
 
 
+def test_extra_packages_accepts_a_json_array_from_the_cli(tmp_path):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+        extra_packages='  ["numpy","scipy"]',
+    )
+
+    assert agent.extra_packages == ("numpy", "scipy")
+
+
+@pytest.mark.parametrize("extra_packages", ['["numpy", 1]', "[invalid"])
+def test_extra_packages_rejects_invalid_json_arrays(tmp_path, extra_packages):
+    with pytest.raises(ValueError, match="extra_packages"):
+        UrsaHarborAgent(
+            logs_dir=tmp_path / "logs",
+            model_name="openai/gpt-4.1-nano",
+            config_file=_config(tmp_path / "ursa.yaml"),
+            extra_packages=extra_packages,
+        )
+
+
+@pytest.mark.parametrize(
+    "archive_name",
+    ["ursa_ai-0.0-py3-none-any.whl", "ursa_ai-0.0.tar.gz", "ursa_ai-0.0.zip"],
+)
+def test_default_install_spec_uses_installed_local_archive(
+    tmp_path, monkeypatch, archive_name
+):
+    archive = tmp_path / archive_name
+    archive.write_bytes(b"wheel")
+    installed_module = (
+        tmp_path / "installed" / "site-packages" / "ursa" / "integrations"
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.__file__", str(installed_module / "harbor.py")
+    )
+    distribution = SimpleNamespace(
+        version="0.0",
+        read_text=lambda _name: json.dumps({"url": archive.as_uri()}),
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.importlib.metadata.distribution",
+        lambda _name: distribution,
+    )
+
+    assert UrsaHarborAgent._default_install_spec() == archive
+
+
+def test_default_install_spec_rejects_invalid_local_provenance(
+    tmp_path, monkeypatch
+):
+    artifact = tmp_path / "ursa.txt"
+    artifact.write_text("not a package")
+    installed_module = (
+        tmp_path / "installed" / "site-packages" / "ursa" / "integrations"
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.__file__", str(installed_module / "harbor.py")
+    )
+    distribution = SimpleNamespace(
+        version="0.0",
+        read_text=lambda _name: json.dumps({"url": artifact.as_uri()}),
+    )
+    monkeypatch.setattr(
+        "ursa.integrations.harbor.importlib.metadata.distribution",
+        lambda _name: distribution,
+    )
+
+    with pytest.raises(ValueError, match="pass ursa_install_spec"):
+        UrsaHarborAgent._default_install_spec()
+
+
+def test_install_spec_rejects_a_non_package_file(tmp_path):
+    artifact = tmp_path / "ursa.txt"
+    artifact.write_text("not a package")
+
+    with pytest.raises(ValueError, match="Python project or wheel/sdist"):
+        UrsaHarborAgent(
+            logs_dir=tmp_path / "logs",
+            model_name="openai/gpt-4.1-nano",
+            config_file=_config(tmp_path / "ursa.yaml"),
+            ursa_install_spec=artifact,
+        )
+
+
+@pytest.mark.asyncio
+async def test_install_uploads_a_local_archive(tmp_path, monkeypatch):
+    archive = tmp_path / "ursa_ai-0.0-py3-none-any.whl"
+    archive.write_bytes(b"wheel")
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+        ursa_install_spec=archive,
+        ursa_extras="harbor",
+    )
+    commands = []
+    uploads = []
+
+    async def fake_exec_as_root(_environment, command, **_kwargs):
+        commands.append(command)
+
+    async def fake_exec_as_agent(*_args, **_kwargs):
+        return SimpleNamespace(stdout="/app\n")
+
+    class FakeEnvironment:
+        async def upload_file(self, source, destination):
+            uploads.append((source, destination))
+
+    monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
+    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+
+    await agent.install(FakeEnvironment())
+
+    assert uploads[0] == (archive, f"/tmp/{archive.name}")
+    assert f"ursa-ai[harbor] @ file:///tmp/{archive.name}" in commands[1]
+
+
 @pytest.mark.parametrize(
     "install_spec",
     [
@@ -2205,6 +2324,19 @@ services:
     assert "TASK_TOKEN=host-token" in main_env
 
 
+def test_singularity_compose_accepts_list_build_args(tmp_path, monkeypatch):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services: {main: {build: {args: [BUILD_VALUE=example]}}}\n",
+    )
+    build = environment._load_compose_config()["services"]["main"]["build"]
+
+    assert environment._compose_build_inputs(build)[2] == (
+        "BUILD_VALUE=example",
+    )
+
+
 @pytest.mark.asyncio
 async def test_singularity_compose_main_build_can_change_context(
     tmp_path, monkeypatch
@@ -2403,6 +2535,30 @@ services:
         (
             "services: {main: {environment: [VALUE=ok, 1]}}\n",
             "environment.*only strings",
+        ),
+        (
+            "services: {main: {environment: {1: value}}}\n",
+            "environment.*only strings",
+        ),
+        (
+            "services: {main: {build: {args: [1]}}}\n",
+            "build args.*string names",
+        ),
+        (
+            "services: {main: {env_file: [1]}}\n",
+            "env_file.*contain paths",
+        ),
+        (
+            "services: {main: {depends_on: {1: {}}}}\n",
+            "depends_on.*string names",
+        ),
+        (
+            "services: {main: {volumes: {}}}\n",
+            "volumes.*list",
+        ),
+        (
+            "services: {main: {ports: {}}}\n",
+            "ports.*list",
         ),
         (
             "services: {main: {env_file: {path: missing, required: 'false'}}}\n",
