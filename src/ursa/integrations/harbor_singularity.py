@@ -1427,9 +1427,15 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         resolve_default_user: bool = True,
     ) -> str:
         command = f"cd {shlex.quote(cwd or default_cwd or self._workdir)} && {command}"
-        resolved_user = (
-            self._resolve_user(user) if resolve_default_user else user
-        )
+        # A rootless Singularity instance can only execute as the invoking
+        # host user. Attempting to honor Harbor's requested image user with
+        # ``su`` prompts for a container password and prevents every command
+        # from starting. User switching is available only in fakeroot mode.
+        resolved_user = None
+        if self._fakeroot:
+            resolved_user = (
+                self._resolve_user(user) if resolve_default_user else user
+            )
         if resolved_user is not None:
             if isinstance(resolved_user, int):
                 user_arg = f"$(getent passwd {resolved_user} | cut -d: -f1)"

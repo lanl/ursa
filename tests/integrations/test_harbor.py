@@ -3703,6 +3703,35 @@ async def test_singularity_exec_uses_instance_and_closes_stdin(
 
 
 @pytest.mark.asyncio
+async def test_singularity_exec_without_fakeroot_does_not_switch_user(
+    tmp_path, monkeypatch
+):
+    environment = _exec_test_environment(tmp_path)
+    environment._fakeroot = False
+    environment.default_user = "agent"
+    calls = []
+
+    class Process:
+        pid = 12345
+        returncode = 0
+
+        async def communicate(self):
+            return b"done", b""
+
+    async def create_process(*command, **kwargs):
+        calls.append((command, kwargs))
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+
+    await environment.exec("printf explicit", user="root")
+    await environment.exec("printf default")
+
+    assert len(calls) == 2
+    assert all("su " not in command[-1] for command, _kwargs in calls)
+
+
+@pytest.mark.asyncio
 async def test_singularity_exec_timeout_returns_124_and_cleans_remote(
     tmp_path, monkeypatch
 ):
