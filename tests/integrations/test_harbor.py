@@ -3710,6 +3710,8 @@ async def test_singularity_exec_without_fakeroot_does_not_switch_user(
     environment._fakeroot = False
     environment.default_user = "agent"
     calls = []
+    warnings = []
+    environment.logger.warning = lambda *args: warnings.append(args)
 
     class Process:
         pid = 12345
@@ -3729,6 +3731,8 @@ async def test_singularity_exec_without_fakeroot_does_not_switch_user(
 
     assert len(calls) == 2
     assert all("su " not in command[-1] for command, _kwargs in calls)
+    assert len(warnings) == 1
+    assert warnings[0][1] == "root"
 
 
 @pytest.mark.asyncio
