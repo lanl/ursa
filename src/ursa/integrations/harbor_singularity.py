@@ -1262,6 +1262,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     "Singularity writable overlay is not prepared"
                 )
             command.extend(["--overlay", str(self._overlay_path)])
+            for source, target in self._rootless_harbor_binds():
+                command.extend(["-B", f"{source}:{target}"])
         if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
             command.extend(["--net", "--network", "none"])
         command.extend(["-B", f"{self._staging_dir}:/staging"])
@@ -1278,6 +1280,16 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             command.extend(["-B", bind])
         command.extend([str(self._sif_path), self._instance_name])
         return command
+
+    def _rootless_harbor_binds(self) -> tuple[tuple[Path, PurePosixPath], ...]:
+        if self._staging_dir is None:
+            raise RuntimeError("Singularity staging directory is not prepared")
+        root = self._staging_dir / "harbor-writable"
+        return (
+            (root / "solution", EnvironmentPaths.solution_dir),
+            (root / "tests", EnvironmentPaths.tests_dir),
+            (root / "skills", EnvironmentPaths.default_skills_dir),
+        )
 
     def _prepare_disk_overlay(self) -> None:
         if self._staging_dir is None:
@@ -1309,6 +1321,9 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             directory = layout / "upper" / relative
             directory.mkdir(parents=True, exist_ok=True)
             directory.chmod(0o777)
+        for source, _target in self._rootless_harbor_binds():
+            source.mkdir(parents=True, exist_ok=True)
+            source.chmod(0o777)
         overlay = self._staging_dir / "overlay.img"
         overlay.touch()
         os.truncate(overlay, storage_mb * 1024 * 1024)

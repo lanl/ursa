@@ -3278,6 +3278,8 @@ def test_singularity_public_instance_uses_36_flags(tmp_path):
 def test_singularity_instance_can_disable_fakeroot(tmp_path):
     environment = _instance_test_environment(tmp_path)
     environment._fakeroot = False
+    for source, _target in environment._rootless_harbor_binds():
+        source.mkdir(parents=True, exist_ok=True)
 
     command = environment._instance_start_command()
 
@@ -3286,6 +3288,16 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
     assert "--writable-tmpfs" not in command
     overlay_index = command.index("--overlay")
     assert command[overlay_index + 1] == str(environment._overlay_path)
+    binds = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-B"
+    ]
+    assert binds[:3] == [
+        f"{environment._staging_dir}/harbor-writable/solution:/solution",
+        f"{environment._staging_dir}/harbor-writable/tests:/tests",
+        f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",
+    ]
 
 
 def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):
@@ -3310,6 +3322,9 @@ def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):
     assert environment._overlay_path.stat().st_size == 128 * 1024 * 1024
     assert commands[0][0][1:3] == ["-q", "-d"]
     assert commands[0][1]["check"] is True
+    for source, _target in environment._rootless_harbor_binds():
+        assert source.is_dir()
+        assert source.stat().st_mode & 0o777 == 0o777
     assert not (environment._staging_dir / "overlay-layout").exists()
 
 
