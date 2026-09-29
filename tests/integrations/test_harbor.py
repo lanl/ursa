@@ -3293,7 +3293,8 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
         for index, value in enumerate(command)
         if value == "-B"
     ]
-    assert binds[:3] == [
+    assert binds[:4] == [
+        f"{environment._staging_dir}/harbor-writable/logs:/logs",
         f"{environment._staging_dir}/harbor-writable/solution:/solution",
         f"{environment._staging_dir}/harbor-writable/tests:/tests",
         f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",

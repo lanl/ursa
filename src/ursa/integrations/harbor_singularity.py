@@ -1286,6 +1286,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             raise RuntimeError("Singularity staging directory is not prepared")
         root = self._staging_dir / "harbor-writable"
         return (
+            (root / "logs", EnvironmentPaths.logs_dir),
             (root / "solution", EnvironmentPaths.solution_dir),
             (root / "tests", EnvironmentPaths.tests_dir),
             (root / "skills", EnvironmentPaths.default_skills_dir),
