@@ -2059,7 +2059,33 @@ async def test_docker_compose_conversion_is_file_to_file(tmp_path):
     main = generated["instances"][next(iter(generated["instances"]))]
     assert main["image"] == "docker://busybox:latest"
     assert main["volumes"] == [f"{staging}:/staging"]
+    assert main["start"]["options"] == ["fakeroot", "containall", "no-home"]
     assert instances["main"][0].endswith("1")
+
+
+@pytest.mark.asyncio
+async def test_docker_compose_conversion_can_disable_fakeroot(tmp_path):
+    source = tmp_path / "docker-compose.yaml"
+    source.write_text("services: {main: {image: busybox:latest}}\n")
+    destination = tmp_path / "project" / "singularity-compose.yml"
+    staging = tmp_path / "staging"
+    staging.mkdir()
+
+    async def resolve_image(_name, _service):
+        return "docker://busybox:latest"
+
+    await docker_compose_to_singularity_compose(
+        source,
+        destination,
+        identity="test",
+        image_resolver=resolve_image,
+        staging_dir=staging,
+        fakeroot=False,
+    )
+
+    generated = yaml.safe_load(destination.read_text())
+    main = generated["instances"][next(iter(generated["instances"]))]
+    assert main["start"]["options"] == ["containall", "no-home"]
 
 
 @pytest.mark.asyncio
@@ -3065,6 +3091,7 @@ def _instance_test_environment(tmp_path, network_mode=NetworkMode.PUBLIC):
     environment._instance_started = False
     environment._network_policy = NetworkPolicy(network_mode=network_mode)
     environment._force_pull = False
+    environment._fakeroot = True
     environment.logger = SimpleNamespace(
         debug=lambda *_args: None,
         warning=lambda *_args: None,
@@ -3244,6 +3271,16 @@ def test_singularity_public_instance_uses_36_flags(tmp_path):
         str(environment._sif_path),
         environment._instance_name,
     ]
+
+
+def test_singularity_instance_can_disable_fakeroot(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._fakeroot = False
+
+    command = environment._instance_start_command()
+
+    assert "--fakeroot" not in command
+    assert "--containall" in command
 
 
 def test_singularity_no_network_uses_none_network(tmp_path):
