@@ -20,6 +20,7 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from jsonargparse import Namespace
 from pydantic import SecretStr
@@ -60,8 +61,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
             checkout or installed version.
         ursa_extras: URSA package extras to install, as a sequence or comma-separated
             string.
-        extra_packages: Additional Python packages to install, as a sequence or
-            comma-separated string.
+        extra_packages: Additional Python packages to install. Pass one requirement
+            string or a sequence of requirement strings.
     """
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
@@ -94,17 +95,25 @@ class UrsaHarborAgent(BaseInstalledAgent):
             else ursa_install_spec
         )
         self.ursa_install_spec = self._parse_install_spec(install_spec)
-        self.ursa_extras = self._parse_list(ursa_extras)
+        self.ursa_extras = self._parse_list(ursa_extras, split_commas=True)
         self.extra_packages = self._parse_list(extra_packages)
         self._secret_env: dict[str, str] = {}
         self._model_env: dict[str, str] = {}
         self._workspace = "/"
 
     @staticmethod
-    def _parse_list(value: str | Sequence[str] | None) -> tuple[str, ...]:
+    def _parse_list(
+        value: str | Sequence[str] | None, *, split_commas: bool = False
+    ) -> tuple[str, ...]:
         if value is None:
             return ()
-        values = value.split(",") if isinstance(value, str) else value
+        values = (
+            value.split(",")
+            if isinstance(value, str) and split_commas
+            else [value]
+            if isinstance(value, str)
+            else value
+        )
         return tuple(item.strip() for item in values if item.strip())
 
     @staticmethod
@@ -123,7 +132,26 @@ class UrsaHarborAgent(BaseInstalledAgent):
         checkout = Path(__file__).resolve().parents[3]
         if (checkout / "pyproject.toml").is_file():
             return checkout
-        return f"ursa-ai=={importlib.metadata.version('ursa-ai')}"
+        distribution = importlib.metadata.distribution("ursa-ai")
+        direct_url = distribution.read_text("direct_url.json")
+        if direct_url:
+            provenance = json.loads(direct_url)
+            url = provenance.get("url")
+            if isinstance(url, str):
+                parsed = urlparse(url)
+                if parsed.scheme == "file":
+                    source = Path(unquote(parsed.path))
+                    if (source / "pyproject.toml").is_file():
+                        return source.resolve()
+                vcs = provenance.get("vcs_info", {})
+                if isinstance(vcs, dict) and isinstance(vcs.get("vcs"), str):
+                    revision = vcs.get("commit_id") or vcs.get(
+                        "requested_revision"
+                    )
+                    suffix = f"@{revision}" if revision else ""
+                    return f"{vcs['vcs']}+{url}{suffix}"
+                return url
+        return f"ursa-ai=={distribution.version}"
 
     @staticmethod
     def _parse_install_spec(value: str | Path) -> str | Path:
@@ -159,6 +187,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
             raise ValueError(
                 "ursa_install_spec must not include extras when ursa_extras is set"
             )
+        direct_reference = re.match(
+            r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\s*@\s*.+)$", target
+        )
+        if direct_reference:
+            name, reference = direct_reference.groups()
+            return f"{name}[{extras}]{reference}"
         if "://" in target:
             return f"ursa-ai[{extras}] @ {target}"
         distribution = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", target)
@@ -372,10 +406,24 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 destination_file = destination / relative
                 destination_file.parent.mkdir(parents=True, exist_ok=True)
                 if source_file.is_symlink():
-                    destination_file.symlink_to(source_file.readlink())
+                    raise ValueError(
+                        "ursa_install_spec source must not contain symlinks: "
+                        f"{relative}"
+                    )
                 elif source_file.is_file():
                     shutil.copy2(source_file, destination_file)
             return
+
+        for source_file in source.rglob("*"):
+            relative = source_file.relative_to(source)
+            if (
+                not UrsaHarborAgent._is_sensitive_source_path(relative)
+                and source_file.is_symlink()
+            ):
+                raise ValueError(
+                    "ursa_install_spec source must not contain symlinks: "
+                    f"{relative}"
+                )
 
         def ignored(directory: str, names: list[str]) -> list[str]:
             relative = Path(directory).relative_to(source)

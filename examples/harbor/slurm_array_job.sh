@@ -16,10 +16,10 @@ jobs_dir=${URSA_HARBOR_JOBS_DIR:-"$repo_root/jobs"}
 model=${URSA_HARBOR_MODEL:-openai/openai:gpt-5.4-nano}
 config_file=${URSA_HARBOR_CONFIG:-"$repo_root/examples/harbor/ursa.yaml"}
 mkdir -p "$cache_dir" "$jobs_dir"
-uv run
+uv run \
   --project "$repo_root/examples/harbor" \
-  --python 3.12 \
-    harbor run \
+  --python 3.13 \
+  harbor run \
   --path "$task" \
   --agent ursa.integrations.harbor:UrsaHarborAgent \
   --model "$model" \
@@ -29,5 +29,5 @@ uv run
   --env ursa.integrations.harbor_singularity:DockerfileSingularityEnvironment \
   --environment-kwarg "singularity_image_cache_dir=$cache_dir" \
   --jobs-dir "$jobs_dir" \
-  --n-concurrent 1
+  --n-concurrent 1 \
   --yes
