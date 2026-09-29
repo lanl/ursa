@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import importlib
+import inspect
 import json
 import signal
 import sqlite3
@@ -99,7 +100,12 @@ def _usage(metrics_path: Path) -> dict[str, Any]:
     }
 
 
-def _agent_config(config: Any, agent_class: type[Any]) -> dict[str, Any]:
+def _agent_config(
+    config: Any,
+    agent_class: type[Any],
+    *,
+    use_web: bool | None = None,
+) -> dict[str, Any]:
     """Select the conventional ``agent_config`` entry for an agent class."""
     name = agent_class.__name__.removesuffix("Agent")
     snake = "".join(
@@ -113,9 +119,15 @@ def _agent_config(config: Any, agent_class: type[Any]) -> dict[str, Any]:
         "prompting": "prompt",
     }
     key = aliases.get(snake, snake)
-    return dict(
+    options = dict(
         config.agent_config.get(key, config.agent_config.get(snake, {}))
     )
+    if (
+        use_web is not None
+        and "use_web" in inspect.signature(agent_class).parameters
+    ):
+        options["use_web"] = use_web
+    return options
 
 
 async def _attach_mcp_tools(agent: Any, mcp_servers: dict[str, Any]) -> None:
@@ -193,7 +205,11 @@ def _run(config: dict[str, Any]) -> None:
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     artifacts_dir = Path(config["artifacts_dir"])
     checkpointer = Checkpointer.from_workspace(artifacts_dir, db_dir="ursa")
-    agent_options = _agent_config(ursa_config, agent_class)
+    agent_options = _agent_config(
+        ursa_config,
+        agent_class,
+        use_web=config.get("use_web"),
+    )
     agent_options["checkpointer"] = checkpointer
     agent = agent_class(
         llm=ursa_config.llm_model.init_chat_model(),

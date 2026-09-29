@@ -10,8 +10,13 @@ Add URSA extras or other packages with agent kwargs:
 --agent-kwarg extra_packages=numpy,scipy
 ```
 
-Use `ursa_source_dir=/path/to/checkout` while developing the integration, or
-set `ursa_install_spec` to another package/version specification.
+Set `ursa_install_spec` to a package requirement, Git URL, or local project
+directory. A local directory is staged into the task container while excluding
+Git-ignored files and common secret files:
+
+```bash
+--agent-kwarg ursa_install_spec=/path/to/checkout
+```
 
 ## Choose the URSA config stack
 
@@ -97,10 +102,12 @@ and the
 [`singularity-compose` 2.0 specification](https://github.com/singularityhub/singularity-compose/blob/master/docs/spec/spec-2.0.md)
 before porting a Docker Compose task.
 
-Multi-container tasks require the `singularity` command because
-`singularity-compose` 0.1.19 does not invoke `apptainer`. The `ursa-ai[harbor]`
-extra installs `singularity-compose`; the host must still provide
-SingularityCE 3.6.2 and its fakeroot CNI network configuration.
+Multi-container tasks work with either SingularityCE or Apptainer. Although
+`singularity-compose` 0.1.19 invokes a command named `singularity` internally,
+the adapter maps that command to the selected runtime inside its private
+project directory. An Apptainer installation therefore does not need a
+system-wide `singularity` alias. The `ursa-ai[harbor]` extra installs
+`singularity-compose`; the host runtime must provide fakeroot CNI networking.
 
 The adapter supports Harbor's static `public` and `no-network` modes on
 SingularityCE 3.6.2. Set the baseline policy in `task.toml`:
@@ -109,6 +116,10 @@ SingularityCE 3.6.2. Set the baseline policy in `task.toml`:
 [environment]
 network_mode = "no-network"
 ```
+
+The effective Harbor policy is also projected into URSA's `use_web` setting
+for each agent phase: `public` and `allowlist` enable web tools, while
+`no-network` disables them. Harbor still enforces the actual network boundary.
 
 `no-network` starts the task as a named Singularity instance with an isolated
 `none` network. It is not available to multi-container tasks because

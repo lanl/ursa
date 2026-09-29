@@ -28,6 +28,7 @@ try:
     from harbor.agents.model_connection import PROVIDERS, ModelConnectionSpec
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
+    from harbor.models.task.config import NetworkMode
     from harbor.models.trial.paths import EnvironmentPaths
 except ImportError as exc:  # pragma: no cover - exercised without the extra
     raise ImportError(
@@ -53,8 +54,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
         config_file: URSA YAML or JSON configuration file.
         config_only: Merge only ``config_file`` before Harbor's settings. By
             default, the system and user config layers are included first.
-        ursa_install_spec: Package spec installed in each task container.
-        ursa_source_dir: Development-only local source tree to upload and install.
+        ursa_install_spec: Package requirement, Git URL, or local Python project
+            directory installed in each task container.
         ursa_extras: URSA package extras to install, as a sequence or comma-separated
             string.
         extra_packages: Additional Python packages to install, as a sequence or
@@ -76,8 +77,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         agent_import_path: str = "ursa.agents:ExecutionAgent",
         config_file: str | Path,
         config_only: bool | str = False,
-        ursa_install_spec: str = "ursa-ai",
-        ursa_source_dir: str | Path | None = None,
+        ursa_install_spec: str | Path = "ursa-ai",
         ursa_extras: str | Sequence[str] | None = None,
         extra_packages: str | Sequence[str] | None = None,
         **kwargs: Any,
@@ -86,17 +86,12 @@ class UrsaHarborAgent(BaseInstalledAgent):
         self.agent_import_path = agent_import_path
         self.config_file = Path(config_file).expanduser().resolve()
         self.config_only = self._parse_bool(config_only, "config_only")
-        if not ursa_install_spec:
-            raise ValueError("ursa_install_spec cannot be empty")
-        self.ursa_install_spec = ursa_install_spec
+        self.ursa_install_spec = self._parse_install_spec(ursa_install_spec)
         self.ursa_extras = self._parse_list(ursa_extras)
         self.extra_packages = self._parse_list(extra_packages)
         self._secret_env: dict[str, str] = {}
         self._model_env: dict[str, str] = {}
         self._workspace = "/"
-        self.ursa_source_dir = (
-            Path(ursa_source_dir).resolve() if ursa_source_dir else None
-        )
 
     @staticmethod
     def _parse_list(value: str | Sequence[str] | None) -> tuple[str, ...]:
@@ -115,6 +110,32 @@ class UrsaHarborAgent(BaseInstalledAgent):
         if normalized in {"false", "0", "no"}:
             return False
         raise ValueError(f"{name} must be true or false")
+
+    @staticmethod
+    def _parse_install_spec(value: str | Path) -> str | Path:
+        if isinstance(value, Path):
+            path = value.expanduser()
+        else:
+            value = value.strip()
+            if not value:
+                raise ValueError("ursa_install_spec cannot be empty")
+            candidate = Path(value).expanduser()
+            if not (
+                candidate.exists()
+                or candidate.is_absolute()
+                or value.startswith(("./", "../"))
+            ):
+                return value
+            path = candidate
+
+        path = path.resolve()
+        if not path.exists():
+            raise ValueError(f"ursa_install_spec path does not exist: {path}")
+        if not (path / "pyproject.toml").is_file():
+            raise ValueError(
+                f"ursa_install_spec is not a Python project: {path}"
+            )
+        return path
 
     def _install_target(self, target: str) -> str:
         if not self.ursa_extras:
@@ -137,9 +158,16 @@ class UrsaHarborAgent(BaseInstalledAgent):
             for server in self.mcp_servers
         }
 
-    def _harbor_config(self, config: UrsaConfig) -> dict[str, Any]:
+    def _harbor_config(
+        self,
+        config: UrsaConfig,
+        *,
+        use_web: bool | None = None,
+    ) -> dict[str, Any]:
         """Convert Harbor-owned model and MCP settings to an URSA layer."""
         layer: dict[str, Any] = {}
+        if use_web is not None:
+            layer["use_web"] = use_web
         if self.model_name:
             provider, separator, model = self.model_name.partition("/")
             if not separator or not provider or not model:
@@ -232,9 +260,13 @@ class UrsaHarborAgent(BaseInstalledAgent):
             ):
                 model_config["model"] = f"{model_provider}:{model}"
 
-    def _runtime_config(self) -> tuple[dict[str, Any], dict[str, str]]:
+    def _runtime_config(
+        self,
+        *,
+        use_web: bool | None = None,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         config = UrsaConfig().model_merge(*self._config_layers())
-        harbor_config = self._harbor_config(config)
+        harbor_config = self._harbor_config(config, use_web=use_web)
         harbor_mcp = harbor_config.pop("mcp_servers", {})
         config = config.model_merge(harbor_config)
 
@@ -254,6 +286,27 @@ class UrsaHarborAgent(BaseInstalledAgent):
         )
         self._qualify_tagged_models(runtime_config)
         return runtime_config, secret_env
+
+    @staticmethod
+    def _network_use_web(environment: BaseEnvironment) -> bool | None:
+        policy = getattr(environment, "network_policy", None)
+        if policy is None:
+            return None
+        return policy.network_mode != NetworkMode.NO_NETWORK
+
+    async def _upload_runtime_config(
+        self,
+        environment: BaseEnvironment,
+        runtime_config: dict[str, Any],
+    ) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", encoding="utf-8"
+        ) as runtime_config_file:
+            json.dump(runtime_config, runtime_config_file)
+            runtime_config_file.flush()
+            await environment.upload_file(
+                Path(runtime_config_file.name), self._remote_config_file
+            )
 
     @classmethod
     def _reject_environment_interpolation(
@@ -389,7 +442,10 @@ class UrsaHarborAgent(BaseInstalledAgent):
     async def install(self, environment: BaseEnvironment) -> None:
         # Reject host-side configuration errors before doing any work in the
         # benchmark container.
-        runtime_config, self._secret_env = self._runtime_config()
+        self._runtime_use_web = self._network_use_web(environment)
+        runtime_config, self._secret_env = self._runtime_config(
+            use_web=self._runtime_use_web
+        )
         # uv's glibc build can crash under QEMU user-mode emulation (for
         # example, amd64 Terminal-Bench images on an arm64 host). The musl
         # release is statically linked and works both natively and under QEMU.
@@ -442,17 +498,13 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 f"Invalid task working directory: {self._workspace!r}"
             )
         install_target = self.ursa_install_spec
-        if self.ursa_source_dir is not None:
-            if not (self.ursa_source_dir / "pyproject.toml").is_file():
-                raise ValueError(
-                    f"ursa_source_dir is not a Python project: {self.ursa_source_dir}"
-                )
+        if isinstance(install_target, Path):
             remote_source = "/tmp/ursa-source"
             with tempfile.TemporaryDirectory(
                 prefix="ursa-harbor-source-"
             ) as temp_dir:
                 staged_source = Path(temp_dir) / "ursa"
-                self._stage_source(self.ursa_source_dir, staged_source)
+                self._stage_source(install_target, staged_source)
                 await environment.upload_dir(staged_source, remote_source)
             install_target = remote_source
         await self.exec_as_root(
@@ -476,14 +528,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             timeout_sec=900,
         )
         self._remote_config_file = "/tmp/ursa-config.json"
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", encoding="utf-8"
-        ) as runtime_config_file:
-            json.dump(runtime_config, runtime_config_file)
-            runtime_config_file.flush()
-            await environment.upload_file(
-                Path(runtime_config_file.name), self._remote_config_file
-            )
+        await self._upload_runtime_config(environment, runtime_config)
 
     async def run(
         self,
@@ -491,6 +536,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
+        use_web = self._network_use_web(environment)
+        if use_web is not None and use_web != getattr(
+            self, "_runtime_use_web", None
+        ):
+            runtime_config, self._secret_env = self._runtime_config(
+                use_web=use_web
+            )
+            await self._upload_runtime_config(environment, runtime_config)
+            self._runtime_use_web = use_web
         payload = {
             "agent_import_path": self.agent_import_path,
             "config_file": self._remote_config_file,
@@ -499,6 +553,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "metrics_path": f"{self.environment_logs_dir}/ursa-metrics.json",
             "log_path": f"{self.environment_logs_dir}/ursa.log",
             "artifacts_dir": str(EnvironmentPaths.artifacts_dir),
+            "use_web": use_web,
         }
         encoded = base64.urlsafe_b64encode(
             json.dumps(payload).encode()
