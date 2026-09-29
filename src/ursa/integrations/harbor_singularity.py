@@ -12,6 +12,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -616,6 +617,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._startup_timeout_sec = singularity_startup_timeout_sec
         self._staging_dir: Path | None = None
         self._sif_path: Path | None = None
+        self._overlay_path: Path | None = None
         self._workdir = self._resolve_workdir()
         identity = hashlib.sha256(self.session_id.encode()).hexdigest()[:16]
         self._instance_name = f"ursa{identity}{secrets.token_hex(4)}"
@@ -1249,10 +1251,16 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             "start",
             "--containall",
             "--no-home",
-            "--writable-tmpfs",
         ]
         if self._fakeroot:
             command.insert(3, "--fakeroot")
+            command.append("--writable-tmpfs")
+        else:
+            if self._overlay_path is None:
+                raise RuntimeError(
+                    "Singularity writable overlay is not prepared"
+                )
+            command.extend(["--overlay", str(self._overlay_path)])
         if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
             command.extend(["--net", "--network", "none"])
         command.extend(["-B", f"{self._staging_dir}:/staging"])
@@ -1269,6 +1277,41 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             command.extend(["-B", bind])
         command.extend([str(self._sif_path), self._instance_name])
         return command
+
+    def _prepare_disk_overlay(self) -> None:
+        if self._staging_dir is None:
+            raise RuntimeError("Singularity staging directory is not prepared")
+        mkfs = shutil.which("mkfs.ext3") or shutil.which("mke2fs")
+        if mkfs is None:
+            raise RuntimeError(
+                "Rootless Singularity requires mkfs.ext3 or mke2fs to "
+                "create a writable disk overlay"
+            )
+
+        storage_mb = self.task_env_config.storage_mb or 1024
+        layout = self._staging_dir / "overlay-layout"
+        for directory in (layout / "upper", layout / "work"):
+            directory.mkdir(parents=True)
+            directory.chmod(0o777)
+        overlay = self._staging_dir / "overlay.img"
+        overlay.touch()
+        os.truncate(overlay, storage_mb * 1024 * 1024)
+        try:
+            subprocess.run(
+                [mkfs, "-q", "-d", str(layout), str(overlay)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            overlay.unlink(missing_ok=True)
+            detail = getattr(exc, "stderr", None) or str(exc)
+            raise RuntimeError(
+                f"Could not create Singularity writable overlay: {detail}"
+            ) from exc
+        finally:
+            shutil.rmtree(layout, ignore_errors=True)
+        self._overlay_path = overlay
 
     async def _stop_instance(self, *, warn: bool) -> None:
         try:
@@ -1349,6 +1392,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         )
         self._staging_dir.chmod(0o755)
         try:
+            if not self._uses_compose and not self._fakeroot:
+                self._prepare_disk_overlay()
             async with asyncio.timeout(self._startup_timeout_sec):
                 if self._uses_compose:
                     await self._prepare_compose_project(
@@ -1380,6 +1425,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self._staging_dir is not None:
             shutil.rmtree(self._staging_dir, ignore_errors=True)
             self._staging_dir = None
+        self._overlay_path = None
 
     @override
     async def stop(self, delete: bool) -> None:
