@@ -3296,6 +3296,11 @@ def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):
 
     def fake_run(command, **kwargs):
         commands.append((command, kwargs))
+        layout = Path(command[3])
+        for relative in ("solution", "tests", "harbor/skills", "workspace"):
+            directory = layout / "upper" / relative
+            assert directory.is_dir()
+            assert directory.stat().st_mode & 0o777 == 0o777
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
