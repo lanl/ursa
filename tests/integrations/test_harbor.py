@@ -1738,9 +1738,10 @@ async def test_singularity_builds_dockerfile_on_demand(tmp_path, monkeypatch):
 
     assert result.is_file()
     assert commands[0][1] == "build"
-    assert commands[1][1] == "save"
-    assert commands[2][0:2] == ("/usr/bin/singularity", "build")
-    assert commands[2][3].startswith("docker-archive://")
+    assert commands[1][1] == "build"
+    assert commands[2][1] == "save"
+    assert commands[3][0:2] == ("/usr/bin/singularity", "build")
+    assert commands[3][3].startswith("docker-archive://")
 
     build_count = sum(
         command[0:2] == ("/usr/bin/docker", "build") for command in commands
@@ -1757,8 +1758,31 @@ async def test_singularity_builds_dockerfile_on_demand(tmp_path, monkeypatch):
         sum(
             command[0:2] == ("/usr/bin/docker", "build") for command in commands
         )
-        == build_count + 1
+        == build_count + 2
     )
+
+
+def test_singularity_prepares_standard_harbor_mountpoints(tmp_path):
+    dockerfile = DockerfileSingularityEnvironment._write_mountpoint_context(
+        tmp_path, "local-image"
+    )
+
+    assert dockerfile.read_text() == (
+        "FROM local-image\nCOPY --chmod=0777 harbor-root/ /\n"
+    )
+    assert {
+        path.relative_to(tmp_path / "harbor-root").as_posix()
+        for path in (tmp_path / "harbor-root").rglob("*")
+        if path.is_dir()
+    } >= {
+        "solution",
+        "tests",
+        "harbor/skills",
+        "logs/agent",
+        "logs/user-agent",
+        "logs/verifier",
+        "logs/artifacts",
+    }
 
 
 @pytest.mark.asyncio
@@ -1817,7 +1841,11 @@ async def test_singularity_falls_back_when_podman_export_fails(
 
     await environment._build_dockerfile_sif(force_build=True)
 
-    builds = [command for command in commands if command[1] == "build"]
+    builds = [
+        command
+        for command in commands
+        if command[1] == "build" and "--pull" in command
+    ]
     assert builds[0][0:3] == ("/usr/bin/podman", "build", "--pull")
     assert builds[1][0:3] == ("/usr/bin/docker", "build", "--pull")
     assert any(
@@ -1834,8 +1862,9 @@ async def test_singularity_builds_with_buildah(tmp_path, monkeypatch):
     await environment._build_dockerfile_sif(force_build=True)
 
     assert commands[0][0:3] == ("/usr/bin/buildah", "build", "--pull")
-    assert commands[1][0:2] == ("/usr/bin/buildah", "push")
-    assert commands[1][3].startswith("docker-archive:")
+    assert commands[1][0:2] == ("/usr/bin/buildah", "build")
+    assert commands[2][0:2] == ("/usr/bin/buildah", "push")
+    assert commands[2][3].startswith("docker-archive:")
     assert commands[-1][0:3] == ("/usr/bin/buildah", "rmi", "--force")
 
 
@@ -1936,8 +1965,13 @@ async def test_concurrent_builds_use_private_builder_tags(
         for command in commands
         if command[0:3] == ("/usr/bin/buildah", "rmi", "--force")
     }
-    assert len(build_tags) == len(set(build_tags)) == 2
-    assert pushed_tags == removed_tags == set(build_tags)
+    base_tags = {tag for tag in build_tags if not tag.endswith("-mountpoints")}
+    prepared_tags = {tag for tag in build_tags if tag.endswith("-mountpoints")}
+    assert len(build_tags) == len(set(build_tags)) == 4
+    assert len(base_tags) == len(prepared_tags) == 2
+    assert prepared_tags == {f"{tag}-mountpoints" for tag in base_tags}
+    assert pushed_tags == prepared_tags
+    assert removed_tags == set(build_tags)
     assert not images
     assert not warnings
 
@@ -1981,8 +2015,15 @@ async def test_concurrent_builds_share_one_cached_sif(tmp_path, monkeypatch):
         for command in commands
         if command[0:2] == ("/usr/bin/buildah", "build")
     ]
+    builder_tags = [
+        command[command.index("--tag") + 1] for command in builder_commands
+    ]
     assert first_result == second_result
-    assert len(builder_commands) == 1
+    assert len(builder_tags) == 2
+    assert (
+        len([tag for tag in builder_tags if not tag.endswith("-mountpoints")])
+        == 1
+    )
 
 
 @pytest.mark.asyncio
