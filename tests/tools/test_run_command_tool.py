@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -133,10 +135,16 @@ def test_run_command_replaces_invalid_utf8_output(
     monkeypatch, tmp_path: Path, chat_model: BaseChatModel
 ):
     monkeypatch.setenv("URSA_SAFETY_LEVEL", "yolo")
+    emit_invalid_utf8 = tmp_path / "emit_invalid_utf8.py"
+    emit_invalid_utf8.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(bytes([183]))\n"
+        "sys.stderr.buffer.write(bytes([183]))\n"
+    )
 
     result, recorder = invoke_with_event_recorder(
         run_command.func,
-        "printf '\\267'; printf '\\267' >&2",
+        subprocess.list2cmdline([sys.executable, str(emit_invalid_utf8)]),
         runtime=make_runtime(
             tmp_path,
             llm=chat_model,
