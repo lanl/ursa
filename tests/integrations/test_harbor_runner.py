@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import base64
 import json
 import shlex
@@ -7,6 +9,9 @@ from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
+
+pytest.importorskip("harbor")
+
 from harbor.models.agent.context import AgentContext
 from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
