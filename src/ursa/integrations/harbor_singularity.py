@@ -577,6 +577,16 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     """Run Dockerfile and supported Compose tasks with Singularity or Apptainer."""
 
     _compose_filename = "docker-compose.yaml"
+    _mountpoint_layout_version = b"harbor-mountpoints-v1"
+    _mountpoint_paths = (
+        "solution",
+        "tests",
+        "harbor/skills",
+        "logs/agent",
+        "logs/user-agent",
+        "logs/verifier",
+        "logs/artifacts",
+    )
 
     def __init__(
         self,
@@ -810,6 +820,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         context_dir = context_dir.resolve()
         digest = hashlib.sha256()
         digest.update(platform.machine().encode())
+        digest.update(self._mountpoint_layout_version)
         digest.update("\0".join(build_args).encode())
         digest.update((target or "").encode())
         ignore_path = context_dir / ".dockerignore"
@@ -916,6 +927,17 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 f"Command failed ({' '.join(command)}): {detail}"
             )
 
+    @classmethod
+    def _write_mountpoint_context(cls, context: Path, base_tag: str) -> Path:
+        mountpoint_root = context / "harbor-root"
+        for path in cls._mountpoint_paths:
+            (mountpoint_root / path).mkdir(parents=True, exist_ok=True)
+        dockerfile = context / "Dockerfile"
+        dockerfile.write_text(
+            f"FROM {base_tag}\nCOPY --chmod=0777 harbor-root/ /\n"
+        )
+        return dockerfile
+
     async def _build_with(
         self,
         builder: str,
@@ -929,10 +951,11 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     ) -> None:
         builder_name = Path(builder).name
         tag = f"ursa-harbor-{output.stem}-{builder_name}-{secrets.token_hex(8)}"
-        remove_command = (
-            (builder, "rmi", "--force", tag)
+        prepared_tag = f"{tag}-mountpoints"
+        remove_prefix = (
+            (builder, "rmi", "--force")
             if builder_name == "buildah"
-            else (builder, "image", "rm", "--force", tag)
+            else (builder, "image", "rm", "--force")
         )
         builder_options = [
             option
@@ -955,15 +978,40 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 str(context_dir),
             )
             with tempfile.TemporaryDirectory(
+                prefix="ursa-harbor-mountpoints-"
+            ) as mountpoint_dir:
+                mountpoint_context = Path(mountpoint_dir)
+                mountpoint_dockerfile = self._write_mountpoint_context(
+                    mountpoint_context, tag
+                )
+                await self._run(
+                    builder,
+                    "build",
+                    "--tag",
+                    prepared_tag,
+                    "--file",
+                    str(mountpoint_dockerfile),
+                    str(mountpoint_context),
+                )
+            with tempfile.TemporaryDirectory(
                 prefix="ursa-harbor-oci-"
             ) as temp_dir:
                 archive = Path(temp_dir) / "image.tar"
                 if builder_name == "buildah":
                     await self._run(
-                        builder, "push", tag, f"docker-archive:{archive}"
+                        builder,
+                        "push",
+                        prepared_tag,
+                        f"docker-archive:{archive}",
                     )
                 else:
-                    await self._run(builder, "save", "-o", str(archive), tag)
+                    await self._run(
+                        builder,
+                        "save",
+                        "-o",
+                        str(archive),
+                        prepared_tag,
+                    )
                 await self._run(
                     self._instance_runtime(),
                     "build",
@@ -972,14 +1020,14 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 )
                 temporary.replace(output)
         finally:
-            try:
-                await self._run(*remove_command)
-            except RuntimeError as exc:
-                self.logger.warning(
-                    "Failed to remove build image %s: %s", tag, exc
-                )
-            finally:
-                temporary.unlink(missing_ok=True)
+            for image in (prepared_tag, tag):
+                try:
+                    await self._run(*remove_prefix, image)
+                except RuntimeError as exc:
+                    self.logger.warning(
+                        "Failed to remove build image %s: %s", image, exc
+                    )
+            temporary.unlink(missing_ok=True)
 
     async def _build_dockerfile_sif(
         self,
