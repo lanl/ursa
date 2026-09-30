@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import os
 import platform
@@ -51,7 +52,25 @@ _COMPOSE_BUILD_FIELDS = frozenset({"args", "context", "dockerfile", "target"})
 def _merge_compose(base: dict[str, Any], overlay: dict[str, Any]) -> None:
     for key, value in overlay.items():
         current = base.get(key)
-        if isinstance(current, dict) and isinstance(value, dict):
+        if (
+            key == "volumes"
+            and isinstance(current, list)
+            and isinstance(value, list)
+        ):
+            merged = list(current)
+            positions = {
+                volume.split(":", 1)[1]: index
+                for index, volume in enumerate(merged)
+            }
+            for volume in value:
+                target = volume.split(":", 1)[1]
+                if target in positions:
+                    merged[positions[target]] = volume
+                else:
+                    positions[target] = len(merged)
+                    merged.append(volume)
+            base[key] = merged
+        elif isinstance(current, dict) and isinstance(value, dict):
             _merge_compose(current, value)
         else:
             base[key] = value
@@ -475,10 +494,16 @@ def _compose_volumes(
                     "singularity-compose cannot preserve read-only Harbor mounts"
                 )
             target = str(mount["target"])
-            if target in targets or target == "/staging":
+            if target == "/staging":
                 raise ValueError(
                     f"Duplicate or reserved main service mount target: {target}"
                 )
+            if target in targets:
+                volumes = [
+                    volume
+                    for volume in volumes
+                    if volume.split(":", 1)[1] != target
+                ]
             targets.add(target)
             volumes.append(f"{mount['source']}:{target}")
     if environment_file is not None:
@@ -615,6 +640,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     "Singularity 3.6 cannot change network policy after start"
                 )
         self._startup_timeout_sec = singularity_startup_timeout_sec
+        self._scratch_dir: Path | None = None
         self._staging_dir: Path | None = None
         self._sif_path: Path | None = None
         self._workdir = self._resolve_workdir()
@@ -807,9 +833,17 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         dockerfile_path = dockerfile_path.resolve()
         context_dir = context_dir.resolve()
         digest = hashlib.sha256()
-        digest.update(platform.machine().encode())
-        digest.update("\0".join(build_args).encode())
-        digest.update((target or "").encode())
+        digest.update(
+            json.dumps(
+                {
+                    "architecture": platform.machine(),
+                    "build_args": build_args,
+                    "target": target,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
         ignore_path = context_dir / ".dockerignore"
         ignore = (
             GitIgnoreSpec.from_lines(ignore_path.read_text().splitlines())
@@ -1310,13 +1344,19 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             for mount in self._mounts
             if mount.get("type") == "bind"
         }
+        if self._uses_compose:
+            configured_targets.update(
+                PurePosixPath(volume.split(":", 1)[1])
+                for volume in self._load_compose_config()["services"][
+                    "main"
+                ].get("volumes", [])
+            )
         binds: list[tuple[Path, PurePosixPath]] = []
         seen_targets: set[PurePosixPath] = set()
         for source, target in candidates:
-            if (
-                any(target.is_relative_to(path) for path in configured_targets)
-                or target in seen_targets
-            ):
+            if any(
+                target.is_relative_to(path) for path in configured_targets
+            ) or any(target.is_relative_to(path) for path in seen_targets):
                 continue
             binds.append((source, target))
             seen_targets.add(target)
@@ -1352,7 +1392,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             )
         if not commands:
             return
-        await self._run(
+        command = [
             self._instance_runtime(),
             "exec",
             "--cleanenv",
@@ -1360,13 +1400,23 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             "--no-home",
             "--pwd",
             "/",
+        ]
+        if self._fakeroot:
+            command.append("--fakeroot")
+        if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
+            command.extend(["--net", "--network", "none"])
+        command.extend([
             "-B",
             f"{self._staging_dir}:/staging",
             self._main_seed_image(),
             "sh",
             "-c",
-            "; ".join(commands),
-        )
+            "set -e; " + "; ".join(commands),
+        ])
+        await self._run(*command)
+        # ``cp -a source/. destination/`` also copies the source directory's
+        # mode onto the bind root. Restore the writable contract after seeding.
+        self._prepare_harbor_bind_sources()
 
     async def _stop_instance(self, *, warn: bool) -> None:
         try:
@@ -1442,14 +1492,16 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._sif_path = await self._build_main_sif(
             force_build or self._force_pull
         )
-        self._staging_dir = Path(
+        self._scratch_dir = Path(
             tempfile.mkdtemp(prefix="ursa-harbor-singularity-")
         )
-        self._staging_dir.chmod(0o755)
+        self._scratch_dir.chmod(0o700)
+        self._staging_dir = self._scratch_dir / "staging"
+        self._staging_dir.mkdir(mode=0o755)
         try:
-            self._prepare_harbor_bind_sources()
-            await self._seed_harbor_bind_sources()
             async with asyncio.timeout(self._startup_timeout_sec):
+                self._prepare_harbor_bind_sources()
+                await self._seed_harbor_bind_sources()
                 if self._uses_compose:
                     await self._prepare_compose_project(
                         force_build or self._force_pull
@@ -1478,9 +1530,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             raise
 
     def _cleanup_staging(self) -> None:
-        if self._staging_dir is not None:
+        scratch_dir = getattr(self, "_scratch_dir", None)
+        if scratch_dir is not None:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
+        elif self._staging_dir is not None:
             shutil.rmtree(self._staging_dir, ignore_errors=True)
-            self._staging_dir = None
+        self._scratch_dir = None
+        self._staging_dir = None
 
     @override
     async def stop(self, delete: bool) -> None:
