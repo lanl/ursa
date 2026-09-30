@@ -50,7 +50,20 @@ async def test_multiple_edit_rows_expand_independently_under_one_heading(
         assert "+value = 2" in expanded
 
 
-async def test_specialized_agent_events_and_artifacts_update_live(tmp_path):
+async def test_specialized_agent_events_and_artifacts_update_live(
+    tmp_path,
+    monkeypatch,
+):
+    class InertTimer:
+        def stop(self):
+            pass
+
+    # Summary expiry is unrelated to this test and must not depend on runner load.
+    monkeypatch.setattr(
+        Turn,
+        "set_timer",
+        lambda *_args, **_kwargs: InertTimer(),
+    )
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(100, 36)) as pilot:
