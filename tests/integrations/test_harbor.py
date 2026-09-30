@@ -3541,10 +3541,18 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
 
     assert commands[0][0:3] == (
         "/usr/bin/singularity",
+        "exec",
+        "--cleanenv",
+    )
+    assert commands[0][-3] == "sh"
+    assert "/tests/." in commands[0][-1]
+    assert "/staging/harbor-writable/tests/" in commands[0][-1]
+    assert commands[1][0:3] == (
+        "/usr/bin/singularity",
         "instance",
         "start",
     )
-    assert commands[1] == (
+    assert commands[2] == (
         "/usr/bin/singularity",
         "exec",
         "--cleanenv",
@@ -3553,7 +3561,7 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
         "instance://ursatestinstance",
         "true",
     )
-    assert commands[2] == (
+    assert commands[3] == (
         "/usr/bin/singularity",
         "instance",
         "stop",
@@ -3636,10 +3644,15 @@ async def test_apptainer_instance_uses_runtime_directly(tmp_path, monkeypatch):
 
     assert commands[0][0:3] == (
         "/usr/bin/apptainer",
+        "exec",
+        "--cleanenv",
+    )
+    assert commands[1][0:3] == (
+        "/usr/bin/apptainer",
         "instance",
         "start",
     )
-    assert commands[1][0] == "/usr/bin/apptainer"
+    assert commands[2][0] == "/usr/bin/apptainer"
 
 
 @pytest.mark.asyncio
@@ -3656,7 +3669,9 @@ async def test_singularity_failed_start_cleans_instance_and_staging(
 
     async def fake_run(*command):
         commands.append(command)
-        if command[1] == "exec":
+        if command[1] == "exec" and any(
+            part.startswith("instance://") for part in command
+        ):
             raise RuntimeError("readiness failed")
 
     monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
