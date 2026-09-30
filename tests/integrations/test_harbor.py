@@ -7,9 +7,11 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import aiosqlite
 import pytest
 import yaml
 
@@ -34,9 +36,7 @@ from ursa.integrations.harbor import (  # noqa: E402
 from ursa.integrations.harbor_runner import (  # noqa: E402
     _agent_config,
     _attach_mcp_tools,
-    _capture_output,
     _close_checkpoint,
-    _usage,
 )
 from ursa.integrations.harbor_runner import _run as _runner_run  # noqa: E402
 from ursa.integrations.harbor_runner import (  # noqa: E402
@@ -49,6 +49,9 @@ from ursa.integrations.harbor_singularity import (  # noqa: E402
 from ursa.integrations.harbor_validation import (  # noqa: E402
     discover_harbor_tasks,
     validate_harbor_task,
+)
+from ursa.observability.jsonl_logger import (  # noqa: E402
+    JSONLLogEventHandler,
 )
 
 
@@ -116,67 +119,13 @@ def _host_openai_key(monkeypatch):
     )
 
 
-def test_usage_reads_current_metrics_schema(tmp_path):
-    metrics = tmp_path / "metrics.json"
-    metrics.write_text(
-        """{
-          "totals": {"llm_total_s": 1.5},
-          "costs": {"total_usd": 0.012},
-          "llm_events": [
-            {"metrics": {"usage_rollup": {
-              "input_tokens": 10, "output_tokens": 2
-            }}},
-            {"metrics": {"usage_rollup": {
-              "input_tokens": 20, "output_tokens": 3
-            }}}
-          ]
-        }"""
-    )
-
-    assert _usage(metrics) == {
-        "n_input_tokens": 30,
-        "n_output_tokens": 5,
-        "cost_usd": 0.012,
-    }
-
-
-def test_usage_leaves_missing_event_usage_unknown(tmp_path):
-    metrics = tmp_path / "metrics.json"
-    metrics.write_text(
-        '{"totals": {"llm_total_s": 1.5}, '
-        '"llm_events": [{"metrics": {"error": "failed"}}]}'
-    )
-
-    assert _usage(metrics) == {
-        "n_input_tokens": None,
-        "n_output_tokens": None,
-        "cost_usd": None,
-    }
-
-
-def test_runner_output_is_teeed_to_harbor_log(tmp_path, capsys):
-    log_path = tmp_path / "agent" / "ursa.log"
-
-    with _capture_output(log_path):
-        print("agent stdout")
-        print("agent stderr", file=sys.stderr)
-
-    captured = capsys.readouterr()
-    assert captured.out == "agent stdout\n"
-    assert captured.err == "agent stderr\n"
-    assert log_path.read_text().splitlines() == [
-        "agent stdout",
-        "agent stderr",
-    ]
-
-
 def test_runner_failure_is_written_to_harbor_log(tmp_path, monkeypatch):
     log_path = tmp_path / "agent" / "ursa.log"
     encoded = base64.urlsafe_b64encode(
-        json.dumps({"log_path": str(log_path)}).encode()
+        json.dumps({"log_dir": str(log_path.parent)}).encode()
     ).decode()
 
-    def fail(_config):
+    async def fail(_config):
         raise RuntimeError("agent failed")
 
     monkeypatch.setattr("ursa.integrations.harbor_runner._run", fail)
@@ -1148,7 +1097,8 @@ async def test_cancelled_run_terminates_container_runner(tmp_path, monkeypatch):
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
 
-    task = asyncio.create_task(agent.run("task", object(), object()))
+    context = SimpleNamespace(metadata={})
+    task = asyncio.create_task(agent.run("task", object(), context))
     await runner_started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1207,18 +1157,24 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
         observed_command = kwargs["command"]
         observed_timeout = kwargs["timeout_sec"]
         observed_env = kwargs["env"]
-        return SimpleNamespace(
-            return_code=0,
-            stdout=(
-                'URSA_HARBOR_RESULT={"result": {"answer": "done"}, '
-                '"n_input_tokens": 11, "n_output_tokens": 7, '
-                '"cost_usd": 0.25}\n'
-            ),
+        agent.logs_dir.mkdir(parents=True, exist_ok=True)
+        (agent.logs_dir / "ursa.jsonl").write_text(
+            "\n".join([
+                '{"type":"chat","event":"start"}',
+                '{"type":"chat","event":"end","usage":'
+                '{"input_tokens":10,"cached_tokens":6,"output_tokens":3}}',
+                '{"type":"tool","event":"end","usage":'
+                '{"input_tokens":100,"cached_tokens":100,'
+                '"output_tokens":100}}',
+                '{"type":"chat","event":"end","usage":'
+                '{"input_tokens":4,"cached_tokens":1,"output_tokens":2}}',
+            ])
         )
+        return SimpleNamespace(return_code=0, stdout="")
 
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
 
-    context = SimpleNamespace()
+    context = SimpleNamespace(metadata={})
     await agent.run("task", object(), context)
 
     assert observed_timeout is None
@@ -1230,11 +1186,10 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
     )
     encoded = shlex.split(observed_command)[-1]
     payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
-    assert payload["log_path"] == "/logs/agent/ursa.log"
-    assert context.metadata == {"ursa_result": {"answer": "done"}}
-    assert context.n_input_tokens == 11
-    assert context.n_output_tokens == 7
-    assert context.cost_usd == 0.25
+    assert payload["log_dir"] == "/logs/agent"
+    assert context.n_input_tokens == 14
+    assert context.n_cache_tokens == 7
+    assert context.n_output_tokens == 5
 
 
 @pytest.mark.asyncio
@@ -1268,19 +1223,16 @@ async def test_run_reuploads_config_when_phase_network_policy_changes(
     async def fake_exec_as_agent(*args, **kwargs):
         encoded = shlex.split(kwargs["command"])[-1]
         payloads.append(json.loads(base64.urlsafe_b64decode(encoded).decode()))
-        return SimpleNamespace(
-            return_code=0,
-            stdout='URSA_HARBOR_RESULT={"result": null}\n',
-        )
+        return SimpleNamespace(return_code=0, stdout="")
 
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
 
-    await agent.run("task", environment, SimpleNamespace())
+    await agent.run("task", environment, SimpleNamespace(metadata={}))
     environment.network_policy = NetworkPolicy(
         network_mode=NetworkMode.ALLOWLIST,
         allowed_hosts=["example.com"],
     )
-    await agent.run("task", environment, SimpleNamespace())
+    await agent.run("task", environment, SimpleNamespace(metadata={}))
 
     assert [config["use_web"] for config in uploaded] == [False, True]
     assert [payload["use_web"] for payload in payloads] == [False, True]
@@ -1312,14 +1264,16 @@ async def test_run_passes_provider_extra_env_only_to_runner(
     async def fake_exec_as_agent(*args, **kwargs):
         nonlocal observed_env
         observed_env = kwargs["env"]
-        return SimpleNamespace(
-            return_code=0,
-            stdout='URSA_HARBOR_RESULT={"result": null}\n',
-        )
+        return SimpleNamespace(return_code=0, stdout="")
 
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
 
-    await agent.run("task", object(), SimpleNamespace())
+    context = SimpleNamespace(metadata={})
+    await agent.run("task", object(), context)
+
+    assert context.n_input_tokens is None
+    assert context.n_cache_tokens is None
+    assert context.n_output_tokens is None
 
     assert observed_env is not None
     assert (
@@ -1365,9 +1319,7 @@ def test_harbor_preserves_a_configured_custom_model_provider(
 
 
 @pytest.mark.asyncio
-async def test_run_reports_stderr_when_runner_has_no_stdout(
-    tmp_path, monkeypatch
-):
+async def test_run_does_not_require_runner_stdout(tmp_path, monkeypatch):
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "logs",
         model_name="openai/gpt-4.1-nano",
@@ -1376,12 +1328,11 @@ async def test_run_reports_stderr_when_runner_has_no_stdout(
     agent._remote_config_file = "/tmp/ursa-config.yaml"
 
     async def fake_exec_as_agent(*args, **kwargs):
-        return SimpleNamespace(stdout=None, stderr="runner failed")
+        return SimpleNamespace(stdout=None)
 
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
 
-    with pytest.raises(RuntimeError, match="runner failed"):
-        await agent.run("task", object(), SimpleNamespace())
+    await agent.run("task", object(), SimpleNamespace(metadata={}))
 
 
 def test_harbor_mcp_servers_convert_to_ursa_mapping(tmp_path):
@@ -1441,14 +1392,15 @@ async def test_mcp_servers_attach_to_tool_capable_agent(monkeypatch):
     assert received == [expected_client]
 
 
-def test_checkpoint_close_flushes_an_integral_database(tmp_path):
+@pytest.mark.asyncio
+async def test_checkpoint_close_flushes_an_integral_database(tmp_path):
     destination = tmp_path / "checkpointer.db"
-    connection = sqlite3.connect(destination)
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("CREATE TABLE checkpoints (value TEXT)")
-    connection.execute("INSERT INTO checkpoints VALUES ('saved')")
+    connection = await aiosqlite.connect(destination)
+    await connection.execute("PRAGMA journal_mode=WAL")
+    await connection.execute("CREATE TABLE checkpoints (value TEXT)")
+    await connection.execute("INSERT INTO checkpoints VALUES ('saved')")
 
-    _close_checkpoint(SimpleNamespace(conn=connection))
+    await _close_checkpoint(SimpleNamespace(conn=connection))
 
     with sqlite3.connect(destination) as database:
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
@@ -1457,33 +1409,36 @@ def test_checkpoint_close_flushes_an_integral_database(tmp_path):
         )
 
 
-def test_checkpoint_close_is_attempted_when_flush_fails():
+@pytest.mark.asyncio
+async def test_checkpoint_close_is_attempted_when_flush_fails():
     class BrokenConnection:
         closed = False
 
-        def commit(self):
+        async def commit(self):
             raise sqlite3.Error("flush failed")
 
-        def close(self):
+        async def close(self):
             self.closed = True
 
     connection = BrokenConnection()
 
     with pytest.raises(sqlite3.Error, match="flush failed"):
-        _close_checkpoint(SimpleNamespace(conn=connection))
+        await _close_checkpoint(SimpleNamespace(conn=connection))
 
     assert connection.closed
 
 
-def test_runner_orchestrates_agent_and_artifacts(tmp_path, monkeypatch, capsys):
-    artifacts = tmp_path / "artifacts"
-    checkpoint_path = artifacts / "ursa" / "checkpointer.db"
+@pytest.mark.asyncio
+async def test_runner_orchestrates_agent_and_logs(
+    tmp_path, monkeypatch, capsys
+):
+    logs = tmp_path / "logs"
+    checkpoint_path = logs / "db" / "checkpointer.db"
     checkpoint_path.parent.mkdir(parents=True)
-    connection = sqlite3.connect(checkpoint_path)
-    connection.execute("CREATE TABLE checkpoints (value TEXT)")
+    connection = await aiosqlite.connect(checkpoint_path)
+    await connection.execute("CREATE TABLE checkpoints (value TEXT)")
     checkpointer = SimpleNamespace(conn=connection)
     constructed = {}
-    events = []
 
     class FakeAgent(BaseAgent):
         def __init__(self, *, use_web=True, **kwargs):
@@ -1497,18 +1452,29 @@ def test_runner_orchestrates_agent_and_artifacts(tmp_path, monkeypatch, capsys):
         def format_result(self, output):
             return {"answer": output}
 
-    def invoke(_self, instruction, **kwargs):
+    async def ainvoke(_self, instruction, **kwargs):
+        from ursa.util.events import DEFAULT_EVENT_NAME
+
         assert instruction == "solve it"
-        assert kwargs["save_json"] is True
-        Path(kwargs["metrics_path"]).write_text(
-            '{"totals": {"input_tokens": 3, "output_tokens": 2}}'
-        )
-        _self.checkpointer.conn.execute(
+        assert set(kwargs) == {"config"}
+        assert len(kwargs["config"]["callbacks"]) == 2
+        for callback in kwargs["config"]["callbacks"]:
+            await callback.on_custom_event(
+                DEFAULT_EVENT_NAME,
+                {
+                    "agent": "ExecutionAgent",
+                    "stage": "step",
+                    "message": "Working",
+                    "preview": "Inspecting the workspace",
+                },
+                run_id="run-id",
+            )
+        await _self.checkpointer.conn.execute(
             "INSERT INTO checkpoints VALUES ('persisted')"
         )
         return "agent output"
 
-    monkeypatch.setattr(FakeAgent, "invoke", invoke)
+    monkeypatch.setattr(FakeAgent, "ainvoke", ainvoke)
 
     runtime_config = SimpleNamespace(
         workspace=None,
@@ -1537,9 +1503,8 @@ def test_runner_orchestrates_agent_and_artifacts(tmp_path, monkeypatch, capsys):
         assert data == {"config": "loaded"}
         return runtime_config
 
-    def make_checkpointer(path, *, db_dir):
-        assert path == artifacts
-        assert db_dir == "ursa"
+    async def make_checkpointer(path):
+        assert path == logs
         return checkpointer
 
     monkeypatch.setattr("ursa.cli.config.load_config_file", load_config)
@@ -1549,36 +1514,22 @@ def test_runner_orchestrates_agent_and_artifacts(tmp_path, monkeypatch, capsys):
         classmethod(validate_config),
     )
     monkeypatch.setattr(
-        "ursa.util.Checkpointer.from_workspace",
+        "ursa.util.Checkpointer.async_from_workspace",
         make_checkpointer,
-    )
-    monkeypatch.setattr(
-        "ursa.util.events.configure_event_logging",
-        lambda *, rich: events.append(rich),
     )
     config_file = tmp_path / "ursa.json"
     config_file.write_text("{}")
-    metrics = tmp_path / "logs" / "metrics.json"
 
-    _runner_run({
+    await _runner_run({
         "agent_import_path": "example:FakeAgent",
         "config_file": str(config_file),
         "workspace": str(tmp_path / "workspace"),
-        "metrics_path": str(metrics),
-        "artifacts_dir": str(artifacts),
+        "log_dir": str(logs),
         "instruction": "solve it",
         "use_web": False,
     })
 
-    payload = json.loads(
-        capsys.readouterr().out.removeprefix("URSA_HARBOR_RESULT=")
-    )
-    assert payload == {
-        "result": {"answer": "agent output"},
-        "n_input_tokens": 3,
-        "n_output_tokens": 2,
-        "cost_usd": None,
-    }
+    assert capsys.readouterr().out == ""
     assert constructed["llm"] == "llm"
     assert constructed["workspace"] == tmp_path / "workspace"
     assert constructed["checkpointer"] is checkpointer
@@ -1588,25 +1539,169 @@ def test_runner_orchestrates_agent_and_artifacts(tmp_path, monkeypatch, capsys):
     assert constructed["thread_id"] == "thread"
     assert constructed["rag_tools"] is None
     assert constructed["rag_tool_embedding"] == "embedding"
-    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-        connection.execute("SELECT 1")
+    with pytest.raises(ValueError, match="no active connection"):
+        await connection.execute("SELECT 1")
     with sqlite3.connect(checkpoint_path) as persisted:
         assert persisted.execute(
             "SELECT value FROM checkpoints"
         ).fetchall() == [("persisted",)]
-    assert events == [False]
+    assert "Working" in (logs / "ursa.log").read_text()
+    assert "Inspecting the workspace" in (logs / "ursa.log").read_text()
+    jsonl = [
+        json.loads(line)
+        for line in (logs / "ursa.jsonl").read_text().splitlines()
+    ]
+    assert isinstance(jsonl[0].pop("timestamp_monotonic_ns"), int)
+    assert jsonl == [
+        {
+            "type": "agent",
+            "event": "progress",
+            "run_id": "run-id",
+            "parent_run_id": None,
+            "tags": [],
+            "metadata": {},
+            "name": "ExecutionAgent",
+            "data": {
+                "agent": "ExecutionAgent",
+                "stage": "step",
+                "message": "Working",
+                "preview": "Inspecting the workspace",
+            },
+        }
+    ]
+    assert json.loads((logs / "ursa_result.out").read_text()) == {
+        "answer": "agent output"
+    }
 
 
-def test_runner_preserves_agent_failure_when_checkpoint_close_fails(
+@pytest.mark.asyncio
+async def test_jsonl_handler_records_complete_callback_lifecycles(monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    timestamps = iter(range(100, 109))
+    monkeypatch.setattr(
+        "ursa.observability.jsonl_logger.time.monotonic_ns",
+        lambda: next(timestamps),
+    )
+    stream = StringIO()
+    handler = JSONLLogEventHandler(stream)
+
+    await handler.on_chain_start(
+        {"name": "AgentGraph"},
+        {"question": "solve it"},
+        run_id="chain-1",
+    )
+    await handler.on_chat_model_start(
+        {"name": "ChatModel"},
+        [[HumanMessage(content="hello")]],
+        run_id="chat-1",
+        parent_run_id="chain-1",
+    )
+    response = LLMResult(
+        generations=[
+            [
+                ChatGeneration(
+                    message=AIMessage(
+                        content="answer",
+                        usage_metadata={
+                            "input_tokens": 12,
+                            "output_tokens": 7,
+                            "total_tokens": 19,
+                        },
+                        response_metadata={
+                            "token_usage": {
+                                "prompt_tokens": 12,
+                                "completion_tokens": 7,
+                                "completion_tokens_details": {
+                                    "reasoning_tokens": 4
+                                },
+                                "prompt_tokens_details": {"cached_tokens": 6},
+                            }
+                        },
+                    )
+                )
+            ]
+        ]
+    )
+    await handler.on_llm_end(
+        response,
+        run_id="chat-1",
+        parent_run_id="chain-1",
+    )
+    await handler.on_tool_start(
+        {"name": "search"},
+        "ignored",
+        run_id="tool-1",
+        parent_run_id="chain-1",
+        inputs={"query": "needle"},
+    )
+    await handler.on_tool_end(
+        {"matches": 2},
+        run_id="tool-1",
+        parent_run_id="chain-1",
+    )
+    await handler.on_agent_action(
+        {"tool": "search"},
+        run_id="agent-1",
+        parent_run_id="chain-1",
+    )
+    await handler.on_agent_finish(
+        {"return_values": {"answer": "done"}},
+        run_id="agent-1",
+        parent_run_id="chain-1",
+    )
+    await handler.on_custom_event(
+        "ursa_agent_progress",
+        {"agent": "ExecutionAgent", "stage": "review"},
+        run_id="progress-1",
+        parent_run_id="chain-1",
+    )
+    await handler.on_chain_end(
+        {"answer": "done"},
+        run_id="chain-1",
+    )
+
+    records = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert [record["timestamp_monotonic_ns"] for record in records] == list(
+        range(100, 109)
+    )
+    assert [(record["type"], record["event"]) for record in records] == [
+        ("chain", "start"),
+        ("chat", "start"),
+        ("chat", "end"),
+        ("tool", "start"),
+        ("tool", "end"),
+        ("agent", "action"),
+        ("agent", "end"),
+        ("agent", "progress"),
+        ("chain", "end"),
+    ]
+    assert records[0]["input"] == {"question": "solve it"}
+    assert records[1]["input"][0][0]["content"] == "hello"
+    assert "answer" in json.dumps(records[2]["output"])
+    assert records[2]["usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 7,
+        "reasoning_tokens": 4,
+        "cached_tokens": 6,
+    }
+    assert records[3]["input"] == {"query": "needle"}
+    assert records[4]["output"] == {"matches": 2}
+    assert records[8]["output"] == {"answer": "done"}
+
+
+@pytest.mark.asyncio
+async def test_runner_preserves_agent_failure_when_checkpoint_close_fails(
     tmp_path, monkeypatch, capsys
 ):
     class BrokenConnection:
         closed = False
 
-        def commit(self):
+        async def commit(self):
             raise sqlite3.Error("checkpoint close failed")
 
-        def close(self):
+        async def close(self):
             self.closed = True
 
     connection = BrokenConnection()
@@ -1622,10 +1717,10 @@ def test_runner_preserves_agent_failure_when_checkpoint_close_fails(
         def format_result(self, output):
             return output
 
-    def invoke(_self, _instruction, **_kwargs):
+    async def ainvoke(_self, _instruction, **_kwargs):
         raise RuntimeError("agent failed")
 
-    monkeypatch.setattr(FailingAgent, "invoke", invoke)
+    monkeypatch.setattr(FailingAgent, "ainvoke", ainvoke)
 
     runtime_config = SimpleNamespace(
         workspace=None,
@@ -1653,18 +1748,20 @@ def test_runner_preserves_agent_failure_when_checkpoint_close_fails(
         "model_validate",
         classmethod(lambda _cls, _data: runtime_config),
     )
+
+    async def make_checkpointer(_path):
+        return checkpointer
+
     monkeypatch.setattr(
-        "ursa.util.Checkpointer.from_workspace",
-        lambda _path, *, db_dir: checkpointer,
+        "ursa.util.Checkpointer.async_from_workspace", make_checkpointer
     )
 
     with pytest.raises(RuntimeError, match="agent failed"):
-        _runner_run({
+        await _runner_run({
             "agent_import_path": "example:FailingAgent",
             "config_file": str(config_file),
             "workspace": str(tmp_path / "workspace"),
-            "metrics_path": str(tmp_path / "logs" / "metrics.json"),
-            "artifacts_dir": str(tmp_path / "artifacts"),
+            "log_dir": str(tmp_path / "logs"),
             "instruction": "solve it",
         })
 
@@ -1673,14 +1770,15 @@ def test_runner_preserves_agent_failure_when_checkpoint_close_fails(
 
 
 @pytest.mark.parametrize("imported", [object(), object])
-def test_runner_rejects_non_ursa_agent(imported, monkeypatch):
+@pytest.mark.asyncio
+async def test_runner_rejects_non_ursa_agent(imported, monkeypatch):
     monkeypatch.setattr(
         "ursa.integrations.harbor_runner._import_symbol",
         lambda _path: imported,
     )
 
     with pytest.raises(TypeError, match="URSA BaseAgent subclass"):
-        _runner_run({"agent_import_path": "example:Invalid"})
+        await _runner_run({"agent_import_path": "example:Invalid"})
 
 
 @pytest.mark.asyncio

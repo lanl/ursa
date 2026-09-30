@@ -10,55 +10,13 @@ import json
 import signal
 import sys
 import traceback
-from collections.abc import Iterator
-from contextlib import (
-    contextmanager,
-    redirect_stderr,
-    redirect_stdout,
-    suppress,
-)
+from contextlib import suppress
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
+from rich.console import Console  # noqa: TID251
 
-class _Tee:
-    """Write text to the runner stream and its durable Harbor log."""
-
-    def __init__(self, stream: TextIO, log: TextIO) -> None:
-        self._stream = stream
-        self._log = log
-
-    def write(self, text: str) -> int:
-        self._stream.write(text)
-        self._log.write(text)
-        self.flush()
-        return len(text)
-
-    def flush(self) -> None:
-        self._stream.flush()
-        self._log.flush()
-
-    def isatty(self) -> bool:
-        return self._stream.isatty()
-
-    def fileno(self) -> int:
-        return self._stream.fileno()
-
-    @property
-    def encoding(self) -> str | None:
-        return self._stream.encoding
-
-
-@contextmanager
-def _capture_output(log_path: Path) -> Iterator[None]:
-    """Tee runner stdout and stderr into Harbor's mounted agent logs."""
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8", buffering=1) as log:
-        with (
-            redirect_stdout(_Tee(sys.stdout, log)),
-            redirect_stderr(_Tee(sys.stderr, log)),
-        ):
-            yield
+from ursa.observability.jsonl_logger import JSONLLogEventHandler
 
 
 def _import_symbol(path: str) -> Any:
@@ -69,34 +27,6 @@ def _import_symbol(path: str) -> Any:
     for component in symbol_name.split("."):
         value = getattr(value, component)
     return value
-
-
-def _usage(metrics_path: Path) -> dict[str, Any]:
-    if not metrics_path.is_file():
-        return {}
-    payload = json.loads(metrics_path.read_text())
-    events = payload.get("llm_events", [])
-    event_usage = [
-        usage
-        for event in events
-        if (usage := event.get("metrics", {}).get("usage_rollup"))
-    ]
-    totals = payload.get("usage_rollup", {})
-    if not totals and event_usage:
-        totals = {
-            key: sum(usage.get(key, 0) or 0 for usage in event_usage)
-            for key in ("input_tokens", "output_tokens")
-        }
-    if not totals:
-        # Compatibility with metrics emitted before usage was separated from
-        # timing totals.
-        totals = payload.get("totals", {})
-    costs = payload.get("costs", {})
-    return {
-        "n_input_tokens": totals.get("input_tokens"),
-        "n_output_tokens": totals.get("output_tokens"),
-        "cost_usd": costs.get("total_usd", totals.get("total_cost")),
-    }
 
 
 def _agent_config(
@@ -143,31 +73,37 @@ async def _attach_mcp_tools(agent: Any, mcp_servers: dict[str, Any]) -> None:
     await agent.add_mcp_tools(start_mcp_client(mcp_servers))
 
 
-def _close_checkpoint(checkpointer: Any) -> None:
+async def _close_checkpoint(checkpointer: Any) -> None:
     """Flush and close the artifact-backed SQLite checkpoint database."""
     connection = checkpointer.conn
     failure: BaseException | None = None
     try:
-        connection.commit()
-        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        await connection.commit()
+        await connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except BaseException as exc:
         failure = exc
     try:
-        connection.close()
+        await connection.close()
     except BaseException as exc:
         if failure is None:
             failure = exc
+    join = getattr(connection, "join", None)
+    if callable(join):
+        try:
+            await asyncio.to_thread(join)
+        except BaseException as exc:
+            if failure is None:
+                failure = exc
     if failure is not None:
         raise failure
 
 
-def _run(config: dict[str, Any]) -> None:
+async def _run(config: dict[str, Any]) -> None:
     from ursa.agents import BaseAgent
+    from ursa.cli.callbacks import HITLLogEventHandler
     from ursa.cli.config import UrsaConfig, load_config_file
     from ursa.util import Checkpointer
-    from ursa.util.events import configure_event_logging
 
-    configure_event_logging(rich=False)
     agent_class = _import_symbol(config["agent_import_path"])
     if not isinstance(agent_class, type) or not issubclass(
         agent_class, BaseAgent
@@ -180,10 +116,11 @@ def _run(config: dict[str, Any]) -> None:
     ursa_config.workspace = Path(config["workspace"])
     ursa_config = ursa_config.resolve()
 
-    metrics_path = Path(config["metrics_path"])
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    artifacts_dir = Path(config["artifacts_dir"])
-    checkpointer = Checkpointer.from_workspace(artifacts_dir, db_dir="ursa")
+    logs_dir = Path(config["log_dir"])
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "ursa.log"
+    jsonl_path = logs_dir / "ursa.jsonl"
+    checkpointer = await Checkpointer.async_from_workspace(logs_dir)
     agent_options = _agent_config(
         ursa_config,
         agent_class,
@@ -211,19 +148,33 @@ def _run(config: dict[str, Any]) -> None:
     previous_sigterm = signal.signal(signal.SIGTERM, terminate)
     failure: BaseException | None = None
     try:
-        asyncio.run(_attach_mcp_tools(agent, ursa_config.mcp_servers))
-        output = agent.invoke(
-            config["instruction"],
-            save_json=True,
-            metrics_path=str(metrics_path),
-        )
-        result = agent.format_result(output)
-        sys.stdout.write(
-            "URSA_HARBOR_RESULT="
-            + json.dumps(
-                {"result": result, **_usage(metrics_path)}, default=str
+        await _attach_mcp_tools(agent, ursa_config.mcp_servers)
+        with (
+            log_path.open("a", encoding="utf-8", buffering=1) as log_file,
+            jsonl_path.open("a", encoding="utf-8", buffering=1) as jsonl_file,
+        ):
+            callbacks = [
+                HITLLogEventHandler(
+                    console=Console(
+                        file=log_file,
+                        force_terminal=False,
+                        force_interactive=False,
+                        color_system=None,
+                    ),
+                    workspace=ursa_config.workspace,
+                ),
+                JSONLLogEventHandler(jsonl_file),
+            ]
+            output = await agent.ainvoke(
+                config["instruction"],
+                config={"callbacks": callbacks},
             )
-            + "\n"
+        result = agent.format_result(output)
+        (logs_dir / "ursa_result.out").write_text(
+            result
+            if isinstance(result, str)
+            else json.dumps(result, default=str),
+            encoding="utf-8",
         )
     except BaseException as exc:
         failure = exc
@@ -231,7 +182,7 @@ def _run(config: dict[str, Any]) -> None:
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         try:
-            _close_checkpoint(checkpointer)
+            await _close_checkpoint(checkpointer)
         except Exception:
             if failure is None:
                 raise
@@ -240,12 +191,12 @@ def _run(config: dict[str, Any]) -> None:
 
 def main(encoded: str) -> None:
     config = json.loads(base64.urlsafe_b64decode(encoded).decode())
-    log_path = Path(config["log_path"])
+    log_path = Path(config["log_dir"]) / "ursa.log"
     try:
-        with _capture_output(log_path):
-            _run(config)
+        asyncio.run(_run(config))
     except BaseException:
         with suppress(OSError):
+            log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("a", encoding="utf-8") as log:
                 traceback.print_exc(file=log)
         raise
