@@ -131,25 +131,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
     URSA_PYTHON_VERSION = "3.13"
     URSA_RUNNER = "/installed-agent/bin/ursa-harbor-runner"
     _INSTALL_ROOT = "/installed-agent"
-    _UV_VERSION = "0.12.8"
-    _UV_RELEASES = {
-        "x86_64": (
-            "x86_64",
-            "6ca4597639c97e921fb915e113061ce8e4a14ead9e42a1ead521dbb0a6763795",
-        ),
-        "amd64": (
-            "x86_64",
-            "6ca4597639c97e921fb915e113061ce8e4a14ead9e42a1ead521dbb0a6763795",
-        ),
-        "aarch64": (
-            "aarch64",
-            "975917badc8370163989e5bbe5a7c69bf922d19f8e57cb2652531bbffc935f84",
-        ),
-        "arm64": (
-            "aarch64",
-            "975917badc8370163989e5bbe5a7c69bf922d19f8e57cb2652531bbffc935f84",
-        ),
-    }
+    _UV_VERSION = "0.12.21"
     ENV_AUTH_PROVIDERS = frozenset({
         "amazon-bedrock",
         "sagemaker",
@@ -694,20 +676,42 @@ class UrsaHarborAgent(BaseInstalledAgent):
 
     @classmethod
     def _stage_uv_binary(cls, machine: str, destination: Path) -> None:
-        """Download and verify the uv binary for the container architecture."""
-        release = cls._UV_RELEASES.get(machine.strip().lower())
-        if release is None:
-            raise RuntimeError(f"unsupported architecture for uv: {machine}")
-        architecture, expected_sha256 = release
+        """Download and verify a portable uv binary for the architecture."""
+        match machine.strip().lower():
+            case "amd64" | "x86_64":
+                architecture = "x86_64"
+            case "arm64" | "aarch64":
+                architecture = "aarch64"
+            case unsupported:
+                raise RuntimeError(
+                    f"unsupported architecture for uv: {unsupported}"
+                )
         archive_name = f"uv-{architecture}-unknown-linux-musl.tar.gz"
         url = (
-            "https://github.com/astral-sh/uv/releases/download/"
+            "https://releases.astral.sh/github/uv/releases/download/"
             f"{cls._UV_VERSION}/{archive_name}"
         )
+        checksum_request = urllib.request.Request(
+            f"{url}.sha256", headers={"User-Agent": "ursa-harbor"}
+        )
+        with urllib.request.urlopen(checksum_request, timeout=120) as response:
+            checksum_fields = response.read(1024).decode("ascii").split()
+        if (
+            len(checksum_fields) != 2
+            or checksum_fields[1] != archive_name
+            or not re.fullmatch(r"[0-9a-f]{64}", checksum_fields[0])
+        ):
+            raise RuntimeError("uv release checksum file is invalid")
+        expected_sha256 = checksum_fields[0]
         with tempfile.TemporaryDirectory(prefix="ursa-harbor-uv-") as temp_dir:
             archive = Path(temp_dir) / archive_name
             digest = hashlib.sha256()
-            with urllib.request.urlopen(url, timeout=120) as response:
+            archive_request = urllib.request.Request(
+                url, headers={"User-Agent": "ursa-harbor"}
+            )
+            with urllib.request.urlopen(
+                archive_request, timeout=120
+            ) as response:
                 with archive.open("wb") as output:
                     while chunk := response.read(1024 * 1024):
                         digest.update(chunk)
