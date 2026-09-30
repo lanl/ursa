@@ -3293,10 +3293,11 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
         for index, value in enumerate(command)
         if value == "-B"
     ]
-    assert binds[:7] == [
+    assert binds[:8] == [
         f"{environment._staging_dir}/harbor-writable/solution:/solution",
         f"{environment._staging_dir}/harbor-writable/tests:/tests",
         f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",
+        f"{environment._staging_dir}/harbor-writable/workdir:/workspace",
         f"{environment._staging_dir}/harbor-writable/logs/agent:/logs/agent",
         f"{environment._staging_dir}/harbor-writable/logs/user-agent:/logs/user-agent",
         f"{environment._staging_dir}/harbor-writable/logs/verifier:/logs/verifier",
@@ -3329,6 +3330,16 @@ def test_singularity_rootless_binds_do_not_shadow_configured_logs(tmp_path):
         bind.endswith("harbor-writable/logs/artifacts:/logs/artifacts")
         for bind in binds
     )
+
+
+def test_singularity_rootless_does_not_bind_root_workdir(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._fakeroot = False
+    environment._workdir = "/"
+
+    binds = environment._rootless_harbor_binds()
+
+    assert all(str(target) != "/" for _source, target in binds)
 
 
 def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):
