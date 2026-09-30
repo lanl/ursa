@@ -4,9 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from ursa.cli import build_parser, main
-from ursa.cli.harbor import validate_harbor_paths
-from ursa.integrations.harbor_validation import discover_harbor_tasks
+harbor = pytest.importorskip("harbor")
+
+from ursa.cli import build_parser, main  # noqa: E402
+from ursa.cli.harbor import validate_harbor_paths  # noqa: E402
+from ursa.integrations.harbor_validation import (  # noqa: E402
+    discover_harbor_tasks,
+)
 
 
 def _task(tmp_path: Path) -> Path:
