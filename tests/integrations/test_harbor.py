@@ -1789,6 +1789,22 @@ async def test_singularity_cache_hash_honors_dockerignore(
     )
 
 
+@pytest.mark.asyncio
+async def test_singularity_cache_hash_delimits_build_options(
+    tmp_path, monkeypatch
+):
+    environment, _ = _singularity_env(tmp_path, monkeypatch)
+
+    first = await environment._dockerfile_cache_path(
+        build_args=("MODE=a",), target="bc"
+    )
+    second = await environment._dockerfile_cache_path(
+        build_args=("MODE=ab",), target="c"
+    )
+
+    assert first != second
+
+
 @pytest.mark.parametrize("invalid_content", [b"", b"broken"])
 @pytest.mark.asyncio
 async def test_singularity_rebuilds_invalid_cache(
@@ -2160,6 +2176,40 @@ def test_singularity_compose_merges_overlays_after_normalizing_paths(
     }
 
 
+def test_singularity_compose_merges_volumes_by_container_target(
+    tmp_path, monkeypatch
+):
+    overlay_dir = tmp_path / "overlay"
+    overlay_dir.mkdir()
+    overlay = overlay_dir / "compose.yaml"
+    overlay.write_text(
+        "services:\n"
+        "  main:\n"
+        "    volumes:\n"
+        "      - ./second:/second\n"
+        "      - ./replacement:/shared\n"
+    )
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services:\n"
+        "  main:\n"
+        "    build: .\n"
+        "    volumes:\n"
+        "      - ./first:/first\n"
+        "      - ./original:/shared\n",
+        extra_compose=[overlay],
+    )
+
+    assert environment._load_compose_config()["services"]["main"][
+        "volumes"
+    ] == [
+        f"{tmp_path / 'environment' / 'first'}:/first",
+        f"{overlay_dir / 'replacement'}:/shared",
+        f"{overlay_dir / 'second'}:/second",
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("runtime", ["apptainer", "singularity"])
 async def test_singularity_compose_uses_selected_runtime_shim(
@@ -2257,6 +2307,55 @@ async def test_singularity_compose_binds_writable_harbor_paths(
             source = Path(volume.split(":", 1)[0])
             assert source.is_dir()
             assert source.stat().st_mode & 0o777 == 0o777
+    finally:
+        environment._cleanup_compose_project()
+
+
+@pytest.mark.asyncio
+async def test_singularity_compose_respects_task_mount_coverage_and_overrides(
+    tmp_path, monkeypatch
+):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services:\n"
+        "  main:\n"
+        "    build: .\n"
+        "    volumes:\n"
+        "      - ./workspace:/workspace\n"
+        "      - ./logs:/logs\n"
+        "      - ./old-verifier:/logs/verifier\n",
+        mounts=[
+            {
+                "type": "bind",
+                "source": "/host/verifier",
+                "target": "/logs/verifier",
+            }
+        ],
+    )
+    environment._workdir = "/workspace"
+    environment._sif_path = tmp_path / "main.sif"
+    environment._sif_path.write_text("main")
+    environment._staging_dir = tmp_path / "staging"
+    environment._staging_dir.mkdir()
+
+    try:
+        await environment._prepare_compose_project(force_build=False)
+        generated = yaml.safe_load(environment._compose_file.read_text())
+        volumes = generated["instances"][environment._compose_key("main")][
+            "volumes"
+        ]
+
+        assert f"{tmp_path / 'environment' / 'workspace'}:/workspace" in volumes
+        assert f"{tmp_path / 'environment' / 'logs'}:/logs" in volumes
+        assert "/host/verifier:/logs/verifier" in volumes
+        assert not any(
+            "old-verifier:/logs/verifier" in item for item in volumes
+        )
+        assert not any(
+            "harbor-writable/workdir:/workspace" in item for item in volumes
+        )
+        assert not any("harbor-writable/logs/" in item for item in volumes)
     finally:
         environment._cleanup_compose_project()
 
@@ -3138,6 +3237,7 @@ def _instance_test_environment(tmp_path, network_mode=NetworkMode.PUBLIC):
     environment._mounts = []
     environment._workdir = "/workspace"
     environment._sif_path = tmp_path / "image.sif"
+    environment._scratch_dir = None
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
     environment._instance_name = "ursatestinstance"
@@ -3396,6 +3496,18 @@ def test_singularity_runtime_parent_mount_covers_default_children(tmp_path):
     assert not any(target.startswith("/logs/") for target in targets)
 
 
+def test_singularity_generated_parent_covers_nested_workdir(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._workdir = "/tests/work"
+
+    targets = {
+        str(target) for _source, target in environment._harbor_writable_binds()
+    }
+
+    assert "/tests" in targets
+    assert "/tests/work" not in targets
+
+
 def test_singularity_runtime_does_not_bind_root_workdir(tmp_path):
     environment = _instance_test_environment(tmp_path)
     environment._fakeroot = False
@@ -3523,9 +3635,15 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
     async def fake_run(*command):
         commands.append(command)
 
+    created = {}
+
     async def fake_upload():
         assert environment._instance_started
         assert environment._staging_dir is not None
+        assert environment._scratch_dir is not None
+        created["scratch"] = environment._scratch_dir
+        assert environment._scratch_dir.stat().st_mode & 0o777 == 0o700
+        assert environment._staging_dir.stat().st_mode & 0o777 == 0o755
         for source, _target in environment._harbor_writable_binds():
             assert source.is_dir()
             assert source.stat().st_mode & 0o777 == 0o777
@@ -3544,6 +3662,7 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
         "exec",
         "--cleanenv",
     )
+    assert commands[0][-1].startswith("set -e; ")
     assert commands[0][-3] == "sh"
     assert "/tests/." in commands[0][-1]
     assert "/staging/harbor-writable/tests/" in commands[0][-1]
@@ -3569,6 +3688,42 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
         "ursatestinstance",
     )
     assert environment._staging_dir is None
+    assert environment._scratch_dir is None
+    assert not created["scratch"].exists()
+
+
+@pytest.mark.asyncio
+async def test_singularity_seed_isolated_and_restores_bind_permissions(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(
+        tmp_path, network_mode=NetworkMode.NO_NETWORK
+    )
+    environment._prepare_harbor_bind_sources()
+    command = None
+
+    async def fake_run(*arguments):
+        nonlocal command
+        command = arguments
+        for source, _target in environment._harbor_writable_binds():
+            source.chmod(0o755)
+
+    monkeypatch.setattr(environment, "_run", fake_run)
+
+    await environment._seed_harbor_bind_sources()
+
+    assert command is not None
+    network_index = command.index("--net")
+    assert command[network_index : network_index + 3] == (
+        "--net",
+        "--network",
+        "none",
+    )
+    assert command[-1].startswith("set -e; ")
+    assert all(
+        source.stat().st_mode & 0o777 == 0o777
+        for source, _target in environment._harbor_writable_binds()
+    )
 
 
 @pytest.mark.asyncio
@@ -3711,6 +3866,37 @@ async def test_singularity_startup_timeout_cleans_possible_instance(
 
     assert commands[-1][1:3] == ("instance", "stop")
     assert environment._staging_dir is None
+
+
+@pytest.mark.asyncio
+async def test_singularity_startup_timeout_includes_content_seed(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._staging_dir = None
+    environment._startup_timeout_sec = 0.01
+    environment._validate_definition = lambda: None
+    commands = []
+
+    async def fake_build(_force_build):
+        return tmp_path / "image.sif"
+
+    async def fake_run(*command):
+        commands.append(command)
+        if command[1] == "exec" and not any(
+            part.startswith("instance://") for part in command
+        ):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
+    monkeypatch.setattr(environment, "_run", fake_run)
+
+    with pytest.raises(TimeoutError, match="did not become ready"):
+        await environment.start(force_build=False)
+
+    assert commands[-1][1:3] == ("instance", "stop")
+    assert environment._staging_dir is None
+    assert environment._scratch_dir is None
 
 
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
