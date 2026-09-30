@@ -121,26 +121,6 @@ async def _run(config: dict[str, Any]) -> None:
     log_path = logs_dir / "ursa.log"
     jsonl_path = logs_dir / "ursa.jsonl"
     checkpointer = await Checkpointer.async_from_workspace(logs_dir)
-    agent_options = _agent_config(
-        ursa_config,
-        agent_class,
-        use_web=config.get("use_web"),
-    )
-    agent_options["checkpointer"] = checkpointer
-    agent = agent_class(
-        llm=ursa_config.llm_model.init_chat_model(),
-        workspace=ursa_config.workspace,
-        agent_name=ursa_config.agent_name or "harbor",
-        group=ursa_config.group,
-        thread_id=ursa_config.thread_id,
-        rag_tools=ursa_config.rag_tools,
-        rag_tool_embedding=(
-            ursa_config.emb_model.init_embedding()
-            if ursa_config.emb_model
-            else None
-        ),
-        **agent_options,
-    )
 
     def terminate(_signum: int, _frame: Any) -> None:
         raise SystemExit(143)
@@ -148,6 +128,26 @@ async def _run(config: dict[str, Any]) -> None:
     previous_sigterm = signal.signal(signal.SIGTERM, terminate)
     failure: BaseException | None = None
     try:
+        agent_options = _agent_config(
+            ursa_config,
+            agent_class,
+            use_web=config.get("use_web"),
+        )
+        agent_options["checkpointer"] = checkpointer
+        agent = agent_class(
+            llm=ursa_config.llm_model.init_chat_model(),
+            workspace=ursa_config.workspace,
+            agent_name=ursa_config.agent_name or "harbor",
+            group=ursa_config.group,
+            thread_id=ursa_config.thread_id,
+            rag_tools=ursa_config.rag_tools,
+            rag_tool_embedding=(
+                ursa_config.emb_model.init_embedding()
+                if ursa_config.emb_model
+                else None
+            ),
+            **agent_options,
+        )
         await _attach_mcp_tools(agent, ursa_config.mcp_servers)
         with (
             log_path.open("a", encoding="utf-8", buffering=1) as log_file,
