@@ -121,8 +121,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
         ursa_install_spec: Package requirement, Git URL, local Python project,
             or local wheel/sdist installed in each task container. Defaults to
             this URSA checkout or installed version.
-        ursa_extras: URSA package extras to install, as a sequence or comma-separated
-            string.
+        ursa_extras: Additional URSA package extras to install, as a sequence or
+            comma-separated string. The ``harbor`` extra is always installed.
         extra_packages: Additional Python packages to install. Pass one requirement
             string or a sequence of requirement strings.
     """
@@ -177,9 +177,10 @@ class UrsaHarborAgent(BaseInstalledAgent):
             else ursa_install_spec
         )
         self.ursa_install_spec = self._parse_install_spec(install_spec)
-        self.ursa_extras = self._parse_list(
+        requested_extras = self._parse_list(
             ursa_extras, name="ursa_extras", split_commas=True
         )
+        self.ursa_extras = self._merge_extras(requested_extras, ("harbor",))
         self.extra_packages = self._parse_list(
             extra_packages, name="extra_packages"
         )
@@ -300,35 +301,59 @@ class UrsaHarborAgent(BaseInstalledAgent):
             )
         return path
 
+    @staticmethod
+    def _merge_extras(*extra_groups: Sequence[str]) -> tuple[str, ...]:
+        extras: dict[str, None] = {}
+        for group in extra_groups:
+            for extra in group:
+                normalized = re.sub(r"[-_.]+", "-", extra.strip()).lower()
+                if normalized:
+                    extras[normalized] = None
+        return tuple(extras)
+
     def _install_target(self, target: str) -> str:
-        if not self.ursa_extras:
-            return target
-        extras = ",".join(self.ursa_extras)
-        if "[" in target.split("@", 1)[0]:
-            raise ValueError(
-                "ursa_install_spec must not include extras when ursa_extras is set"
-            )
         direct_reference = re.match(
-            r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\s*@\s*.+)$", target
+            r"^([A-Za-z0-9][A-Za-z0-9._-]*)"
+            r"\s*(?:\[([^\]]+)\])?\s*@\s*(.+)$",
+            target,
         )
         if direct_reference:
-            name, reference = direct_reference.groups()
-            return f"{name}[{extras}]{reference}"
+            name, embedded, reference = direct_reference.groups()
+            extras = ",".join(
+                self._merge_extras(
+                    embedded.split(",") if embedded else (), self.ursa_extras
+                )
+            )
+            return f"{name}[{extras}] @ {reference}"
         if "://" in target:
+            extras = ",".join(self.ursa_extras)
             return f"ursa-ai[{extras}] @ {target}"
-        distribution = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", target)
+        distribution = re.match(
+            r"^([A-Za-z0-9][A-Za-z0-9._-]*)"
+            r"\s*(?:\[([^\]]+)\])?\s*",
+            target,
+        )
         if distribution:
+            name, embedded = distribution.groups()
+            extras = ",".join(
+                self._merge_extras(
+                    embedded.split(",") if embedded else (), self.ursa_extras
+                )
+            )
             end = distribution.end()
-            return f"{target[:end]}[{extras}]{target[end:]}"
+            return f"{name}[{extras}]{target[end:]}"
+        extras = ",".join(self.ursa_extras)
         return f"{target}[{extras}]"
 
     @staticmethod
     def _github_archive_target(target: str) -> str:
         """Use a GitHub archive so task images do not need a Git client."""
         match = re.fullmatch(
-            r"(?:(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*@\s*)?"
+            r"(?:(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)"
+            r"\s*(?P<extras>\[[^\]]+\])?\s*@\s*)?"
             r"git\+https://github\.com/(?P<repository>[^?#]+?)"
-            r"(?:\.git)?@(?P<revision>[^#]+)",
+            r"(?:\.git)?@(?P<revision>[^#;\s]+)"
+            r"(?P<marker>\s*;\s*.+)?",
             target,
         )
         if match is None:
@@ -337,7 +362,10 @@ class UrsaHarborAgent(BaseInstalledAgent):
         revision = quote(match.group("revision"), safe="")
         archive = f"https://github.com/{repository}/archive/{revision}.tar.gz"
         name = match.group("name")
-        return f"{name} @ {archive}" if name else archive
+        extras = match.group("extras") or ""
+        marker = match.group("marker") or ""
+        requirement = f"{name}{extras} @ {archive}" if name else archive
+        return f"{requirement}{marker}"
 
     def _mcp_config(self) -> dict[str, dict[str, Any]]:
         """Convert Harbor's MCP list to URSA's named mapping."""
