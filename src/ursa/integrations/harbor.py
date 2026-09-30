@@ -19,9 +19,11 @@ import subprocess
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import unquote, urlparse
 
+import typer
+import yaml
 from jsonargparse import Namespace
 from pydantic import SecretStr
 
@@ -42,9 +44,22 @@ from ursa.cli.config import (
     ENV_SUB_REGEX,
     UrsaConfig,
     config_search_paths,
-    load_config_file,
 )
 from ursa.util.secrets import externalize_secret_references
+
+
+def _load_harbor_config_file(path: Path) -> dict[str, Any]:
+    """Load a raw config layer so secrets can be externalized on the host."""
+    loader = yaml.safe_load if path.suffix in {".yaml", ".yml"} else json.load
+    with path.open(encoding="utf-8") as config_file:
+        data = loader(config_file)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Configuration file '{path}' must contain a mapping at its root"
+        )
+    return data
 
 
 class UrsaHarborAgent(BaseInstalledAgent):
@@ -67,7 +82,9 @@ class UrsaHarborAgent(BaseInstalledAgent):
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
     URSA_PYTHON_VERSION = "3.13"
-    URSA_RUNNER = "/usr/local/bin/ursa-harbor-runner"
+    URSA_RUNNER = (
+        "/opt/ursa-tools/ursa-ai/bin/python -m ursa.integrations.harbor runner"
+    )
     ENV_AUTH_PROVIDERS = frozenset({
         "amazon-bedrock",
         "sagemaker",
@@ -321,10 +338,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 Namespace(config=self.config_file, subcommand=None), "final"
             )
         )
-        layers = [
-            load_config_file(path, interpolate_environment=False)
-            for path in paths
-        ]
+        layers = [_load_harbor_config_file(path) for path in paths]
         for layer in layers:
             self._reject_environment_interpolation(layer)
         return layers
@@ -350,18 +364,10 @@ class UrsaHarborAgent(BaseInstalledAgent):
         *,
         use_web: bool | None = None,
     ) -> tuple[dict[str, Any], dict[str, str]]:
-        config = UrsaConfig().model_merge(*self._config_layers())
-        harbor_config = self._harbor_config(config, use_web=use_web)
-        harbor_mcp = harbor_config.pop("mcp_servers", {})
-        config = config.model_merge(harbor_config)
-
-        # A Harbor MCP entry describes the whole named server. Replacing that
-        # entry avoids retaining incompatible fields when its transport changes.
-        if harbor_mcp:
-            config.mcp_servers = {
-                **config.mcp_servers,
-                **harbor_mcp,
-            }
+        config_layers = self._config_layers()
+        base_config = UrsaConfig().model_merge(*config_layers)
+        harbor_layer = self._harbor_config(base_config, use_web=use_web)
+        config = UrsaConfig().model_merge(*config_layers, harbor_layer)
 
         config_data = config.model_dump(mode="python", exclude_unset=True)
         self._qualify_tagged_models(config_data)
@@ -607,7 +613,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
                 f"{self.URSA_PYTHON_VERSION} "
                 f"{extra_packages} {shlex.quote(install_target)} && "
                 'test "$(command -v ursa)" = /usr/local/bin/ursa && '
-                "test -x /usr/local/bin/ursa-harbor-runner"
+                "test -x /opt/ursa-tools/ursa-ai/bin/python"
             ),
             timeout_sec=900,
         )
@@ -715,4 +721,62 @@ def make_harbor_agent(
     return BoundUrsaHarborAgent
 
 
-__all__ = ["UrsaHarborAgent", "make_harbor_agent"]
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Run and validate URSA's Harbor integration.",
+)
+
+
+@app.command()
+def validate(
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            help="Task files, task directories, or roots to scan recursively"
+        ),
+    ],
+) -> None:
+    """Validate Harbor task environments supported by URSA."""
+    from ursa.integrations.harbor_validation import (
+        discover_harbor_tasks,
+        validate_harbor_task,
+    )
+
+    tasks = discover_harbor_tasks(paths)
+    failures = 0
+    for task in tasks:
+        try:
+            validate_harbor_task(task)
+        except Exception as exc:
+            failures += 1
+            typer.echo(f"FAIL {task}: {type(exc).__name__}: {exc}", err=True)
+        else:
+            typer.echo(f"OK   {task}")
+    if failures:
+        raise typer.Exit(1)
+    typer.echo(f"Validated {len(tasks)} Harbor task(s).")
+
+
+@app.command("runner")
+def run_runner(
+    encoded: Annotated[
+        str,
+        typer.Argument(help="URL-safe base64-encoded runner configuration"),
+    ],
+) -> None:
+    """Run the container-side Harbor agent process."""
+    from ursa.integrations.harbor_runner import main as runner_main
+
+    runner_main(encoded)
+
+
+def main() -> None:
+    """Run the Harbor integration CLI."""
+    app()
+
+
+__all__ = ["UrsaHarborAgent", "app", "make_harbor_agent"]
+
+
+if __name__ == "__main__":
+    main()
