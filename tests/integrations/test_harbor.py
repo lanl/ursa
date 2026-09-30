@@ -3293,12 +3293,42 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
         for index, value in enumerate(command)
         if value == "-B"
     ]
-    assert binds[:4] == [
-        f"{environment._staging_dir}/harbor-writable/logs:/logs",
+    assert binds[:7] == [
         f"{environment._staging_dir}/harbor-writable/solution:/solution",
         f"{environment._staging_dir}/harbor-writable/tests:/tests",
         f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",
+        f"{environment._staging_dir}/harbor-writable/logs/agent:/logs/agent",
+        f"{environment._staging_dir}/harbor-writable/logs/user-agent:/logs/user-agent",
+        f"{environment._staging_dir}/harbor-writable/logs/verifier:/logs/verifier",
+        f"{environment._staging_dir}/harbor-writable/logs/artifacts:/logs/artifacts",
     ]
+
+
+def test_singularity_rootless_binds_do_not_shadow_configured_logs(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._fakeroot = False
+    environment._mounts = [
+        {
+            "type": "bind",
+            "source": "/host/artifacts",
+            "target": "/logs/artifacts",
+        }
+    ]
+    for source, _target in environment._rootless_harbor_binds():
+        source.mkdir(parents=True, exist_ok=True)
+
+    command = environment._instance_start_command()
+
+    binds = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-B"
+    ]
+    assert "/host/artifacts:/logs/artifacts" in binds
+    assert not any(
+        bind.endswith("harbor-writable/logs/artifacts:/logs/artifacts")
+        for bind in binds
+    )
 
 
 def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):

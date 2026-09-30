@@ -1285,12 +1285,25 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self._staging_dir is None:
             raise RuntimeError("Singularity staging directory is not prepared")
         root = self._staging_dir / "harbor-writable"
-        return (
-            (root / "logs", EnvironmentPaths.logs_dir),
+        binds = [
             (root / "solution", EnvironmentPaths.solution_dir),
             (root / "tests", EnvironmentPaths.tests_dir),
             (root / "skills", EnvironmentPaths.default_skills_dir),
-        )
+        ]
+        configured_targets = {
+            PurePosixPath(mount["target"])
+            for mount in self._mounts
+            if mount.get("type") == "bind"
+        }
+        for target in (
+            EnvironmentPaths.agent_dir,
+            EnvironmentPaths.user_agent_dir,
+            EnvironmentPaths.verifier_dir,
+            EnvironmentPaths.artifacts_dir,
+        ):
+            if target not in configured_targets:
+                binds.append((root / target.relative_to("/"), target))
+        return tuple(binds)
 
     def _prepare_disk_overlay(self) -> None:
         if self._staging_dir is None:
