@@ -1290,6 +1290,9 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             (root / "tests", EnvironmentPaths.tests_dir),
             (root / "skills", EnvironmentPaths.default_skills_dir),
         ]
+        workdir = PurePosixPath(self._workdir)
+        if workdir != PurePosixPath("/"):
+            binds.append((root / "workdir", workdir))
         configured_targets = {
             PurePosixPath(mount["target"])
             for mount in self._mounts
