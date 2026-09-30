@@ -33,7 +33,7 @@ does not copy host config or keyring files into the task container.
 Each trial captures the URSA runner's stdout, stderr, and progress logging in
 `agent/ursa.log`. Metrics remain in `agent/ursa-metrics.json`.
 
-## Singularity and SLURM
+## Singularity
 
 The custom environment builds `environment/Dockerfile` with Buildah, Podman,
 or Docker, converts it to a cached SIF, and requires no Apptainer definition
@@ -46,13 +46,6 @@ SIFs are cached by build context under `$XDG_CACHE_HOME/ursa/harbor/sif`, or
 with the same build context share a lock and build only once. Set
 `URSA_HARBOR_SIF_CACHE` or pass `singularity_image_cache_dir` as an environment
 kwarg to use a different shared cache.
-
-```bash
-export OPENAI_API_KEY=...
-export URSA_HARBOR_SIF_CACHE=/shared/cache/harbor-sif
-export URSA_HARBOR_JOBS_DIR=/shared/results/ursa-harbor
-bash submit_slurm.sh
-```
 
 For a direct run, add:
 
@@ -141,5 +134,3 @@ Singularity adapter rejects variable workdirs it cannot resolve before launch.
 
 Remove `jobs/` when local results are no longer needed. Remove the SIF cache
 only when no Harbor jobs use it.
-`submit_slurm.sh` prints the temporary task-manifest path, which can be removed
-after the array finishes.

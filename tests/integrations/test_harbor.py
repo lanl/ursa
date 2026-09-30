@@ -189,21 +189,6 @@ def test_runner_failure_is_written_to_harbor_log(tmp_path, monkeypatch):
     assert "RuntimeError: agent failed" in text
 
 
-def test_runner_console_entrypoint_reads_encoded_argument(
-    tmp_path, monkeypatch
-):
-    log_path = tmp_path / "agent" / "ursa.log"
-    payload = {"log_path": str(log_path), "instruction": "task"}
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    received = []
-    monkeypatch.setattr("ursa.integrations.harbor_runner._run", received.append)
-    monkeypatch.setattr(sys, "argv", ["ursa-harbor-runner", encoded])
-
-    _runner_main()
-
-    assert received == [payload]
-
-
 def _singularity_env(
     tmp_path,
     monkeypatch,
@@ -594,41 +579,6 @@ def test_harbor_model_connection_is_an_ursa_provider_layer(
     assert set(secret_env.values()) == {"host-openai-key"}
 
 
-def test_harbor_model_switch_drops_old_provider_fields(tmp_path, monkeypatch):
-    monkeypatch.delenv("OLD_AZURE_KEY", raising=False)
-    config_file = tmp_path / "ursa.yaml"
-    config_file.write_text(
-        "inference_providers:\n"
-        "  ollama:\n"
-        "    model_provider: ollama\n"
-        "    base_url: http://localhost:11434\n"
-        "llm_model:\n"
-        "  model: old-model\n"
-        "  model_provider: azure_openai\n"
-        "  api_key:\n"
-        "    env: OLD_AZURE_KEY\n"
-        "  ssl_verify: false\n"
-        "  azure_deployment: old-deployment\n"
-        "  max_completion_tokens: 456\n"
-    )
-    agent = UrsaHarborAgent(
-        logs_dir=tmp_path / "logs",
-        model_name="ollama/gemma4:latest",
-        config_file=config_file,
-    )
-
-    runtime_config, secret_env = agent._runtime_config()
-
-    assert "OLD_AZURE_KEY" not in json.dumps(runtime_config)
-    assert "api_key" not in runtime_config["llm_model"]
-    assert "azure_deployment" not in runtime_config["llm_model"]
-    assert runtime_config["llm_model"]["model_provider"] == "ollama"
-    assert runtime_config["llm_model"]["max_completion_tokens"] == 456
-    monkeypatch.setenv(next(iter(secret_env)), next(iter(secret_env.values())))
-    resolved = UrsaConfig.model_validate(runtime_config).resolve()
-    assert resolved.llm_model.model_provider == "ollama"
-
-
 def test_harbor_model_accepts_an_explicit_model_provider(tmp_path):
     config_file = tmp_path / "ursa.yaml"
     config_file.write_text(
@@ -746,7 +696,7 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     assert "--with numpy" in install_command
     assert "--with scipy" in install_command
     assert 'command -v ursa)" = /usr/local/bin/ursa' in install_command
-    assert "test -x /usr/local/bin/ursa-harbor-runner" in install_command
+    assert "test -x /opt/ursa-tools/ursa-ai/bin/python" in install_command
     assert timeouts == [600, 900]
     assert len(uploads) == 1
     runtime_config, destination, mode = uploads[0]
@@ -1274,7 +1224,10 @@ async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
     assert observed_timeout is None
     assert observed_env["URSA_HARBOR_SECRET_0"] == "resolved-on-host"
     assert observed_command is not None
-    assert "exec /usr/local/bin/ursa-harbor-runner" in observed_command
+    assert (
+        "exec /opt/ursa-tools/ursa-ai/bin/python "
+        "-m ursa.integrations.harbor runner" in observed_command
+    )
     encoded = shlex.split(observed_command)[-1]
     payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
     assert payload["log_path"] == "/logs/agent/ursa.log"

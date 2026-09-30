@@ -238,9 +238,7 @@ def _run(config: dict[str, Any]) -> None:
             traceback.print_exc(file=sys.stderr)
 
 
-def main(encoded: str | None = None) -> None:
-    if encoded is None:
-        encoded = sys.argv[1]
+def main(encoded: str) -> None:
     config = json.loads(base64.urlsafe_b64decode(encoded).decode())
     log_path = Path(config["log_path"])
     try:
@@ -251,7 +249,3 @@ def main(encoded: str | None = None) -> None:
             with log_path.open("a", encoding="utf-8") as log:
                 traceback.print_exc(file=log)
         raise
-
-
-if __name__ == "__main__":
-    main(sys.argv[1])
