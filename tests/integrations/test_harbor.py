@@ -546,6 +546,40 @@ def test_harbor_model_connection_is_an_ursa_provider_layer(
     assert set(secret_env.values()) == {"host-openai-key"}
 
 
+def test_runtime_config_does_not_resolve_unreferenced_implicit_provider(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("AI_PORTAL_API_KEY", "portal-secret")
+    config_file = tmp_path / "ursa.yaml"
+    config_file.write_text(
+        "inference_providers:\n"
+        "  aiportal:\n"
+        "    model_provider: openai\n"
+        "    base_url: https://aiportal.example.test\n"
+        "    api_key:\n"
+        "      env: AI_PORTAL_API_KEY\n"
+        "llm_model:\n"
+        "  model: openai/gemma-4-31B-it\n"
+        "  inference_provider: aiportal\n"
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="aiportal/openai/gemma-4-31B-it",
+        config_file=config_file,
+        config_only=True,
+    )
+
+    runtime_config, secret_env = agent._runtime_config()
+
+    assert runtime_config["inference_providers"]["aiportal"]["api_key"] == {
+        "env": "URSA_HARBOR_SECRET_0"
+    }
+    assert "openai" not in runtime_config["inference_providers"]
+    assert "OPENAI_API_KEY" not in json.dumps(runtime_config)
+    assert set(secret_env.values()) == {"portal-secret"}
+
+
 def test_harbor_model_accepts_an_explicit_model_provider(tmp_path):
     config_file = tmp_path / "ursa.yaml"
     config_file.write_text(
@@ -662,7 +696,10 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     assert commands[0].endswith("uname -m")
     assert "/installed-agent/bin/uv python install 3.13" in commands[1]
     install_command = commands[2]
-    assert "uv tool install --force --python 3.13" in install_command
+    assert (
+        "uv tool install --force --refresh-package ursa-ai --python 3.13"
+        in install_command
+    )
     assert "ursa-ai[image,harbor]==1.2" in install_command
     assert "--with numpy" in install_command
     assert "--with scipy" in install_command
