@@ -509,9 +509,14 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
                 },
             )
             await pilot.pause(0.01)
-            if app._conversation_anchor_transition:
+            if conversation.max_scroll_y > 0:
                 break
 
+        # Start a fresh transition synchronously now that overflow is known.
+        # On slower CI hosts the original 150 ms animation can otherwise
+        # finish during ``pilot.pause`` before the test gets to observe it.
+        app._reset_conversation_auto_follow(conversation)
+        app._anchor_conversation_if_overflowing()
         assert app._conversation_anchor_transition
         conversation.scroll_home(animate=False, immediate=True)
         await pilot.pause(0.2)
