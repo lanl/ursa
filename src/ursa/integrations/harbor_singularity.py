@@ -12,7 +12,6 @@ import secrets
 import shlex
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -577,16 +576,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     """Run Dockerfile and supported Compose tasks with Singularity or Apptainer."""
 
     _compose_filename = "docker-compose.yaml"
-    _mountpoint_layout_version = b"harbor-mountpoints-v1"
-    _mountpoint_paths = (
-        "solution",
-        "tests",
-        "harbor/skills",
-        "logs/agent",
-        "logs/user-agent",
-        "logs/verifier",
-        "logs/artifacts",
-    )
 
     def __init__(
         self,
@@ -628,7 +617,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._startup_timeout_sec = singularity_startup_timeout_sec
         self._staging_dir: Path | None = None
         self._sif_path: Path | None = None
-        self._overlay_path: Path | None = None
         self._workdir = self._resolve_workdir()
         identity = hashlib.sha256(self.session_id.encode()).hexdigest()[:16]
         self._instance_name = f"ursa{identity}{secrets.token_hex(4)}"
@@ -820,7 +808,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         context_dir = context_dir.resolve()
         digest = hashlib.sha256()
         digest.update(platform.machine().encode())
-        digest.update(self._mountpoint_layout_version)
         digest.update("\0".join(build_args).encode())
         digest.update((target or "").encode())
         ignore_path = context_dir / ".dockerignore"
@@ -927,17 +914,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 f"Command failed ({' '.join(command)}): {detail}"
             )
 
-    @classmethod
-    def _write_mountpoint_context(cls, context: Path, base_tag: str) -> Path:
-        mountpoint_root = context / "harbor-root"
-        for path in cls._mountpoint_paths:
-            (mountpoint_root / path).mkdir(parents=True, exist_ok=True)
-        dockerfile = context / "Dockerfile"
-        dockerfile.write_text(
-            f"FROM {base_tag}\nCOPY --chmod=0777 harbor-root/ /\n"
-        )
-        return dockerfile
-
     async def _build_with(
         self,
         builder: str,
@@ -951,11 +927,10 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     ) -> None:
         builder_name = Path(builder).name
         tag = f"ursa-harbor-{output.stem}-{builder_name}-{secrets.token_hex(8)}"
-        prepared_tag = f"{tag}-mountpoints"
-        remove_prefix = (
-            (builder, "rmi", "--force")
+        remove_command = (
+            (builder, "rmi", "--force", tag)
             if builder_name == "buildah"
-            else (builder, "image", "rm", "--force")
+            else (builder, "image", "rm", "--force", tag)
         )
         builder_options = [
             option
@@ -978,40 +953,15 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 str(context_dir),
             )
             with tempfile.TemporaryDirectory(
-                prefix="ursa-harbor-mountpoints-"
-            ) as mountpoint_dir:
-                mountpoint_context = Path(mountpoint_dir)
-                mountpoint_dockerfile = self._write_mountpoint_context(
-                    mountpoint_context, tag
-                )
-                await self._run(
-                    builder,
-                    "build",
-                    "--tag",
-                    prepared_tag,
-                    "--file",
-                    str(mountpoint_dockerfile),
-                    str(mountpoint_context),
-                )
-            with tempfile.TemporaryDirectory(
                 prefix="ursa-harbor-oci-"
             ) as temp_dir:
                 archive = Path(temp_dir) / "image.tar"
                 if builder_name == "buildah":
                     await self._run(
-                        builder,
-                        "push",
-                        prepared_tag,
-                        f"docker-archive:{archive}",
+                        builder, "push", tag, f"docker-archive:{archive}"
                     )
                 else:
-                    await self._run(
-                        builder,
-                        "save",
-                        "-o",
-                        str(archive),
-                        prepared_tag,
-                    )
+                    await self._run(builder, "save", "-o", str(archive), tag)
                 await self._run(
                     self._instance_runtime(),
                     "build",
@@ -1020,14 +970,14 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 )
                 temporary.replace(output)
         finally:
-            for image in (prepared_tag, tag):
-                try:
-                    await self._run(*remove_prefix, image)
-                except RuntimeError as exc:
-                    self.logger.warning(
-                        "Failed to remove build image %s: %s", image, exc
-                    )
-            temporary.unlink(missing_ok=True)
+            try:
+                await self._run(*remove_command)
+            except RuntimeError as exc:
+                self.logger.warning(
+                    "Failed to remove build image %s: %s", tag, exc
+                )
+            finally:
+                temporary.unlink(missing_ok=True)
 
     async def _build_dockerfile_sif(
         self,
@@ -1196,15 +1146,14 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             self._compose_project_dir / "singularity-compose.yml"
         )
         main_mounts = list(self._mounts)
-        if not self._fakeroot:
-            for source, target in self._rootless_compose_binds():
-                source.mkdir(parents=True, exist_ok=True)
-                source.chmod(0o777)
-                main_mounts.append({
-                    "type": "bind",
-                    "source": str(source),
-                    "target": str(target),
-                })
+        for source, target in self._harbor_writable_binds():
+            source.mkdir(parents=True, exist_ok=True)
+            source.chmod(0o777)
+            main_mounts.append({
+                "type": "bind",
+                "source": str(source),
+                "target": str(target),
+            })
         self._compose_instances = await docker_compose_to_singularity_compose(
             self._compose_paths(),
             self._compose_file,
@@ -1313,15 +1262,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         ]
         if self._fakeroot:
             command.insert(3, "--fakeroot")
-            command.append("--writable-tmpfs")
-        else:
-            if self._overlay_path is None:
-                raise RuntimeError(
-                    "Singularity writable overlay is not prepared"
-                )
-            command.extend(["--overlay", str(self._overlay_path)])
-            for source, target in self._rootless_harbor_binds():
-                command.extend(["-B", f"{source}:{target}"])
+        for source, target in self._harbor_writable_binds():
+            command.extend(["-B", f"{source}:{target}"])
         if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
             command.extend(["--net", "--network", "none"])
         command.extend(["-B", f"{self._staging_dir}:/staging"])
@@ -1339,111 +1281,46 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         command.extend([str(self._sif_path), self._instance_name])
         return command
 
-    def _rootless_harbor_binds(self) -> tuple[tuple[Path, PurePosixPath], ...]:
+    def _harbor_writable_binds(
+        self,
+    ) -> tuple[tuple[Path, PurePosixPath], ...]:
+        """Return host binds that provide Harbor's writable runtime paths."""
         if self._staging_dir is None:
             raise RuntimeError("Singularity staging directory is not prepared")
         root = self._staging_dir / "harbor-writable"
-        binds = [
+        candidates = [
             (root / "solution", EnvironmentPaths.solution_dir),
             (root / "tests", EnvironmentPaths.tests_dir),
             (root / "skills", EnvironmentPaths.default_skills_dir),
         ]
         workdir = PurePosixPath(self._workdir)
         if workdir != PurePosixPath("/"):
-            binds.append((root / "workdir", workdir))
+            candidates.append((root / "workdir", workdir))
+        candidates.extend(
+            (root / target.relative_to("/"), target)
+            for target in (
+                EnvironmentPaths.agent_dir,
+                EnvironmentPaths.user_agent_dir,
+                EnvironmentPaths.verifier_dir,
+                EnvironmentPaths.artifacts_dir,
+            )
+        )
         configured_targets = {
             PurePosixPath(mount["target"])
             for mount in self._mounts
             if mount.get("type") == "bind"
         }
-        for target in (
-            EnvironmentPaths.agent_dir,
-            EnvironmentPaths.user_agent_dir,
-            EnvironmentPaths.verifier_dir,
-            EnvironmentPaths.artifacts_dir,
-        ):
-            if target not in configured_targets:
-                binds.append((root / target.relative_to("/"), target))
+        binds: list[tuple[Path, PurePosixPath]] = []
+        seen_targets: set[PurePosixPath] = set()
+        for source, target in candidates:
+            if (
+                any(target.is_relative_to(path) for path in configured_targets)
+                or target in seen_targets
+            ):
+                continue
+            binds.append((source, target))
+            seen_targets.add(target)
         return tuple(binds)
-
-    def _rootless_compose_binds(
-        self,
-    ) -> tuple[tuple[Path, PurePosixPath], ...]:
-        if self._staging_dir is None:
-            raise RuntimeError("Singularity staging directory is not prepared")
-        root = self._staging_dir / "harbor-writable"
-        configured_targets = {
-            PurePosixPath(mount["target"])
-            for mount in self._mounts
-            if mount.get("type") == "bind"
-        }
-        targets = [
-            EnvironmentPaths.agent_dir,
-            EnvironmentPaths.user_agent_dir,
-            EnvironmentPaths.verifier_dir,
-            EnvironmentPaths.artifacts_dir,
-        ]
-        workdir = PurePosixPath(self._workdir)
-        if workdir != PurePosixPath("/"):
-            targets.insert(0, workdir)
-        return tuple(
-            (root / "compose" / target.relative_to("/"), target)
-            for target in targets
-            if target not in configured_targets
-        )
-
-    def _prepare_disk_overlay(self) -> None:
-        if self._staging_dir is None:
-            raise RuntimeError("Singularity staging directory is not prepared")
-        mkfs = shutil.which("mkfs.ext3") or shutil.which("mke2fs")
-        if mkfs is None:
-            raise RuntimeError(
-                "Rootless Singularity requires mkfs.ext3 or mke2fs to "
-                "create a writable disk overlay"
-            )
-
-        storage_mb = self.task_env_config.storage_mb or 1024
-        layout = self._staging_dir / "overlay-layout"
-        for directory in (layout / "upper", layout / "work"):
-            directory.mkdir(parents=True)
-            directory.chmod(0o777)
-        writable_paths = (
-            EnvironmentPaths.solution_dir,
-            EnvironmentPaths.tests_dir,
-            EnvironmentPaths.default_skills_dir,
-            PurePosixPath(self._workdir),
-        )
-        for target in writable_paths:
-            if not target.is_absolute():
-                raise ValueError(
-                    f"Singularity writable path must be absolute: {target}"
-                )
-            relative = target.relative_to("/")
-            directory = layout / "upper" / relative
-            directory.mkdir(parents=True, exist_ok=True)
-            directory.chmod(0o777)
-        for source, _target in self._rootless_harbor_binds():
-            source.mkdir(parents=True, exist_ok=True)
-            source.chmod(0o777)
-        overlay = self._staging_dir / "overlay.img"
-        overlay.touch()
-        os.truncate(overlay, storage_mb * 1024 * 1024)
-        try:
-            subprocess.run(
-                [mkfs, "-q", "-d", str(layout), str(overlay)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as exc:
-            overlay.unlink(missing_ok=True)
-            detail = getattr(exc, "stderr", None) or str(exc)
-            raise RuntimeError(
-                f"Could not create Singularity writable overlay: {detail}"
-            ) from exc
-        finally:
-            shutil.rmtree(layout, ignore_errors=True)
-        self._overlay_path = overlay
 
     async def _stop_instance(self, *, warn: bool) -> None:
         try:
@@ -1524,8 +1401,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         )
         self._staging_dir.chmod(0o755)
         try:
-            if not self._uses_compose and not self._fakeroot:
-                self._prepare_disk_overlay()
             async with asyncio.timeout(self._startup_timeout_sec):
                 if self._uses_compose:
                     await self._prepare_compose_project(
@@ -1537,9 +1412,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                         await self._run_compose("up")
                     self._add_compose_service_aliases()
                 else:
+                    for source, _target in self._harbor_writable_binds():
+                        source.mkdir(parents=True, exist_ok=True)
+                        source.chmod(0o777)
                     await self._run(*self._instance_start_command())
                 self._instance_started = True
                 await self._run(*self._instance_exec_prefix(), "true")
+            await self.ensure_dirs(self._mount_targets(writable_only=True))
             await self._upload_environment_dir_after_start()
         except TimeoutError as exc:
             await self._cleanup_failed_start()
@@ -1557,7 +1436,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self._staging_dir is not None:
             shutil.rmtree(self._staging_dir, ignore_errors=True)
             self._staging_dir = None
-        self._overlay_path = None
 
     @override
     async def stop(self, delete: bool) -> None:
