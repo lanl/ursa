@@ -13,6 +13,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -527,6 +528,7 @@ async def docker_compose_to_singularity_compose(
     main_mounts: Sequence[Mapping[str, Any]] = (),
     network_mode: NetworkMode = NetworkMode.PUBLIC,
     fakeroot: bool = True,
+    main_overlay: Path | None = None,
 ) -> dict[str, list[str]]:
     """Convert one or more Docker Compose files into a singularity-compose file."""
     paths = (
@@ -553,6 +555,13 @@ async def docker_compose_to_singularity_compose(
         start_options = ["containall", "no-home"]
         if fakeroot:
             start_options.insert(0, "fakeroot")
+        if name == "main" and main_overlay is not None:
+            start_options.append(f"overlay={main_overlay}")
+        elif main_overlay is not None:
+            # ``singularity-compose up --read_only`` is required to prevent
+            # its implicit tmpfs overlay from conflicting with main's disk
+            # overlay. Preserve the normal tmpfs behavior for sidecars.
+            start_options.append("writable-tmpfs")
         instance: dict[str, Any] = {
             "image": await image_resolver(name, service),
             "network": {
@@ -608,6 +617,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         singularity_image_cache_dir: Path | str | None = None,
         singularity_force_pull: bool = False,
         singularity_fakeroot: bool = True,
+        singularity_overlay: bool = True,
         singularity_no_mount: str | None = None,
         singularity_startup_timeout_sec: float = 300,
         **kwargs,
@@ -632,6 +642,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         )
         self._force_pull = singularity_force_pull
         self._fakeroot = singularity_fakeroot
+        self._overlay_enabled = singularity_overlay
         self._runtime_path: str | None = None
         super().__init__(*args, **kwargs)
         for policy in self._phase_network_policies:
@@ -643,11 +654,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._scratch_dir: Path | None = None
         self._staging_dir: Path | None = None
         self._sif_path: Path | None = None
+        self._overlay_path: Path | None = None
         self._workdir = self._resolve_workdir()
         identity = hashlib.sha256(self.session_id.encode()).hexdigest()[:16]
         self._instance_name = f"ursa{identity}{secrets.token_hex(4)}"
         self._compose_identity = f"{identity[:8]}{secrets.token_hex(4)}"
         self._instance_started = False
+        self._instance_start_attempted = False
         self._warned_user_switch_without_fakeroot = False
         self._compose_project_dir: Path | None = None
         self._compose_file: Path | None = None
@@ -1200,6 +1213,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             main_mounts=main_mounts,
             network_mode=self._network_policy.network_mode,
             fakeroot=self._fakeroot,
+            main_overlay=self._overlay_path,
         )
         self._instance_name = self._compose_instances["main"][0]
 
@@ -1296,6 +1310,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         ]
         if self._fakeroot:
             command.insert(3, "--fakeroot")
+        if self._overlay_path is not None:
+            command.extend(["--overlay", str(self._overlay_path)])
         for source, target in self._harbor_writable_binds():
             command.extend(["-B", f"{source}:{target}"])
         if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
@@ -1323,6 +1339,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             raise RuntimeError("Singularity staging directory is not prepared")
         root = self._staging_dir / "harbor-writable"
         candidates = [
+            (root / "installed-agent", PurePosixPath("/installed-agent")),
             (root / "solution", EnvironmentPaths.solution_dir),
             (root / "tests", EnvironmentPaths.tests_dir),
             (root / "skills", EnvironmentPaths.default_skills_dir),
@@ -1366,6 +1383,46 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         for source, _target in self._harbor_writable_binds():
             source.mkdir(parents=True, exist_ok=True)
             source.chmod(0o777)
+
+    def _prepare_disk_overlay(self) -> None:
+        """Create a sparse ext3 overlay compatible with Singularity 3.6."""
+        if self._scratch_dir is None:
+            raise RuntimeError("Singularity scratch directory is not prepared")
+        mkfs_ext3 = shutil.which("mkfs.ext3")
+        mkfs = mkfs_ext3 or shutil.which("mke2fs")
+        if mkfs is None:
+            raise RuntimeError(
+                "Singularity --overlay requires mkfs.ext3 or mke2fs"
+            )
+
+        storage_mb = self.task_env_config.storage_mb or 1024
+        layout = self._scratch_dir / "overlay-layout"
+        for directory in (layout / "upper", layout / "work"):
+            directory.mkdir(parents=True)
+            directory.chmod(0o777)
+        overlay = self._scratch_dir / "overlay.img"
+        overlay.touch(mode=0o600)
+        os.truncate(overlay, storage_mb * 1024 * 1024)
+        try:
+            command = [mkfs, "-q"]
+            if mkfs_ext3 is None:
+                command.extend(["-t", "ext3"])
+            command.extend(["-d", str(layout), str(overlay)])
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            overlay.unlink(missing_ok=True)
+            detail = getattr(exc, "stderr", None) or str(exc)
+            raise RuntimeError(
+                f"Could not create Singularity writable overlay: {detail}"
+            ) from exc
+        finally:
+            shutil.rmtree(layout, ignore_errors=True)
+        self._overlay_path = overlay
 
     def _main_seed_image(self) -> str:
         if self._sif_path is not None:
@@ -1418,7 +1475,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         # mode onto the bind root. Restore the writable contract after seeding.
         self._prepare_harbor_bind_sources()
 
-    async def _stop_instance(self, *, warn: bool) -> None:
+    async def _stop_instance(self, *, warn: bool) -> bool:
         try:
             await self._run(
                 self._instance_runtime(),
@@ -1434,10 +1491,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     self._instance_name,
                     exc,
                 )
-        finally:
-            self._instance_started = False
+                return False
+            raise
+        self._instance_started = False
+        self._instance_start_attempted = False
+        return True
 
-    async def _stop_compose(self, *, warn: bool) -> None:
+    async def _stop_compose(self, *, warn: bool) -> bool:
         try:
             await self._run_compose("down", "--timeout", "0")
         except RuntimeError as exc:
@@ -1457,31 +1517,39 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     )
                 except RuntimeError as stop_exc:
                     failures.append(str(stop_exc))
-            if failures and warn:
-                self.logger.warning(
-                    "Failed to stop singularity-compose project (%s) and "
-                    "instances (%s)",
-                    exc,
-                    "; ".join(failures),
-                )
-            if failures and not warn:
+            if failures:
+                if warn:
+                    self.logger.warning(
+                        "Failed to stop singularity-compose project (%s) and "
+                        "instances (%s)",
+                        exc,
+                        "; ".join(failures),
+                    )
+                    return False
                 raise
-        finally:
-            self._instance_started = False
+        self._instance_started = False
+        self._instance_start_attempted = False
+        return True
 
     async def _cleanup_failed_start(self) -> None:
         """Best-effort runtime cleanup without masking the startup error."""
+        if not self._instance_start_attempted:
+            self._cleanup_compose_project()
+            self._cleanup_staging()
+            return
+        stopped = True
         try:
             if self._uses_compose:
                 if self._compose_file is not None:
-                    await self._stop_compose(warn=True)
+                    stopped = await self._stop_compose(warn=True)
             else:
-                await self._stop_instance(warn=True)
+                stopped = await self._stop_instance(warn=True)
         except Exception as exc:
+            stopped = False
             self.logger.warning(
                 "Failed to clean up Singularity startup: %s", exc
             )
-        finally:
+        if stopped:
             self._cleanup_compose_project()
             self._cleanup_staging()
 
@@ -1498,8 +1566,11 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._scratch_dir.chmod(0o700)
         self._staging_dir = self._scratch_dir / "staging"
         self._staging_dir.mkdir(mode=0o755)
+        self._instance_start_attempted = False
         try:
             async with asyncio.timeout(self._startup_timeout_sec):
+                if self._overlay_enabled:
+                    self._prepare_disk_overlay()
                 self._prepare_harbor_bind_sources()
                 await self._seed_harbor_bind_sources()
                 if self._uses_compose:
@@ -1509,9 +1580,14 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     lock_path = self._compose_start_lock_path()
                     lock_path.parent.mkdir(parents=True, exist_ok=True)
                     async with AsyncFileLock(lock_path):
-                        await self._run_compose("up")
+                        compose_arguments = ["up"]
+                        if self._overlay_path is not None:
+                            compose_arguments.append("--read_only")
+                        self._instance_start_attempted = True
+                        await self._run_compose(*compose_arguments)
                     self._add_compose_service_aliases()
                 else:
+                    self._instance_start_attempted = True
                     await self._run(*self._instance_start_command())
                 self._instance_started = True
                 await self._run(*self._instance_exec_prefix(), "true")
@@ -1537,18 +1613,23 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             shutil.rmtree(self._staging_dir, ignore_errors=True)
         self._scratch_dir = None
         self._staging_dir = None
+        self._overlay_path = None
 
     @override
     async def stop(self, delete: bool) -> None:
-        try:
-            if self._uses_compose:
-                if self._compose_file is not None:
-                    await self._stop_compose(warn=True)
-            elif self._instance_started:
-                await self._stop_instance(warn=True)
-        finally:
+        stopped = True
+        if self._uses_compose:
+            if self._compose_file is not None:
+                stopped = await self._stop_compose(warn=True)
+        elif self._instance_started:
+            stopped = await self._stop_instance(warn=True)
+        if stopped:
             self._cleanup_compose_project()
             self._cleanup_staging()
+        else:
+            self.logger.warning(
+                "Preserving Singularity runtime files for a later stop retry"
+            )
         if delete:
             self.logger.debug(
                 "Singularity image preserved at %s for reuse", self._sif_path
