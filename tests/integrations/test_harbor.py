@@ -1738,10 +1738,9 @@ async def test_singularity_builds_dockerfile_on_demand(tmp_path, monkeypatch):
 
     assert result.is_file()
     assert commands[0][1] == "build"
-    assert commands[1][1] == "build"
-    assert commands[2][1] == "save"
-    assert commands[3][0:2] == ("/usr/bin/singularity", "build")
-    assert commands[3][3].startswith("docker-archive://")
+    assert commands[1][1] == "save"
+    assert commands[2][0:2] == ("/usr/bin/singularity", "build")
+    assert commands[2][3].startswith("docker-archive://")
 
     build_count = sum(
         command[0:2] == ("/usr/bin/docker", "build") for command in commands
@@ -1758,31 +1757,8 @@ async def test_singularity_builds_dockerfile_on_demand(tmp_path, monkeypatch):
         sum(
             command[0:2] == ("/usr/bin/docker", "build") for command in commands
         )
-        == build_count + 2
+        == build_count + 1
     )
-
-
-def test_singularity_prepares_standard_harbor_mountpoints(tmp_path):
-    dockerfile = DockerfileSingularityEnvironment._write_mountpoint_context(
-        tmp_path, "local-image"
-    )
-
-    assert dockerfile.read_text() == (
-        "FROM local-image\nCOPY --chmod=0777 harbor-root/ /\n"
-    )
-    assert {
-        path.relative_to(tmp_path / "harbor-root").as_posix()
-        for path in (tmp_path / "harbor-root").rglob("*")
-        if path.is_dir()
-    } >= {
-        "solution",
-        "tests",
-        "harbor/skills",
-        "logs/agent",
-        "logs/user-agent",
-        "logs/verifier",
-        "logs/artifacts",
-    }
 
 
 @pytest.mark.asyncio
@@ -1841,11 +1817,7 @@ async def test_singularity_falls_back_when_podman_export_fails(
 
     await environment._build_dockerfile_sif(force_build=True)
 
-    builds = [
-        command
-        for command in commands
-        if command[1] == "build" and "--pull" in command
-    ]
+    builds = [command for command in commands if command[1] == "build"]
     assert builds[0][0:3] == ("/usr/bin/podman", "build", "--pull")
     assert builds[1][0:3] == ("/usr/bin/docker", "build", "--pull")
     assert any(
@@ -1862,9 +1834,8 @@ async def test_singularity_builds_with_buildah(tmp_path, monkeypatch):
     await environment._build_dockerfile_sif(force_build=True)
 
     assert commands[0][0:3] == ("/usr/bin/buildah", "build", "--pull")
-    assert commands[1][0:2] == ("/usr/bin/buildah", "build")
-    assert commands[2][0:2] == ("/usr/bin/buildah", "push")
-    assert commands[2][3].startswith("docker-archive:")
+    assert commands[1][0:2] == ("/usr/bin/buildah", "push")
+    assert commands[1][3].startswith("docker-archive:")
     assert commands[-1][0:3] == ("/usr/bin/buildah", "rmi", "--force")
 
 
@@ -1965,13 +1936,8 @@ async def test_concurrent_builds_use_private_builder_tags(
         for command in commands
         if command[0:3] == ("/usr/bin/buildah", "rmi", "--force")
     }
-    base_tags = {tag for tag in build_tags if not tag.endswith("-mountpoints")}
-    prepared_tags = {tag for tag in build_tags if tag.endswith("-mountpoints")}
-    assert len(build_tags) == len(set(build_tags)) == 4
-    assert len(base_tags) == len(prepared_tags) == 2
-    assert prepared_tags == {f"{tag}-mountpoints" for tag in base_tags}
-    assert pushed_tags == prepared_tags
-    assert removed_tags == set(build_tags)
+    assert len(build_tags) == len(set(build_tags)) == 2
+    assert pushed_tags == removed_tags == set(build_tags)
     assert not images
     assert not warnings
 
@@ -2015,15 +1981,8 @@ async def test_concurrent_builds_share_one_cached_sif(tmp_path, monkeypatch):
         for command in commands
         if command[0:2] == ("/usr/bin/buildah", "build")
     ]
-    builder_tags = [
-        command[command.index("--tag") + 1] for command in builder_commands
-    ]
     assert first_result == second_result
-    assert len(builder_tags) == 2
-    assert (
-        len([tag for tag in builder_tags if not tag.endswith("-mountpoints")])
-        == 1
-    )
+    assert len(builder_commands) == 1
 
 
 @pytest.mark.asyncio
@@ -2250,8 +2209,9 @@ async def test_singularity_compose_uses_selected_runtime_shim(
 
 
 @pytest.mark.asyncio
-async def test_singularity_rootless_compose_binds_writable_harbor_paths(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("fakeroot", [False, True])
+async def test_singularity_compose_binds_writable_harbor_paths(
+    tmp_path, monkeypatch, fakeroot
 ):
     environment = _compose_environment(
         tmp_path,
@@ -2265,7 +2225,7 @@ async def test_singularity_rootless_compose_binds_writable_harbor_paths(
             }
         ],
     )
-    environment._fakeroot = False
+    environment._fakeroot = fakeroot
     environment._workdir = "/workspace"
     environment._sif_path = tmp_path / "main.sif"
     environment._sif_path.write_text("main")
@@ -2283,6 +2243,9 @@ async def test_singularity_rootless_compose_binds_writable_harbor_paths(
             sum(volume.endswith(":/logs/verifier") for volume in volumes) == 1
         )
         for target in (
+            "/solution",
+            "/tests",
+            "/harbor/skills",
             "/workspace",
             "/logs/agent",
             "/logs/user-agent",
@@ -2291,7 +2254,9 @@ async def test_singularity_rootless_compose_binds_writable_harbor_paths(
             volume = next(
                 volume for volume in volumes if volume.endswith(f":{target}")
             )
-            assert Path(volume.split(":", 1)[0]).is_dir()
+            source = Path(volume.split(":", 1)[0])
+            assert source.is_dir()
+            assert source.stat().st_mode & 0o777 == 0o777
     finally:
         environment._cleanup_compose_project()
 
@@ -3175,8 +3140,6 @@ def _instance_test_environment(tmp_path, network_mode=NetworkMode.PUBLIC):
     environment._sif_path = tmp_path / "image.sif"
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
-    environment._overlay_path = tmp_path / "overlay.img"
-    environment._overlay_path.touch()
     environment._instance_name = "ursatestinstance"
     environment._instance_started = False
     environment._network_policy = NetworkPolicy(network_mode=network_mode)
@@ -3353,7 +3316,8 @@ def test_singularity_public_instance_uses_36_flags(tmp_path):
     assert "--fakeroot" in command
     assert "--containall" in command
     assert "--no-home" in command
-    assert "--writable-tmpfs" in command
+    assert "--writable-tmpfs" not in command
+    assert "--overlay" not in command
     assert "--pwd" not in command
     assert "--no-mount" not in command
     assert "--net" not in command
@@ -3366,7 +3330,7 @@ def test_singularity_public_instance_uses_36_flags(tmp_path):
 def test_singularity_instance_can_disable_fakeroot(tmp_path):
     environment = _instance_test_environment(tmp_path)
     environment._fakeroot = False
-    for source, _target in environment._rootless_harbor_binds():
+    for source, _target in environment._harbor_writable_binds():
         source.mkdir(parents=True, exist_ok=True)
 
     command = environment._instance_start_command()
@@ -3374,8 +3338,7 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
     assert "--fakeroot" not in command
     assert "--containall" in command
     assert "--writable-tmpfs" not in command
-    overlay_index = command.index("--overlay")
-    assert command[overlay_index + 1] == str(environment._overlay_path)
+    assert "--overlay" not in command
     binds = [
         command[index + 1]
         for index, value in enumerate(command)
@@ -3393,7 +3356,7 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
     ]
 
 
-def test_singularity_rootless_binds_do_not_shadow_configured_logs(tmp_path):
+def test_singularity_runtime_binds_do_not_shadow_configured_logs(tmp_path):
     environment = _instance_test_environment(tmp_path)
     environment._fakeroot = False
     environment._mounts = [
@@ -3403,7 +3366,7 @@ def test_singularity_rootless_binds_do_not_shadow_configured_logs(tmp_path):
             "target": "/logs/artifacts",
         }
     ]
-    for source, _target in environment._rootless_harbor_binds():
+    for source, _target in environment._harbor_writable_binds():
         source.mkdir(parents=True, exist_ok=True)
 
     command = environment._instance_start_command()
@@ -3420,42 +3383,27 @@ def test_singularity_rootless_binds_do_not_shadow_configured_logs(tmp_path):
     )
 
 
-def test_singularity_rootless_does_not_bind_root_workdir(tmp_path):
+def test_singularity_runtime_parent_mount_covers_default_children(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._mounts = [
+        {"type": "bind", "source": "/host/logs", "target": "/logs"}
+    ]
+
+    targets = {
+        str(target) for _source, target in environment._harbor_writable_binds()
+    }
+
+    assert not any(target.startswith("/logs/") for target in targets)
+
+
+def test_singularity_runtime_does_not_bind_root_workdir(tmp_path):
     environment = _instance_test_environment(tmp_path)
     environment._fakeroot = False
     environment._workdir = "/"
 
-    binds = environment._rootless_harbor_binds()
+    binds = environment._harbor_writable_binds()
 
     assert all(str(target) != "/" for _source, target in binds)
-
-
-def test_singularity_disk_overlay_uses_requested_storage(tmp_path, monkeypatch):
-    environment = _instance_test_environment(tmp_path)
-    environment._overlay_path = None
-    environment.task_env_config = SimpleNamespace(storage_mb=128)
-    commands = []
-
-    def fake_run(command, **kwargs):
-        commands.append((command, kwargs))
-        layout = Path(command[3])
-        for relative in ("solution", "tests", "harbor/skills", "workspace"):
-            directory = layout / "upper" / relative
-            assert directory.is_dir()
-            assert directory.stat().st_mode & 0o777 == 0o777
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    environment._prepare_disk_overlay()
-
-    assert environment._overlay_path is not None
-    assert environment._overlay_path.stat().st_size == 128 * 1024 * 1024
-    assert commands[0][0][1:3] == ["-q", "-d"]
-    assert commands[0][1]["check"] is True
-    for source, _target in environment._rootless_harbor_binds():
-        assert source.is_dir()
-        assert source.stat().st_mode & 0o777 == 0o777
-    assert not (environment._staging_dir / "overlay-layout").exists()
 
 
 def test_singularity_no_network_uses_none_network(tmp_path):
@@ -3493,6 +3441,10 @@ def test_singularity_instance_mounts_staging_and_configured_binds(tmp_path):
         if value == "-B"
     ]
     assert binds == [
+        f"{environment._staging_dir}/harbor-writable/solution:/solution",
+        f"{environment._staging_dir}/harbor-writable/tests:/tests",
+        f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",
+        f"{environment._staging_dir}/harbor-writable/workdir:/workspace",
         f"{environment._staging_dir}:/staging",
         "/host/logs:/logs",
         "/host/input:/input:ro",
@@ -3574,6 +3526,9 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
     async def fake_upload():
         assert environment._instance_started
         assert environment._staging_dir is not None
+        for source, _target in environment._harbor_writable_binds():
+            assert source.is_dir()
+            assert source.stat().st_mode & 0o777 == 0o777
 
     monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
     monkeypatch.setattr(environment, "_run", fake_run)
@@ -3606,6 +3561,52 @@ async def test_singularity_start_exec_and_stop_use_one_instance(
         "ursatestinstance",
     )
     assert environment._staging_dir is None
+
+
+@pytest.mark.asyncio
+async def test_singularity_start_ensures_writable_mount_targets(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._staging_dir = None
+    environment._mounts = [
+        {
+            "type": "bind",
+            "source": "/host/writable",
+            "target": "/logs/agent",
+        },
+        {
+            "type": "bind",
+            "source": "/host/read-only",
+            "target": "/input",
+            "read_only": True,
+        },
+    ]
+    ensured = []
+
+    async def fake_build(_force_build):
+        return tmp_path / "image.sif"
+
+    async def fake_run(*_command):
+        pass
+
+    async def fake_ensure_dirs(dirs, *, chmod=True):
+        ensured.append((dirs, chmod))
+
+    async def fake_upload():
+        pass
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", fake_build)
+    monkeypatch.setattr(environment, "_run", fake_run)
+    monkeypatch.setattr(environment, "ensure_dirs", fake_ensure_dirs)
+    monkeypatch.setattr(
+        environment, "_upload_environment_dir_after_start", fake_upload
+    )
+
+    await environment.start(force_build=False)
+    await environment.stop(delete=False)
+
+    assert ensured == [(["/logs/agent"], True)]
 
 
 @pytest.mark.asyncio
