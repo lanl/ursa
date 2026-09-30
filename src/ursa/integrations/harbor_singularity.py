@@ -1322,6 +1322,52 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             seen_targets.add(target)
         return tuple(binds)
 
+    def _prepare_harbor_bind_sources(self) -> None:
+        for source, _target in self._harbor_writable_binds():
+            source.mkdir(parents=True, exist_ok=True)
+            source.chmod(0o777)
+
+    def _main_seed_image(self) -> str:
+        if self._sif_path is not None:
+            return str(self._sif_path)
+        main = self._load_compose_config()["services"]["main"]
+        image = main.get("image")
+        if not isinstance(image, str) or not image:
+            raise RuntimeError("Main Singularity image is not prepared")
+        return image if "://" in image else f"docker://{image}"
+
+    async def _seed_harbor_bind_sources(self) -> None:
+        """Copy existing image content into writable bind sources."""
+        if self._staging_dir is None:
+            raise RuntimeError("Singularity staging directory is not prepared")
+        commands = []
+        for source, target in self._harbor_writable_binds():
+            destination = PurePosixPath("/staging") / source.relative_to(
+                self._staging_dir
+            )
+            commands.append(
+                f"if [ -d {shlex.quote(str(target))} ]; then "
+                f"cp -a {shlex.quote(str(target) + '/.')} "
+                f"{shlex.quote(str(destination) + '/')}; fi"
+            )
+        if not commands:
+            return
+        await self._run(
+            self._instance_runtime(),
+            "exec",
+            "--cleanenv",
+            "--containall",
+            "--no-home",
+            "--pwd",
+            "/",
+            "-B",
+            f"{self._staging_dir}:/staging",
+            self._main_seed_image(),
+            "sh",
+            "-c",
+            "; ".join(commands),
+        )
+
     async def _stop_instance(self, *, warn: bool) -> None:
         try:
             await self._run(
@@ -1401,6 +1447,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         )
         self._staging_dir.chmod(0o755)
         try:
+            self._prepare_harbor_bind_sources()
+            await self._seed_harbor_bind_sources()
             async with asyncio.timeout(self._startup_timeout_sec):
                 if self._uses_compose:
                     await self._prepare_compose_project(
@@ -1412,9 +1460,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                         await self._run_compose("up")
                     self._add_compose_service_aliases()
                 else:
-                    for source, _target in self._harbor_writable_binds():
-                        source.mkdir(parents=True, exist_ok=True)
-                        source.chmod(0o777)
                     await self._run(*self._instance_start_command())
                 self._instance_started = True
                 await self._run(*self._instance_exec_prefix(), "true")
