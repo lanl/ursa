@@ -7,42 +7,32 @@ on:
   workflow_dispatch:
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.11"
+          - os: macos-latest
+            python-version: "3.11"
     steps:
       - uses: actions/checkout@v4
       - name: Install uv and set the python version
         uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: pyproject.toml
+          cache-suffix: py${{ matrix.python-version }}
       - name: install project
         run: uv sync --all-extras --dev
       - name: pytest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: uv run pytest --durations=0
-  harbor:
-    name: harbor (ubuntu-latest)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: pyproject.toml
-          cache-suffix: harbor
-      - name: Install Harbor integration
-        run: uv sync --extra harbor --dev
-      - name: Test Harbor integration
-        run: >-
-          uv run pytest --durations=0
-          tests/cli/test_harbor_cli.py
-          tests/integrations/test_harbor.py

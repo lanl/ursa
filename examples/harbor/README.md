@@ -27,6 +27,12 @@ uv run harbor view jobs
 
 To run all three tasks, repeat the command with `--path benchmark/tasks`.
 
+Validate their Docker and Compose environments without running an agent:
+
+```bash
+uv run -m ursa.integrations.harbor validate benchmark/tasks
+```
+
 ## Add a task
 
 Start with Harbor's generator:
@@ -61,5 +67,5 @@ omitted. The adapter replaces its configured model with `--model`.
 Harbor `[[environment.mcp_servers]]` entries are also attached automatically;
 see the [MCP task tutorial](https://www.harborframework.com/docs/tutorials/mcp-server-task).
 
-See [advanced usage](ADVANCED.md) for extra Python packages, Singularity,
-SLURM, and cleanup.
+See [advanced usage](ADVANCED.md) for extra Python packages, Singularity, and
+cleanup.
