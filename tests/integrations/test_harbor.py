@@ -663,7 +663,7 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     assert "/installed-agent/bin/uv python install 3.13" in commands[1]
     install_command = commands[2]
     assert "uv tool install --force --python 3.13" in install_command
-    assert "ursa-ai[image]==1.2" in install_command
+    assert "ursa-ai[image,harbor]==1.2" in install_command
     assert "--with numpy" in install_command
     assert "--with scipy" in install_command
     assert "test -x /installed-agent/bin/ursa" in install_command
@@ -801,7 +801,7 @@ async def test_source_install_does_not_upload_secrets(tmp_path, monkeypatch):
     secrets = {".env", ".env.local", "client.key", "credentials.json"}
     assert not secrets & set(uploaded)
     assert any(
-        "/installed-agent/tmp/ursa-source[image]" in command
+        "/installed-agent/tmp/ursa-source[image,harbor]" in command
         for command in commands
     )
 
@@ -934,6 +934,34 @@ def test_install_extras_use_a_named_direct_reference(tmp_path, install_spec):
     )
 
 
+def test_install_always_includes_harbor_extra(tmp_path):
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+        ursa_install_spec="ursa-ai==1.2",
+    )
+
+    assert agent._install_target(agent.ursa_install_spec) == (
+        "ursa-ai[harbor]==1.2"
+    )
+
+
+def test_install_merges_embedded_extras(tmp_path):
+    install_spec = "ursa-ai [Image,harbor] ==1.2"
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+        ursa_install_spec=install_spec,
+        ursa_extras="Harbor,json_schema",
+    )
+
+    assert agent._install_target(install_spec) == (
+        "ursa-ai[image,harbor,json-schema]==1.2"
+    )
+
+
 def test_install_extras_extend_an_existing_named_direct_reference(tmp_path):
     install_spec = "ursa-ai @ git+https://example.com/ursa.git@revision"
     agent = UrsaHarborAgent(
@@ -946,7 +974,7 @@ def test_install_extras_extend_an_existing_named_direct_reference(tmp_path):
     )
 
     assert agent._install_target(install_spec) == (
-        "ursa-ai[image] @ git+https://example.com/ursa.git@revision"
+        "ursa-ai[image,harbor] @ git+https://example.com/ursa.git@revision"
     )
     assert agent.extra_packages == ("numpy>=1.26,<3",)
 
@@ -970,6 +998,31 @@ def test_install_extras_extend_an_existing_named_direct_reference(tmp_path):
 )
 def test_github_git_install_uses_archive_without_git(install_spec, expected):
     assert UrsaHarborAgent._github_archive_target(install_spec) == expected
+
+
+def test_github_install_target_preserves_embedded_extras(tmp_path):
+    install_spec = (
+        "ursa-ai [image] @ git+https://github.com/lanl/ursa.git@harbor "
+        '; python_version >= "3.12"'
+    )
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "logs",
+        model_name="openai/gpt-4.1-nano",
+        config_file=_config(tmp_path / "ursa.yaml"),
+        ursa_install_spec=install_spec,
+    )
+
+    archive_target = agent._github_archive_target(install_spec)
+
+    assert archive_target == (
+        "ursa-ai[image] @ https://github.com/lanl/ursa/archive/harbor.tar.gz "
+        '; python_version >= "3.12"'
+    )
+    assert agent._install_target(archive_target) == (
+        "ursa-ai[image,harbor] @ "
+        "https://github.com/lanl/ursa/archive/harbor.tar.gz "
+        '; python_version >= "3.12"'
+    )
 
 
 def test_extra_packages_accepts_a_json_array_from_the_cli(tmp_path):
