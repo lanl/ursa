@@ -30,8 +30,11 @@ Secret references are resolved on the host, including keyring references. The
 adapter passes generated environment references only to the URSA runner; it
 does not copy host config or keyring files into the task container.
 
-Each trial captures the URSA runner's stdout, stderr, and progress logging in
-`agent/ursa.log`. Metrics remain in `agent/ursa-metrics.json`.
+Each trial renders human-readable agent and tool progress to `agent/ursa.log`
+and writes structured chat, tool, agent, and chain lifecycle records to
+`agent/ursa.jsonl`. Each JSONL record has a monotonic nanosecond timestamp;
+chat end records include token usage. The formatted final result is written to
+`agent/ursa_result.out`.
 
 ## Singularity
 

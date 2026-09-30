@@ -12,10 +12,12 @@ import base64
 import fnmatch
 import importlib.metadata
 import json
+import platform
 import re
 import shlex
 import shutil
 import subprocess
+import sysconfig
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -33,7 +35,6 @@ try:
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
     from harbor.models.task.config import NetworkMode
-    from harbor.models.trial.paths import EnvironmentPaths
 except ImportError as exc:  # pragma: no cover - exercised without the extra
     raise ImportError(
         "The Harbor integration requires `uv add 'ursa-ai[harbor]'`."
@@ -60,6 +61,45 @@ def _load_harbor_config_file(path: Path) -> dict[str, Any]:
             f"Configuration file '{path}' must contain a mapping at its root"
         )
     return data
+
+
+def _jsonl_token_usage(
+    path: Path,
+) -> tuple[int | None, int | None, int | None]:
+    totals: dict[str, int | None] = {
+        "input_tokens": None,
+        "cached_tokens": None,
+        "output_tokens": None,
+    }
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None, None, None
+
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or (
+            record.get("type"),
+            record.get("event"),
+        ) != ("chat", "end"):
+            continue
+        usage = record.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        for key in totals:
+            value = usage.get(key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                continue
+            totals[key] = (totals[key] or 0) + value
+
+    return (
+        totals["input_tokens"],
+        totals["cached_tokens"],
+        totals["output_tokens"],
+    )
 
 
 class UrsaHarborAgent(BaseInstalledAgent):
@@ -640,17 +680,25 @@ class UrsaHarborAgent(BaseInstalledAgent):
             "config_file": self._remote_config_file,
             "instruction": instruction,
             "workspace": self._workspace,
-            "metrics_path": f"{self.environment_logs_dir}/ursa-metrics.json",
-            "log_path": f"{self.environment_logs_dir}/ursa.log",
-            "artifacts_dir": str(EnvironmentPaths.artifacts_dir),
+            "log_dir": str(self.environment_logs_dir),
             "use_web": use_web,
         }
         encoded = base64.urlsafe_b64encode(
             json.dumps(payload).encode()
         ).decode()
         runner_pid_file = "/tmp/ursa-harbor-runner.pid"
+
+        # Add context
+        context.metadata = {
+            **(context.metadata or {}),
+            "agent": self.agent_import_path,
+            "ursa_install_spec": str(self.ursa_install_spec),
+            "host": platform.node(),
+            "host_platform": sysconfig.get_platform(),
+        }
+
         try:
-            result = await self.exec_as_agent(
+            await self.exec_as_agent(
                 environment,
                 command=(
                     f"echo $$ > {runner_pid_file}; "
@@ -672,26 +720,11 @@ class UrsaHarborAgent(BaseInstalledAgent):
             except Exception:
                 pass
             raise
-        marker = "URSA_HARBOR_RESULT="
-        line = next(
-            (
-                line
-                for line in reversed((result.stdout or "").splitlines())
-                if line.startswith(marker)
-            ),
-            None,
-        )
-        if line:
-            data = json.loads(line.removeprefix(marker))
-            context.metadata = {"ursa_result": data.get("result")}
-            context.n_input_tokens = data.get("n_input_tokens")
-            context.n_output_tokens = data.get("n_output_tokens")
-            context.cost_usd = data.get("cost_usd")
-            return
-        raise RuntimeError(
-            "URSA runner exited without an URSA_HARBOR_RESULT record: "
-            + (result.stderr or "no output")
-        )
+        (
+            context.n_input_tokens,
+            context.n_cache_tokens,
+            context.n_output_tokens,
+        ) = _jsonl_token_usage(self.logs_dir / "ursa.jsonl")
 
 
 def make_harbor_agent(
