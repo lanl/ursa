@@ -473,6 +473,27 @@ class UrsaHarborAgent(BaseInstalledAgent):
             ):
                 model_config["model"] = f"{model_provider}:{model}"
 
+    @staticmethod
+    def _prune_implicit_unreferenced_providers(
+        config: dict[str, Any], explicit_providers: set[str]
+    ) -> None:
+        """Remove defaults whose secrets are unrelated to this run."""
+        referenced_providers = {
+            str(provider)
+            for field_name in ("llm_model", "emb_model")
+            if isinstance(model := config.get(field_name), dict)
+            if (provider := model.get("inference_provider")) is not None
+        }
+        provider_configs = config.get("inference_providers")
+        if not isinstance(provider_configs, dict):
+            return
+        for name in tuple(provider_configs):
+            if (
+                name not in explicit_providers
+                and name not in referenced_providers
+            ):
+                provider_configs.pop(name)
+
     def _runtime_config(
         self,
         *,
@@ -484,10 +505,22 @@ class UrsaHarborAgent(BaseInstalledAgent):
         config = UrsaConfig().model_merge(*config_layers, harbor_layer)
 
         config_data = config.model_dump(mode="python", exclude_unset=True)
+        explicit_providers = {
+            str(name)
+            for layer in config_layers
+            if isinstance(layer.get("inference_providers"), dict)
+            for name in layer["inference_providers"]
+        }
+        self._prune_implicit_unreferenced_providers(
+            config_data, explicit_providers
+        )
         self._qualify_tagged_models(config_data)
         projected, secret_env = externalize_secret_references(config_data)
         runtime_config = UrsaConfig.model_validate(projected).model_dump(
             mode="json", exclude_none=True, exclude_unset=True
+        )
+        self._prune_implicit_unreferenced_providers(
+            runtime_config, explicit_providers
         )
         self._qualify_tagged_models(runtime_config)
         return runtime_config, secret_env
@@ -786,7 +819,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
         await self.exec_as_root(
             environment,
             command=(
-                f"{install_root}/bin/uv tool install --force --python "
+                f"{install_root}/bin/uv tool install --force "
+                "--refresh-package ursa-ai --python "
                 f"{self.URSA_PYTHON_VERSION} "
                 f"{extra_packages} {shlex.quote(install_target)} && "
                 f"test -x {install_root}/bin/ursa && "
