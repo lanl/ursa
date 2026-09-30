@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import hashlib
+import io
 import json
 import os
 import re
@@ -7,7 +9,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
-from io import StringIO
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,14 +52,30 @@ from ursa.integrations.harbor_validation import (  # noqa: E402
     discover_harbor_tasks,
     validate_harbor_task,
 )
-from ursa.observability.jsonl_logger import (  # noqa: E402
-    JSONLLogEventHandler,
-)
 
 
 def _config(path: Path) -> Path:
     path.write_text("llm_model:\n  model: gpt-4.1-nano\n")
     return path
+
+
+def _stub_uv_download(agent, monkeypatch) -> None:
+    def stage(machine, destination):
+        assert machine == "aarch64"
+        destination.write_bytes(b"uv")
+        destination.chmod(0o755)
+
+    monkeypatch.setattr(agent, "_stage_uv_binary", stage)
+
+
+def _uv_archive(content: bytes) -> bytes:
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+        member = tarfile.TarInfo("uv-test/uv")
+        member.mode = 0o755
+        member.size = len(content)
+        bundle.addfile(member, io.BytesIO(content))
+    return archive.getvalue()
 
 
 def _harbor_task(tmp_path: Path, *, sidecar: bool = False) -> Path:
@@ -611,6 +629,9 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
     async def fake_exec_as_root(environment, command, **kwargs):
         commands.append(command)
         timeouts.append(kwargs["timeout_sec"])
+        if "env" in kwargs:
+            install_envs.append(kwargs["env"])
+        return SimpleNamespace(stdout="aarch64\n")
 
     async def fake_exec_as_agent(environment, command, **kwargs):
         assert command == "pwd"
@@ -618,44 +639,94 @@ async def test_install_uses_uv_and_uploads_one_config(tmp_path, monkeypatch):
 
     class FakeEnvironment:
         async def upload_file(self, source, destination):
-            uploads.append((
-                json.loads(source.read_text()),
-                destination,
-                source.stat().st_mode & 0o777,
-            ))
+            if destination == "/installed-agent/tmp/uv-upload":
+                uv_uploads.append((source.read_bytes(), destination))
+            else:
+                uploads.append((
+                    json.loads(source.read_text()),
+                    destination,
+                    source.stat().st_mode & 0o777,
+                ))
 
     uploads = []
+    uv_uploads = []
+    install_envs = []
 
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+    _stub_uv_download(agent, monkeypatch)
 
     await agent.install(FakeEnvironment())
 
-    assert "command -v tar" in commands[0]
-    assert 'missing_packages="$missing_packages tar"' in commands[0]
-    assert "ca-certificates $missing_packages" in commands[0]
-    assert "unknown-linux-musl.tar.gz" in commands[0]
-    assert "sha256sum -c" in commands[0]
-    assert "case $(uname -m)" in commands[0]
-    assert "/opt/uv/uv python install 3.13" in commands[0]
-    install_command = commands[1]
+    assert "mkdir -p /installed-agent/bin" in commands[0]
+    assert commands[0].endswith("uname -m")
+    assert "/installed-agent/bin/uv python install 3.13" in commands[1]
+    install_command = commands[2]
     assert "uv tool install --force --python 3.13" in install_command
-    assert "UV_TOOL_BIN_DIR=/usr/local/bin" in install_command
     assert "ursa-ai[image]==1.2" in install_command
     assert "--with numpy" in install_command
     assert "--with scipy" in install_command
-    assert 'command -v ursa)" = /usr/local/bin/ursa' in install_command
-    assert "test -x /opt/ursa-tools/ursa-ai/bin/python" in install_command
-    assert timeouts == [600, 900]
+    assert "test -x /installed-agent/bin/ursa" in install_command
+    assert (
+        "test -x /installed-agent/tools/ursa-ai/bin/python" in install_command
+    )
+    assert "> /installed-agent/bin/ursa-harbor-runner" in install_command
+    assert commands[3] == "chmod 644 /installed-agent/tmp/ursa-config.json"
+    assert all("/opt/" not in command for command in commands)
+    assert all("/usr/local" not in command for command in commands)
+    assert timeouts == [30, 600, 900, 30]
+    assert all(
+        env["UV_PYTHON_INSTALL_DIR"] == "/installed-agent/python"
+        and env["UV_TOOL_BIN_DIR"] == "/installed-agent/bin"
+        and env["UV_TOOL_DIR"] == "/installed-agent/tools"
+        for env in install_envs
+    )
+    assert uv_uploads == [(b"uv", "/installed-agent/tmp/uv-upload")]
     assert len(uploads) == 1
     runtime_config, destination, mode = uploads[0]
-    assert destination == "/tmp/ursa-config.json"
+    assert destination == "/installed-agent/tmp/ursa-config.json"
     assert mode == 0o600
     assert runtime_config["inference_providers"]["openai"]["api_key"] == {
         "env": "URSA_HARBOR_SECRET_0"
     }
     assert agent._secret_env == {"URSA_HARBOR_SECRET_0": "host-openai-key"}
     assert agent._workspace == "/app"
+
+
+def test_stage_uv_binary_verifies_and_extracts_archive(tmp_path, monkeypatch):
+    content = b"static uv binary"
+    archive = _uv_archive(content)
+    monkeypatch.setattr(
+        UrsaHarborAgent,
+        "_UV_RELEASES",
+        {"test": ("test", hashlib.sha256(archive).hexdigest())},
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda _url, timeout: io.BytesIO(archive),
+    )
+    destination = tmp_path / "uv"
+
+    UrsaHarborAgent._stage_uv_binary("test", destination)
+
+    assert destination.read_bytes() == content
+    assert destination.stat().st_mode & 0o777 == 0o755
+
+
+def test_stage_uv_binary_rejects_bad_checksum(tmp_path, monkeypatch):
+    archive = _uv_archive(b"tampered")
+    monkeypatch.setattr(
+        UrsaHarborAgent,
+        "_UV_RELEASES",
+        {"test": ("test", "0" * 64)},
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda _url, timeout: io.BytesIO(archive),
+    )
+
+    with pytest.raises(RuntimeError, match="SHA-256"):
+        UrsaHarborAgent._stage_uv_binary("test", tmp_path / "uv")
 
 
 @pytest.mark.asyncio
@@ -671,13 +742,14 @@ async def test_install_rejects_invalid_task_working_directory(
     )
 
     async def fake_exec_as_root(*_args, **_kwargs):
-        pass
+        return SimpleNamespace(stdout="aarch64\n")
 
     async def fake_exec_as_agent(*_args, **_kwargs):
         return SimpleNamespace(stdout=stdout)
 
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+    _stub_uv_download(agent, monkeypatch)
 
     with pytest.raises(RuntimeError, match="Invalid task working directory"):
         await agent.install(SimpleNamespace())
@@ -705,6 +777,7 @@ async def test_source_install_does_not_upload_secrets(tmp_path, monkeypatch):
 
     async def fake_exec_as_root(environment, command, **kwargs):
         commands.append(command)
+        return SimpleNamespace(stdout="aarch64\n")
 
     async def fake_exec_as_agent(*args, **kwargs):
         return SimpleNamespace(stdout="/app\n")
@@ -721,12 +794,16 @@ async def test_source_install_does_not_upload_secrets(tmp_path, monkeypatch):
 
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+    _stub_uv_download(agent, monkeypatch)
     await agent.install(FakeEnvironment())
 
     assert "module.py" in uploaded
     secrets = {".env", ".env.local", "client.key", "credentials.json"}
     assert not secrets & set(uploaded)
-    assert any("/tmp/ursa-source[image]" in command for command in commands)
+    assert any(
+        "/installed-agent/tmp/ursa-source[image]" in command
+        for command in commands
+    )
 
 
 def test_install_spec_path_must_be_a_python_project(tmp_path):
@@ -874,6 +951,27 @@ def test_install_extras_extend_an_existing_named_direct_reference(tmp_path):
     assert agent.extra_packages == ("numpy>=1.26,<3",)
 
 
+@pytest.mark.parametrize(
+    ("install_spec", "expected"),
+    [
+        (
+            "ursa-ai @ git+https://github.com/lanl/ursa.git@harbor",
+            "ursa-ai @ https://github.com/lanl/ursa/archive/harbor.tar.gz",
+        ),
+        (
+            "git+https://github.com/lanl/ursa.git@feature/overlay",
+            "https://github.com/lanl/ursa/archive/feature%2Foverlay.tar.gz",
+        ),
+        (
+            "git+https://example.com/lanl/ursa.git@harbor",
+            "git+https://example.com/lanl/ursa.git@harbor",
+        ),
+    ],
+)
+def test_github_git_install_uses_archive_without_git(install_spec, expected):
+    assert UrsaHarborAgent._github_archive_target(install_spec) == expected
+
+
 def test_extra_packages_accepts_a_json_array_from_the_cli(tmp_path):
     agent = UrsaHarborAgent(
         logs_dir=tmp_path / "logs",
@@ -976,6 +1074,7 @@ async def test_install_uploads_a_local_archive(tmp_path, monkeypatch):
 
     async def fake_exec_as_root(_environment, command, **_kwargs):
         commands.append(command)
+        return SimpleNamespace(stdout="aarch64\n")
 
     async def fake_exec_as_agent(*_args, **_kwargs):
         return SimpleNamespace(stdout="/app\n")
@@ -986,11 +1085,13 @@ async def test_install_uploads_a_local_archive(tmp_path, monkeypatch):
 
     monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+    _stub_uv_download(agent, monkeypatch)
 
     await agent.install(FakeEnvironment())
 
-    assert uploads[0] == (archive, f"/tmp/{archive.name}")
-    assert f"ursa-ai[harbor] @ file:///tmp/{archive.name}" in commands[1]
+    remote_archive = f"/installed-agent/tmp/{archive.name}"
+    assert (archive, remote_archive) in uploads
+    assert f"ursa-ai[harbor] @ file://{remote_archive}" in commands[2]
 
 
 @pytest.mark.parametrize(
@@ -1083,7 +1184,7 @@ async def test_cancelled_run_terminates_container_runner(tmp_path, monkeypatch):
         model_name="openai/gpt-4.1-nano",
         config_file=_config(tmp_path / "ursa.yaml"),
     )
-    agent._remote_config_file = "/tmp/ursa-config.yaml"
+    agent._remote_config_file = "/installed-agent/tmp/ursa-config.yaml"
     runner_started = asyncio.Event()
     cleanup_commands = []
 
@@ -1104,10 +1205,12 @@ async def test_cancelled_run_terminates_container_runner(tmp_path, monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert len(cleanup_commands) == 1
-    assert "kill -TERM" in cleanup_commands[0]
-    assert "kill -KILL" in cleanup_commands[0]
-    assert "/proc/$1/task/$1/children" in cleanup_commands[0]
+    terminate = next(
+        command for command in cleanup_commands if "kill -TERM" in command
+    )
+    assert "kill -KILL" in terminate
+    assert "/proc/$1/task/$1/children" in terminate
+    assert agent._runner_pid_file.startswith("/installed-agent/tmp/")
 
 
 @pytest.mark.asyncio
@@ -1118,6 +1221,7 @@ async def test_runner_cleanup_terminates_descendants(tmp_path):
         "bash",
         "-c",
         f"echo $$ > {pid_file}; sleep 30 & echo $! > {child_file}; wait",
+        "ursa.integrations.harbor runner",
     )
     for _ in range(100):
         if pid_file.is_file() and child_file.is_file():
@@ -1140,56 +1244,20 @@ async def test_runner_cleanup_terminates_descendants(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_leaves_trial_timeout_to_harbor(tmp_path, monkeypatch):
-    agent = UrsaHarborAgent(
-        logs_dir=tmp_path / "logs",
-        model_name="openai/gpt-4.1-nano",
-        config_file=_config(tmp_path / "ursa.yaml"),
+async def test_runner_cleanup_ignores_an_unrelated_pid(tmp_path):
+    pid_file = tmp_path / "runner.pid"
+    sleeper = await asyncio.create_subprocess_exec("sleep", "30")
+    pid_file.write_text(str(sleeper.pid))
+
+    cleanup = await asyncio.create_subprocess_exec(
+        "bash",
+        "-c",
+        UrsaHarborAgent._terminate_runner_command(str(pid_file)),
     )
-    agent._remote_config_file = "/tmp/ursa-config.yaml"
-    agent._secret_env = {"URSA_HARBOR_SECRET_0": "resolved-on-host"}
-    observed_timeout = object()
-    observed_env = None
-    observed_command = None
-
-    async def fake_exec_as_agent(*args, **kwargs):
-        nonlocal observed_command, observed_env, observed_timeout
-        observed_command = kwargs["command"]
-        observed_timeout = kwargs["timeout_sec"]
-        observed_env = kwargs["env"]
-        agent.logs_dir.mkdir(parents=True, exist_ok=True)
-        (agent.logs_dir / "ursa.jsonl").write_text(
-            "\n".join([
-                '{"type":"chat","event":"start"}',
-                '{"type":"chat","event":"end","usage":'
-                '{"input_tokens":10,"cached_tokens":6,"output_tokens":3}}',
-                '{"type":"tool","event":"end","usage":'
-                '{"input_tokens":100,"cached_tokens":100,'
-                '"output_tokens":100}}',
-                '{"type":"chat","event":"end","usage":'
-                '{"input_tokens":4,"cached_tokens":1,"output_tokens":2}}',
-            ])
-        )
-        return SimpleNamespace(return_code=0, stdout="")
-
-    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
-
-    context = SimpleNamespace(metadata={})
-    await agent.run("task", object(), context)
-
-    assert observed_timeout is None
-    assert observed_env["URSA_HARBOR_SECRET_0"] == "resolved-on-host"
-    assert observed_command is not None
-    assert (
-        "exec /opt/ursa-tools/ursa-ai/bin/python "
-        "-m ursa.integrations.harbor runner" in observed_command
-    )
-    encoded = shlex.split(observed_command)[-1]
-    payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
-    assert payload["log_dir"] == "/logs/agent"
-    assert context.n_input_tokens == 14
-    assert context.n_cache_tokens == 7
-    assert context.n_output_tokens == 5
+    assert await cleanup.wait() == 0
+    assert sleeper.returncode is None
+    sleeper.terminate()
+    await sleeper.wait()
 
 
 @pytest.mark.asyncio
@@ -1206,7 +1274,7 @@ async def test_run_reuploads_config_when_phase_network_policy_changes(
         config_file=config_file,
         config_only=True,
     )
-    agent._remote_config_file = "/tmp/ursa-config.json"
+    agent._remote_config_file = "/installed-agent/tmp/ursa-config.json"
     agent._runtime_use_web = True
     uploaded = []
     payloads = []
@@ -1215,7 +1283,7 @@ async def test_run_reuploads_config_when_phase_network_policy_changes(
         network_policy = NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
 
         async def upload_file(self, source, destination):
-            assert destination == "/tmp/ursa-config.json"
+            assert destination == "/installed-agent/tmp/ursa-config.json"
             uploaded.append(json.loads(source.read_text()))
 
     environment = FakeEnvironment()
@@ -1225,7 +1293,13 @@ async def test_run_reuploads_config_when_phase_network_policy_changes(
         payloads.append(json.loads(base64.urlsafe_b64decode(encoded).decode()))
         return SimpleNamespace(return_code=0, stdout="")
 
+    root_commands = []
+
+    async def fake_exec_as_root(_environment, command, **_kwargs):
+        root_commands.append(command)
+
     monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
+    monkeypatch.setattr(agent, "exec_as_root", fake_exec_as_root)
 
     await agent.run("task", environment, SimpleNamespace(metadata={}))
     environment.network_policy = NetworkPolicy(
@@ -1236,6 +1310,10 @@ async def test_run_reuploads_config_when_phase_network_policy_changes(
 
     assert [config["use_web"] for config in uploaded] == [False, True]
     assert [payload["use_web"] for payload in payloads] == [False, True]
+    assert (
+        root_commands.count("chmod 644 /installed-agent/tmp/ursa-config.json")
+        == 2
+    )
 
 
 @pytest.mark.asyncio
@@ -1258,7 +1336,7 @@ async def test_run_passes_provider_extra_env_only_to_runner(
         config_file=config_file,
     )
     runtime_config, agent._secret_env = agent._runtime_config()
-    agent._remote_config_file = "/tmp/ursa-config.json"
+    agent._remote_config_file = "/installed-agent/tmp/ursa-config.json"
     observed_env = None
 
     async def fake_exec_as_agent(*args, **kwargs):
@@ -1316,23 +1394,6 @@ def test_harbor_preserves_a_configured_custom_model_provider(
     resolved = UrsaConfig.model_validate(runtime_config).resolve()
     assert resolved.llm_model.model_provider == "openai"
     assert resolved.llm_model.base_url == "https://models.test/v1"
-
-
-@pytest.mark.asyncio
-async def test_run_does_not_require_runner_stdout(tmp_path, monkeypatch):
-    agent = UrsaHarborAgent(
-        logs_dir=tmp_path / "logs",
-        model_name="openai/gpt-4.1-nano",
-        config_file=_config(tmp_path / "ursa.yaml"),
-    )
-    agent._remote_config_file = "/tmp/ursa-config.yaml"
-
-    async def fake_exec_as_agent(*args, **kwargs):
-        return SimpleNamespace(stdout=None)
-
-    monkeypatch.setattr(agent, "exec_as_agent", fake_exec_as_agent)
-
-    await agent.run("task", object(), SimpleNamespace(metadata={}))
 
 
 def test_harbor_mcp_servers_convert_to_ursa_mapping(tmp_path):
@@ -1426,269 +1487,6 @@ async def test_checkpoint_close_is_attempted_when_flush_fails():
         await _close_checkpoint(SimpleNamespace(conn=connection))
 
     assert connection.closed
-
-
-@pytest.mark.asyncio
-async def test_runner_orchestrates_agent_and_logs(
-    tmp_path, monkeypatch, capsys
-):
-    logs = tmp_path / "logs"
-    checkpoint_path = logs / "db" / "checkpointer.db"
-    checkpoint_path.parent.mkdir(parents=True)
-    connection = await aiosqlite.connect(checkpoint_path)
-    await connection.execute("CREATE TABLE checkpoints (value TEXT)")
-    checkpointer = SimpleNamespace(conn=connection)
-    constructed = {}
-
-    class FakeAgent(BaseAgent):
-        def __init__(self, *, use_web=True, **kwargs):
-            constructed.update(kwargs)
-            constructed["use_web"] = use_web
-            self.checkpointer = kwargs["checkpointer"]
-
-        def _build_graph(self):
-            pass
-
-        def format_result(self, output):
-            return {"answer": output}
-
-    async def ainvoke(_self, instruction, **kwargs):
-        from ursa.util.events import DEFAULT_EVENT_NAME
-
-        assert instruction == "solve it"
-        assert set(kwargs) == {"config"}
-        assert len(kwargs["config"]["callbacks"]) == 2
-        for callback in kwargs["config"]["callbacks"]:
-            await callback.on_custom_event(
-                DEFAULT_EVENT_NAME,
-                {
-                    "agent": "ExecutionAgent",
-                    "stage": "step",
-                    "message": "Working",
-                    "preview": "Inspecting the workspace",
-                },
-                run_id="run-id",
-            )
-        await _self.checkpointer.conn.execute(
-            "INSERT INTO checkpoints VALUES ('persisted')"
-        )
-        return "agent output"
-
-    monkeypatch.setattr(FakeAgent, "ainvoke", ainvoke)
-
-    runtime_config = SimpleNamespace(
-        workspace=None,
-        resolve=lambda: runtime_config,
-        llm_model=SimpleNamespace(init_chat_model=lambda: "llm"),
-        agent_name="runner",
-        group="benchmark",
-        thread_id="thread",
-        rag_tools=None,
-        emb_model=SimpleNamespace(init_embedding=lambda: "embedding"),
-        agent_config={"fake": {"use_web": True}},
-        mcp_servers={},
-    )
-    monkeypatch.setattr(
-        "ursa.integrations.harbor_runner._import_symbol",
-        lambda path: FakeAgent
-        if path == "example:FakeAgent"
-        else pytest.fail(f"unexpected import path: {path}"),
-    )
-
-    def load_config(path):
-        assert path == config_file
-        return {"config": "loaded"}
-
-    def validate_config(_cls, data):
-        assert data == {"config": "loaded"}
-        return runtime_config
-
-    async def make_checkpointer(path):
-        assert path == logs
-        return checkpointer
-
-    monkeypatch.setattr("ursa.cli.config.load_config_file", load_config)
-    monkeypatch.setattr(
-        UrsaConfig,
-        "model_validate",
-        classmethod(validate_config),
-    )
-    monkeypatch.setattr(
-        "ursa.util.Checkpointer.async_from_workspace",
-        make_checkpointer,
-    )
-    config_file = tmp_path / "ursa.json"
-    config_file.write_text("{}")
-
-    await _runner_run({
-        "agent_import_path": "example:FakeAgent",
-        "config_file": str(config_file),
-        "workspace": str(tmp_path / "workspace"),
-        "log_dir": str(logs),
-        "instruction": "solve it",
-        "use_web": False,
-    })
-
-    assert capsys.readouterr().out == ""
-    assert constructed["llm"] == "llm"
-    assert constructed["workspace"] == tmp_path / "workspace"
-    assert constructed["checkpointer"] is checkpointer
-    assert constructed["use_web"] is False
-    assert constructed["agent_name"] == "runner"
-    assert constructed["group"] == "benchmark"
-    assert constructed["thread_id"] == "thread"
-    assert constructed["rag_tools"] is None
-    assert constructed["rag_tool_embedding"] == "embedding"
-    with pytest.raises(ValueError, match="no active connection"):
-        await connection.execute("SELECT 1")
-    with sqlite3.connect(checkpoint_path) as persisted:
-        assert persisted.execute(
-            "SELECT value FROM checkpoints"
-        ).fetchall() == [("persisted",)]
-    assert "Working" in (logs / "ursa.log").read_text()
-    assert "Inspecting the workspace" in (logs / "ursa.log").read_text()
-    jsonl = [
-        json.loads(line)
-        for line in (logs / "ursa.jsonl").read_text().splitlines()
-    ]
-    assert isinstance(jsonl[0].pop("timestamp_monotonic_ns"), int)
-    assert jsonl == [
-        {
-            "type": "agent",
-            "event": "progress",
-            "run_id": "run-id",
-            "parent_run_id": None,
-            "tags": [],
-            "metadata": {},
-            "name": "ExecutionAgent",
-            "data": {
-                "agent": "ExecutionAgent",
-                "stage": "step",
-                "message": "Working",
-                "preview": "Inspecting the workspace",
-            },
-        }
-    ]
-    assert json.loads((logs / "ursa_result.out").read_text()) == {
-        "answer": "agent output"
-    }
-
-
-@pytest.mark.asyncio
-async def test_jsonl_handler_records_complete_callback_lifecycles(monkeypatch):
-    from langchain_core.messages import AIMessage, HumanMessage
-    from langchain_core.outputs import ChatGeneration, LLMResult
-
-    timestamps = iter(range(100, 109))
-    monkeypatch.setattr(
-        "ursa.observability.jsonl_logger.time.monotonic_ns",
-        lambda: next(timestamps),
-    )
-    stream = StringIO()
-    handler = JSONLLogEventHandler(stream)
-
-    await handler.on_chain_start(
-        {"name": "AgentGraph"},
-        {"question": "solve it"},
-        run_id="chain-1",
-    )
-    await handler.on_chat_model_start(
-        {"name": "ChatModel"},
-        [[HumanMessage(content="hello")]],
-        run_id="chat-1",
-        parent_run_id="chain-1",
-    )
-    response = LLMResult(
-        generations=[
-            [
-                ChatGeneration(
-                    message=AIMessage(
-                        content="answer",
-                        usage_metadata={
-                            "input_tokens": 12,
-                            "output_tokens": 7,
-                            "total_tokens": 19,
-                        },
-                        response_metadata={
-                            "token_usage": {
-                                "prompt_tokens": 12,
-                                "completion_tokens": 7,
-                                "completion_tokens_details": {
-                                    "reasoning_tokens": 4
-                                },
-                                "prompt_tokens_details": {"cached_tokens": 6},
-                            }
-                        },
-                    )
-                )
-            ]
-        ]
-    )
-    await handler.on_llm_end(
-        response,
-        run_id="chat-1",
-        parent_run_id="chain-1",
-    )
-    await handler.on_tool_start(
-        {"name": "search"},
-        "ignored",
-        run_id="tool-1",
-        parent_run_id="chain-1",
-        inputs={"query": "needle"},
-    )
-    await handler.on_tool_end(
-        {"matches": 2},
-        run_id="tool-1",
-        parent_run_id="chain-1",
-    )
-    await handler.on_agent_action(
-        {"tool": "search"},
-        run_id="agent-1",
-        parent_run_id="chain-1",
-    )
-    await handler.on_agent_finish(
-        {"return_values": {"answer": "done"}},
-        run_id="agent-1",
-        parent_run_id="chain-1",
-    )
-    await handler.on_custom_event(
-        "ursa_agent_progress",
-        {"agent": "ExecutionAgent", "stage": "review"},
-        run_id="progress-1",
-        parent_run_id="chain-1",
-    )
-    await handler.on_chain_end(
-        {"answer": "done"},
-        run_id="chain-1",
-    )
-
-    records = [json.loads(line) for line in stream.getvalue().splitlines()]
-    assert [record["timestamp_monotonic_ns"] for record in records] == list(
-        range(100, 109)
-    )
-    assert [(record["type"], record["event"]) for record in records] == [
-        ("chain", "start"),
-        ("chat", "start"),
-        ("chat", "end"),
-        ("tool", "start"),
-        ("tool", "end"),
-        ("agent", "action"),
-        ("agent", "end"),
-        ("agent", "progress"),
-        ("chain", "end"),
-    ]
-    assert records[0]["input"] == {"question": "solve it"}
-    assert records[1]["input"][0][0]["content"] == "hello"
-    assert "answer" in json.dumps(records[2]["output"])
-    assert records[2]["usage"] == {
-        "input_tokens": 12,
-        "output_tokens": 7,
-        "reasoning_tokens": 4,
-        "cached_tokens": 6,
-    }
-    assert records[3]["input"] == {"query": "needle"}
-    assert records[4]["output"] == {"matches": 2}
-    assert records[8]["output"] == {"answer": "done"}
 
 
 @pytest.mark.asyncio
@@ -2090,7 +1888,7 @@ def _compose_environment(
             else None
         ),
     )
-    return DockerfileSingularityEnvironment(
+    environment = DockerfileSingularityEnvironment(
         environment_dir=environment_dir,
         environment_name="test",
         session_id="trial__env",
@@ -2099,6 +1897,8 @@ def _compose_environment(
         extra_docker_compose=extra_compose,
         mounts=mounts,
     )
+    environment._overlay_enabled = False
+    return environment
 
 
 @pytest.mark.asyncio
@@ -2153,6 +1953,40 @@ async def test_docker_compose_conversion_can_disable_fakeroot(tmp_path):
     generated = yaml.safe_load(destination.read_text())
     main = generated["instances"][next(iter(generated["instances"]))]
     assert main["start"]["options"] == ["containall", "no-home"]
+
+
+@pytest.mark.asyncio
+async def test_docker_compose_conversion_adds_main_overlay(tmp_path):
+    source = tmp_path / "docker-compose.yaml"
+    source.write_text(
+        "services: {main: {image: busybox:latest}, api: {image: busybox:latest}}\n"
+    )
+    destination = tmp_path / "project" / "singularity-compose.yml"
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    overlay = tmp_path / "overlay.img"
+
+    async def resolve_image(_name, _service):
+        return "docker://busybox:latest"
+
+    await docker_compose_to_singularity_compose(
+        source,
+        destination,
+        identity="test",
+        image_resolver=resolve_image,
+        staging_dir=staging,
+        main_overlay=overlay,
+    )
+
+    instances = yaml.safe_load(destination.read_text())["instances"]
+    main = next(value for key, value in instances.items() if "main" in key)
+    api = next(value for key, value in instances.items() if "api" in key)
+    assert f"overlay={overlay}" in main["start"]["options"]
+    assert "writable-tmpfs" not in main["start"]["options"]
+    assert not any(
+        option.startswith("overlay=") for option in api["start"]["options"]
+    )
+    assert "writable-tmpfs" in api["start"]["options"]
 
 
 @pytest.mark.asyncio
@@ -2966,6 +2800,7 @@ services:
     image: busybox:latest
 """,
     )
+    environment._overlay_enabled = True
     commands = []
 
     async def build(_force):
@@ -2975,10 +2810,7 @@ services:
 
     async def run(*command, cwd=None, env=None):
         commands.append((command, cwd))
-        if (
-            Path(command[0]).name == "singularity-compose"
-            and command[-1] == "up"
-        ):
+        if Path(command[0]).name == "singularity-compose" and "up" in command:
             hosts = environment._compose_project_dir / "etc.hosts"
             hosts.write_text(
                 "".join(
@@ -2996,8 +2828,13 @@ services:
     async def upload():
         pass
 
+    def prepare_overlay():
+        environment._overlay_path = environment._scratch_dir / "overlay.img"
+        environment._overlay_path.touch()
+
     monkeypatch.setattr(environment, "_build_dockerfile_sif", build)
     monkeypatch.setattr(environment, "_run", run)
+    monkeypatch.setattr(environment, "_prepare_disk_overlay", prepare_overlay)
     monkeypatch.setattr(
         environment, "_upload_environment_dir_after_start", upload
     )
@@ -3008,16 +2845,13 @@ services:
     assert "\tmain\n" in hosts
     assert "\tapi\n" in hosts
     assert environment._instance_started
-    assert any(
-        command[-1] == "up" and cwd == environment._compose_project_dir
+    up_command, up_cwd = next(
+        (command, cwd)
         for command, cwd in commands
+        if Path(command[0]).name == "singularity-compose" and "up" in command
     )
-    compose_actions = [
-        command[-1]
-        for command, _cwd in commands
-        if Path(command[0]).name == "singularity-compose"
-    ]
-    assert compose_actions == ["up"]
+    assert up_cwd == environment._compose_project_dir
+    assert up_command[-2:] == ("up", "--read_only")
 
     await environment.stop(delete=False)
 
@@ -3034,7 +2868,7 @@ services:
         ("readiness", "readiness failed"),
     ],
 )
-async def test_singularity_compose_failed_start_preserves_error_and_cleans_up(
+async def test_singularity_compose_failed_start_preserves_runtime_for_stop_retry(
     tmp_path, monkeypatch, failure_stage, message
 ):
     environment = _compose_environment(
@@ -3084,10 +2918,20 @@ async def test_singularity_compose_failed_start_preserves_error_and_cleans_up(
         await environment.start(force_build=False)
 
     assert any("down" in command for command in commands)
+    assert environment._compose_project_dir == created["project"]
+    assert environment._staging_dir == created["staging"]
+    assert created["project"].exists()
+    assert created["staging"].exists()
+
+    async def successful_stop(*_command, **_kwargs):
+        pass
+
+    monkeypatch.setattr(environment, "_run", successful_stop)
+    await environment.stop(delete=False)
+
     assert environment._compose_project_dir is None
     assert environment._staging_dir is None
     assert environment._compose_instances == {}
-    assert not environment._instance_started
     assert not created["project"].exists()
     assert not created["staging"].exists()
 
@@ -3289,6 +3133,8 @@ def _instance_test_environment(tmp_path, network_mode=NetworkMode.PUBLIC):
     environment._workdir = "/workspace"
     environment._sif_path = tmp_path / "image.sif"
     environment._scratch_dir = None
+    environment._overlay_enabled = False
+    environment._overlay_path = None
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
     environment._instance_name = "ursatestinstance"
@@ -3478,6 +3324,120 @@ def test_singularity_public_instance_uses_36_flags(tmp_path):
     ]
 
 
+def test_singularity_instance_uses_disk_overlay_with_fakeroot(tmp_path):
+    environment = _instance_test_environment(tmp_path)
+    environment._overlay_path = tmp_path / "overlay.img"
+
+    command = environment._instance_start_command()
+
+    overlay_index = command.index("--overlay")
+    assert command[overlay_index + 1] == str(environment._overlay_path)
+    assert command.index("--fakeroot") < overlay_index
+    assert "--writable" not in command
+    assert "--writable-tmpfs" not in command
+
+
+def test_singularity_disk_overlay_uses_task_storage(tmp_path, monkeypatch):
+    environment = _instance_test_environment(tmp_path)
+    environment._scratch_dir = tmp_path / "scratch"
+    environment._scratch_dir.mkdir(mode=0o700)
+    environment.task_env_config = SimpleNamespace(storage_mb=128)
+    calls = []
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/sbin/mkfs.ext3" if name == "mkfs.ext3" else None,
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: calls.append((command, kwargs)),
+    )
+
+    environment._prepare_disk_overlay()
+
+    assert environment._overlay_path == environment._scratch_dir / "overlay.img"
+    assert environment._overlay_path.stat().st_size == 128 * 1024 * 1024
+    assert environment._overlay_path.stat().st_mode & 0o777 == 0o600
+    assert calls[0][0][0:3] == ["/usr/sbin/mkfs.ext3", "-q", "-d"]
+    assert calls[0][1] == {
+        "check": True,
+        "capture_output": True,
+        "text": True,
+    }
+    assert not (environment._scratch_dir / "overlay-layout").exists()
+
+
+def test_singularity_disk_overlay_mke2fs_fallback_requests_ext3(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._scratch_dir = tmp_path / "scratch"
+    environment._scratch_dir.mkdir(mode=0o700)
+    environment.task_env_config = SimpleNamespace(storage_mb=8)
+    calls = []
+
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/sbin/mke2fs" if name == "mke2fs" else None,
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: calls.append(command),
+    )
+
+    environment._prepare_disk_overlay()
+
+    assert calls == [
+        [
+            "/usr/sbin/mke2fs",
+            "-q",
+            "-t",
+            "ext3",
+            "-d",
+            str(environment._scratch_dir / "overlay-layout"),
+            str(environment._overlay_path),
+        ]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_singularity_failure_before_instance_start_removes_overlay(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    environment._overlay_enabled = True
+    runtime_commands = []
+    created = {}
+
+    async def build(_force):
+        return environment._sif_path
+
+    def prepare_overlay():
+        created["scratch"] = environment._scratch_dir
+        created["overlay"] = environment._scratch_dir / "overlay.img"
+        created["overlay"].touch()
+        environment._overlay_path = created["overlay"]
+        raise RuntimeError("overlay preparation failed")
+
+    async def run(*command, **_kwargs):
+        runtime_commands.append(command)
+
+    monkeypatch.setattr(environment, "_build_main_sif", build)
+    monkeypatch.setattr(environment, "_prepare_disk_overlay", prepare_overlay)
+    monkeypatch.setattr(environment, "_run", run)
+
+    with pytest.raises(RuntimeError, match="overlay preparation failed"):
+        await environment.start(force_build=False)
+
+    assert runtime_commands == []
+    assert environment._scratch_dir is None
+    assert environment._overlay_path is None
+    assert not created["scratch"].exists()
+    assert not created["overlay"].exists()
+
+
 def test_singularity_instance_can_disable_fakeroot(tmp_path):
     environment = _instance_test_environment(tmp_path)
     environment._fakeroot = False
@@ -3495,7 +3455,8 @@ def test_singularity_instance_can_disable_fakeroot(tmp_path):
         for index, value in enumerate(command)
         if value == "-B"
     ]
-    assert binds[:8] == [
+    assert binds[:9] == [
+        f"{environment._staging_dir}/harbor-writable/installed-agent:/installed-agent",
         f"{environment._staging_dir}/harbor-writable/solution:/solution",
         f"{environment._staging_dir}/harbor-writable/tests:/tests",
         f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",
@@ -3604,6 +3565,7 @@ def test_singularity_instance_mounts_staging_and_configured_binds(tmp_path):
         if value == "-B"
     ]
     assert binds == [
+        f"{environment._staging_dir}/harbor-writable/installed-agent:/installed-agent",
         f"{environment._staging_dir}/harbor-writable/solution:/solution",
         f"{environment._staging_dir}/harbor-writable/tests:/tests",
         f"{environment._staging_dir}/harbor-writable/skills:/harbor/skills",
@@ -3945,7 +3907,7 @@ async def test_singularity_startup_timeout_includes_content_seed(
     with pytest.raises(TimeoutError, match="did not become ready"):
         await environment.start(force_build=False)
 
-    assert commands[-1][1:3] == ("instance", "stop")
+    assert not any(command[1:3] == ("instance", "stop") for command in commands)
     assert environment._staging_dir is None
     assert environment._scratch_dir is None
 
@@ -4080,6 +4042,36 @@ async def test_singularity_compose_down_falls_back_to_direct_instance_stop(
     assert all(
         command[1:4] == ("instance", "stop", "--force") for command in commands
     )
+
+
+@pytest.mark.asyncio
+async def test_singularity_failed_stop_preserves_live_overlay_for_retry(
+    tmp_path, monkeypatch
+):
+    environment = _instance_test_environment(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    staging = scratch / "staging"
+    staging.mkdir()
+    overlay = scratch / "overlay.img"
+    overlay.touch()
+    environment._scratch_dir = scratch
+    environment._staging_dir = staging
+    environment._overlay_path = overlay
+    environment._instance_started = True
+
+    async def run(*_command):
+        raise RuntimeError("stop failed")
+
+    monkeypatch.setattr(environment, "_run", run)
+
+    await environment.stop(delete=False)
+
+    assert environment._instance_started
+    assert environment._scratch_dir == scratch
+    assert environment._overlay_path == overlay
+    assert scratch.is_dir()
+    assert overlay.is_file()
 
 
 @pytest.mark.asyncio

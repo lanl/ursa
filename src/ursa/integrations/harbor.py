@@ -10,19 +10,23 @@ from __future__ import annotations
 import asyncio
 import base64
 import fnmatch
+import hashlib
 import importlib.metadata
 import json
 import platform
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
 import sysconfig
+import tarfile
 import tempfile
+import urllib.request
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import typer
 import yaml
@@ -72,28 +76,31 @@ def _jsonl_token_usage(
         "output_tokens": None,
     }
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open(encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict) or (
+                    record.get("type"),
+                    record.get("event"),
+                ) != ("chat", "end"):
+                    continue
+                usage = record.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                for key in totals:
+                    value = usage.get(key)
+                    if (
+                        not isinstance(value, int)
+                        or isinstance(value, bool)
+                        or value < 0
+                    ):
+                        continue
+                    totals[key] = (totals[key] or 0) + value
     except OSError:
         return None, None, None
-
-    for line in lines:
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(record, dict) or (
-            record.get("type"),
-            record.get("event"),
-        ) != ("chat", "end"):
-            continue
-        usage = record.get("usage")
-        if not isinstance(usage, dict):
-            continue
-        for key in totals:
-            value = usage.get(key)
-            if not isinstance(value, int) or isinstance(value, bool):
-                continue
-            totals[key] = (totals[key] or 0) + value
 
     return (
         totals["input_tokens"],
@@ -122,9 +129,27 @@ class UrsaHarborAgent(BaseInstalledAgent):
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
     URSA_PYTHON_VERSION = "3.13"
-    URSA_RUNNER = (
-        "/opt/ursa-tools/ursa-ai/bin/python -m ursa.integrations.harbor runner"
-    )
+    URSA_RUNNER = "/installed-agent/bin/ursa-harbor-runner"
+    _INSTALL_ROOT = "/installed-agent"
+    _UV_VERSION = "0.12.8"
+    _UV_RELEASES = {
+        "x86_64": (
+            "x86_64",
+            "6ca4597639c97e921fb915e113061ce8e4a14ead9e42a1ead521dbb0a6763795",
+        ),
+        "amd64": (
+            "x86_64",
+            "6ca4597639c97e921fb915e113061ce8e4a14ead9e42a1ead521dbb0a6763795",
+        ),
+        "aarch64": (
+            "aarch64",
+            "975917badc8370163989e5bbe5a7c69bf922d19f8e57cb2652531bbffc935f84",
+        ),
+        "arm64": (
+            "aarch64",
+            "975917badc8370163989e5bbe5a7c69bf922d19f8e57cb2652531bbffc935f84",
+        ),
+    }
     ENV_AUTH_PROVIDERS = frozenset({
         "amazon-bedrock",
         "sagemaker",
@@ -161,6 +186,10 @@ class UrsaHarborAgent(BaseInstalledAgent):
         self._secret_env: dict[str, str] = {}
         self._model_env: dict[str, str] = {}
         self._workspace = "/"
+        self._runner_pid_file = (
+            f"{self._INSTALL_ROOT}/tmp/ursa-harbor-runner-"
+            f"{secrets.token_hex(16)}.pid"
+        )
 
     @staticmethod
     def _parse_list(
@@ -292,6 +321,23 @@ class UrsaHarborAgent(BaseInstalledAgent):
             end = distribution.end()
             return f"{target[:end]}[{extras}]{target[end:]}"
         return f"{target}[{extras}]"
+
+    @staticmethod
+    def _github_archive_target(target: str) -> str:
+        """Use a GitHub archive so task images do not need a Git client."""
+        match = re.fullmatch(
+            r"(?:(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*@\s*)?"
+            r"git\+https://github\.com/(?P<repository>[^?#]+?)"
+            r"(?:\.git)?@(?P<revision>[^#]+)",
+            target,
+        )
+        if match is None:
+            return target
+        repository = match.group("repository").removesuffix(".git")
+        revision = quote(match.group("revision"), safe="")
+        archive = f"https://github.com/{repository}/archive/{revision}.tar.gz"
+        name = match.group("name")
+        return f"{name} @ {archive}" if name else archive
 
     def _mcp_config(self) -> dict[str, dict[str, Any]]:
         """Convert Harbor's MCP list to URSA's named mapping."""
@@ -438,6 +484,14 @@ class UrsaHarborAgent(BaseInstalledAgent):
             await environment.upload_file(
                 Path(runtime_config_file.name), self._remote_config_file
             )
+        # Docker upload implementations can preserve the root-owned 0600 mode
+        # of the host temporary file. The JSON contains secret references,
+        # never secret values, and must be readable by a non-root agent.
+        await self.exec_as_root(
+            environment,
+            command=f"chmod 644 {shlex.quote(self._remote_config_file)}",
+            timeout_sec=30,
+        )
 
     @classmethod
     def _reject_environment_interpolation(
@@ -544,9 +598,15 @@ class UrsaHarborAgent(BaseInstalledAgent):
 
     @staticmethod
     def _terminate_runner_command(pid_file: str) -> str:
+        quoted_pid_file = shlex.quote(pid_file)
         return (
-            f"if [ -s {pid_file} ]; then "
-            f"pid=$(cat {pid_file}); "
+            f"if [ -s {quoted_pid_file} ]; then "
+            f"pid=$(cat {quoted_pid_file}); "
+            "case $pid in ''|*[!0-9]*) exit 0 ;; esac; "
+            'command=$(tr "\\000" " " < "/proc/$pid/cmdline" 2>/dev/null) '
+            "|| exit 0; "
+            'case "$command" in *"ursa.integrations.harbor runner"*) ;; '
+            "*) exit 0 ;; esac; "
             "descendants() { for child in "
             '$(cat "/proc/$1/task/$1/children" 2>/dev/null); '
             'do descendants "$child"; echo "$child"; done; }; '
@@ -555,7 +615,8 @@ class UrsaHarborAgent(BaseInstalledAgent):
             'i=0; while kill -0 "$pid" 2>/dev/null '
             '&& [ "$i" -lt 20 ]; do '
             "sleep 0.1; i=$((i + 1)); done; "
-            'kill -KILL $children "$pid" 2>/dev/null || true; fi'
+            'kill -KILL $children "$pid" 2>/dev/null || true; '
+            f"rm -f -- {quoted_pid_file}; fi"
         )
 
     @staticmethod
@@ -570,52 +631,59 @@ class UrsaHarborAgent(BaseInstalledAgent):
         except (ImportError, AttributeError):
             return None
 
+    @classmethod
+    def _stage_uv_binary(cls, machine: str, destination: Path) -> None:
+        """Download and verify the uv binary for the container architecture."""
+        release = cls._UV_RELEASES.get(machine.strip().lower())
+        if release is None:
+            raise RuntimeError(f"unsupported architecture for uv: {machine}")
+        architecture, expected_sha256 = release
+        archive_name = f"uv-{architecture}-unknown-linux-musl.tar.gz"
+        url = (
+            "https://github.com/astral-sh/uv/releases/download/"
+            f"{cls._UV_VERSION}/{archive_name}"
+        )
+        with tempfile.TemporaryDirectory(prefix="ursa-harbor-uv-") as temp_dir:
+            archive = Path(temp_dir) / archive_name
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(url, timeout=120) as response:
+                with archive.open("wb") as output:
+                    while chunk := response.read(1024 * 1024):
+                        digest.update(chunk)
+                        output.write(chunk)
+            if digest.hexdigest() != expected_sha256:
+                raise RuntimeError(
+                    "downloaded uv archive failed SHA-256 validation"
+                )
+            with tarfile.open(archive, "r:gz") as bundle:
+                member = next(
+                    (
+                        item
+                        for item in bundle.getmembers()
+                        if item.isfile()
+                        and PurePosixPath(item.name).name == "uv"
+                    ),
+                    None,
+                )
+                if member is None:
+                    raise RuntimeError(
+                        "downloaded uv archive does not contain uv"
+                    )
+                source = bundle.extractfile(member)
+                if source is None:
+                    raise RuntimeError(
+                        "could not read uv from downloaded archive"
+                    )
+                with source, destination.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+        destination.chmod(0o755)
+
     async def install(self, environment: BaseEnvironment) -> None:
         # Reject host-side configuration errors before doing any work in the
         # benchmark container.
         self._runtime_use_web = self._network_use_web(environment)
         runtime_config, self._secret_env = self._runtime_config(
             use_web=self._runtime_use_web
-        )
-        # uv's glibc build can crash under QEMU user-mode emulation (for
-        # example, amd64 Terminal-Bench images on an arm64 host). The musl
-        # release is statically linked and works both natively and under QEMU.
-        uv_version = "0.12.8"
-        await self.exec_as_root(
-            environment,
-            command=(
-                "missing_packages=; "
-                'command -v curl >/dev/null 2>&1 || missing_packages="$missing_packages curl"; '
-                'command -v tar >/dev/null 2>&1 || missing_packages="$missing_packages tar"; '
-                'command -v sha256sum >/dev/null 2>&1 || missing_packages="$missing_packages coreutils"; '
-                'if [ -n "$missing_packages" ]; then '
-                "if command -v microdnf >/dev/null; then "
-                "microdnf install -y ca-certificates $missing_packages && microdnf clean all; "
-                "elif command -v dnf >/dev/null; then "
-                "dnf install -y ca-certificates $missing_packages && dnf clean all; "
-                "elif command -v yum >/dev/null; then "
-                "yum install -y ca-certificates $missing_packages && yum clean all; "
-                "elif command -v apk >/dev/null; then "
-                "apk add --no-cache ca-certificates $missing_packages; "
-                "elif command -v apt-get >/dev/null; then "
-                "apt-get update && apt-get install -y ca-certificates $missing_packages; "
-                "else echo 'curl, tar, and sha256sum are required to install uv' >&2; exit 1; fi; fi; "
-                "if ! command -v /opt/uv/uv >/dev/null 2>&1; then "
-                "case $(uname -m) in "
-                "x86_64|amd64) uv_arch=x86_64; "
-                "uv_sha256=6ca4597639c97e921fb915e113061ce8e4a14ead9e42a1ead521dbb0a6763795 ;; "
-                "aarch64|arm64) uv_arch=aarch64; "
-                "uv_sha256=975917badc8370163989e5bbe5a7c69bf922d19f8e57cb2652531bbffc935f84 ;; "
-                "*) echo 'unsupported architecture for uv: '$(uname -m) >&2; exit 1 ;; "
-                "esac; mkdir -p /opt/uv; uv_archive=/tmp/uv.tar.gz; "
-                f"curl -LsSf https://github.com/astral-sh/uv/releases/download/{uv_version}/"
-                'uv-${uv_arch}-unknown-linux-musl.tar.gz -o "$uv_archive"; '
-                'echo "$uv_sha256  $uv_archive" | sha256sum -c -; '
-                'tar -xzf "$uv_archive" --strip-components=1 -C /opt/uv; '
-                'rm -f "$uv_archive"; fi; '
-                f"/opt/uv/uv python install {self.URSA_PYTHON_VERSION}"
-            ),
-            timeout_sec=600,
         )
         working_directory = await self.exec_as_agent(
             environment, command="pwd", timeout_sec=30
@@ -625,14 +693,55 @@ class UrsaHarborAgent(BaseInstalledAgent):
             raise RuntimeError(
                 f"Invalid task working directory: {self._workspace!r}"
             )
+        install_root = self._INSTALL_ROOT
+        install_env = {
+            "HOME": f"{install_root}/home",
+            "TMPDIR": f"{install_root}/tmp",
+            "UV_CACHE_DIR": f"{install_root}/cache",
+            "UV_PYTHON_INSTALL_BIN": "0",
+            "UV_PYTHON_INSTALL_DIR": f"{install_root}/python",
+            "UV_TOOL_BIN_DIR": f"{install_root}/bin",
+            "UV_TOOL_DIR": f"{install_root}/tools",
+        }
+        architecture = await self.exec_as_root(
+            environment,
+            command=(
+                f"mkdir -p {install_root}/bin {install_root}/cache "
+                f"{install_root}/home {install_root}/python "
+                f"{install_root}/tmp {install_root}/tools && "
+                f"chmod 1777 {install_root}/tmp && uname -m"
+            ),
+            env=install_env,
+            timeout_sec=30,
+        )
+        machine = (architecture.stdout or "").strip()
+        with tempfile.TemporaryDirectory(
+            prefix="ursa-harbor-uv-upload-"
+        ) as temp_dir:
+            staged_uv = Path(temp_dir) / "uv"
+            await asyncio.to_thread(self._stage_uv_binary, machine, staged_uv)
+            await environment.upload_file(
+                staged_uv, f"{install_root}/tmp/uv-upload"
+            )
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"mv {install_root}/tmp/uv-upload {install_root}/bin/uv && "
+                f"chmod 755 {install_root}/bin/uv && "
+                f"{install_root}/bin/uv python install "
+                f"{self.URSA_PYTHON_VERSION}"
+            ),
+            env=install_env,
+            timeout_sec=600,
+        )
         install_target = self.ursa_install_spec
         if isinstance(install_target, Path):
             if install_target.is_file():
-                remote_source = f"/tmp/{install_target.name}"
+                remote_source = f"{install_root}/tmp/{install_target.name}"
                 await environment.upload_file(install_target, remote_source)
                 install_target = f"file://{remote_source}"
             else:
-                remote_source = "/tmp/ursa-source"
+                remote_source = f"{install_root}/tmp/ursa-source"
                 with tempfile.TemporaryDirectory(
                     prefix="ursa-harbor-source-"
                 ) as temp_dir:
@@ -640,24 +749,30 @@ class UrsaHarborAgent(BaseInstalledAgent):
                     self._stage_source(install_target, staged_source)
                     await environment.upload_dir(staged_source, remote_source)
                 install_target = remote_source
-        install_target = self._install_target(install_target)
+        install_target = self._install_target(
+            self._github_archive_target(install_target)
+        )
         extra_packages = " ".join(
             f"--with {shlex.quote(package)}" for package in self.extra_packages
         )
         await self.exec_as_root(
             environment,
             command=(
-                "UV_TOOL_DIR=/opt/ursa-tools "
-                "UV_TOOL_BIN_DIR=/usr/local/bin "
-                "/opt/uv/uv tool install --force --python "
+                f"{install_root}/bin/uv tool install --force --python "
                 f"{self.URSA_PYTHON_VERSION} "
                 f"{extra_packages} {shlex.quote(install_target)} && "
-                'test "$(command -v ursa)" = /usr/local/bin/ursa && '
-                "test -x /opt/ursa-tools/ursa-ai/bin/python"
+                f"test -x {install_root}/bin/ursa && "
+                f"test -x {install_root}/tools/ursa-ai/bin/python && "
+                "printf '%s\\n' '#!/bin/sh' "
+                "'exec /installed-agent/tools/ursa-ai/bin/python "
+                '-m ursa.integrations.harbor runner "$@"\' '
+                f"> {install_root}/bin/ursa-harbor-runner && "
+                f"chmod 755 {install_root}/bin/ursa-harbor-runner"
             ),
+            env=install_env,
             timeout_sec=900,
         )
-        self._remote_config_file = "/tmp/ursa-config.json"
+        self._remote_config_file = f"{install_root}/tmp/ursa-config.json"
         await self._upload_runtime_config(environment, runtime_config)
 
     async def run(
@@ -686,7 +801,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         encoded = base64.urlsafe_b64encode(
             json.dumps(payload).encode()
         ).decode()
-        runner_pid_file = "/tmp/ursa-harbor-runner.pid"
+        runner_pid_file = self._runner_pid_file
 
         # Add context
         context.metadata = {
@@ -698,33 +813,47 @@ class UrsaHarborAgent(BaseInstalledAgent):
         }
 
         try:
-            await self.exec_as_agent(
-                environment,
-                command=(
-                    f"echo $$ > {runner_pid_file}; "
-                    f"exec {self.URSA_RUNNER} " + shlex.quote(encoded)
-                ),
-                env={**self._model_env, **self._secret_env},
-                cwd=self._workspace,
-                timeout_sec=None,
-            )
-        except asyncio.CancelledError:
+            try:
+                await self.exec_as_agent(
+                    environment,
+                    command=(
+                        f"echo $$ > {runner_pid_file}; "
+                        f"exec {self.URSA_RUNNER} " + shlex.quote(encoded)
+                    ),
+                    env={**self._model_env, **self._secret_env},
+                    cwd=self._workspace,
+                    timeout_sec=None,
+                )
+            except asyncio.CancelledError:
+                try:
+                    await asyncio.shield(
+                        self.exec_as_root(
+                            environment,
+                            command=self._terminate_runner_command(
+                                runner_pid_file
+                            ),
+                            timeout_sec=10,
+                        )
+                    )
+                except Exception:
+                    pass
+                raise
+        finally:
             try:
                 await asyncio.shield(
                     self.exec_as_root(
                         environment,
-                        command=self._terminate_runner_command(runner_pid_file),
+                        command=f"rm -f -- {shlex.quote(runner_pid_file)}",
                         timeout_sec=10,
                     )
                 )
             except Exception:
                 pass
-            raise
-        (
-            context.n_input_tokens,
-            context.n_cache_tokens,
-            context.n_output_tokens,
-        ) = _jsonl_token_usage(self.logs_dir / "ursa.jsonl")
+            (
+                context.n_input_tokens,
+                context.n_cache_tokens,
+                context.n_output_tokens,
+            ) = _jsonl_token_usage(self.logs_dir / "ursa.jsonl")
 
 
 def make_harbor_agent(

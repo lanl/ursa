@@ -7,20 +7,21 @@ import math
 import re
 import time
 from dataclasses import fields, is_dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, TextIO
 
 from langchain_core.callbacks import AsyncCallbackHandler
 
-_USAGE_KEYS = (
-    "input_tokens",
-    "output_tokens",
-    "reasoning_tokens",
-    "cached_tokens",
-)
+
+def _safe_repr(value: Any) -> str:
+    try:
+        return repr(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
 
 
-def _json_safe(value: Any) -> Any:
+def _json_safe(value: Any, seen: set[int] | None = None) -> Any:
     """Convert callback payloads to values accepted by ``json.dumps``."""
     if value is None or isinstance(value, (bool, int, str)):
         return value
@@ -35,22 +36,41 @@ def _json_safe(value: Any) -> Any:
             "error_type": value.__class__.__name__,
             "message": str(value),
         }
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
-    if is_dataclass(value):
-        return {
-            field.name: _json_safe(getattr(value, field.name))
-            for field in fields(value)
-        }
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        try:
-            return _json_safe(model_dump(mode="python"))
-        except TypeError:
-            return _json_safe(model_dump())
-    return repr(value)
+
+    seen = seen if seen is not None else set()
+    identity = id(value)
+    if identity in seen:
+        return f"<recursive {type(value).__name__}>"
+    seen.add(identity)
+    try:
+        if isinstance(value, dict):
+            return {
+                str(key): _json_safe(item, seen) for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [_json_safe(item, seen) for item in value]
+        if is_dataclass(value):
+            return {
+                field.name: _json_safe(getattr(value, field.name), seen)
+                for field in fields(value)
+            }
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            try:
+                dumped = model_dump(mode="python")
+            except TypeError:
+                try:
+                    dumped = model_dump()
+                except Exception:
+                    return _safe_repr(value)
+            except Exception:
+                return _safe_repr(value)
+            return _json_safe(dumped, seen)
+        return _safe_repr(value)
+    except Exception:
+        return _safe_repr(value)
+    finally:
+        seen.remove(identity)
 
 
 def _coerce_usage_object(value: Any) -> dict[str, Any]:
@@ -101,18 +121,25 @@ def _coerce_usage_object(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _to_int(value: Any) -> int:
+def _to_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
     try:
-        return int(float(value))
-    except (TypeError, ValueError, OverflowError):
-        return 0
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if not number.is_finite() or number < 0 or number != number.to_integral():
+        return None
+    return int(number)
 
 
 def _detail_dict(value: Any) -> dict[str, Any]:
     return _coerce_usage_object(value)
 
 
-def _reasoning_tokens(data: dict[str, Any]) -> int:
+def _reasoning_tokens(data: dict[str, Any]) -> int | None:
     candidates = [
         data.get("reasoning_tokens"),
         _detail_dict(data.get("completion_tokens_details")).get(
@@ -124,10 +151,13 @@ def _reasoning_tokens(data: dict[str, Any]) -> int:
     for key, value in _detail_dict(data.get("output_token_details")).items():
         if key == "reasoning" or key.endswith("_reasoning"):
             candidates.append(value)
-    return max((_to_int(value) for value in candidates), default=0)
+    values = [
+        value for item in candidates if (value := _to_int(item)) is not None
+    ]
+    return max(values, default=None)
 
 
-def _cached_tokens(data: dict[str, Any]) -> int:
+def _cached_tokens(data: dict[str, Any]) -> int | None:
     candidates = [
         data.get("cached_tokens"),
         data.get("cached_input_tokens"),
@@ -139,34 +169,47 @@ def _cached_tokens(data: dict[str, Any]) -> int:
     for key, value in _detail_dict(data.get("input_token_details")).items():
         if key == "cache_read" or key.endswith("_cache_read"):
             candidates.append(value)
-    return max((_to_int(value) for value in candidates), default=0)
+    values = [
+        value for item in candidates if (value := _to_int(item)) is not None
+    ]
+    return max(values, default=None)
+
+
+def _first_token_value(data: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = _to_int(data.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _normalize_usage(value: Any) -> dict[str, int]:
     data = _coerce_usage_object(value)
-    return {
-        "input_tokens": _to_int(
-            data.get("input_tokens", data.get("prompt_tokens"))
+    values = {
+        "input_tokens": _first_token_value(
+            data, "input_tokens", "prompt_tokens"
         ),
-        "output_tokens": _to_int(
-            data.get("output_tokens", data.get("completion_tokens"))
+        "output_tokens": _first_token_value(
+            data, "output_tokens", "completion_tokens"
         ),
         "reasoning_tokens": _reasoning_tokens(data),
         "cached_tokens": _cached_tokens(data),
     }
+    return {key: value for key, value in values.items() if value is not None}
 
 
 def _sum_usage(sources: list[dict[str, Any]]) -> dict[str, int]:
-    total = dict.fromkeys(_USAGE_KEYS, 0)
+    total: dict[str, int] = {}
     for source in sources:
         usage = _normalize_usage(source)
-        for key in _USAGE_KEYS:
-            total[key] += usage[key]
+        for key, value in usage.items():
+            total[key] = total.get(key, 0) + value
     return total
 
 
 def _extract_usage(response: Any) -> dict[str, int]:
     """Extract usage once, preferring LangChain's normalized metadata."""
+    selected_usage: list[dict[str, Any]] = []
     usage_metadata: list[dict[str, Any]] = []
     response_metadata_usage: list[dict[str, Any]] = []
     llm_output_usage: list[dict[str, Any]] = []
@@ -187,19 +230,24 @@ def _extract_usage(response: Any) -> dict[str, int]:
             message = getattr(generation, "message", None)
             if message is None:
                 continue
-            if usage := _coerce_usage_object(
+            normalized = _coerce_usage_object(
                 getattr(message, "usage_metadata", None)
-            ):
-                usage_metadata.append(usage)
+            )
+            if normalized:
+                usage_metadata.append(normalized)
             response_metadata = getattr(message, "response_metadata", None)
+            raw_usage: dict[str, Any] = {}
             if isinstance(response_metadata, dict):
                 raw = response_metadata.get(
                     "token_usage"
                 ) or response_metadata.get("usage")
-                if usage := _coerce_usage_object(raw):
-                    response_metadata_usage.append(usage)
+                raw_usage = _coerce_usage_object(raw)
+                if raw_usage:
+                    response_metadata_usage.append(raw_usage)
+            if normalized or raw_usage:
+                selected_usage.append(normalized or raw_usage)
 
-    selected = usage_metadata or response_metadata_usage or llm_output_usage
+    selected = selected_usage or llm_output_usage
     total = _sum_usage(selected)
 
     # Providers sometimes put normalized totals on the message and cache or
@@ -212,7 +260,8 @@ def _extract_usage(response: Any) -> dict[str, int]:
     ):
         extras = _sum_usage(sources)
         for key in ("reasoning_tokens", "cached_tokens"):
-            total[key] = max(total[key], extras[key])
+            if key in extras:
+                total[key] = max(total.get(key, 0), extras[key])
     return total
 
 
@@ -289,8 +338,11 @@ class JSONLLogEventHandler(AsyncCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        callback_name = kwargs.get("name")
         name = self._start_name(
-            "chain", run_id, _record_name(serialized, "chain")
+            "chain",
+            run_id,
+            str(callback_name or _record_name(serialized, "chain")),
         )
         self._write(
             "chain",
