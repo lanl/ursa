@@ -2209,6 +2209,53 @@ async def test_singularity_compose_uses_selected_runtime_shim(
 
 
 @pytest.mark.asyncio
+async def test_singularity_rootless_compose_binds_writable_harbor_paths(
+    tmp_path, monkeypatch
+):
+    environment = _compose_environment(
+        tmp_path,
+        monkeypatch,
+        "services: {main: {}}\n",
+        mounts=[
+            {
+                "type": "bind",
+                "source": "/host/verifier",
+                "target": "/logs/verifier",
+            }
+        ],
+    )
+    environment._fakeroot = False
+    environment._workdir = "/workspace"
+    environment._sif_path = tmp_path / "main.sif"
+    environment._sif_path.write_text("main")
+    environment._staging_dir = tmp_path / "staging"
+    environment._staging_dir.mkdir()
+
+    try:
+        await environment._prepare_compose_project(force_build=False)
+
+        generated = yaml.safe_load(environment._compose_file.read_text())
+        main = generated["instances"][environment._compose_key("main")]
+        volumes = main["volumes"]
+        assert "/host/verifier:/logs/verifier" in volumes
+        assert (
+            sum(volume.endswith(":/logs/verifier") for volume in volumes) == 1
+        )
+        for target in (
+            "/workspace",
+            "/logs/agent",
+            "/logs/user-agent",
+            "/logs/artifacts",
+        ):
+            volume = next(
+                volume for volume in volumes if volume.endswith(f":{target}")
+            )
+            assert Path(volume.split(":", 1)[0]).is_dir()
+    finally:
+        environment._cleanup_compose_project()
+
+
+@pytest.mark.asyncio
 async def test_singularity_compose_dependency_invokes_runtime_shim(
     tmp_path, monkeypatch
 ):
