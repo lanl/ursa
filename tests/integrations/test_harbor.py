@@ -6,6 +6,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,6 +133,7 @@ async def _start_environment(
     network_mode: NetworkMode = NetworkMode.PUBLIC,
     overlay: bool = False,
     compose: bool = False,
+    image_cache_dir: Path | None = None,
 ) -> DockerfileSingularityEnvironment:
     environment_dir = root / "environment"
     environment_dir.mkdir(parents=True)
@@ -175,7 +177,7 @@ async def _start_environment(
         persistent_env={"PERSISTED_VALUE": "from-environment"},
         singularity_fakeroot=fakeroot,
         singularity_overlay=overlay,
-        singularity_image_cache_dir=root / "sif-cache",
+        singularity_image_cache_dir=image_cache_dir or root / "sif-cache",
         singularity_startup_timeout_sec=30,
     )
     if compose:
@@ -196,7 +198,8 @@ async def _start_environment(
             target,
         )
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(image, cache_path)
+        if not cache_path.exists():
+            shutil.copy2(image, cache_path)
     try:
         await environment.start(force_build=False)
     except BaseException:
@@ -311,6 +314,53 @@ async def test_real_instance_lifecycle_and_file_transfer(
         await environment.exec("true")
 
 
+async def test_cached_sif_is_touched_and_marked_until_its_last_user_stops(
+    tmp_path: Path,
+    ubuntu_sif: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cache = tmp_path / "shared-sif-cache"
+    old_image = tmp_path / "old-ubuntu.sif"
+    shutil.copy2(ubuntu_sif, old_image)
+    os.utime(old_image, (1, 1))
+    first = await _start_environment(
+        tmp_path / "first",
+        old_image,
+        image_cache_dir=cache,
+    )
+    second = None
+    try:
+        sif = first._sif_path
+        assert sif is not None
+        marker = first._sif_in_use_path(sif)
+        assert sif.stat().st_mtime_ns > old_image.stat().st_mtime_ns
+        assert marker.is_file()
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                "ursa.integrations.harbor_singularity.archspec.cpu.host",
+                lambda: SimpleNamespace(name="different-microarchitecture"),
+            )
+            other_microarchitecture = await first._dockerfile_cache_path()
+        assert other_microarchitecture != sif
+
+        second = await _start_environment(
+            tmp_path / "second",
+            old_image,
+            image_cache_dir=cache,
+        )
+        assert second._sif_path == sif
+
+        await first.stop(delete=False)
+        assert marker.is_file()
+
+        await second.stop(delete=False)
+        assert not marker.exists()
+    finally:
+        if second is not None:
+            await _cleanup_environment(second)
+        await _cleanup_environment(first)
+
+
 async def test_timeout_kills_the_command_but_keeps_instance_usable(
     environment: DockerfileSingularityEnvironment,
     tmp_path: Path,
@@ -419,6 +469,12 @@ async def test_compose_sidecar_lifecycle_and_file_transfer(
     )
     instances: set[str] = set()
     try:
+        cached_sifs = list((tmp_path / "sif-cache").glob("*.sif"))
+        assert len(cached_sifs) == 2
+        assert all(
+            environment._sif_in_use_path(path).is_file() for path in cached_sifs
+        )
+
         main = await environment.service_exec(
             "printf main-service",
             service="main",
@@ -456,6 +512,10 @@ async def test_compose_sidecar_lifecycle_and_file_transfer(
             for instance in names
         }
         await environment.stop(delete=False)
+        assert all(
+            not environment._sif_in_use_path(path).exists()
+            for path in cached_sifs
+        )
         for instance in instances:
             probe = subprocess.run(
                 [

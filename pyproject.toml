@@ -111,6 +111,7 @@ harbor = [
     "filelock>=3.19.1,<4",
     "pathspec>=0.12.1,<2",
     "singularity-compose>=0.1.19,<0.2",
+    "archspec>=0.2.6,<0.3",
 ]
 
 [build-system]
