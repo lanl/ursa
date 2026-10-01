@@ -166,7 +166,7 @@ def test_handoff_imports_checkpoint_as_local_named_agent(tmp_path, monkeypatch):
 
     command = UrsaHarborAgent.handoff(trial, tmp_path / "workspace")
 
-    assert UrsaHarborAgent.SUPPORTS_HANDOFF is True
+    assert UrsaHarborAgent.capabilities.handoff is True
     assert command == [
         "ursa",
         "--name",
