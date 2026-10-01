@@ -19,10 +19,14 @@ from langchain_core.language_models.fake_chat_models import (
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.tools import tool
+from langgraph.checkpoint.base import empty_checkpoint
 
 from ursa.agents import BaseAgent
+from ursa.cli import agent_management
+from ursa.integrations import harbor as harbor_integration
 from ursa.integrations.harbor import UrsaHarborAgent, _jsonl_token_usage
 from ursa.integrations.harbor_runner import _run as _runner_run
+from ursa.util import Checkpointer
 from ursa.util.events import AgentEvents
 
 
@@ -124,6 +128,115 @@ def _records(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def test_runtime_config_records_evaluation_group(tmp_path):
+    config_file = _runtime_config(tmp_path / "ursa.yaml")
+    config_file.write_text(config_file.read_text() + "group: science\n")
+    agent = UrsaHarborAgent(
+        logs_dir=tmp_path / "agent",
+        environment_logs_dir=tmp_path / "agent",
+        config_file=config_file,
+    )
+
+    runtime_config, _ = agent._runtime_config()
+
+    assert runtime_config["group"] == "science"
+    assert agent._runtime_group == "science"
+
+
+def test_handoff_imports_checkpoint_as_local_named_agent(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        harbor_integration.shutil, "which", lambda command: f"/bin/{command}"
+    )
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", cache)
+    trial = tmp_path / "install pytorch__abc123"
+    (cache / "science").mkdir(parents=True)
+    checkpoint = trial / "agent" / "db" / "checkpointer.db"
+    checkpointer = Checkpointer.from_workspace(trial / "agent")
+    checkpointer.put(
+        {"configurable": {"thread_id": "trial-thread", "checkpoint_ns": ""}},
+        empty_checkpoint(),
+        {},
+        {},
+    )
+    checkpointer.conn.close()
+    (trial / "result.json").write_text(
+        json.dumps({"agent_result": {"metadata": {"group": "science"}}})
+    )
+
+    command = UrsaHarborAgent.handoff(trial, tmp_path / "workspace")
+
+    assert UrsaHarborAgent.SUPPORTS_HANDOFF is True
+    assert command == [
+        "ursa",
+        "--name",
+        "harbor-install-pytorch__abc123",
+        "--group",
+        "science",
+    ]
+    imported = (
+        cache
+        / "science"
+        / "agents"
+        / "harbor-install-pytorch__abc123"
+        / "db"
+        / "checkpointer.db"
+    )
+    with sqlite3.connect(imported) as database:
+        assert database.execute(
+            "SELECT DISTINCT thread_id FROM checkpoints"
+        ).fetchall() == [("ursa",)]
+    with sqlite3.connect(checkpoint) as database:
+        assert database.execute(
+            "SELECT DISTINCT thread_id FROM checkpoints"
+        ).fetchall() == [("trial-thread",)]
+
+
+def test_handoff_rejects_missing_cli_or_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        harbor_integration.shutil, "which", lambda _command: None
+    )
+    with pytest.raises(ValueError, match="ursa CLI not found"):
+        UrsaHarborAgent.handoff(tmp_path / "trial", tmp_path)
+
+    monkeypatch.setattr(
+        harbor_integration.shutil, "which", lambda command: f"/bin/{command}"
+    )
+    with pytest.raises(ValueError, match="URSA checkpoint not found"):
+        UrsaHarborAgent.handoff(tmp_path / "trial", tmp_path)
+
+
+def test_handoff_requires_group_and_does_not_overwrite_existing_agent(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        harbor_integration.shutil, "which", lambda command: f"/bin/{command}"
+    )
+    monkeypatch.setattr(agent_management, "URSA_CACHE_DIR", tmp_path / "cache")
+    trial = tmp_path / "trial"
+    checkpointer = Checkpointer.from_workspace(trial / "agent")
+    checkpointer.put(
+        {"configurable": {"thread_id": "trial-thread", "checkpoint_ns": ""}},
+        empty_checkpoint(),
+        {},
+        {},
+    )
+    checkpointer.conn.close()
+
+    with pytest.raises(
+        ValueError, match="does not record the URSA evaluation group"
+    ):
+        UrsaHarborAgent.handoff(trial, tmp_path)
+
+    (trial / "result.json").write_text(
+        json.dumps({"agent_result": {"metadata": {"group": "default"}}})
+    )
+    UrsaHarborAgent.handoff(trial, tmp_path)
+
+    with pytest.raises(ValueError, match="Destination agent already exists"):
+        UrsaHarborAgent.handoff(trial, tmp_path)
+
+
 @pytest.mark.asyncio
 async def test_harbor_adapter_runs_real_runner_and_populates_context(
     tmp_path, monkeypatch
@@ -161,6 +274,8 @@ async def test_harbor_adapter_runs_real_runner_and_populates_context(
     assert context.n_input_tokens == 12
     assert context.n_cache_tokens == 6
     assert context.n_output_tokens == 7
+    assert context.metadata is not None
+    assert context.metadata["group"] == "default"
     assert (logs / "ursa_result.out").read_text() == "runner answer"
     assert "Inspecting the workspace" in (logs / "ursa.log").read_text()
 

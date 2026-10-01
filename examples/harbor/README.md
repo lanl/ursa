@@ -25,6 +25,21 @@ A successful task reports reward `1`. Inspect the result with:
 uv run harbor view jobs
 ```
 
+To continue a completed trial as a local URSA conversation, pass its trial
+directory to Harbor's handoff command:
+
+```bash
+uv run harbor trial handoff jobs/<job>/<trial>
+```
+
+The handoff imports `agent/db/checkpointer.db` as a persistent agent named
+`harbor-<trial-directory>` in the same URSA group used during evaluation, then
+opens the local URSA TUI. A non-default group must already exist locally so its
+security policy is preserved. Handoff is refused when the trial does not record
+its evaluation group. The trial artifacts are left unchanged. As with other
+Harbor handoffs, the conversation is restored but files from the task container
+are not copied into the local workspace.
+
 To run all three tasks, repeat the command with `--path benchmark/tasks`.
 
 Validate their Docker and Compose environments without running an agent:
