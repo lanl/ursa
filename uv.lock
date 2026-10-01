@@ -428,6 +428,15 @@ wheels = [
 ]
 
 [[package]]
+name = "archspec"
+version = "0.2.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/1e/5be538cbaf66d14b276efd536ca76cefdff82eab95c1b7078792a24aaa86/archspec-0.2.7.tar.gz", hash = "sha256:87bd0f5664e641333c8878352987a7e7fadd225252279ac9f37c0ca185de3147", size = 60538, upload-time = "2026-10-28T14:19:14.064Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/51/ef383bb83ed9018413d3a9259c3d0535c9fb2c05ebce13a7ada259b20a0b/archspec-0.2.7-py3-none-any.whl", hash = "sha256:b6d97c2d840d8538d3f63b70c7c45ace2d26b3d9591d7c93d5fb33e50b1bc592", size = 87319, upload-time = "2026-10-28T14:19:12.134Z" },
+]
+
+[[package]]
 name = "argon2-cffi"
 version = "25.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -8876,6 +8885,7 @@ fm = [
     { name = "torch" },
 ]
 harbor = [
+    { name = "archspec" },
     { name = "filelock" },
     { name = "harbor", marker = "python_full_version >= '3.12'" },
     { name = "pathspec", version = "0.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -8933,6 +8943,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0,<0.22" },
+    { name = "archspec", marker = "extra == 'harbor'", specifier = ">=0.2.6,<0.3" },
     { name = "arxiv", specifier = ">=2.2.0,<3.0" },
     { name = "atomman", marker = "extra == 'lammps'", specifier = ">=1.5.2" },
     { name = "beautifulsoup4", specifier = ">=4.13.4,<5.0" },

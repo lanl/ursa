@@ -22,6 +22,7 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, override
 
+import archspec.cpu
 import yaml
 from filelock import AsyncFileLock
 from harbor.environments.base import BaseEnvironment, ExecResult
@@ -665,6 +666,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._compose_project_dir: Path | None = None
         self._compose_file: Path | None = None
         self._compose_instances: dict[str, list[str]] = {}
+        self._sif_use_token = f"{os.getpid()}-{secrets.token_hex(16)}"
+        self._sifs_in_use: set[Path] = set()
 
     @staticmethod
     @override
@@ -851,6 +854,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 {
                     "architecture": platform.machine(),
                     "build_args": build_args,
+                    "microarchitecture": archspec.cpu.host().name,
                     "target": target,
                 },
                 separators=(",", ":"),
@@ -912,6 +916,53 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         except RuntimeError:
             return False
         return True
+
+    @staticmethod
+    def _sif_in_use_path(path: Path) -> Path:
+        return Path(f"{path}.in-use")
+
+    async def _mark_sif_in_use(self, path: Path) -> None:
+        """Refresh a cached SIF and record this environment as a user."""
+        async with AsyncFileLock(path.with_suffix(".lock")):
+            os.utime(path)
+            if path in self._sifs_in_use:
+                return
+            marker = self._sif_in_use_path(path)
+            users = (
+                set(marker.read_text().splitlines())
+                if marker.is_file()
+                else set()
+            )
+            users.add(self._sif_use_token)
+            marker.write_text("".join(f"{user}\n" for user in sorted(users)))
+            self._sifs_in_use.add(path)
+
+    async def _release_sifs_in_use(self) -> None:
+        """Remove this environment from each cached SIF's users."""
+        for path in tuple(self._sifs_in_use):
+            try:
+                async with AsyncFileLock(path.with_suffix(".lock")):
+                    marker = self._sif_in_use_path(path)
+                    users = (
+                        set(marker.read_text().splitlines())
+                        if marker.is_file()
+                        else set()
+                    )
+                    users.discard(self._sif_use_token)
+                    if users:
+                        marker.write_text(
+                            "".join(f"{user}\n" for user in sorted(users))
+                        )
+                    else:
+                        marker.unlink(missing_ok=True)
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to release cached Singularity image %s: %s",
+                    path,
+                    exc,
+                )
+            else:
+                self._sifs_in_use.remove(path)
 
     @staticmethod
     async def _terminate_host_process(
@@ -1157,20 +1208,21 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             if "build" in service or "image" not in service:
                 if self._sif_path is None:
                     raise RuntimeError("Main Singularity image is not prepared")
+                await self._mark_sif_in_use(self._sif_path)
                 return str(self._sif_path)
         if "build" in service:
             dockerfile, context, build_args, target = (
                 self._compose_build_inputs(service["build"])
             )
-            return str(
-                await self._build_dockerfile_sif(
-                    force_build,
-                    dockerfile_path=dockerfile,
-                    context_dir=context,
-                    build_args=build_args,
-                    target=target,
-                )
+            path = await self._build_dockerfile_sif(
+                force_build,
+                dockerfile_path=dockerfile,
+                context_dir=context,
+                build_args=build_args,
+                target=target,
             )
+            await self._mark_sif_in_use(path)
+            return str(path)
         image = service["image"]
         if not isinstance(image, str) or not image:
             raise ValueError(
@@ -1536,6 +1588,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if not self._instance_start_attempted:
             self._cleanup_compose_project()
             self._cleanup_staging()
+            await self._release_sifs_in_use()
             return
         stopped = True
         try:
@@ -1552,22 +1605,25 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if stopped:
             self._cleanup_compose_project()
             self._cleanup_staging()
+            await self._release_sifs_in_use()
 
     @override
     async def start(self, force_build: bool) -> None:
         if sys.platform == "win32":
             raise RuntimeError("Singularity is unavailable on Windows")
-        self._sif_path = await self._build_main_sif(
-            force_build or self._force_pull
-        )
-        self._scratch_dir = Path(
-            tempfile.mkdtemp(prefix="ursa-harbor-singularity-")
-        )
-        self._scratch_dir.chmod(0o700)
-        self._staging_dir = self._scratch_dir / "staging"
-        self._staging_dir.mkdir(mode=0o755)
-        self._instance_start_attempted = False
         try:
+            self._sif_path = await self._build_main_sif(
+                force_build or self._force_pull
+            )
+            if self._sif_path is not None:
+                await self._mark_sif_in_use(self._sif_path)
+            self._scratch_dir = Path(
+                tempfile.mkdtemp(prefix="ursa-harbor-singularity-")
+            )
+            self._scratch_dir.chmod(0o700)
+            self._staging_dir = self._scratch_dir / "staging"
+            self._staging_dir.mkdir(mode=0o755)
+            self._instance_start_attempted = False
             async with asyncio.timeout(self._startup_timeout_sec):
                 if self._overlay_enabled:
                     self._prepare_disk_overlay()
@@ -1626,6 +1682,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if stopped:
             self._cleanup_compose_project()
             self._cleanup_staging()
+            await self._release_sifs_in_use()
         else:
             self.logger.warning(
                 "Preserving Singularity runtime files for a later stop retry"
