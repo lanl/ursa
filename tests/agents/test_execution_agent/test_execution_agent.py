@@ -14,7 +14,7 @@ from langchain_core.messages import (
 )
 
 from ursa.agents import ExecutionAgent
-from ursa.agents.execution_agent import ReviewAssessment
+from ursa.agents.execution_agent import ReviewAssessment, review_complete
 from ursa.util import Checkpointer
 
 
@@ -174,6 +174,56 @@ def test_execution_agent_review_uses_current_invoke_request(
         "REVIEW::new invocation request"
     )
     assert result["review"].is_complete is True
+
+
+def test_execution_agent_stops_after_repeated_incomplete_reviews(
+    chat_model, monkeypatch, tmpdir: Path
+):
+    review_count = 0
+
+    def fake_invoke_structured(*args, **kwargs):
+        nonlocal review_count
+        review_count += 1
+        return ReviewAssessment(is_complete=False, reason="still blocked")
+
+    monkeypatch.setattr(
+        "ursa.agents.execution_agent.invoke_structured",
+        fake_invoke_structured,
+    )
+
+    execution_agent = ExecutionAgent(
+        llm=chat_model,
+        workspace=tmpdir,
+        max_review_attempts=2,
+    )
+    result = execution_agent.invoke("attempt a blocked task")
+
+    assert review_count == 2
+    assert result["review_exhausted"] is True
+    assert result["review_attempts"] == 2
+    assert review_complete(result) == "recap"
+    assert isinstance(result["messages"][-1], AIMessage)
+
+
+def test_execution_agent_tool_progress_resets_review_attempts(
+    chat_model, tmpdir: Path
+):
+    execution_agent = ExecutionAgent(llm=chat_model, workspace=tmpdir)
+    result = execution_agent.query_executor(
+        {
+            "messages": [
+                HumanMessage(content="run a command"),
+                ToolMessage(content="done", tool_call_id="call-1"),
+            ],
+            "review_attempts": 2,
+            "review_exhausted": True,
+            "symlinkdir": {},
+        },
+        runtime=SimpleNamespace(context=execution_agent.context),
+    )
+
+    assert result["review_attempts"] == 0
+    assert result["review_exhausted"] is False
 
 
 def test_execution_agent_persistent_thread_reviews_latest_invoke_request(
