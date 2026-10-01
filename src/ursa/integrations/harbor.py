@@ -34,6 +34,7 @@ from jsonargparse import Namespace
 from pydantic import SecretStr
 
 try:
+    from harbor.agents.capabilities import AgentCapabilities
     from harbor.agents.installed.base import BaseInstalledAgent
     from harbor.agents.model_connection import PROVIDERS, ModelConnectionSpec
     from harbor.environments.base import BaseEnvironment
@@ -129,7 +130,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
     """
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
-    SUPPORTS_HANDOFF = True
+    capabilities = AgentCapabilities(handoff=True)
     URSA_PYTHON_VERSION = "3.13"
     URSA_RUNNER = "/installed-agent/bin/ursa-harbor-runner"
     _INSTALL_ROOT = "/installed-agent"

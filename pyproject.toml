@@ -107,7 +107,7 @@ metric_plots = [
     "scipy>=1.16.2,<2.0.0",
 ]
 harbor = [
-    "harbor>=0.22.0,<0.23; python_version >= '3.12'",
+    "harbor>=0.23.0,<0.24; python_version >= '3.12'",
     "filelock>=3.19.1,<4",
     "pathspec>=0.12.1,<2",
     "singularity-compose>=0.1.19,<0.2",
