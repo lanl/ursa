@@ -50,6 +50,7 @@ from ursa.cli.config import (
     UrsaConfig,
     config_search_paths,
 )
+from ursa.security import DEFAULT_GROUP_NAME, validate_group_name
 from ursa.util.secrets import externalize_secret_references
 
 
@@ -128,6 +129,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
     """
 
     MODEL_CONNECTION = ModelConnectionSpec(passthrough=True)
+    SUPPORTS_HANDOFF = True
     URSA_PYTHON_VERSION = "3.13"
     URSA_RUNNER = "/installed-agent/bin/ursa-harbor-runner"
     _INSTALL_ROOT = "/installed-agent"
@@ -168,6 +170,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         )
         self._secret_env: dict[str, str] = {}
         self._model_env: dict[str, str] = {}
+        self._runtime_group = DEFAULT_GROUP_NAME
         self._workspace = "/"
         self._runner_pid_file = (
             f"{self._INSTALL_ROOT}/tmp/ursa-harbor-runner-"
@@ -505,6 +508,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
             runtime_config, explicit_providers
         )
         self._qualify_tagged_models(runtime_config)
+        self._runtime_group = validate_group_name(runtime_config.get("group"))
         return runtime_config, secret_env
 
     @staticmethod
@@ -665,6 +669,102 @@ class UrsaHarborAgent(BaseInstalledAgent):
     @staticmethod
     def name() -> str:
         return "ursa"
+
+    @staticmethod
+    def _handoff_agent_name(trial_dir: Path) -> str:
+        """Return a valid local persistent-agent name for a Harbor trial."""
+        trial_name = re.sub(r"[^A-Za-z0-9._-]+", "-", trial_dir.name).strip(
+            "._-"
+        )
+        return f"harbor-{trial_name or 'trial'}"
+
+    @staticmethod
+    def _handoff_group(trial_dir: Path) -> str:
+        """Read the evaluation group recorded in Harbor's trial result."""
+        result_path = trial_dir / "result.json"
+        if not result_path.is_file():
+            raise ValueError(
+                f"Harbor trial result {result_path} does not record the URSA "
+                "evaluation group; refusing to resume"
+            )
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"Could not read Harbor trial result {result_path}: {exc}"
+            ) from exc
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"Harbor trial result {result_path} is not an object"
+            )
+
+        agent_results = [result.get("agent_result")]
+        step_results = result.get("step_results")
+        if isinstance(step_results, list):
+            agent_results.extend(
+                step.get("agent_result")
+                for step in step_results
+                if isinstance(step, dict)
+            )
+
+        groups: set[str] = set()
+        for agent_result in agent_results:
+            if not isinstance(agent_result, dict):
+                continue
+            metadata = agent_result.get("metadata")
+            if not isinstance(metadata, dict) or "group" not in metadata:
+                continue
+            group = metadata["group"]
+            if not isinstance(group, str):
+                raise ValueError(
+                    f"Harbor trial result {result_path} has an invalid URSA group"
+                )
+            groups.add(validate_group_name(group))
+
+        if len(groups) > 1:
+            raise ValueError(
+                f"Harbor trial result {result_path} contains multiple URSA groups"
+            )
+        if not groups:
+            raise ValueError(
+                f"Harbor trial result {result_path} does not record the URSA "
+                "evaluation group; refusing to resume"
+            )
+        return next(iter(groups))
+
+    @classmethod
+    def handoff(cls, trial_dir: Path, cwd: Path) -> list[str]:
+        """Import a trial checkpoint and resume it in the local URSA TUI."""
+        del cwd  # URSA uses the directory from which Harbor launches the CLI.
+        if shutil.which("ursa") is None:
+            raise ValueError(
+                "ursa CLI not found on PATH; install URSA first: "
+                "uv tool install 'ursa-ai[harbor]'"
+            )
+
+        checkpoint = trial_dir / "agent" / "db" / "checkpointer.db"
+        if not checkpoint.is_file():
+            raise ValueError(
+                f"URSA checkpoint not found at {checkpoint}; "
+                "handoff requires a completed trial with a native session"
+            )
+
+        from ursa.cli.agent_management import import_agent
+
+        agent_name = cls._handoff_agent_name(trial_dir)
+        group = cls._handoff_group(trial_dir)
+        try:
+            import_agent(
+                checkpoint,
+                group_name=group,
+                agent_name=agent_name,
+            )
+        except (FileExistsError, FileNotFoundError) as exc:
+            raise ValueError(str(exc)) from exc
+        command = ["ursa", "--name", agent_name]
+        if group != DEFAULT_GROUP_NAME:
+            command.extend(["--group", group])
+        return command
 
     def version(self) -> str | None:
         try:
@@ -873,6 +973,7 @@ class UrsaHarborAgent(BaseInstalledAgent):
         context.metadata = {
             **(context.metadata or {}),
             "agent": self.agent_import_path,
+            "group": self._runtime_group,
             "ursa_install_spec": str(self.ursa_install_spec),
             "host": platform.node(),
             "host_platform": sysconfig.get_platform(),
