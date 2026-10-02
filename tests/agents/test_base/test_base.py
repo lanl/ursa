@@ -712,3 +712,26 @@ def test_runtime_injection_preserved_for_nodes(tmp_path: Path):
     assert runtime is not None
     assert isinstance(runtime, Runtime)
     assert runtime.context.workspace == Path(tmp_path)
+
+
+def test_default_thread_id_is_unique_per_agent(tmp_path):
+    """Two agents built without a thread_id must not share a checkpoint thread.
+
+    The constructor docstring promises a generated identifier. A constant one
+    puts every library-built agent on the same thread of whatever checkpoint
+    store it is given, so two agents sharing a store share a conversation
+    (issue #332).
+    """
+    first = BasicChatAgent(llm=TinyCountingModel(), workspace=tmp_path / "w1")
+    second = BasicChatAgent(llm=TinyCountingModel(), workspace=tmp_path / "w2")
+
+    assert first.thread_id != second.thread_id
+
+
+def test_explicit_thread_id_is_respected(tmp_path):
+    """Passing a thread_id still pins it, which is how the CLI shares a thread."""
+    agent = BasicChatAgent(
+        llm=TinyCountingModel(), workspace=tmp_path / "w", thread_id="ursa"
+    )
+
+    assert agent.thread_id == "ursa"
