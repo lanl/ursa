@@ -296,9 +296,21 @@ async def test_real_instance_lifecycle_and_file_transfer(
     )
     assert downloaded.read_text() == "round trip"
 
+    runtime_workdir = environment._runtime_workdir_root
+    assert runtime_workdir is not None
+    large_tmp = await environment.exec(
+        "dd if=/dev/zero of=/tmp/ursa-workdir-capacity "
+        "bs=1M count=65 status=none"
+    )
+    assert large_tmp.return_code == 0
+    assert (
+        runtime_workdir / "main" / "tmp" / "ursa-workdir-capacity"
+    ).stat().st_size == 65 * 1024 * 1024
+
     scratch = environment._scratch_dir
     await environment.stop(delete=False)
     assert scratch is not None and not scratch.exists()
+    assert not runtime_workdir.exists()
     stopped = subprocess.run(
         [
             environment._instance_runtime(),
