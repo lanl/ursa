@@ -18,6 +18,7 @@ import sys
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from copy import deepcopy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, override
@@ -530,6 +531,7 @@ async def docker_compose_to_singularity_compose(
     network_mode: NetworkMode = NetworkMode.PUBLIC,
     fakeroot: bool = True,
     main_overlay: Path | None = None,
+    service_workdirs: Mapping[str, Sequence[Path]] | None = None,
 ) -> dict[str, list[str]]:
     """Convert one or more Docker Compose files into a singularity-compose file."""
     paths = (
@@ -541,6 +543,34 @@ async def docker_compose_to_singularity_compose(
     service_keys = {
         name: _compose_key(identity, name) for name in config["services"]
     }
+    replicas_by_service = {
+        name: service.get("deploy", {}).get("replicas", 1)
+        for name, service in config["services"].items()
+    }
+    instance_keys = {
+        name: (
+            [service_keys[name]]
+            if replicas == 1 or service_workdirs is None
+            else [
+                f"{service_keys[name]}-r{replica}"
+                for replica in range(1, replicas + 1)
+            ]
+        )
+        for name, replicas in replicas_by_service.items()
+    }
+    if service_workdirs is not None:
+        for name, replicas in replicas_by_service.items():
+            try:
+                workdirs = service_workdirs[name]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Missing Singularity workdir for service {name!r}"
+                ) from exc
+            if len(workdirs) != replicas:
+                raise ValueError(
+                    f"Expected {replicas} Singularity workdir(s) for "
+                    f"service {name!r}, got {len(workdirs)}"
+                )
     instances = {}
     instance_names = {}
     project_dir = singularity_compose_path.parent
@@ -584,7 +614,9 @@ async def docker_compose_to_singularity_compose(
             instance["volumes"] = volumes
         if depends_on := service.get("depends_on", []):
             instance["depends_on"] = [
-                service_keys[dependency] for dependency in depends_on
+                instance_key
+                for dependency in depends_on
+                for instance_key in instance_keys[dependency]
             ]
         if ports := service.get("ports", []):
             instance["ports"] = ports
@@ -592,13 +624,24 @@ async def docker_compose_to_singularity_compose(
             instance["start"]["args"] = (
                 shlex.join(command) if isinstance(command, list) else command
             )
-        replicas = service.get("deploy", {}).get("replicas", 1)
-        if replicas != 1:
+        replicas = replicas_by_service[name]
+        if service_workdirs is None and replicas != 1:
             instance["deploy"] = {"replicas": replicas}
-        instances[key] = instance
-        instance_names[name] = [
-            f"{key}{replica}" for replica in range(1, replicas + 1)
-        ]
+        if service_workdirs is None:
+            instances[key] = instance
+            instance_names[name] = [
+                f"{key}{replica}" for replica in range(1, replicas + 1)
+            ]
+        else:
+            for instance_key, workdir in zip(
+                instance_keys[name], service_workdirs[name], strict=True
+            ):
+                replica = deepcopy(instance)
+                replica["start"]["options"].append(f"workdir={workdir}")
+                instances[instance_key] = replica
+            instance_names[name] = [
+                f"{instance_key}1" for instance_key in instance_keys[name]
+            ]
     singularity_compose_path.write_text(
         yaml.safe_dump(
             {"version": "2.0", "instances": instances}, sort_keys=False
@@ -652,8 +695,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     "Singularity 3.6 cannot change network policy after start"
                 )
         self._startup_timeout_sec = singularity_startup_timeout_sec
+        self._lifecycle_lock = asyncio.Lock()
         self._scratch_dir: Path | None = None
         self._staging_dir: Path | None = None
+        self._runtime_workdir_temp: tempfile.TemporaryDirectory[str] | None = (
+            None
+        )
+        self._runtime_workdir_root: Path | None = None
         self._sif_path: Path | None = None
         self._overlay_path: Path | None = None
         self._workdir = self._resolve_workdir()
@@ -666,6 +714,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._compose_project_dir: Path | None = None
         self._compose_file: Path | None = None
         self._compose_instances: dict[str, list[str]] = {}
+        self._compose_uses_sudo = False
         self._sif_use_token = f"{os.getpid()}-{secrets.token_hex(16)}"
         self._sifs_in_use: set[Path] = set()
 
@@ -979,6 +1028,17 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 os.killpg(process.pid, signal.SIGKILL)
             await process.wait()
 
+    @staticmethod
+    async def _await_cleanup(cleanup: Awaitable[Any]) -> Any:
+        """Finish ownership cleanup even if the caller is cancelled again."""
+        task = asyncio.ensure_future(cleanup)
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        return task.result()
+
     async def _run(
         self,
         *command: str,
@@ -1002,7 +1062,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         try:
             stdout, stderr = await process.communicate()
         except asyncio.CancelledError:
-            await self._terminate_host_process(process)
+            await self._await_cleanup(self._terminate_host_process(process))
             raise
         if process.returncode:
             detail = stderr.decode(errors="replace") or stdout.decode(
@@ -1244,6 +1304,20 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._compose_file = (
             self._compose_project_dir / "singularity-compose.yml"
         )
+        compose_config = self._load_compose_config()
+        self._compose_uses_sudo = not self._fakeroot and any(
+            service.get("ports")
+            for service in compose_config["services"].values()
+        )
+        service_workdirs = {}
+        for name, service in compose_config["services"].items():
+            replicas = service.get("deploy", {}).get("replicas", 1)
+            service_workdirs[name] = tuple(
+                self._runtime_workdir(
+                    f"compose-{self._compose_key(name)}-{replica}"
+                )
+                for replica in range(1, replicas + 1)
+            )
         main_mounts = list(self._mounts)
         for source, target in self._harbor_writable_binds():
             source.mkdir(parents=True, exist_ok=True)
@@ -1266,6 +1340,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             network_mode=self._network_policy.network_mode,
             fakeroot=self._fakeroot,
             main_overlay=self._overlay_path,
+            service_workdirs=service_workdirs,
         )
         self._instance_name = self._compose_instances["main"][0]
 
@@ -1333,6 +1408,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._compose_project_dir = None
         self._compose_file = None
         self._compose_instances = {}
+        self._compose_uses_sudo = False
 
     def _instance_exec_prefix(
         self,
@@ -1359,6 +1435,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             "start",
             "--containall",
             "--no-home",
+            "--workdir",
+            str(self._runtime_workdir("main")),
         ]
         if self._fakeroot:
             command.insert(3, "--fakeroot")
@@ -1507,6 +1585,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             "--cleanenv",
             "--containall",
             "--no-home",
+            "--workdir",
+            str(self._runtime_workdir("seed")),
             "--pwd",
             "/",
         ]
@@ -1527,7 +1607,74 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         # mode onto the bind root. Restore the writable contract after seeding.
         self._prepare_harbor_bind_sources()
 
+    async def _list_instances(self) -> set[str]:
+        command = [
+            self._instance_runtime(),
+            "instance",
+            "list",
+            "--json",
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not list Singularity instances: {exc}"
+            ) from exc
+        try:
+            stdout, stderr = await process.communicate()
+        except asyncio.CancelledError:
+            await self._await_cleanup(self._terminate_host_process(process))
+            raise
+        if process.returncode:
+            detail = stderr.decode(errors="replace") or stdout.decode(
+                errors="replace"
+            )
+            raise RuntimeError(
+                f"Could not list Singularity instances: {detail}"
+            )
+        return self._parse_instance_list(stdout)
+
+    async def _instance_exists(self) -> bool:
+        return self._instance_name in await self._list_instances()
+
+    @staticmethod
+    def _parse_instance_list(output: bytes) -> set[str]:
+        try:
+            instances = json.loads(output)["instances"]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Could not parse Singularity instance list"
+            ) from exc
+        if not isinstance(instances, list) or any(
+            not isinstance(instance, dict)
+            or not isinstance(instance.get("instance"), str)
+            for instance in instances
+        ):
+            raise RuntimeError("Could not parse Singularity instance list")
+        return {instance["instance"] for instance in instances}
+
     async def _stop_instance(self, *, warn: bool) -> bool:
+        try:
+            exists = await self._instance_exists()
+        except RuntimeError as exc:
+            if warn:
+                self.logger.warning(
+                    "Failed to inspect Singularity instance %s: %s",
+                    self._instance_name,
+                    exc,
+                )
+                return False
+            raise
+        if not exists:
+            self._instance_started = False
+            self._instance_start_attempted = False
+            return True
         try:
             await self._run(
                 self._instance_runtime(),
@@ -1553,12 +1700,36 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         try:
             await self._run_compose("down", "--timeout", "0")
         except RuntimeError as exc:
+            if self._compose_uses_sudo:
+                if warn:
+                    self.logger.warning(
+                        "Failed to stop privileged singularity-compose "
+                        "project; preserving runtime files: %s",
+                        exc,
+                    )
+                    return False
+                raise RuntimeError(
+                    "Failed to stop privileged singularity-compose project"
+                ) from exc
+            try:
+                existing = await self._list_instances()
+            except RuntimeError as list_exc:
+                if warn:
+                    self.logger.warning(
+                        "Failed to stop singularity-compose project (%s) "
+                        "or inspect instances (%s)",
+                        exc,
+                        list_exc,
+                    )
+                    return False
+                raise
             failures = []
-            for instance in {
+            expected = {
                 instance
                 for instances in self._compose_instances.values()
                 for instance in instances
-            }:
+            }
+            for instance in expected & existing:
                 try:
                     await self._run(
                         self._instance_runtime(),
@@ -1609,6 +1780,19 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
 
     @override
     async def start(self, force_build: bool) -> None:
+        async with self._lifecycle_lock:
+            if self._instance_started:
+                raise RuntimeError("Singularity environment is already started")
+            if (
+                self._instance_start_attempted
+                or self._runtime_workdir_temp is not None
+            ):
+                raise RuntimeError(
+                    "Singularity environment requires stop before restart"
+                )
+            await self._start(force_build)
+
+    async def _start(self, force_build: bool) -> None:
         if sys.platform == "win32":
             raise RuntimeError("Singularity is unavailable on Windows")
         try:
@@ -1617,6 +1801,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             )
             if self._sif_path is not None:
                 await self._mark_sif_in_use(self._sif_path)
+            self._prepare_runtime_workdir()
             self._scratch_dir = Path(
                 tempfile.mkdtemp(prefix="ursa-harbor-singularity-")
             )
@@ -1650,7 +1835,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             await self.ensure_dirs(self._mount_targets(writable_only=True))
             await self._upload_environment_dir_after_start()
         except TimeoutError as exc:
-            await self._cleanup_failed_start()
+            await self._await_cleanup(self._cleanup_failed_start())
             raise TimeoutError(
                 "Singularity instance did not become ready within "
                 f"{self._startup_timeout_sec:g} seconds"
@@ -1658,8 +1843,35 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         except BaseException:
             # An interrupted instance-start command can still leave an instance
             # behind, so cleanup is attempted before start reports success.
-            await self._cleanup_failed_start()
+            await self._await_cleanup(self._cleanup_failed_start())
             raise
+
+    def _prepare_runtime_workdir(self) -> None:
+        if self._runtime_workdir_temp is not None:
+            raise RuntimeError(
+                "Singularity runtime workdir is already prepared"
+            )
+        temporary = tempfile.TemporaryDirectory(
+            prefix="ursa-harbor-singularity-workdir-",
+            ignore_cleanup_errors=True,
+            delete=False,
+        )
+        self._runtime_workdir_temp = temporary
+        self._runtime_workdir_root = Path(temporary.name)
+
+    def _runtime_workdir(self, name: str) -> Path:
+        if self._runtime_workdir_root is None:
+            raise RuntimeError("Singularity runtime workdir is not prepared")
+        workdir = self._runtime_workdir_root / name
+        workdir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return workdir
+
+    def _cleanup_runtime_workdir(self) -> None:
+        temporary = self._runtime_workdir_temp
+        self._runtime_workdir_temp = None
+        self._runtime_workdir_root = None
+        if temporary is not None:
+            temporary.cleanup()
 
     def _cleanup_staging(self) -> None:
         scratch_dir = getattr(self, "_scratch_dir", None)
@@ -1670,14 +1882,19 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._scratch_dir = None
         self._staging_dir = None
         self._overlay_path = None
+        self._cleanup_runtime_workdir()
 
     @override
     async def stop(self, delete: bool) -> None:
+        async with self._lifecycle_lock:
+            await self._stop(delete)
+
+    async def _stop(self, delete: bool) -> None:
         stopped = True
         if self._uses_compose:
             if self._compose_file is not None:
                 stopped = await self._stop_compose(warn=True)
-        elif self._instance_started:
+        elif self._instance_started or self._instance_start_attempted:
             stopped = await self._stop_instance(warn=True)
         if stopped:
             self._cleanup_compose_project()
@@ -2124,6 +2341,10 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
 
     @override
     async def stop_service(self, service: str) -> None:
+        async with self._lifecycle_lock:
+            await self._stop_service(service)
+
+    async def _stop_service(self, service: str) -> None:
         instances = self._compose_instances.get(service)
         if not instances:
             raise ValueError(f"Unknown Docker Compose service: {service!r}")
