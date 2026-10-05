@@ -637,7 +637,7 @@ async def test_picker_header_shares_the_top_row_with_exit_hint(tmp_path):
         assert str(exit_hint.content) == "Esc to Exit"
 
 
-async def test_slash_picker_opens_status_inside_textual(tmp_path):
+def status_hitl(tmp_path):
     hitl = FakeHITL(tmp_path)
     hitl.agent_name = "lab-assistant"
     hitl.config.agent_name = "lab-assistant"
@@ -652,7 +652,18 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
             for index in range(20)
         },
     }
-    app = UrsaTextualApp(hitl)
+    return hitl
+
+
+async def open_status_from_slash_picker(pilot):
+    await pilot.press("/")
+    await await_screen(pilot, HotlistScreen)
+    await pilot.press("s", "t", "a", "t", "u", "s", "enter")
+    return await await_screen(pilot, InformationScreen)
+
+
+async def test_slash_picker_lists_commands_and_fits_terminal(tmp_path):
+    app = UrsaTextualApp(status_hitl(tmp_path))
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("/")
@@ -668,14 +679,26 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
         ] == ["agents", "exit", "status", "keymap", "models", "theme"]
 
-        await pilot.press("s", "t", "a", "t", "u", "s", "enter")
-        screen = await await_screen(pilot, InformationScreen)
+
+async def test_slash_picker_status_shows_runtime_details(tmp_path):
+    app = UrsaTextualApp(status_hitl(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await open_status_from_slash_picker(pilot)
         assert "LLM Endpoint" in screen.content
         assert "lab-assistant" in screen.content
         assert "MCP servers" in screen.content
         assert "ursa-mcp" in screen.content
         assert "https://example.test/mcp" in screen.content
 
+
+async def test_slash_picker_status_config_is_read_only_and_selectable(
+    tmp_path,
+):
+    app = UrsaTextualApp(status_hitl(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await open_status_from_slash_picker(pilot)
         tabs = {str(tab.label): tab for tab in screen.query(Tab)}
         await pilot.click(f"#{tabs['Config'].id}")
         await pilot.press("tab")
@@ -701,9 +724,16 @@ async def test_slash_picker_opens_status_inside_textual(tmp_path):
         assert editor.cursor_location[0] == 2
         assert not editor.selection.is_empty
 
+
+async def test_slash_picker_status_body_scrolls_and_closes(tmp_path):
+    app = UrsaTextualApp(status_hitl(tmp_path))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await open_status_from_slash_picker(pilot)
+        tabs = {str(tab.label): tab for tab in screen.query(Tab)}
         await pilot.click(f"#{tabs['Status'].id}")
         await pilot.press("tab")
-        body = app.screen.query_one("#information-body", VerticalScroll)
+        body = screen.query_one("#information-body", VerticalScroll)
         assert app.focused is body
         assert body.scroll_y == 0
         await pilot.press("end")
