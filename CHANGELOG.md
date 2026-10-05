@@ -1,5 +1,44 @@
 # Change Log
 
+## v0.17.2
+
+Changes since `v0.17.1`:
+
+### New environment: Agent Elo
+
+- Added Agent Elo, URSA's evolutionary competition environment: multiple agents
+  work independently on the same task, are randomly paired each generation, and
+  compete head-to-head; an LLM judge compares completed and timed-out competitors
+  against the task's evaluation criteria to pick a winner or a draw, and Elo
+  ratings track the standings (#321).
+- Losing competitors leave the active population while survivors produce
+  descendants that inherit their parent's files and persistent state, so
+  solutions are developed and refined over successive generations (#321).
+- Added validated `AgentEloConfig` configuration covering population size,
+  unique member names, automatically managed member workspaces, and persistent
+  agent identities, along with a runnable example project under
+  `examples/environments/agent_elo` and documentation in
+  `docs/environments/agent-elo.md` (#321).
+- Dashboard environment runs now support Agent Elo end to end, including run
+  management, the run UI, and worker wiring (#321).
+
+### Configuration and security
+
+- Fixed and hardened layered configuration merging: higher-priority layers no
+  longer clobber or incorrectly promote lower-priority defaults, optional models
+  can be completed across layers, and invalid or secret-valued overrides from
+  higher-priority sources are rejected instead of silently inherited (#352).
+- Switching a model between the `base_url` and `inference_provider` endpoint
+  styles now cleanly supersedes the other style without turning the internal
+  null into an explicit model override, and merged configurations no longer
+  alias mutable inputs (#352).
+- The default group can now have an endpoint allowlist: previously the default
+  group always permitted every endpoint; it now follows a persisted group policy
+  when one is configured and remains unrestricted when none is, with the
+  configured policy validated like any other group's (#350).
+- `ursa groups update` now supports persisting a policy for the otherwise
+  implicit default group by creating its directories on demand (#350).
+
 ## v0.17.1
 
 Changes since `v0.17.0`:
