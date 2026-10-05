@@ -8,7 +8,8 @@ from textual.widgets import Markdown, Static
 
 import ursa.cli.tui.app as app_module
 import ursa.util.crossplatform as crossplatform
-from tests.cli._app_fakes import FakeHITL, emit_event, wait_for
+from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.tui.utils import await_animations, eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EventCard, ExceptionCard, RunCommandCard
 from ursa.cli.tui.turn import Turn
@@ -47,7 +48,7 @@ async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
         await turn.add_response("Short response")
         await pilot.pause()
 
-        await wait_for(
+        await eventually(
             pilot, lambda: banner.region.y == conversation.content_region.y
         )
         assert banner.region.y == conversation.content_region.y
@@ -87,7 +88,7 @@ async def test_prompt_submission_events_and_history(tmp_path):
         await pilot.press("h", "e", "l", "l", "o", "enter")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: hitl.calls == [("chat", "hello")])
+        await eventually(pilot, lambda: hitl.calls == [("chat", "hello")])
         assert hitl.calls == [("chat", "hello")]
         messages = list(app.query(MessageCard))
         assert len(messages) == 2
@@ -149,7 +150,7 @@ async def test_agent_exception_card_expands_to_full_traceback(tmp_path):
 
         card.on_click(Click())
         await pilot.pause()
-        await wait_for(pilot, lambda: card.expanded)
+        await eventually(pilot, lambda: card.expanded)
         assert card.expanded
         rich_traceback = card.query_one(".exception-traceback", Static)
         assert not rich_traceback.has_class("hidden")
@@ -229,13 +230,13 @@ async def test_turn_spinner_animates_and_shows_reasoning_while_agent_runs(
         assert first_frame in ActivityIndicator.FRAMES
         assert str(label.content) == "Inspecting the request"
 
-        assert await wait_for(
+        assert await eventually(
             pilot, lambda: str(spinner.content) != first_frame
         )
         assert str(spinner.content) in ActivityIndicator.FRAMES
 
         release_agent.set()
-        assert await wait_for(pilot, lambda: not app.workers)
+        assert await eventually(pilot, lambda: not app.workers)
         assert str(spinner.content) == ""
         assert str(label.content) == ""
         assert str(done_mark.content) == ""
@@ -282,7 +283,7 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
         assert prompt.disabled
 
         await pilot.press("ctrl+c")
-        assert await wait_for(pilot, lambda: len(notifications) == 1)
+        assert await eventually(pilot, lambda: len(notifications) == 1)
 
         assert prompt.disabled
         assert any(worker.group == "agent" for worker in app.workers)
@@ -292,7 +293,7 @@ async def test_ctrl_c_reports_that_running_agent_cannot_be_cancelled(
 
         release.set()
         await app.workers.wait_for_complete()
-        assert await wait_for(pilot, lambda: not prompt.disabled)
+        assert await eventually(pilot, lambda: not prompt.disabled)
 
 
 async def test_clear_conversation_is_refused_during_active_turn(
@@ -324,7 +325,7 @@ async def test_clear_conversation_is_refused_during_active_turn(
         await pilot.press("ctrl+l")
         await pilot.pause()
 
-        await wait_for(pilot, lambda: turn.is_mounted)
+        await eventually(pilot, lambda: turn.is_mounted)
         assert turn.is_mounted
         assert "not allowed" in notifications[0][0]
         assert "Ctrl+D" in notifications[0][0]
@@ -370,7 +371,7 @@ async def test_quitting_waits_for_active_agent_then_exits(
         await finished.wait()
         await pilot.pause()
 
-    await wait_for(pilot, lambda: app._exit)
+    await eventually(pilot, lambda: app._exit)
     assert app._exit
 
 
@@ -429,7 +430,7 @@ async def test_turn_navigation_changes_real_scroll_position(tmp_path):
 
         await pilot.press("alt+down")
         await pilot.pause()
-        await wait_for(
+        await eventually(
             pilot,
             lambda: app._turn_navigation_marker is app._turn_markers()[-1],
         )
@@ -464,7 +465,7 @@ async def test_new_cards_follow_bottom_without_moving_scrolled_view(tmp_path):
             )
             await pilot.pause()
 
-        assert await wait_for(
+        assert await eventually(
             pilot,
             lambda: conversation.scroll_y == conversation.max_scroll_y,
         )
@@ -508,13 +509,22 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
                     "phase": "start",
                 },
             )
-            await pilot.pause(0.01)
-            if app._conversation_anchor_transition:
+            await pilot.pause()
+            if conversation.max_scroll_y > 0:
                 break
 
+        # Start a fresh transition synchronously now that overflow is known.
+        # On slower CI hosts the original 150 ms animation can otherwise
+        # finish during ``pilot.pause`` before the test gets to observe it.
+        app._reset_conversation_auto_follow(conversation)
+        app._anchor_conversation_if_overflowing()
         assert app._conversation_anchor_transition
         conversation.scroll_home(animate=False, immediate=True)
-        await pilot.pause(0.2)
+        await eventually(
+            pilot,
+            lambda: not conversation.is_anchored,
+            description="the user scroll to cancel conversation anchoring",
+        )
 
         assert not conversation.is_anchored
         scrolled_position = conversation.scroll_y
@@ -533,10 +543,11 @@ async def test_user_scroll_cancels_initial_anchor_transition(tmp_path):
 
         await app.submit_prompt(PromptArea.Submitted("next prompt"))
         await app.workers.wait_for_complete()
-        for _ in range(50):
-            await pilot.pause(0.02)
-            if conversation.is_anchored:
-                break
+        await eventually(
+            pilot,
+            lambda: conversation.is_anchored,
+            description="the next prompt to restore conversation anchoring",
+        )
 
         assert conversation.is_anchored
         assert conversation.scroll_y == conversation.max_scroll_y
@@ -631,7 +642,7 @@ async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
                 turn,
                 {"type": "custom", "tool": f"tool-{index}", "phase": "start"},
             )
-            await pilot.pause(0.01)
+            await pilot.pause()
             if app._conversation_anchor_transition:
                 break
 
@@ -639,9 +650,8 @@ async def test_user_scroll_during_anchor_start_gap_is_not_overridden(tmp_path):
         assert app.animator.is_being_animated(conversation, "scroll_y")
 
         conversation.scroll_home(animate=False, immediate=True)
-        for _ in range(8):
-            await asyncio.sleep(0.03)
-            assert conversation.scroll_y == 0
+        await await_animations(pilot)
+        assert conversation.scroll_y == 0
 
 
 async def test_update_status_survives_absent_status_widget(tmp_path):
