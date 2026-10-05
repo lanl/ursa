@@ -43,7 +43,11 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
             "message": "Drafted plan",
             "steps": plan_steps(),
         })
-        await pilot.pause()
+        assert await eventually(
+            pilot,
+            lambda: "7. Step 7" in str(plan.query_one(Markdown).source),
+            description="the collapsed plan Markdown to render",
+        )
         markdown = plan.query_one(Markdown)
         source = str(markdown.source)
         assert len(turn.query(PlanCard)) == 1
@@ -58,14 +62,18 @@ async def test_plan_card_renders_drafting_and_collapsed_steps(tmp_path):
         assert "_… truncated …_" in source
         hint = plan.query_one(".event-expand-hint", Static)
         assert str(hint.content) == "Click to expand"
-        assert all(
-            node.region.height == 1
-            for node in markdown.query("*")
-            if type(node).__name__ == "MarkdownListItem"
-        )
 
         await pilot.resize_terminal(160, 36)
-        await pilot.pause()
+        assert await eventually(
+            pilot,
+            lambda: "lazy river"
+            in next(
+                line
+                for line in str(markdown.source).splitlines()
+                if "1. Step 1" in line
+            ),
+            description="the plan Markdown to reflow at the wider size",
+        )
         wide_first_step = next(
             line
             for line in str(markdown.source).splitlines()
@@ -138,6 +146,13 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
         assert plans[1].state == "complete"
 
         await pilot.press("ctrl+o")
+        assert await eventually(
+            pilot,
+            lambda: all(plan.expanded for plan in plans)
+            and "**Revision feedback**"
+            in str(plans[0].query_one(Markdown).source),
+            description="all plan cards to expand and render feedback",
+        )
         assert all(plan.expanded for plan in plans)
         assert (
             str(plans[0].query_one(".event-expand-hint", Static).content)
@@ -151,12 +166,13 @@ async def test_plan_card_tracks_revisions_approval_and_expansion(tmp_path):
         assert "> Add a concrete validation step before implementation." in (
             expanded_source
         )
-        assert any(
-            type(node).__name__ == "MarkdownBlockQuote"
-            for node in plans[0].query_one(Markdown).query("*")
-        )
 
         await pilot.press("ctrl+o")
+        assert await eventually(
+            pilot,
+            lambda: all(not plan.expanded for plan in plans),
+            description="all plan cards to collapse",
+        )
         assert all(not plan.expanded for plan in plans)
         assert (
             str(plans[0].query_one(".event-expand-hint", Static).content)

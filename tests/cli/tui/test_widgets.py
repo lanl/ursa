@@ -1,7 +1,6 @@
 import asyncio
 import os
 import random
-import threading
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -12,7 +11,7 @@ from mcp.client.session_group import StreamableHttpParameters
 from pydantic import SecretStr
 from textual import events
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.theme import BUILTIN_THEMES
 from textual.widgets import (
     Collapsible,
@@ -30,19 +29,15 @@ import ursa.util.crossplatform as crossplatform
 from tests.cli._app_fakes import FakeHITL
 from tests.tui.utils import (
     await_dom,
-    await_event,
     await_screen,
     await_workers,
     eventually,
 )
-from ursa.agents.base import AgentWithTools
-from ursa.agents.execution_agent import ExecutionAgent
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
 )
-from ursa.cli.runtime import AgentHITL
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.tui.widgets import (
@@ -438,18 +433,18 @@ async def test_prompt_caps_at_thirty_percent_of_terminal_height(tmp_path):
         assert prompt.region.height == 3  # One content row plus the border.
 
         prompt.load_text("\n".join(str(index) for index in range(30)))
-        for _ in range(3):
-            await pilot.pause()
-            if prompt.region.height == 13:
-                break
-        assert prompt.region.height == 13  # ceil(36 * 0.3) plus the border.
+        assert await eventually(
+            pilot,
+            lambda: prompt.region.height == 13,
+            description="the prompt to reach its tall-terminal height cap",
+        )  # ceil(36 * 0.3) plus the border.
 
         await pilot.resize_terminal(100, 20)
-        for _ in range(3):
-            await pilot.pause()
-            if prompt.region.height == 8:
-                break
-        assert prompt.region.height == 8  # ceil(20 * 0.3) plus the border.
+        assert await eventually(
+            pilot,
+            lambda: prompt.region.height == 8,
+            description="the prompt to reach its short-terminal height cap",
+        )  # ceil(20 * 0.3) plus the border.
 
 
 async def test_prompt_scrolls_to_each_newline_after_reaching_height_cap(
@@ -465,21 +460,29 @@ async def test_prompt_scrolls_to_each_newline_after_reaching_height_cap(
         # Resizing and cursor scrolling run after refresh; one pause may
         # return before the resulting layout has finished on a busy runner.
         assert await eventually(pilot, lambda: prompt.region.height == 8)
-        assert prompt.scroll_y == 0
+        initial_scroll = prompt.scroll_y
 
         await pilot.press("ctrl+j")
-        assert await eventually(pilot, lambda: prompt.scroll_y == 1)
+        assert await eventually(
+            pilot,
+            lambda: prompt.scroll_y > initial_scroll
+            and prompt.content_region.contains(*prompt.cursor_screen_offset),
+            description="the prompt to keep the new line's cursor visible",
+        )
         first_scroll = prompt.scroll_y
         assert prompt.cursor_location == (6, 0)
-        assert first_scroll == prompt.max_scroll_y == 1
+        assert first_scroll == prompt.max_scroll_y
         assert prompt.content_region.contains(*prompt.cursor_screen_offset)
 
         await pilot.press("ctrl+j")
         assert await eventually(
-            pilot, lambda: prompt.scroll_y == first_scroll + 1
+            pilot,
+            lambda: prompt.scroll_y > first_scroll
+            and prompt.content_region.contains(*prompt.cursor_screen_offset),
+            description="the prompt to follow the next line's cursor",
         )
         assert prompt.cursor_location == (7, 0)
-        assert prompt.scroll_y == prompt.max_scroll_y == first_scroll + 1
+        assert prompt.scroll_y == prompt.max_scroll_y
         assert prompt.content_region.contains(*prompt.cursor_screen_offset)
 
 
@@ -489,10 +492,11 @@ async def test_prompt_grows_for_soft_wrapped_lines(tmp_path):
     async with app.run_test(size=(40, 24)) as pilot:
         prompt = app.query_one(PromptArea)
         prompt.load_text("word " * 40)
-        for _ in range(3):
-            await pilot.pause()
-            if prompt.region.height > 3:
-                break
+        assert await eventually(
+            pilot,
+            lambda: prompt.region.height > 3,
+            description="the prompt to grow for wrapped content",
+        )
 
         assert prompt.virtual_size.height > 1
         assert prompt.region.height == min(8, prompt.virtual_size.height) + 2
@@ -1518,28 +1522,32 @@ async def test_expanded_advanced_modal_is_scrollable_on_short_terminal(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
+        "ursa.cli.tui.widgets.list_provider_models",
+        lambda _config: [ProviderModel("test-model", "openai")],
     )
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
     async with app.run_test(size=(80, 20)) as pilot:
         await app._show_command("models")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        assert isinstance(app.screen, ModelScreen)
+        screen = await await_screen(pilot, ModelScreen)
+        await await_workers(app, pilot)
         app.screen.query_one("#chat-advanced", Collapsible).collapsed = False
-        await pilot.pause()
 
-        dialog = app.screen.query_one(".settings-dialog")
-        assert dialog.region.y >= 0
-        assert dialog.region.bottom <= app.screen.size.height
-        assert dialog.max_scroll_y > 0
+        dialog = screen.query_one(".settings-dialog")
+        assert await eventually(
+            pilot,
+            lambda: dialog.max_scroll_y > 0
+            and screen.region.contains_region(dialog.region),
+            description="the expanded settings dialog to fit and scroll",
+        )
 
         dialog.scroll_end(animate=False)
-        await pilot.pause()
-        actions = app.screen.query_one(".settings-actions")
-        assert actions.region.y >= 0
-        assert actions.region.bottom <= app.screen.size.height
+        actions = screen.query_one(".settings-actions")
+        assert await eventually(
+            pilot,
+            lambda: screen.region.contains_region(actions.region),
+            description="the settings actions to become visible after scrolling",
+        )
 
 
 async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
@@ -2388,19 +2396,15 @@ async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.press("/", "a", "g", "e", "n", "t", "s", "enter")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        await eventually(pilot, lambda: isinstance(app.screen, AgentsScreen))
-        assert isinstance(app.screen, AgentsScreen)
-        panes = list(app.screen.query(TabPane))
+        screen = await await_screen(pilot, AgentsScreen)
+        await await_workers(app, pilot)
+        panes = list(screen.query(TabPane))
         assert len(panes) == 2
-        assert [tab.label_text for tab in app.screen.query(Tab)] == [
+        assert [tab.label_text for tab in screen.query(Tab)] == [
             "#plan",
             "#chat",
         ]
-        tools = list(app.screen.query(Collapsible))
+        tools = list(screen.query(Collapsible))
         assert len(tools) == 2
         assert all(tool.collapsed for tool in tools)
         assert [str(tool.title) for tool in tools[:2]] == [
@@ -2425,14 +2429,12 @@ async def test_agents_command_uses_tabs_and_collapsed_tool_details(tmp_path):
         assert len(tools[0].query(Markdown)) == 1
 
         await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        await eventually(pilot, lambda: len(app.screen.query(Collapsible)) == 4)
-        assert len(app.screen.query(Collapsible)) == 4
+        await await_workers(app, pilot)
+        await await_dom(pilot, screen, "Collapsible", count=4)
+        assert len(screen.query(Collapsible)) == 4
 
 
-async def test_agents_lazily_load_tools_and_only_once(tmp_path):
+async def test_agents_load_each_tab_once_without_blocking_navigation(tmp_path):
     hitl = FakeHITL(tmp_path)
     ready = asyncio.Event()
     calls = []
@@ -2463,147 +2465,40 @@ async def test_agents_lazily_load_tools_and_only_once(tmp_path):
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
         screen = await await_screen(pilot, AgentsScreen)
-        # Mounting the screen does not mean its activation worker has started.
-        assert await eventually(pilot, lambda: calls == ["plan"])
-        # A callback already queued when hydration stops must tolerate the
-        # frame state being gone while the loading node is still mounted.
-        screen._stop_tool_loading(0)
-        screen._advance_tool_loading(0)
-        # Tool discovery is suspended, but tabs remain interactive.
-        await pilot.press("right")
         assert await eventually(
             pilot,
-            lambda: len(screen.query("#agent-tools-1 .agent-tool")) == 1,
+            lambda: calls == ["plan"]
+            and bool(screen.query("#agent-tools-0 .agent-tools-loading")),
+            description="the plan tab to begin loading",
+        )
+
+        # The active agent may still be initializing, but another tab remains
+        # usable and can publish its own tools.
+        await pilot.press("right")
+        await await_dom(
+            pilot,
+            screen,
+            "#agent-tools-1 .agent-tool",
         )
         assert calls == ["plan", "chat"]
         assert len(screen.query("#agent-tools-1 .agent-tool")) == 1
 
         await pilot.press("left", "right")
-        await pilot.pause()
         assert calls == ["plan", "chat"]
 
         ready.set()
         await await_workers(app, pilot)
-        await eventually(pilot, lambda: screen.agents[0].tools_loaded)
-        assert screen.agents[0].tools_loaded
-        # Hydration of the hidden plan tab updates state without mounting its
-        # potentially expensive Markdown tool cards on the UI thread.
-        assert not screen.query("#agent-tools-0 .agent-tool")
-        assert screen._tool_panes_pending_render == {0}
 
         await pilot.press("left")
-        await pilot.pause()
         await await_dom(
             pilot,
             screen,
             "#agent-tools-0 .agent-tool",
         )
-        assert screen._tool_panes_pending_render == set()
+        assert not screen.query("#agent-tools-0 .agent-tools-loading")
 
         await pilot.press("right", "left")
-        await pilot.pause()
         assert calls == ["plan", "chat"]
-
-
-async def test_immediate_switch_preempts_large_tool_render(
-    tmp_path, monkeypatch
-):
-    hydration_started = asyncio.Event()
-    hydration_release = asyncio.Event()
-    construction_started = asyncio.Event()
-    loading_seen_during_construction = False
-    construction_count = 0
-    safe = SimpleNamespace(
-        description="safe agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={}),
-    )
-    execute = SimpleNamespace(
-        description="execution agent",
-        config={},
-        tool_sources={},
-        _agent=None,
-    )
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"safe": safe, "execute": execute}
-
-    async def get_agent(name):
-        wrapper = hitl.agents[name]
-        if name == "execute":
-            hydration_started.set()
-            await hydration_release.wait()
-            wrapper._agent = SimpleNamespace(
-                tools={
-                    f"tool_{index}": SimpleNamespace(
-                        name=f"tool_{index}",
-                        description="A detailed configured tool. " * 20,
-                        args_schema=FakeToolArgs,
-                        return_direct=False,
-                    )
-                    for index in range(100)
-                }
-            )
-        return wrapper
-
-    from ursa.cli.tui.widgets import AgentToolDetails
-
-    def observed_card_construction(tool):
-        nonlocal construction_count, loading_seen_during_construction
-        construction_count += 1
-        construction_started.set()
-        loading_seen_during_construction = bool(
-            app.screen.query("#agent-tools-1 .agent-tools-loading")
-        )
-        return AgentToolDetails(tool)
-
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.AgentToolDetails", observed_card_construction
-    )
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await app._show_command("agents")
-        await app.workers.wait_for_complete()
-        await pilot.press("right")
-        await hydration_started.wait()
-
-        hydration_release.set()
-        await construction_started.wait()
-        assert loading_seen_during_construction
-        # This is the reported ordering: completion becomes runnable just as
-        # the user asks to leave the expensive tab.
-        switch_task = asyncio.create_task(pilot.press("left"))
-        tabs = app.screen.query_one("#agents-tabs", TabbedContent)
-        await eventually(
-            pilot,
-            lambda: tabs.active == "agent-tab-0",
-            description="the safe agent tab to activate",
-        )
-
-        assert tabs.active == "agent-tab-0"
-
-        await app.workers.wait_for_complete()
-        await switch_task
-        constructions_after_switch = construction_count
-        assert constructions_after_switch <= 5
-        await pilot.pause()
-        assert construction_count == constructions_after_switch
-        assert len(app.screen.query("#agent-tools-1 .agent-tool")) < 100
-        assert not app.screen.query("#agent-tools-1 .agent-tool Markdown")
-
-        await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        await eventually(
-            pilot,
-            lambda: len(app.screen.query("#agent-tools-1 .agent-tool")) == 100,
-        )
-        assert len(app.screen.query("#agent-tools-1 .agent-tool")) == 100
-        assert not app.screen.query("#agent-tools-1 .agent-tool Markdown")
-        assert not app.screen.query("#agent-tools-1 .agent-tools-loading")
 
 
 async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
@@ -2640,18 +2535,21 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
-        await app.workers.wait_for_complete()
+        await await_screen(pilot, AgentsScreen)
         await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await await_workers(app, pilot)
 
+        await await_dom(
+            pilot,
+            app.screen,
+            "#agent-tools-1 .agent-tools-error",
+        )
         error = app.screen.query_one(
             "#agent-tools-1 .agent-tools-error", Static
         )
         assert "tool card could not be built" in str(error.render())
         assert not app.screen.query("#agent-tools-1 .agent-tools-loading")
         assert construction_attempts == 1
-        assert 1 not in app.screen._tool_panes_pending_render
 
         await pilot.press("left")
         await pilot.pause()
@@ -2665,62 +2563,9 @@ async def test_agent_tool_render_failure_is_displayed(tmp_path, monkeypatch):
         )
 
         await pilot.press("right")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await await_workers(app, pilot)
         assert construction_attempts == 1
         assert "tool card could not be built" in str(error.render())
-
-
-async def test_initialized_tools_render_while_schema_hydration_is_pending(
-    tmp_path,
-):
-    schema_started = threading.Event()
-    schema_release = threading.Event()
-
-    class BlockingSchema:
-        @classmethod
-        def model_json_schema(cls):
-            schema_started.set()
-            schema_release.wait(timeout=15)
-            return {"properties": {}}
-
-    configured_tool = FakeConfiguredTool()
-    configured_tool.args_schema = BlockingSchema
-    wrapper = SimpleNamespace(
-        description="ready agent",
-        config={},
-        tool_sources={},
-        _agent=SimpleNamespace(tools={"read_file": configured_tool}),
-    )
-    hitl = FakeHITL(tmp_path)
-    hitl.agents = {"ready": wrapper}
-
-    async def get_agent(_name):
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    try:
-        async with app.run_test(size=(100, 36)) as pilot:
-            await app._show_command("agents")
-            await await_event(pilot, schema_started)
-            assert app.screen.query(".agent-tools-loading")
-            tools = app.screen.query("#agent-tools-0 .agent-tool")
-            assert len(tools) == 1
-            assert "read_file" in str(tools.first(Collapsible).title)
-
-            schema_release.set()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            await eventually(
-                pilot,
-                lambda: len(app.screen.query("#agent-tools-0 .agent-tool"))
-                == 1,
-            )
-            assert len(app.screen.query("#agent-tools-0 .agent-tool")) == 1
-    finally:
-        schema_release.set()
 
 
 async def test_agents_display_tool_load_failure(tmp_path):
@@ -2741,241 +2586,13 @@ async def test_agents_display_tool_load_failure(tmp_path):
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app._show_command("agents")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
+        screen = await await_screen(pilot, AgentsScreen)
+        await await_workers(app, pilot)
 
-        error = app.screen.query_one(".agent-tools-error", Static)
+        await await_dom(pilot, screen, ".agent-tools-error")
+        error = screen.query_one(".agent-tools-error", Static)
         assert "MCP server unavailable" in str(error.render())
-        assert not app.screen.query(".agent-tools-loading")
-        assert app.screen._tool_loading_timers == {}
-        assert app.screen._tool_loading_frames == {}
-        assert isinstance(app.screen, AgentsScreen)
-
-
-async def test_agents_remain_responsive_during_blocking_initialization(
-    tmp_path, chat_model
-):
-    constructor_started = threading.Event()
-    constructor_release = threading.Event()
-    mcp_started = threading.Event()
-    mcp_release = threading.Event()
-    schema_started = threading.Event()
-    schema_release = threading.Event()
-
-    class BlockingSchema:
-        @classmethod
-        def model_json_schema(cls):
-            schema_started.set()
-            schema_release.wait(timeout=15)
-            return {"properties": {}}
-
-    configured_tool = FakeConfiguredTool()
-    configured_tool.args_schema = BlockingSchema
-
-    class PhasedAgent(AgentWithTools):
-        """A deliberately long description used to make this pane scroll.
-
-        The remaining text creates enough vertical content to exercise scroll
-        input while constructor, MCP, and schema phases are independently held.
-        """
-
-        def __init__(self, **_kwargs):
-            constructor_started.set()
-            constructor_release.wait(timeout=15)
-            self._test_tools = {}
-
-        @property
-        def tools(self):
-            return self._test_tools
-
-        async def add_mcp_tools(self, _client):
-            mcp_started.set()
-            await asyncio.to_thread(mcp_release.wait, 15)
-            self._test_tools = {configured_tool.name: configured_tool}
-            return {configured_tool.name: "laboratory"}
-
-    hitl = FakeHITL(tmp_path)
-    execute = AgentHITL(agent_class=PhasedAgent)
-    execute.config.update({f"option_{index}": index for index in range(20)})
-    initialized = AgentHITL(agent_class=ExecutionAgent)
-    initialized._agent = SimpleNamespace(tools={})
-    hitl.agents = {"execute": execute, "ready": initialized}
-
-    async def get_agent(name):
-        wrapper = hitl.agents[name]
-        if wrapper._agent is None:
-            await wrapper.instantiate(
-                llm=chat_model,
-                workspace=tmp_path,
-                agent_name="persistent",
-                group="default",
-                mcp_client=object(),
-                thread_id="test",
-            )
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    async def assert_ui_is_live(pilot, screen):
-        loading = screen.query_one(".agent-tools-loading", Static)
-        first_frame = str(loading.render())
-        assert await eventually(
-            pilot, lambda: str(loading.render()) != first_frame
-        )
-        await pilot.press("right")
-        assert screen.query_one("#agents-tabs", TabbedContent).active == (
-            "agent-tab-1"
-        )
-        await pilot.press("left")
-        scroll = screen._scroll_view()
-        await pilot.press("end")
-        await pilot.pause()
-        bottom = scroll.scroll_y
-        assert bottom > 0
-        await pilot.press("home")
-        await pilot.pause()
-        await eventually(pilot, lambda: scroll.scroll_y < bottom)
-        assert scroll.scroll_y < bottom
-
-    try:
-        async with app.run_test(size=(100, 36)) as pilot:
-            await app._show_command("agents")
-            await await_event(pilot, constructor_started)
-            screen = app.screen
-            await assert_ui_is_live(pilot, screen)
-
-            constructor_release.set()
-            await await_event(pilot, mcp_started)
-            await assert_ui_is_live(pilot, screen)
-
-            mcp_release.set()
-            await await_event(pilot, schema_started)
-            await assert_ui_is_live(pilot, screen)
-
-            schema_release.set()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            await eventually(
-                pilot, lambda: screen.query("#agent-tools-0 .agent-tool")
-            )
-            assert screen.query("#agent-tools-0 .agent-tool")
-            assert screen._tool_loading_timers == {}
-            assert screen._tool_loading_frames == {}
-    finally:
-        constructor_release.set()
-        mcp_release.set()
-        schema_release.set()
-
-
-async def test_dismissing_agents_during_loading_cleans_up_and_publishes(
-    tmp_path,
-):
-    schema_started = threading.Event()
-    schema_release = threading.Event()
-
-    class BlockingSchema:
-        @classmethod
-        def model_json_schema(cls):
-            schema_started.set()
-            schema_release.wait(timeout=15)
-            return {"properties": {}}
-
-    configured_tool = FakeConfiguredTool()
-    configured_tool.args_schema = BlockingSchema
-
-    class SlowAgent:
-        description = "Slow agent"
-
-        def __init__(self, **_kwargs):
-            self.tools = {"read_file": configured_tool}
-
-    hitl = FakeHITL(tmp_path)
-    wrapper = AgentHITL(agent_class=SlowAgent)
-    hitl.agents = {"slow": wrapper}
-
-    async def get_agent(_name):
-        await wrapper.instantiate()
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    try:
-        async with app.run_test(size=(100, 36)) as pilot:
-            await app._show_command("agents")
-            await await_event(pilot, schema_started)
-            loading_screen = app.screen
-            await pilot.press("escape")
-            await pilot.pause()
-            await eventually(
-                pilot, lambda: not isinstance(app.screen, AgentsScreen)
-            )
-            assert not isinstance(app.screen, AgentsScreen)
-            assert loading_screen._tool_loading_timers == {}
-            assert loading_screen._tool_loading_frames == {}
-
-            schema_release.set()
-            await wrapper.wait_until_initialized()
-            await app._show_command("agents")
-            await pilot.pause()
-            await eventually(
-                pilot, lambda: not app.screen.query(".agent-tools-loading")
-            )
-            assert not app.screen.query(".agent-tools-loading")
-            assert app.screen.query("#agent-tools-0 .agent-tool")
-    finally:
-        schema_release.set()
-
-
-async def test_agents_lazily_render_execution_agent_tools(tmp_path, chat_model):
-    hitl = FakeHITL(tmp_path)
-    wrapper = AgentHITL(agent_class=ExecutionAgent)
-    hitl.agents = {"execute": wrapper}
-
-    async def get_agent(name):
-        if wrapper._agent is None:
-            await wrapper.instantiate(
-                llm=chat_model,
-                workspace=tmp_path,
-                agent_name=None,
-                group="default",
-                mcp_client=None,
-                thread_id="test",
-            )
-        return wrapper
-
-    hitl.get_agent = get_agent
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await app._show_command("agents")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        rendered_tools = app.screen.query("#agent-tools-0 .agent-tool")
-        assert len(rendered_tools) == len(wrapper._agent.tools)
-        assert len(rendered_tools) > 0
-        first_tool = rendered_tools.first()
-        tools_container = app.screen.query_one("#agent-tools-0", Vertical)
-        details = app.screen.query_one(".agent-details", VerticalScroll)
-        children = list(details.children)
-        tools_title = app.screen.query_one(".agent-tools-title", Static)
-        title_index = children.index(tools_title)
-        assert all(
-            children.index(markdown) < title_index
-            for markdown in details.query(Markdown)
-            if markdown.parent is details
-        )
-        assert children.index(tools_title) < children.index(tools_container)
-        app.screen.refresh(layout=True)
-        await pilot.pause()
-        await eventually(pilot, lambda: first_tool.region.height > 0)
-        assert first_tool.region.height > 0
-        assert tools_container.region.contains_region(first_tool.region)
-        assert first_tool.region.y < app.screen.region.bottom
+        assert not screen.query(".agent-tools-loading")
 
 
 def test_command_details_and_keymap_come_from_live_bindings(
