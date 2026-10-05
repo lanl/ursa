@@ -220,6 +220,27 @@ def test_partial_default_provider_update_is_inherited_by_default_model():
     assert resolved.llm_model.ssl_verify is False
 
 
+def test_ollama_provider_base_url_reaches_runtime_model():
+    """Test for Issue #358, fixed in PR#352"""
+
+    config = UrsaConfig().model_merge({
+        "inference_providers": {
+            "local_ollama": {"base_url": "http://127.0.0.1:11999"}
+        },
+        "llm_model": {
+            "model": "ollama:gpt-oss:20b",
+            "inference_provider": "local_ollama",
+        },
+    })
+
+    resolved = config.resolve()
+
+    assert resolved.llm_model.model == "gpt-oss:20b"
+    assert resolved.llm_model.model_provider == "ollama"
+    assert resolved.llm_model.base_url == "http://127.0.0.1:11999"
+    assert resolved.llm_model.kwargs["base_url"] == "http://127.0.0.1:11999"
+
+
 def test_literal_secret_replaces_secret_reference():
     result = UrsaConfig().model_merge(
         {
