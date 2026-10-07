@@ -99,6 +99,9 @@ def test_image_block_from_file_returns_base64_image_block(tmp_path: Path):
 
     assert result["type"] == "image"
     assert result["mime_type"] == "image/png"
+    # file_id is reserved for provider-side file-store references and must
+    # never carry a local path (providers may prioritize it over base64)
+    assert "file_id" not in result
     assert base64.b64decode(result["base64"]).startswith(b"\x89PNG")
 
 
@@ -129,11 +132,15 @@ def test_read_image_tool_reads_from_runtime_workspace(
         ),
     )
 
-    assert len(result) == 1
-    assert result[0]["type"] == "image"
-    assert result[0]["mime_type"] == "image/png"
-    assert result[0]["file_id"] == target.name
-    assert base64.b64decode(result[0]["base64"]).startswith(b"\x89PNG")
+    assert len(result) == 2
+    assert result[0] == {
+        "type": "text",
+        "text": f"Image file: {target.name}",
+    }
+    assert result[1]["type"] == "image"
+    assert result[1]["mime_type"] == "image/png"
+    assert "file_id" not in result[1]
+    assert base64.b64decode(result[1]["base64"]).startswith(b"\x89PNG")
 
 
 @pytest.mark.real_llm
@@ -185,3 +192,59 @@ def test_read_image_tool_output_can_be_read_by_attached_llm(
     ])
 
     assert response.number == number
+
+
+def test_image_block_from_file_converts_svg_to_png(tmp_path: Path):
+    target = tmp_path / "circle.svg"
+
+    target.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg"
+             width="100"
+             height="100"
+             viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="40" fill="red"/>
+        </svg>
+        """,
+        encoding="utf-8",
+    )
+
+    result = image_block_from_file(target)
+
+    assert result["type"] == "image"
+    assert result["mime_type"] == "image/png"
+
+    decoded = base64.b64decode(result["base64"])
+    assert decoded.startswith(b"\x89PNG")
+
+
+def test_svg_conversion_labels_original_filename(
+    tmp_path: Path, chat_model: BaseChatModel
+):
+    target = tmp_path / "plot.svg"
+
+    target.write_text(
+        """
+        <svg xmlns="http://www.w3.org/2000/svg"
+             width="20"
+             height="20">
+          <rect width="20" height="20" fill="blue"/>
+        </svg>
+        """,
+        encoding="utf-8",
+    )
+
+    result = read_image_tool.func(
+        image_path=target.name,
+        runtime=make_runtime(
+            tmp_path,
+            llm=chat_model,
+            tool_call_id="read-svg-call",
+        ),
+    )
+
+    # The label keeps the original .svg name even though the payload is png
+    assert result[0] == {"type": "text", "text": "Image file: plot.svg"}
+    assert result[1]["mime_type"] == "image/png"
+    assert "file_id" not in result[1]
+    assert base64.b64decode(result[1]["base64"]).startswith(b"\x89PNG")

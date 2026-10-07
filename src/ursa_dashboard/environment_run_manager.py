@@ -14,9 +14,12 @@ from typing import Any, Literal, Mapping
 import yaml
 
 from ursa.environments.config import (
+    AgentEloConfig,
     AgentSymposiumConfig,
     AgentTeamConfig,
     EnvironmentMemberConfig,
+    elo_cache_dir,
+    save_elo_config,
     save_symposium_config,
     save_team_config,
     symposium_cache_dir,
@@ -34,12 +37,18 @@ from ursa.security import enforce_group_base_url_policy, validate_group_name
 from .credentials import (
     CredentialConfigurationError,
     CredentialStore,
+    _config_api_key_env,
     assert_no_credential_metadata,
     assert_no_raw_api_key,
     resolve_api_key,
 )
 
-EnvironmentType = Literal["agent_team", "agent_symposium"]
+EnvironmentType = Literal[
+    "agent_team",
+    "agent_symposium",
+    "agent_elo",
+]
+
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 _ENV_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -86,7 +95,7 @@ _ALLOWED_CLASS_PATHS = {
 @dataclass(frozen=True)
 class ValidatedEnvironmentLaunch:
     environment_type: EnvironmentType
-    config: AgentTeamConfig | AgentSymposiumConfig
+    config: AgentTeamConfig | AgentSymposiumConfig | AgentEloConfig
     config_mapping: dict[str, Any]
 
 
@@ -143,7 +152,7 @@ def _validate_model(model: Any, *, group: str, label: str) -> None:
         str(raw.get("base_url")) if raw.get("base_url") else None,
         group,
     )
-    env_name = str(raw.get("api_key_env") or "").strip()
+    env_name = str(_config_api_key_env(raw) or "").strip()
     if env_name and not _ENV_VAR_RE.fullmatch(env_name):
         raise ValueError(f"{label} has an invalid api_key_env name.")
 
@@ -185,34 +194,65 @@ def _validate_config_mapping(
     *,
     group: str,
     nested: bool = False,
-) -> AgentTeamConfig | AgentSymposiumConfig:
+) -> AgentTeamConfig | AgentSymposiumConfig | AgentEloConfig:
     data["group"] = group
     assert_no_raw_api_key(data, context="environment config")
     try:
         if environment_type == "agent_team":
-            config: AgentTeamConfig | AgentSymposiumConfig = (
-                AgentTeamConfig.from_mapping(data)
-            )
+            config = AgentTeamConfig.from_mapping(data)
+
             lead = config.pi
             lead_label = "PI"
-        else:
+
+        elif environment_type == "agent_symposium":
             config = AgentSymposiumConfig.from_mapping(data)
+
             lead = config.organizer
             lead_label = "Organizer"
+
+        else:
+            config = AgentEloConfig.from_mapping(data)
+
+            lead = None
+            lead_label = None
+
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid environment configuration: {exc}") from exc
 
-    _validate_simple_name(config.name, label="Environment name")
-    if not config.members:
+    _validate_simple_name(
+        config.name,
+        label="Environment name",
+    )
+
+    if environment_type != "agent_elo" and not config.members:
         raise ValueError("An environment must contain at least one member.")
-    _validate_member(lead, group=group, label=lead_label)
-    seen = {lead.name}
-    for index, member in enumerate(config.members, start=1):
-        _validate_member(member, group=group, label=f"Member {index}")
-        if member.name in seen:
+
+    seen: set[str] = set()
+
+    if lead is not None:
+        _validate_member(
+            lead,
+            group=group,
+            label=str(lead_label),
+        )
+
+        seen.add(lead.name)
+
+    for index, member in enumerate(
+        config.members,
+        start=1,
+    ):
+        _validate_member(
+            member,
+            group=group,
+            label=f"Member {index}",
+        )
+
+        if environment_type != "agent_elo" and member.name in seen:
             raise ValueError(
                 f"Environment member name {member.name!r} is duplicated."
             )
+
         seen.add(member.name)
     if (
         nested and environment_type != "agent_team"
@@ -315,7 +355,7 @@ class EnvironmentRunManager:
             "disabled",
         }:
             raise CredentialConfigurationError(
-                "Agent teams and symposia require an enabled dashboard LLM."
+                "Agent environments require an enabled dashboard LLM."
             )
         main_key = resolve_api_key(
             llm,
@@ -327,8 +367,9 @@ class EnvironmentRunManager:
 
         def collect(value: Any) -> None:
             if isinstance(value, Mapping):
-                if value.get("model") and value.get("api_key_env"):
-                    name = str(value["api_key_env"]).strip()
+                member_env = _config_api_key_env(value)
+                if value.get("model") and member_env:
+                    name = str(member_env).strip()
                     if not _ENV_VAR_RE.fullmatch(name):
                         raise CredentialConfigurationError(
                             f"Invalid member API-key environment variable {name!r}."
@@ -362,11 +403,34 @@ class EnvironmentRunManager:
         replace_existing: bool = False,
     ) -> dict[str, Any]:
         name = launch.config.name
-        definition_path = (
-            team_cache_dir(self.group, name) / "team.yaml"
-            if launch.environment_type == "agent_team"
-            else symposium_cache_dir(self.group, name) / "symposium.yaml"
-        )
+
+        if launch.environment_type == "agent_team":
+            definition_path = (
+                team_cache_dir(
+                    self.group,
+                    name,
+                )
+                / "team.yaml"
+            )
+
+        elif launch.environment_type == "agent_symposium":
+            definition_path = (
+                symposium_cache_dir(
+                    self.group,
+                    name,
+                )
+                / "symposium.yaml"
+            )
+
+        else:
+            definition_path = (
+                elo_cache_dir(
+                    self.group,
+                    name,
+                )
+                / "elo.yaml"
+            )
+
         definition_matches = False
         if definition_path.exists():
             with contextlib.suppress(Exception):
@@ -376,11 +440,20 @@ class EnvironmentRunManager:
                 if isinstance(existing, Mapping):
                     existing_mapping = dict(existing)
                     existing_mapping["group"] = self.group
-                    existing_config = (
-                        AgentTeamConfig.from_mapping(existing_mapping)
-                        if launch.environment_type == "agent_team"
-                        else AgentSymposiumConfig.from_mapping(existing_mapping)
-                    )
+                    if launch.environment_type == "agent_team":
+                        existing_config = AgentTeamConfig.from_mapping(
+                            existing_mapping
+                        )
+
+                    elif launch.environment_type == "agent_symposium":
+                        existing_config = AgentSymposiumConfig.from_mapping(
+                            existing_mapping
+                        )
+
+                    else:
+                        existing_config = AgentEloConfig.from_mapping(
+                            existing_mapping
+                        )
                     definition_matches = (
                         _plain(existing_config) == launch.config_mapping
                     )
@@ -388,12 +461,30 @@ class EnvironmentRunManager:
                 raise EnvironmentDefinitionExistsError(definition_path)
         if launch.environment_type == "agent_team":
             if replace_existing or not definition_path.exists():
-                save_team_config(launch.config, definition_path)
+                save_team_config(
+                    launch.config,
+                    definition_path,
+                )
+
             class_name = "AgentTeamEnvironment"
+
+        elif launch.environment_type == "agent_symposium":
+            if replace_existing or not definition_path.exists():
+                save_symposium_config(
+                    launch.config,
+                    definition_path,
+                )
+
+            class_name = "AgentSymposiumEnvironment"
+
         else:
             if replace_existing or not definition_path.exists():
-                save_symposium_config(launch.config, definition_path)
-            class_name = "AgentSymposiumEnvironment"
+                save_elo_config(
+                    launch.config,
+                    definition_path,
+                )
+
+            class_name = "AgentEloEnvironment"
 
         effective_run_id = (
             _validate_simple_name(run_id, label="Run ID")
@@ -809,6 +900,37 @@ members:
   - name: critical_path
     role: Challenges assumptions and proposes alternatives
     agent: ChatAgent
+    config:
+      use_web: false
+"""
+
+
+ELO_STARTER_YAML = """name: research_elo
+description: Evolutionary competition between independent research agents.
+
+initial_rating: 1500
+k_factor: 32
+deaths_per_round: 1
+
+seed: 12345
+generations: 2
+
+member_timeout_seconds: null
+restart_from_json: null
+
+# Put evaluation criteria in the task entered when launching the run.
+# judge_prompt can provide optional additional guidance.
+
+members:
+  - name: researcher_1
+    role: Independent research competitor
+    agent: ExecutionAgent
+    config:
+      use_web: false
+
+  - name: researcher_2
+    role: Independent research competitor
+    agent: ExecutionAgent
     config:
       use_web: false
 """

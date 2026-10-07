@@ -3,9 +3,11 @@ import logging
 import mimetypes
 from pathlib import Path
 
+import pymupdf
 from langchain.tools import ToolRuntime
 from langchain_core.messages.content import (
     ImageContentBlock,
+    TextContentBlock,
     create_image_block,
 )
 from langchain_core.tools import tool
@@ -18,28 +20,41 @@ logger = logging.getLogger(__name__)
 @tool
 def read_image_tool(
     image_path: str, runtime: ToolRuntime[AgentContext]
-) -> list[ImageContentBlock]:
+) -> list[TextContentBlock | ImageContentBlock]:
     """Read an image from disk to ingest into the workflow"""
-    image_path: Path = runtime.context.workspace.joinpath(image_path)
+    workspace = runtime.context.workspace
+    resolved_path = workspace.joinpath(image_path)
     try:
-        result = image_block_from_file(
-            image_path,
-            workspace=runtime.context.workspace,
-        )
+        image_block = image_block_from_file(resolved_path)
     except Exception as e:
         logger.exception(
             "Image read failed",
             exc_info=e,
-            extra={"image_path": str(image_path)},
+            extra={"image_path": str(resolved_path)},
         )
         raise
 
-    return [result]
+    try:
+        display_path = str(resolved_path.relative_to(workspace))
+    except ValueError:
+        # Not under the workspace (e.g. an absolute path); label it the way
+        # the caller referenced it.
+        display_path = image_path
+
+    # The text block surfaces the filename to the model. It must stay a
+    # separate text block: ImageContentBlock.file_id is reserved for
+    # provider-side file-store references (OpenAI file IDs, Google File API
+    # URIs), not local paths, and providers may give it priority over the
+    # base64 payload.
+    text_block: TextContentBlock = {
+        "type": "text",
+        "text": f"Image file: {display_path}",
+    }
+    return [text_block, image_block]
 
 
 def image_block_from_file(
     filename: Path,
-    workspace: Path | None = None,
     max_size_mb: float = 20,
 ) -> ImageContentBlock:
     file_size = filename.stat().st_size
@@ -51,18 +66,20 @@ def image_block_from_file(
 
     mime_type, _ = mimetypes.guess_type(filename)
     assert mime_type is not None
-    data = base64.b64encode(filename.read_bytes()).decode("utf-8")
 
-    # If workspace is provided, try resolve a local path
-    file_id = None
-    if workspace:
-        try:
-            file_id = str(filename.relative_to(workspace))
-        except ValueError:
-            pass  # relative_to failed
+    if mime_type == "image/svg+xml":
+        with pymupdf.open(filename) as document:
+            page = document[0]
+            pixmap = page.get_pixmap()
+            image_bytes = pixmap.tobytes("png")
+
+        mime_type = "image/png"
+    else:
+        image_bytes = filename.read_bytes()
+
+    data = base64.b64encode(image_bytes).decode("utf-8")
 
     return create_image_block(
         base64=data,
         mime_type=mime_type,
-        file_id=file_id,
     )

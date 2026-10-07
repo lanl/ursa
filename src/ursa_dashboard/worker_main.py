@@ -50,14 +50,35 @@ def _api_key_from_config(
     label: str,
     override: str | None | object = _UNSET,
 ) -> str | None:
-    if "api_key" in config:
-        raise ValueError(
-            f"Literal {label} API keys are not accepted in worker config"
-        )
+    from collections.abc import Mapping
+
+    from ursa.util.secrets import SecretReference
+
+    api_key = config.get("api_key")
+    # A safe ``{env|keyring: ...}`` reference is an indirection, not a literal
+    # secret; only reject literal (string) keys embedded in the config.
+    api_key_reference: SecretReference | None = None
+    if api_key is not None:
+        if isinstance(api_key, Mapping):
+            candidate = SecretReference.maybe_validate(dict(api_key))
+            if not isinstance(candidate, SecretReference):
+                raise ValueError(
+                    f"Literal {label} API keys are not accepted in worker config"
+                )
+            api_key_reference = candidate
+        else:
+            raise ValueError(
+                f"Literal {label} API keys are not accepted in worker config"
+            )
     if override is not _UNSET:
         return str(override) if override else None
 
     env_name = str(config.get("api_key_env") or "").strip()
+    if not env_name and api_key_reference is not None:
+        assert api_key_reference.keyring is None, (
+            "Keyring not currently supported here. Use API_KEY_ENV for setting the key."
+        )
+        env_name = str(api_key_reference.env or "").strip()
     if not env_name:
         return None
     env_val = os.environ.get(env_name)
@@ -75,6 +96,8 @@ def _init_llm(
 ):
     # Avoid importing langchain unless actually executing.
     from langchain.chat_models import init_chat_model  # type: ignore
+
+    from ursa.util.http import build_httpx_async_client, build_httpx_client
 
     raw_base_url = llm_cfg.get("base_url")
     base_url = str(raw_base_url).strip() if raw_base_url is not None else None
@@ -99,6 +122,21 @@ def _init_llm(
     if base_url:
         kwargs["base_url"] = base_url
 
+    # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
+    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought
+    #     into compatibility with the TUI.
+    cond1 = base_url and "openai.com" in base_url
+    cond2 = (
+        model_kwargs.get("model_provider", "") == "openai"
+        or model[:7] == "openai:"
+    )
+    if cond1 or (not base_url and cond2):
+        kwargs.setdefault("http_client", build_httpx_client(verify=True))
+        kwargs.setdefault(
+            "http_async_client",
+            build_httpx_async_client(verify=True),
+        )
+
     return init_chat_model(**kwargs)
 
 
@@ -113,6 +151,7 @@ def _init_embedding(
     snapshotted into the run record; the run manager delivers stored or
     environment-backed secrets through the worker's one-time stdin channel.
     """
+    from ursa.util.http import build_httpx_async_client, build_httpx_client
 
     model = str(embedding_cfg.get("model") or "").strip()
     if not model or model.lower() in {"none", "disabled"}:
@@ -139,6 +178,21 @@ def _init_embedding(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
+
+    # Fixing an edge case where some users were getting connection errors with OpenAI's endpoint
+    #     Limited fix for edge case for now. Can remove if/when the dashboard config is brought
+    #     into compatibility with the TUI.
+    cond1 = base_url and "openai.com" in base_url
+    cond2 = (
+        model_kwargs.get("model_provider", "") == "openai"
+        or model[:7] == "openai:"
+    )
+    if cond1 or (not base_url and cond2):
+        kwargs.setdefault("http_client", build_httpx_client(verify=True))
+        kwargs.setdefault(
+            "http_async_client",
+            build_httpx_async_client(verify=True),
+        )
 
     return init_embeddings(**kwargs)
 

@@ -308,9 +308,19 @@ def validate_model_provider(
             _matches_model(inference_provider.model, model.name)
             for model in models
         ):
+            from textwrap import wrap
+
+            known_models = "\n".join(
+                wrap(
+                    ", ".join(sorted([model.name for model in models])),
+                    initial_indent="  ",
+                    subsequent_indent="  ",
+                )
+            )
             raise ValueError(
                 f"Model '{inference_provider.model}' is not available from "
-                "the inference provider"
+                "the inference provider.\n\n"
+                f"Known models for inference provider:\n{known_models}"
             )
     except Exception as exc:
         provider = (
@@ -322,6 +332,6 @@ def validate_model_provider(
         model = getattr(inference_provider, "model", "configured endpoint")
         raise ValueError(
             f"Unable to validate {model_type} model '{model}' with provider "
-            f"'{provider}': {exc}. Check the model name, provider endpoint, "
-            "and API credentials."
+            f"'{provider}': {exc}.\n\n"
+            "Check the model name, provider endpoint, and API credentials."
         ) from exc

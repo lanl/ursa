@@ -54,6 +54,7 @@ from ursa.cli.tui.widgets import (
 )
 from ursa.util import crossplatform
 from ursa.util import mcp as ursa_mcp
+from ursa.util.tqdm_lock import install_thread_only_tqdm_lock
 
 
 def _config_yaml_value(value: Any) -> Any:
@@ -67,7 +68,9 @@ def _config_yaml_value(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _config_yaml_value(asdict(value))
     if isinstance(value, Mapping):
-        return {str(key): _config_yaml_value(item) for key, item in value.items()}
+        return {
+            str(key): _config_yaml_value(item) for key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set)):
         return [_config_yaml_value(item) for item in value]
     if isinstance(value, (Path, Enum)):
@@ -220,12 +223,18 @@ class UrsaTextualApp(App[None]):
     def _update_status(self, state: str) -> None:
         items = [
             self.hitl.config.llm_model.pretty_repr(short=True),
-            f"{self.total_tokens} tokens",
+            f"{self.total_tokens:,} tokens",
         ]
         if agent_name := self.hitl.config.agent_name:
             items.append(f"agent {agent_name}")
         items.append(state)
-        self.query_one("#status", Static).update(Text("  •  ".join(items)))
+        # The agent worker's tail can run while teardown is pruning the
+        # tree; a bare query here crashes the worker and surfaces as
+        # WorkerFailed at run_test exit.
+        status = self.query("#status")
+        if not status:
+            return
+        status.first(Static).update(Text("  •  ".join(items)))
 
     def add_tokens(self, usage: TokenUsage) -> None:
         self.total_tokens += usage.total_tokens
@@ -321,6 +330,11 @@ class UrsaTextualApp(App[None]):
                 exc, "".join(traceback.format_exception(exc))
             )
             response = f"**Agent failed:** `{type(exc).__name__}: {exc}`"
+        if self._exit:
+            # App-level workers survive widget pruning (only widget-bound
+            # workers are cancelled on removal); do not touch the tree
+            # mid-teardown.
+            return
         turn.finish_activity(succeeded=succeeded)
         await turn.add_response(response)
         self.call_after_refresh(self._anchor_conversation_if_overflowing)
@@ -388,6 +402,11 @@ class UrsaTextualApp(App[None]):
             max_content_height, max(1, prompt.virtual_size.height)
         )
         prompt.styles.height = content_height + 2
+        # TextArea scrolls the cursor when its selection changes, before the
+        # edit has updated its virtual size. Once the prompt is capped, that
+        # leaves its viewport one visual line behind each newly inserted line.
+        # Re-evaluate cursor visibility now that virtual_size is current.
+        prompt.scroll_cursor_visible(animate=False)
 
     def _open_hotlist(self, trigger: str) -> None:
         candidates = self._hotlist_candidates(trigger)
@@ -517,13 +536,13 @@ class UrsaTextualApp(App[None]):
             return
         if command == "agents":
             details = load_agent_details(self.hitl)
-            self.push_screen(
+            await self.push_screen(
                 AgentsScreen(details, self.hitl),
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
         if command == "models":
-            self.push_screen(
+            await self.push_screen(
                 ModelScreen(
                     self.hitl.config.inference_providers,
                     self.hitl.config.llm_model,
@@ -541,7 +560,7 @@ class UrsaTextualApp(App[None]):
                     if theme.name != self.theme
                 ),
             ]
-            self.push_screen(
+            await self.push_screen(
                 ThemeScreen(choices, initial_theme=self.theme),
                 callback=self._select_theme,
             )
@@ -553,12 +572,14 @@ class UrsaTextualApp(App[None]):
         if content is None:
             self.query_one(PromptArea).focus()
             return
-        self.push_screen(
+        await self.push_screen(
             InformationScreen(
                 command.capitalize(),
                 content(),
                 config_yaml=(
-                    self._resolved_config_yaml() if command == "status" else None
+                    self._resolved_config_yaml()
+                    if command == "status"
+                    else None
                 ),
             ),
             callback=lambda _: self.query_one(PromptArea).focus(),
@@ -807,6 +828,11 @@ class UrsaTextualApp(App[None]):
 
 def run_textual(hitl: HITL) -> None:
     """Launch the experimental full-screen interface."""
+    # Must run before Textual redirects ``sys.stderr`` to a proxy whose
+    # ``fileno()`` is invalid; otherwise tqdm's default multiprocessing lock
+    # triggers ``bad value(s) in fds_to_keep`` (and a follow-on deadlock) the
+    # first time a progress bar is built (e.g. RAG document ingestion).
+    install_thread_only_tqdm_lock()
     try:
         UrsaTextualApp(hitl).run()
     finally:
@@ -815,6 +841,7 @@ def run_textual(hitl: HITL) -> None:
 
 def run_textual_once(hitl: HITL, prompt: str, *, stdout: Any = None) -> str:
     """Run one routed prompt and render its event stream to standard output."""
+    install_thread_only_tqdm_lock()
     output = stdout or sys.stdout
     console = Console(file=output)
     handler = HITLLogEventHandler(console=console, workspace=hitl.workspace)

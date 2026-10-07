@@ -40,6 +40,7 @@ from ursa.cli.rag_management import (
     add_rag_subcommands,
     handle_rag_command,
 )
+from ursa.cli.self import add_self_subcommands
 from ursa.util.http import inject_truststore_into_ssl
 
 set_parsing_settings(docstring_parse_attribute_docstrings=True)
@@ -141,6 +142,8 @@ def build_parser() -> ArgumentParser:
     # Credential management commands
     add_auth_subcommands(subparsers)
 
+    add_self_subcommands(subparsers)
+
     exec_parser = ArgumentParser()
     exec_parser.add_argument("prompt", type=str)
     subparsers.add_subcommand(
@@ -191,6 +194,11 @@ def main(args=None):
     _apply_legacy_name_env(cfg, env_overrides)
 
     match subcommand:
+        case "self":
+            self_config = cfg.self
+            command_config = self_config[self_config.subcommand]
+            command_config.action(command_config)
+            return
         case "auth":
             auth_config = cfg.auth
             command_config = auth_config[auth_config.subcommand]

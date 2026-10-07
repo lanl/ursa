@@ -1,0 +1,7 @@
+title: Evolve numerical methods with Agent Elo
+summary: Run two numerical-integration agents through competition, inheritance, and refinement.
+tags:
+  - guided
+  - multi-agent
+  - execution-agent
+  - python-api

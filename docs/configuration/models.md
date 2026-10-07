@@ -1,12 +1,13 @@
 # Models and inference providers
 
-URSA initializes chat and embedding models through LangChain. A model name
-normally uses `<provider>:<model-name>`. Connection settings belong in a named
-`inference_providers` entry; `llm_model` and `emb_model` select that entry with
-`inference_provider`.
+URSA initializes chat and embedding models through LangChain. Model names
+normally use the form `<provider>:<model-name>`. Connection settings belong in
+an `inference_providers` entry, and `llm_model` and `emb_model` select that
+entry with `inference_provider`.
 
 For the standard OpenAI service, no YAML is required. Set `OPENAI_API_KEY` and
-run `ursa`; URSA's built-in `openai` provider supplies the endpoint and defaults.
+run `ursa`; URSA's built-in `openai` provider supplies the endpoint and
+defaults.
 
 ## Hosted and local model examples
 
@@ -46,8 +47,8 @@ run `ursa`; URSA's built-in `openai` provider supplies the endpoint and defaults
       inference_provider: research_gateway
     ```
 
-    Use the provider's actual model name and put the non-secret URL directly in
-    the file.
+    Use the provider's actual model name, and put the non-secret URL directly
+    in the file.
 
 === "Anthropic"
 
@@ -109,7 +110,7 @@ run `ursa`; URSA's built-in `openai` provider supplies the endpoint and defaults
 ## Use one provider for chat and embeddings
 
 Models inherit endpoint and credential values from the selected provider. They
-can share one provider while retaining their own model names:
+can share one provider while using different model names:
 
 ```yaml
 inference_providers:
@@ -126,12 +127,12 @@ emb_model:
 ```
 
 A value set directly on a model overrides the provider value. Set a nullable
-model value to `null` to clear an inherited value.
+model field to `null` to clear an inherited value.
 
 ## Temporary CLI overrides
 
-Configuration files are preferable for reusable endpoint settings, but every
-model field can also be overridden for a single run. For example:
+Configuration files are preferable for reusable endpoint settings, but you can
+also override any model field for a single run. For example:
 
 === "macOS/Linux"
 
@@ -157,7 +158,7 @@ complete precedence order.
 ## TLS verification
 
 URSA verifies TLS certificates by default and loads the operating system trust
-store. For a temporary test endpoint only, verification can be disabled on the
+store. For a temporary test endpoint only, you can disable verification on the
 provider:
 
 ```yaml
@@ -174,8 +175,28 @@ the correct certificate authority instead whenever possible.
 
 URSA includes `langchain-openai`, `langchain-anthropic`,
 `langchain-google-genai`, and `langchain-ollama`. Other model integrations use
-their corresponding `langchain-*` package. LangGraph extensions such as durable
-checkpoint backends use `langgraph-*` packages.
+the corresponding `langchain-*` package. LangGraph extensions, such as durable
+checkpoint backends, use `langgraph-*` packages.
+
+=== "ursa self"
+
+    When URSA is installed with `uv tool install ursa-ai`, you can use
+    `ursa self modify` to add or remove additional packages from your URSA
+    installation:
+
+    ```bash
+    ursa self modify --with langgraph-checkpoint-postgres
+    ```
+
+    For an additional model provider, replace the `langgraph-*` package with
+    its integration package, for example `--with langchain-groq`.
+
+    You can also enable URSA extras with the `--extra` flag. For example, to
+    enable the LAMMPS agent:
+
+    ```bash
+    ursa self modify --extra lammps
+    ```
 
 === "uv tool installation"
 
@@ -186,6 +207,7 @@ checkpoint backends use `langgraph-*` packages.
 
         ```bash
         uv tool install --force \
+          --python 3.13 \
           --with langgraph-checkpoint-postgres \
           'ursa[dashboard]'
         ```
@@ -194,6 +216,7 @@ checkpoint backends use `langgraph-*` packages.
 
         ```powershell
         uv tool install --force `
+          --python 3.13 `
           --with langgraph-checkpoint-postgres `
           'ursa[dashboard]'
         ```

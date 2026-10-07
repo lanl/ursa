@@ -105,6 +105,7 @@ from .credentials import (
     store_api_key,
 )
 from .environment_run_manager import (
+    ELO_STARTER_YAML,
     SYMPOSIUM_STARTER_YAML,
     TEAM_STARTER_YAML,
     EnvironmentDefinitionExistsError,
@@ -153,6 +154,13 @@ from .settings import (
     apply_dashboard_config,
     merge_global_settings_patch,
 )
+
+
+def _validated_agent_name(raw: str) -> str:
+    try:
+        return validate_agent_name(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
@@ -230,11 +238,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         "yes",
         "on",
     }
+    # Agents whose `use_web` default follows the dashboard-wide opt-in
+    # (`--use-web` / URSA_DASHBOARD_USE_WEB). Kept in sync with the CLI fan-out
+    # in `ursa.cli.config` ("chat", "execute", "deep_review", "prompt") plus the
+    # dashboard-only planning/execution workflow.
     web_opt_in_agent_ids = {
         "chat_agent",
         "execution_agent",
         "planning_executor_workflow",
         "prompting_agent",
+        "deep_review_agent",
     }
     rag_tool_agent_ids = {
         "chat_agent",
@@ -596,7 +609,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     def create_session(req: SessionCreateRequest) -> SessionDetail:
         agent_name = str(req.agent_name or "").strip() or None
         if agent_name is not None:
-            validate_agent_name(agent_name)
+            _validated_agent_name(agent_name)
             # New named agents are allowed. If the directory does not yet exist,
             # the underlying agent class will create persistent state on first use.
 
@@ -873,7 +886,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def save_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
-        name = validate_agent_name(str(payload.get("agent_name") or "").strip())
+        name = _validated_agent_name(
+            str(payload.get("agent_name") or "").strip()
+        )
         cli_save_agent(name, dashboard_group)
         return {
             "ok": True,
@@ -887,10 +902,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def copy_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
-        source = validate_agent_name(
+        source = _validated_agent_name(
             str(payload.get("source_agent_name") or "").strip()
         )
-        new_name = validate_agent_name(
+        new_name = _validated_agent_name(
             str(payload.get("new_agent_name") or "").strip()
         )
         cli_copy_agent(new_name, source, dashboard_group, dashboard_group)
@@ -907,7 +922,9 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         dependencies=[Depends(require_auth)],
     )
     def delete_named_agent(payload: dict[str, Any]) -> dict[str, Any]:
-        name = validate_agent_name(str(payload.get("agent_name") or "").strip())
+        name = _validated_agent_name(
+            str(payload.get("agent_name") or "").strip()
+        )
         cli_delete_agent(name, dashboard_group)
         return {
             "ok": True,
@@ -3513,6 +3530,10 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
           alert('Agent name cannot be empty.');
           return;
         }
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
+          alert('Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number.');
+          return;
+        }
         await startSession('', trimmed);
       };
     }
@@ -3797,19 +3818,23 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
   }
 
   async function startSession(agentId, agentName='') {
-    const workspace = await chooseWorkspaceSelection({
-      title: 'Choose a workspace for this session',
-    });
-    if (!workspace) return;
-    const payload = {};
-    if (String(agentId || '').trim()) payload.agent_id = String(agentId || '').trim();
-    if (String(agentName || '').trim()) payload.agent_name = String(agentName || '').trim();
-    payload.workspace_mode = workspace.workspace_mode;
-    if (workspace.workspace_path) payload.workspace_path = workspace.workspace_path;
-    const res = await api('POST', '/sessions', payload);
-    await refreshAgents();
-    await refreshSessions();
-    await loadSession(res.session.session_id);
+    try {
+      const workspace = await chooseWorkspaceSelection({
+        title: 'Choose a workspace for this session',
+      });
+      if (!workspace) return;
+      const payload = {};
+      if (String(agentId || '').trim()) payload.agent_id = String(agentId || '').trim();
+      if (String(agentName || '').trim()) payload.agent_name = String(agentName || '').trim();
+      payload.workspace_mode = workspace.workspace_mode;
+      if (workspace.workspace_path) payload.workspace_path = workspace.workspace_path;
+      const res = await api('POST', '/sessions', payload);
+      await refreshAgents();
+      await refreshSessions();
+      await loadSession(res.session.session_id);
+    } catch (e) {
+      alert(String(e && e.message ? e.message : e));
+    }
   }
 
   async function renameSession(sessionId, newTitle) {
@@ -4515,9 +4540,13 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         saveBtn.type = 'button';
         saveBtn.textContent = 'Checkpoint';
         saveBtn.onclick = async () => {
-          await api('POST', '/agent-management/save', { agent_name: item.agent_name });
-          await refreshAgents();
-          await refreshAgentManagement();
+          try {
+            await api('POST', '/agent-management/save', { agent_name: item.agent_name });
+            await refreshAgents();
+            await refreshAgentManagement();
+          } catch (e) {
+            alert(String(e && e.message ? e.message : e));
+          }
         };
 
         const copyBtn = document.createElement('button');
@@ -4527,9 +4556,22 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         copyBtn.onclick = async () => {
           const newName = prompt('New name for copied agent', item.agent_name + '.copy');
           if (newName === null) return;
-          await api('POST', '/agent-management/copy', { source_agent_name: item.agent_name, new_agent_name: newName });
-          await refreshAgents();
-          await refreshAgentManagement();
+          const copyName = String(newName || '').trim();
+          if (!copyName) {
+            alert('Agent name cannot be empty.');
+            return;
+          }
+          if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(copyName)) {
+            alert('Agent name may only contain letters, numbers, dot, underscore, and hyphen, and must start with a letter or number.');
+            return;
+          }
+          try {
+            await api('POST', '/agent-management/copy', { source_agent_name: item.agent_name, new_agent_name: copyName });
+            await refreshAgents();
+            await refreshAgentManagement();
+          } catch (e) {
+            alert(String(e && e.message ? e.message : e));
+          }
         };
 
         const delBtn = document.createElement('button');
@@ -4538,9 +4580,13 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         delBtn.textContent = 'Delete';
         delBtn.onclick = async () => {
           if (!confirm('Delete agent ' + item.agent_name + '?')) return;
-          await api('POST', '/agent-management/delete', { agent_name: item.agent_name });
-          await refreshAgents();
-          await refreshAgentManagement();
+          try {
+            await api('POST', '/agent-management/delete', { agent_name: item.agent_name });
+            await refreshAgents();
+            await refreshAgentManagement();
+          } catch (e) {
+            alert(String(e && e.message ? e.message : e));
+          }
         };
 
         actions.appendChild(saveBtn);
@@ -5636,6 +5682,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 runs=runs,
                 team_starter_yaml=TEAM_STARTER_YAML,
                 symposium_starter_yaml=SYMPOSIUM_STARTER_YAML,
+                elo_starter_yaml=ELO_STARTER_YAML,
             )
         )
 

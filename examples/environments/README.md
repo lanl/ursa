@@ -79,14 +79,14 @@ Install the dashboard-enabled URSA tool, then launch it:
 === "macOS/Linux"
 
     ```bash
-    uv tool install 'ursa[dashboard]'
+    uv tool install --python 3.13 'ursa[dashboard]'
     ursa-dashboard
     ```
 
 === "Windows PowerShell"
 
     ```powershell
-    uv tool install "ursa[dashboard]"
+    uv tool install --python 3.13 "ursa[dashboard]"
     ursa-dashboard
     ```
 

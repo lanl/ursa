@@ -8,6 +8,7 @@ from textual.widgets import Static
 import ursa.cli.tui.event_handler as event_handler_module
 import ursa.cli.tui.turn as turn_module
 from tests.cli._app_fakes import FakeHITL, emit_event
+from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import EditCard, FileActivityCard, RunCommandCard
 from ursa.cli.tui.event_handler import TextualEventHandler
@@ -275,6 +276,9 @@ async def test_activity_kinds_keep_independent_cards_open(
         return_to_reading.set()
         await reading_updated.wait()
         await pilot.pause()
+        await eventually(
+            pilot, lambda: list(reading.files["Reading"]) == ["fileA", "fileC"]
+        )
         assert list(reading.files["Reading"]) == ["fileA", "fileC"]
         assert len(app.query(FileActivityCard)) == 2
         assert not reading.done
@@ -289,6 +293,7 @@ async def test_activity_kinds_keep_independent_cards_open(
 
         current_reading_timer.fire()
         await pilot.pause()
+        await eventually(pilot, lambda: reading.done)
         assert reading.done
 
         finish_agent.set()
@@ -425,6 +430,9 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         emit_second.set()
         await second_emitted.wait()
         await pilot.pause()
+        await eventually(
+            pilot, lambda: list(first.files["Reading"]) == ["fileA", "fileB"]
+        )
         assert list(first.files["Reading"]) == ["fileA", "fileB"]
         assert not first.done
         assert timers[0].stopped
@@ -432,6 +440,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
 
         timers[1].fire()
         await pilot.pause()
+        await eventually(pilot, lambda: first.done)
         assert first.done
 
         emit_third.set()
@@ -446,6 +455,7 @@ async def test_summary_card_mounts_immediately_updates_and_finalizes_after_idle(
         finish_agent.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
+        await eventually(pilot, lambda: groups[1].done)
         assert groups[1].done
 
 

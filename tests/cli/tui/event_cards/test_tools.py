@@ -3,6 +3,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
 
 from tests.cli._app_fakes import FakeHITL
+from tests.tui.utils import eventually
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.event_cards import ToolCallCard
 from ursa.cli.tui.event_handler import TextualEventHandler
@@ -51,6 +52,7 @@ async def test_default_tool_card_switches_from_input_to_output(tmp_path):
         )
         await pilot.pause()
 
+        await eventually(pilot, lambda: card.completed)
         assert card.completed
         assert card.query_one(".tool-call-state", Static).content == "✓"
         assert "polar" in str(

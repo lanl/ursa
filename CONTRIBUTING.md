@@ -23,7 +23,7 @@ the following in the current directory:
 # If using pip with venv, first activate your environment, then
 pre-commit install
 
-# If usign uv
+# If using uv
 uv run pre-commit install
 ```
 

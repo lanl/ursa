@@ -1,5 +1,207 @@
 # Change Log
 
+## v0.17.2
+
+Changes since `v0.17.1`:
+
+### New environment: Agent Elo
+
+- Added Agent Elo, URSA's evolutionary competition environment: multiple agents
+  work independently on the same task, are randomly paired each generation, and
+  compete head-to-head; an LLM judge compares completed and timed-out competitors
+  against the task's evaluation criteria to pick a winner or a draw, and Elo
+  ratings track the standings (#321).
+- Losing competitors leave the active population while survivors produce
+  descendants that inherit their parent's files and persistent state, so
+  solutions are developed and refined over successive generations (#321).
+- Added validated `AgentEloConfig` configuration covering population size,
+  unique member names, automatically managed member workspaces, and persistent
+  agent identities, along with a runnable example project under
+  `examples/environments/agent_elo` and documentation in
+  `docs/environments/agent-elo.md` (#321).
+- Dashboard environment runs now support Agent Elo end to end, including run
+  management, the run UI, and worker wiring (#321).
+
+### Configuration and security
+
+- Fixed and hardened layered configuration merging: higher-priority layers no
+  longer clobber or incorrectly promote lower-priority defaults, optional models
+  can be completed across layers, and invalid or secret-valued overrides from
+  higher-priority sources are rejected instead of silently inherited (#352).
+- Switching a model between the `base_url` and `inference_provider` endpoint
+  styles now cleanly supersedes the other style without turning the internal
+  null into an explicit model override, and merged configurations no longer
+  alias mutable inputs (#352).
+- The default group can now have an endpoint allowlist: previously the default
+  group always permitted every endpoint; it now follows a persisted group policy
+  when one is configured and remains unrestricted when none is, with the
+  configured policy validated like any other group's (#350).
+- `ursa groups update` now supports persisting a policy for the otherwise
+  implicit default group by creating its directories on demand (#350).
+
+## v0.17.1
+
+Changes since `v0.17.0`:
+
+### Agents and tool reliability
+
+- Hardened message-history preparation and summarization for broader provider
+  compatibility: URSA now removes invalid mid-history system messages, orphaned
+  tool results, and crashed-step prompt tails before model calls; keeps the
+  system prompt first; and summarizes older tool-call transcripts as plain text
+  instead of sending provider-invalid tool-call slices (#339).
+- Fixed unregistered typed state declarations for Materials Project, RAG, and
+  recall agents so state registration warnings/errors reflect real issues
+  instead of agent implementation mismatches (#341).
+- Added an async implementation for persisted RAG tools, skipped empty RAG
+  progress bars, and installed a thread-only `tqdm` lock in the TUI path to avoid
+  Textual stderr/resource-tracker `bad value(s) in fds_to_keep` failures and
+  follow-on deadlocks during RAG use (#330, #337).
+- Made `URSA_SAFETY_LEVEL=none` and `URSA_SAFETY_LEVEL=yolo` bypass the command
+  safety LLM check entirely; the previous permissive prompt behavior is now the
+  `trusted` safety level (#343).
+- Closed async SQLite resources more completely by joining their worker threads,
+  preventing lingering non-daemon threads from blocking shutdown (#339).
+
+### Dashboard
+
+- Returned HTTP 400 responses for invalid named-agent inputs and added matching
+  browser-side validation/alerts for creating, saving, copying, and deleting
+  named agents (#322).
+- Added dashboard `--use-web` / `URSA_DASHBOARD_USE_WEB` support so
+  dashboard-created agents, including Deep Review, can opt in to web, arXiv, and
+  OSTI tools consistently with the CLI (#334).
+- Fixed dashboard environment credential handling so safe secret references such
+  as `api_key: {env: ...}` are accepted while literal API keys remain rejected in
+  persisted or worker configuration (#327, #346).
+- Initialized dashboard worker OpenAI chat and embedding clients with URSA's
+  explicit HTTPX/truststore clients to avoid connection errors seen by some
+  users on OpenAI endpoints (#346).
+
+### Configuration, TUI, and inference providers
+
+- Corrected chat and embedding model parsing so only known provider prefixes are
+  split from `provider:model` strings, colon-containing model names are
+  preserved, and users get clearer provider-inference errors with supported
+  provider hints (#337).
+- Fixed layered configuration merging for model settings, including sparse
+  overrides, nested model objects, and the precedence between `base_url` and
+  `inference_provider` (#337).
+- Improved inference-provider validation errors by listing known models for a
+  provider and separating endpoint/credential guidance from the underlying
+  validation failure (#337).
+- Fixed TUI prompt scrolling after multi-line edits and formatted total token
+  counts with thousands separators (#337).
+
+### Image handling and provider compatibility
+
+- Converted SVG files passed to `read_image_tool` into PNG image payloads while
+  preserving the original filename as a separate text block (#329).
+- Stopped placing local workspace paths in `ImageContentBlock.file_id`, which is
+  reserved for provider-side file references and could break providers such as
+  Gemini that prioritize `file_id` over embedded image bytes (#340).
+
+### Dependencies, documentation, and maintenance
+
+- Capped `aiosqlite` below 0.22 pending upstream compatibility (#344),
+  relaxed `langchain-mcp-adapters` to the 0.2 series, allowed `justext` 3.0.1
+  through the 3.x series, and updated `uv.lock` accordingly.
+- Updated docs and examples for dashboard web-tool opt-in and fixed several
+  documentation typos (#333, #334).
+- Updated the Ruff workflow to run the current lint-check target (#337).
+
+## v0.17.0
+
+Changes since `v0.16.4`:
+
+### Terminal UI (TUI)
+
+- Replaced the Rich REPL with a new Textual terminal application, split into
+  focused modules with per-event "cards" for source code, command output,
+  files, diffs, plans, tools, search, and agent/artifact activity. Added an
+  expandable exception card, an explicit `exit` command, theming, a growing
+  multi-line prompt, runtime hardening, and randomized startup tips with
+  platform-aware keymaps (#315).
+- Surfaced persistent named-agent sessions and agent routing directly in the
+  TUI, and marked each user turn in the scrollback so prompts stay visible
+  between agent output blocks (#311, #315).
+- Hardened TUI teardown so a Mount dispatch racing app shutdown can no longer
+  crash the app, and stabilized the associated timing tests (#324).
+
+### Configuration and inference providers
+
+- Added layered CLI configuration with XDG-based overrides and reusable,
+  provider-aware inference-provider definitions, so models can be declared once
+  and shared across agents and environments (#314).
+- Added external secret references resolved from the OS credential store,
+  including support for injecting secrets into MCP request headers (#314).
+- Expanded the `print_config` command and hardened configuration resolution and
+  source merging, with correct XDG config paths on Windows (#314).
+
+### CLI
+
+- Added an `ursa self` command to inspect and manage a `uv tool` installation,
+  with `status`, `update` (preserving the install recipe), and `modify`
+  (extras, extra packages, exact version, or Git ref) subcommands (#325).
+- Added the running URSA version to the startup banner (#307).
+- Reported missing/invalid API keys and model-initialization errors cleanly,
+  without a traceback, for OpenAI and non-OpenAI endpoints (#302).
+
+### Agents
+
+- Made the acquisition agents concurrent (async search, materialization, and
+  cached-item loading) and registered their typed graph state; added a
+  `build_config` helper and `SourceTask`/`ProcessedSource` structures (#314,
+  #315).
+- Added an `UnregisteredAgentStateWarning` that flags `BaseAgent` subclasses
+  declaring a typed state they never register (#297).
+- Landed context summaries as framed human-role messages so a summarized
+  history never ends on an assistant summary, keeping message sequences
+  provider-valid (#309).
+- Kept deep-review role/phase prompts out of the persisted message channel,
+  ensured each debate phase leads with its own role prompt, and propagated
+  phase model failures immediately instead of swallowing them (#308).
+- Fixed `print_visited_sites` to return only the visited-sites update, so
+  deep-review outputs report exactly one entry per real iteration (#313).
+- Added cross-agent regression coverage pinning provider-valid message
+  sequences across agents (#297).
+
+### Observability
+
+- Repaired the OpenTelemetry OTLP/HTTP export path (Tier 1 of #259): each export
+  builds a private, per-call tracer provider (shut down in-call) that never
+  touches the global provider, emits a real-time root span plus one GenAI
+  semantic-convention child span per LLM call, and returns a structured,
+  truthfully reported result. Endpoint resolution follows a documented
+  precedence (parameter, field, then `OTEL_EXPORTER_OTLP_*` env vars); headers
+  accept a mapping or an env-style string; a missing `otel` extra now warns with
+  an install hint; and the inert `otel_metrics` constructor argument is
+  deprecated (#305).
+- Captured reasoning and cached-token counts from all usage carriers
+  (langchain `usage_metadata` details, raw OpenAI Responses/Anthropic shapes,
+  service-tier-prefixed keys) without double-counting (#316).
+- Recorded error samples when `on_llm_error` has no matching start, so failed
+  LLM calls are no longer silently dropped from the per-LLM metrics (#293).
+- Emitted arXiv and web search progress events asynchronously via `aemit`
+  (#320).
+
+### Dashboard
+
+- Gave the dashboard chat visible failure feedback so pre-run send errors name
+  the real problem instead of silently orphaning the user's message (#301,
+  #306).
+
+### Documentation and maintenance
+
+- Reorganized and expanded the getting-started, configuration (files/env,
+  models, secrets, MCP), CLI/TUI, and reference (OTel, CLI) documentation; added
+  a filterable example catalog with per-example READMEs and runnable project
+  scaffolding; and added versioned-docs build hooks (#314, #315, #318, #320).
+- Migrated packaged TUI stylesheets into the distribution, bumped `rich`,
+  `langchain-mcp-adapters`, `textual`, and `keyring` dependencies, narrowed the
+  `otel` extra to the OTLP/HTTP exporter, and added `hypothesis` to the dev
+  group (#314, #315, #305).
+
 ## v0.16.4
 
 Changes since `v0.16.3`:
