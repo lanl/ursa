@@ -1,8 +1,9 @@
 # ruff: noqa: TID251
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar
 
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import ToolMessage

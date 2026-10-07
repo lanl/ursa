@@ -48,9 +48,10 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from time import monotonic_ns, perf_counter
-from typing import Any, Mapping, Self
+from typing import Any, Self
 from uuid import uuid4
 
 from langchain.tools import ToolRuntime
@@ -767,8 +768,8 @@ __all__ = [
     "DEFAULT_EVENT_LOGGING_HANDLER",
     "DEFAULT_EVENT_NAME",
     "AgentEvents",
-    "EventConsoleFormatter",
     "EnvironmentEvents",
+    "EventConsoleFormatter",
     "EventLoggingHandler",
     "EventRange",
     "ProgressEvents",

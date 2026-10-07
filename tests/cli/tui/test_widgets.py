@@ -681,7 +681,7 @@ async def test_slash_picker_lists_commands_and_fits_terminal(tmp_path):
         assert "agents" in screenshot
         assert [
             candidate.partition(" — ")[0] for candidate in app.screen.candidates
-        ] == ["agents", "exit", "status", "keymap", "models", "theme"]
+        ] == ["agents", "skills", "exit", "status", "keymap", "models", "theme"]
 
 
 async def test_slash_picker_status_shows_runtime_details(tmp_path):

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic_ns
-from typing import Any, Iterator, Mapping
+from typing import Any
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -25,7 +26,7 @@ TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 
 
 def utc_now_rfc3339() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def new_event_id() -> str:

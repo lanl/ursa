@@ -323,7 +323,7 @@ def _pdf_page_count(path: Path) -> int:
     try:
         with pymupdf.open(str(path)) as doc:
             return len(doc)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("Failed to count document pages")
         return 0
 
@@ -632,14 +632,14 @@ def read_pdf(path: str | Path) -> str:
                 # Any other OCR-related failure: keep original extraction
                 logger.warning("OCR failed; using original extraction: %s", e)
 
-        return text  # noqa: TRY300
+        return text
 
     except subprocess.CalledProcessError as e:
         # OCR failed; return whatever we got from normal extraction
         err = (e.stderr or "")[:500]
         logger.error("OCR failed: %s", err)
         return text if text else f"[Error]: OCR failed: {err}"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("Document parsing failed")
         return f"[Error]: {e}"
 

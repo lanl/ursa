@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from operator import add, or_
 from pathlib import Path
-from typing import Annotated, Any, Literal, Mapping, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from langchain.chat_models import BaseChatModel
 from langchain.tools import BaseTool

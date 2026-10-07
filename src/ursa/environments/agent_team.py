@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Mapping
+from typing import Any
 
 from langchain.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
@@ -111,7 +112,7 @@ class AgentTeamEnvironment(BaseEnvironment):
         *,
         llm: BaseChatModel,
         **kwargs: Any,
-    ) -> "AgentTeamEnvironment":
+    ) -> AgentTeamEnvironment:
         return cls(llm=llm, config=load_team_config(path), **kwargs)
 
     def _coerce_config(

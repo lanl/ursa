@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from dotenv import load_dotenv
 from langchain_core.embeddings import FakeEmbeddings
@@ -10,6 +12,15 @@ from pydantic import BaseModel
 @pytest.fixture(scope="session", autouse=True)
 def _load_dotenv():
     load_dotenv()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(monkeypatch, tmp_path_factory):
+    # Skills are discovered under ~/.ursa/skills and HITL materializes the
+    # bundled skill there, so an unisolated home would both leak the developer's
+    # own skills into tool descriptions and write into their real home.
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(Path, "home", lambda: home)
 
 
 def _message_stream(content: str):
