@@ -86,13 +86,18 @@ def test_group_directory_helpers_use_shared_group_root(isolated_security_cache):
     )
 
 
+@pytest.mark.parametrize("group", ["default", None, "", " default "])
+@pytest.mark.parametrize("existing_directory", [False, True])
 @pytest.mark.parametrize("base_url", [None, "", "https://anything.example/v1"])
 def test_default_group_does_not_require_whitelist_config(
-    isolated_security_cache, base_url
+    isolated_security_cache, base_url, existing_directory, group
 ):
-    assert security.is_base_url_allowed(base_url, "default") is True
-    security.enforce_group_base_url_policy(base_url, "default")
-    assert not isolated_security_cache.exists()
+    if existing_directory:
+        (isolated_security_cache / "default").mkdir(parents=True)
+
+    assert security.is_base_url_allowed(base_url, group) is True
+    security.enforce_group_base_url_policy(base_url, group)
+    assert isolated_security_cache.exists() == existing_directory
 
 
 def test_non_default_group_requires_existing_group_directory(
@@ -125,16 +130,17 @@ def test_non_default_group_requires_group_config_file(isolated_security_cache):
         ("allowed_base_urls:\n  - '   '\n", "empty allowed URL"),
     ],
 )
+@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_group_config_must_define_valid_allowed_base_urls(
-    isolated_security_cache, yaml_text, match
+    isolated_security_cache, group, yaml_text, match
 ):
-    group_dir = isolated_security_cache / "science"
+    group_dir = isolated_security_cache / security.validate_group_name(group)
     group_dir.mkdir(parents=True)
     (group_dir / "group.yaml").write_text(yaml_text, encoding="utf-8")
 
     with pytest.raises(GroupBaseURLPolicyError, match=match):
         security.enforce_group_base_url_policy(
-            "https://models.example.org/v1", "science"
+            "https://models.example.org/v1", group
         )
 
 
@@ -148,17 +154,18 @@ def test_group_config_must_define_valid_allowed_base_urls(
         "https://models.example.org/v2/chat/completions",
     ],
 )
+@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_group_whitelist_allows_exact_url_and_same_origin(
-    isolated_security_cache, base_url
+    isolated_security_cache, group, base_url
 ):
     _write_group_config(
         isolated_security_cache,
-        "science",
+        security.validate_group_name(group),
         ["https://models.example.org/v1/"],
     )
 
-    assert security.is_base_url_allowed(base_url, "science") is True
-    security.enforce_group_base_url_policy(base_url, "science")
+    assert security.is_base_url_allowed(base_url, group) is True
+    security.enforce_group_base_url_policy(base_url, group)
 
 
 @pytest.mark.parametrize(
@@ -174,54 +181,59 @@ def test_group_whitelist_allows_exact_url_and_same_origin(
         "https://models.example.org:444/v1",
     ],
 )
+@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_group_whitelist_rejects_missing_or_different_origin(
-    isolated_security_cache, base_url
+    isolated_security_cache, group, base_url
 ):
     _write_group_config(
         isolated_security_cache,
-        "science",
+        security.validate_group_name(group),
         ["https://models.example.org/v1"],
     )
 
-    assert security.is_base_url_allowed(base_url, "science") is False
+    assert security.is_base_url_allowed(base_url, group) is False
     with pytest.raises(GroupBaseURLPolicyError):
-        security.enforce_group_base_url_policy(base_url, "science")
+        security.enforce_group_base_url_policy(base_url, group)
 
 
+@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_policy_error_for_missing_base_url_lists_allowed_urls(
     isolated_security_cache,
+    group,
 ):
     _write_group_config(
         isolated_security_cache,
-        "science",
+        security.validate_group_name(group),
         ["https://models.example.org/v1"],
     )
 
     with pytest.raises(GroupBaseURLPolicyError) as excinfo:
-        security.enforce_group_base_url_policy(None, "science")
+        security.enforce_group_base_url_policy(None, group)
 
     message = str(excinfo.value)
     assert "requires an explicit model base_url" in message
     assert "https://models.example.org/v1" in message
 
 
+@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_policy_error_for_disallowed_base_url_names_group_and_allowed_urls(
     isolated_security_cache,
+    group,
 ):
     _write_group_config(
         isolated_security_cache,
-        "science",
+        security.validate_group_name(group),
         ["https://models.example.org/v1"],
     )
 
     with pytest.raises(GroupBaseURLPolicyError) as excinfo:
         security.enforce_group_base_url_policy(
-            "https://unsafe.example.org/v1", "science"
+            "https://unsafe.example.org/v1", group
         )
 
     message = str(excinfo.value)
     assert "https://unsafe.example.org/v1" in message
-    assert "science" in message
+    assert security.validate_group_name(group) in message
     assert "https://models.example.org/v1" in message
 
 
@@ -251,17 +263,19 @@ def test_get_model_base_url_uses_first_available_attr():
     assert security.get_model_base_url(model) == "https://base.example/v1"
 
 
+@pytest.mark.parametrize("group", ["science", "default", None, "", " default "])
 def test_enforce_model_group_policy_uses_model_base_url(
     isolated_security_cache,
+    group,
 ):
     _write_group_config(
         isolated_security_cache,
-        "science",
+        security.validate_group_name(group),
         ["https://models.example.org/v1"],
     )
     safe_model = SimpleNamespace(base_url="https://models.example.org/v1/")
     unsafe_model = SimpleNamespace(base_url="https://unsafe.example.org/v1")
 
-    security.enforce_model_group_policy(safe_model, "science")
+    security.enforce_model_group_policy(safe_model, group)
     with pytest.raises(GroupBaseURLPolicyError):
-        security.enforce_model_group_policy(unsafe_model, "science")
+        security.enforce_model_group_policy(unsafe_model, group)
