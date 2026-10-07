@@ -15,8 +15,6 @@ from urllib.parse import quote, urlparse
 
 import feedparser
 
-logger = logging.getLogger(__name__)
-
 # PDF & Vision extras (match your existing stack)
 import pymupdf
 import requests
@@ -48,6 +46,8 @@ try:
     from openai import OpenAI
 except Exception:
     OpenAI = None
+
+logger = logging.getLogger(__name__)
 
 
 # ---------- Shared State / Types ----------
@@ -604,6 +604,19 @@ class WebSearchAgent(BaseAcquisitionAgent):
                 "duckduckgo-search (DDGS) is required for WebSearchAgentGeneric."
             )
 
+    def _id(self, hit_or_item: dict[str, Any]) -> str:
+        url = hit_or_item.get("href") or hit_or_item.get("url") or ""
+        return (
+            _hash(url)
+            if url
+            else hit_or_item.get("id", _hash(json.dumps(hit_or_item)))
+        )
+
+    def _citation(self, item: ItemMetadata) -> str:
+        t = item.get("title", "") or ""
+        u = item.get("url", "") or ""
+        return f"{t} ({u})" if t else (u or item.get("id", "Web result"))
+
     def _serpbase_search(self, query: str) -> list[dict[str, Any]]:
         """Search Google via the SerpBase API. Returns [] on any failure."""
         try:
@@ -619,18 +632,18 @@ class WebSearchAgent(BaseAcquisitionAgent):
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            logger.warning("SerpBase search failed (%s); falling back to DDGS.", e)
+            logger.warning(
+                "SerpBase search failed (%s); falling back to DDGS.", e
+            )
             return []
         results: list[dict[str, Any]] = []
         for r in data.get("organic_results", []):
-            results.append(
-                {
-                    "title": r.get("title", ""),
-                    "href": r.get("link", ""),
-                    "body": r.get("snippet", ""),
-                    "position": r.get("position"),
-                }
-            )
+            results.append({
+                "title": r.get("title", ""),
+                "href": r.get("link", ""),
+                "body": r.get("snippet", ""),
+                "position": r.get("position"),
+            })
         return results
 
     def _search(self, query: str) -> list[dict[str, Any]]:
