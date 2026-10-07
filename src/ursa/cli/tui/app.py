@@ -547,13 +547,13 @@ class UrsaTextualApp(App[None]):
             return
         if command == "agents":
             details = load_agent_details(self.hitl)
-            self.push_screen(
+            await self.push_screen(
                 AgentsScreen(details, self.hitl),
                 callback=lambda _: self.query_one(PromptArea).focus(),
             )
             return
         if command == "models":
-            self.push_screen(
+            await self.push_screen(
                 ModelScreen(
                     self.hitl.config.inference_providers,
                     self.hitl.config.llm_model,
@@ -571,7 +571,7 @@ class UrsaTextualApp(App[None]):
                     if theme.name != self.theme
                 ),
             ]
-            self.push_screen(
+            await self.push_screen(
                 ThemeScreen(choices, initial_theme=self.theme),
                 callback=self._select_theme,
             )
@@ -586,7 +586,7 @@ class UrsaTextualApp(App[None]):
         if content is None:
             self.query_one(PromptArea).focus()
             return
-        self.push_screen(
+        await self.push_screen(
             InformationScreen(
                 command.capitalize(),
                 content(),

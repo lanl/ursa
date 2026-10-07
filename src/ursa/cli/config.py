@@ -19,6 +19,8 @@ from pydantic import (
     Field,
     PrivateAttr,
     SecretStr,
+    TypeAdapter,
+    ValidationError,
     field_serializer,
     field_validator,
     model_validator,
@@ -107,6 +109,17 @@ class InferenceProviderConfig(BaseModel):
             )
         return self.model_copy()
 
+    def model_merge(self, other: Self | dict[str, Any]) -> Self:
+        """Merge explicit settings from a higher-priority provider."""
+        candidate = (
+            other
+            if isinstance(other, InferenceProviderConfig)
+            else type(self).model_validate(other)
+        )
+        override = _sparse_model_values(candidate)
+        merged = _merge_config_values(_sparse_model_values(self), override)
+        return type(self).model_validate(merged)
+
 
 class ModelConfig(BaseModel):
     """Configuration manager for LangChain's `init_*` factories."""
@@ -142,22 +155,42 @@ class ModelConfig(BaseModel):
         if isinstance(other, ModelConfig):
             candidate = other
             updates = candidate.model_dump(mode="python", exclude_unset=True)
+            candidate_fields = candidate.model_fields_set
         else:
             updates = deepcopy(other)
-            if updates.get("base_url") is not None:
+            if (
+                updates.get("base_url") is not None
+                and updates.get("inference_provider") is not None
+            ):
                 updates["inference_provider"] = None
-            elif updates.get("inference_provider") is not None:
-                updates["base_url"] = None
-            candidate = type(self).model_validate({
+
+            candidate_input = {
                 "model": self.model,
                 **updates,
-            })
-            updates = candidate.model_dump(mode="python", exclude_unset=True)
+            }
+            context_fields = set(candidate_input) - set(updates)
+            try:
+                candidate = type(self).model_validate(candidate_input)
+            except ValidationError:
+                for field_name in ("model_provider", "inference_provider"):
+                    current = getattr(self, field_name)
+                    if field_name not in updates and current is not None:
+                        candidate_input[field_name] = current
+                        context_fields.add(field_name)
+                candidate = type(self).model_validate(candidate_input)
 
+            updates = candidate.model_dump(mode="python", exclude_unset=True)
+            for field_name in context_fields:
+                updates.pop(field_name, None)
+            candidate_fields = candidate.model_fields_set - context_fields
+
+        superseded_field = None
         if updates.get("base_url") is not None:
             updates["inference_provider"] = None
+            superseded_field = "inference_provider"
         elif updates.get("inference_provider") is not None:
             updates["base_url"] = None
+            superseded_field = "base_url"
 
         merged = type(self).model_validate({
             **self.model_dump(mode="python"),
@@ -166,9 +199,13 @@ class ModelConfig(BaseModel):
         # Validating the complete merged mapping marks every default as explicit.
         # Preserve only fields supplied by either layer so provider defaults can
         # still fill values that merely appeared in the model dump.
-        merged.__pydantic_fields_set__ = (
-            self.model_fields_set | candidate.model_fields_set
-        )
+        fields_set = self.model_fields_set | candidate_fields
+        # Switching endpoint styles clears the lower-priority alternative
+        # without turning that internal null into an explicit model override.
+        if superseded_field is not None:
+            fields_set.discard(superseded_field)
+        merged.__pydantic_fields_set__ = fields_set
+
         return merged
 
     @model_validator(mode="before")
@@ -423,6 +460,33 @@ class EmbModelConfig(ModelConfig):
         return self._parse_model_and_provider(_BUILTIN_PROVIDERS)
 
 
+def _sparse_model_values(model: BaseModel) -> dict[str, Any]:
+    """Return explicitly set model values without serializing nested models."""
+    values = {
+        name: deepcopy(getattr(model, name))
+        for name in model.model_fields_set
+        if name in type(model).model_fields
+    }
+    values.update(deepcopy(model.model_extra or {}))
+    return values
+
+
+def _merge_config_values(
+    base: Any,
+    override: Any,
+) -> Any:
+    """Recursively merge ordinary values and honor nested model mergers."""
+    model_merge = getattr(base, "model_merge", None)
+    if callable(model_merge) and isinstance(override, (dict, type(base))):
+        return model_merge(override)
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = deepcopy(base)
+        for key, value in override.items():
+            merged[key] = _merge_config_values(merged.get(key), value)
+        return merged
+    return deepcopy(override)
+
+
 class UrsaConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -529,7 +593,7 @@ class UrsaConfig(BaseModel):
         """Return this config after applying canonical resolution."""
         return resolve_ursa_config(self)
 
-    def model_merge(self, *others: Self | dict[str, Any]) -> Self:
+    def model_merge(self, *others: dict[str, Any]) -> Self:
         """Merge higher-priority config layers and validate the result once."""
         fields_set = set(self.model_fields_set)
         merged = {
@@ -537,47 +601,32 @@ class UrsaConfig(BaseModel):
             for name in type(self).model_fields
         }
         for other in others:
-            updates = (
-                other.model_dump(mode="python", exclude_unset=True)
-                if isinstance(other, UrsaConfig)
-                else deepcopy(other)
-            )
+            if not isinstance(other, dict):
+                raise TypeError(
+                    "UrsaConfig.model_merge() accepts raw configuration "
+                    "mappings, not validated UrsaConfig instances"
+                )
+            updates = deepcopy(other)
             fields_set.update(updates)
             for key, value in updates.items():
-                current = merged.get(key)
                 field_info = type(self).model_fields.get(key)
-                field_annotation = getattr(field_info, "annotation", None)
-                model_cls = None
-                if isinstance(field_annotation, type) and issubclass(
-                    field_annotation, BaseModel
-                ):
-                    model_cls = field_annotation
-                elif getattr(field_annotation, "__args__", None):
-                    for arg in field_annotation.__args__:
-                        if isinstance(arg, type) and issubclass(arg, BaseModel):
-                            model_cls = arg
-                            break
-
-                model_merge = getattr(current, "model_merge", None)
-                if callable(model_merge):
-                    merged[key] = model_merge(value)
-                elif (
-                    model_cls is not None
-                    and isinstance(value, dict)
-                    and not (
-                        isinstance(current, dict)
-                        and all(
-                            isinstance(v, BaseModel) for v in current.values()
-                        )
-                    )
-                ):
-                    merged[key] = model_cls.model_validate(value)
-                elif isinstance(current, dict) and isinstance(value, dict):
-                    merged[key] = deep_merge_dicts(current, value)
-                else:
-                    merged[key] = value
+                value = _merge_config_values(merged.get(key), value)
+                if field_info is not None:
+                    try:
+                        value = TypeAdapter(
+                            field_info.annotation
+                        ).validate_python(value)
+                    except ValidationError:
+                        # A later layer may complete a partial value.
+                        pass
+                merged[key] = value
         result = type(self).model_validate(merged)
         result.__pydantic_fields_set__ = fields_set
+        if (
+            self._temp_workspace is not None
+            and self.workspace == result.workspace
+        ):
+            result._temp_workspace = self._temp_workspace
         return result
 
     @field_serializer("workspace")
