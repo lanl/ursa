@@ -472,7 +472,7 @@ def test_link_peers_is_idempotent_and_not_cyclic_for_listings(
     registry.link_peers("H2")
     own = registry.workspace_for("H1")
     # Mutual links create a cycle on disk, but glob must not walk into it.
-    entries = {str(p.relative_to(own)) for p in own.glob("**/*")}
+    entries = {p.relative_to(own).as_posix() for p in own.glob("**/*")}
     assert entries == {"evidence.md", "peers", "peers/h2", "peers/h3"}
 
 
