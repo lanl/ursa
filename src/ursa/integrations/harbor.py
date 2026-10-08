@@ -1087,6 +1087,64 @@ def validate(
     typer.echo(f"Validated {len(tasks)} Harbor task(s).")
 
 
+@app.command("prebuild")
+def prebuild_sifs(
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            help="Task files, task directories, or roots to scan recursively"
+        ),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Rebuild SIFs already present in cache"),
+    ] = False,
+    image_cache_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--image-cache-dir",
+            help="Override the URSA Harbor SIF cache directory",
+        ),
+    ] = None,
+) -> None:
+    """Pre-build Dockerfile-backed SIF files for Harbor tasks."""
+    from ursa.integrations.harbor_validation import (
+        discover_harbor_tasks,
+        prebuild_harbor_task,
+    )
+
+    tasks = discover_harbor_tasks(paths)
+
+    async def build_all() -> tuple[int, int]:
+        failures = 0
+        images: set[Path] = set()
+        for task in tasks:
+            try:
+                built = await prebuild_harbor_task(
+                    task,
+                    force_build=force,
+                    image_cache_dir=image_cache_dir,
+                )
+            except Exception as exc:
+                failures += 1
+                typer.echo(
+                    f"FAIL {task}: {type(exc).__name__}: {exc}", err=True
+                )
+            else:
+                images.update(built)
+                typer.echo(f"OK   {task}: {len(built)} SIF file(s)")
+                for image in built:
+                    typer.echo(f"SIF  {image}")
+        return failures, len(images)
+
+    failures, image_count = asyncio.run(build_all())
+    if failures:
+        raise typer.Exit(1)
+    typer.echo(
+        f"Pre-built {image_count} SIF file(s) for {len(tasks)} Harbor task(s)."
+    )
+
+
 @app.command("runner")
 def run_runner(
     encoded: Annotated[
