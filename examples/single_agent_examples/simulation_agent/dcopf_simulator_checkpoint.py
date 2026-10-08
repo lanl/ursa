@@ -33,12 +33,13 @@ simulator = SimulatorAgent(
     workspace=workspace,
     embedding=embedding,
     checkpointer=checkpointer,
+    thread_id="dcopf_test_executor",
     use_web=True,
 )
-simulator.thread_id = "dcopf_test_executor"
 
-result = simulator.invoke(problem)
-
-print("COMPLETE ------------")
-# print("==============\n==============\n\n".join([x.text for x in result["messages"]]))
-print(result["messages"][-1].text)
+try:
+    result = simulator.invoke(problem)
+    print("COMPLETE ------------")
+    print(result["messages"][-1].text)
+finally:
+    simulator.close()

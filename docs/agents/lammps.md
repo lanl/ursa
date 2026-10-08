@@ -7,7 +7,8 @@ LAMMPS simulation workflow. At the highest level, it can:
 - summarize and choose a potential for the simulation task at hand,
 - author a LAMMPS input script using the chosen potential (and an optional template / data file),
 - execute LAMMPS via MPI (CPU or Kokkos GPU),
-- iteratively “fix” the input script on failures by using run history until success or a max attempt limit.
+- iteratively “fix” the input script on failures by using run history until success or a max attempt limit,
+- hand successful results to an embedded `ExecutionAgent` that writes a Markdown summary and relevant plots.
 
 The agent writes the outputs into a local `workspace` directory and uses rich console panels to display progress, choices, diffs, and errors.
 
@@ -35,13 +36,16 @@ installation, but can be installed via `pip install 'ursa[lammps]'` or `uv add
 from ursa.agents import LammpsAgent
 from langchain_openai import ChatOpenAI
 
-agent = LammpsAgent(llm = ChatOpenAI(model='gpt-5'))
+agent = LammpsAgent(llm=ChatOpenAI(model="gpt-5"))
 
-result = agent.invoke({
-    "simulation_task": "Carry out a LAMMPS simulation of Cu to determine its equation of state.",
-    "elements": ["Cu"],
-    "template": "No template provided."  #Template for the input file
-})
+try:
+    result = agent.invoke({
+        "simulation_task": "Carry out a LAMMPS simulation of Cu to determine its equation of state.",
+        "elements": ["Cu"],
+        "template": "No template provided.",
+    })
+finally:
+    agent.close()
 ```
 
 For more advanced usage see examples here: `ursa/examples/two_agent_examples/lammps_execute/`.
@@ -128,6 +132,13 @@ Stops when:
 - run succeeds (`returncode == 0`), or
 - `fix_attempts >= max_fix_attempts`
 
+### Result summary
+
+After a successful run, `summarize_results=True` sends the task and generated
+files to an embedded `ExecutionAgent`. The child shares the parent workspace
+and lifecycle and writes a Markdown report, including plots when useful. Set
+`summarize_results=False` to finish immediately after the LAMMPS run.
+
 ---
 
 ## State model (`LammpsState`)
@@ -179,6 +190,7 @@ Key parameters you can tune:
 - `ngpus` (default `-1`): set `>= 0` to enable Kokkos GPU flags
 - `lammps_cmd` (default `lmp_mpi`): the name of the LAMMPS executable to launch
 - `mpirun_cmd` (default `mpirun`): currently available options are `mpirun` and `mpiexec`. Other options such as `srun` will be added soon
+- `summarize_results` (default `True`): use the embedded execution child to create a Markdown summary after a successful run
 
 ### LLM / context trimming
 - `tiktoken_model` (default `gpt-5.4-mini`): tokenizer model name used to trim fetched potential metadata text
