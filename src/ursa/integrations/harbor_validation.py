@@ -1,4 +1,4 @@
-"""Static validation for Harbor task environments supported by URSA."""
+"""Validation and SIF pre-building for Harbor tasks supported by URSA."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _verifier_mode(
     return resolve_step_verifier_mode(task.config, step)
 
 
-def _validate_environment(
+def _make_environment(
     task: Task,
     *,
     environment_dir: Path,
@@ -57,21 +57,30 @@ def _validate_environment(
     network_policy,
     phase_network_policies,
     suffix: str,
-) -> None:
-    DockerfileSingularityEnvironment(
+    purpose: str,
+    image_cache_dir: Path | str | None = None,
+) -> DockerfileSingularityEnvironment:
+    trial_directory = (
+        ".ursa-validation" if purpose == "validate" else f".ursa-{purpose}"
+    )
+    return DockerfileSingularityEnvironment(
         environment_dir=environment_dir,
         environment_name=task.short_name,
-        session_id=f"{task.short_name}__validate__{suffix}",
-        trial_paths=TrialPaths(task.paths.task_dir / ".ursa-validation"),
+        session_id=f"{task.short_name}__{purpose}__{suffix}",
+        trial_paths=TrialPaths(task.paths.task_dir / trial_directory),
         task_env_config=task_env_config,
         network_policy=network_policy,
         phase_network_policies=phase_network_policies,
+        singularity_image_cache_dir=image_cache_dir,
     )
 
 
-def validate_harbor_task(task_dir: Path | str) -> None:
-    """Validate one Harbor task against URSA's Singularity constraints."""
-    task = Task(task_dir)
+def _task_environments(
+    task: Task,
+    *,
+    purpose: str,
+    image_cache_dir: Path | str | None = None,
+) -> list[DockerfileSingularityEnvironment]:
     trial_agent = AgentConfig()
     trial_environment = TrialEnvironmentConfig()
     steps: list[StepConfig | None] = list(task.config.steps or [None])
@@ -94,6 +103,7 @@ def validate_harbor_task(task_dir: Path | str) -> None:
         )
         plans.append((step, mode, plan))
 
+    environments = []
     agent_phases = [
         policy
         for _, mode, plan in plans
@@ -103,13 +113,17 @@ def validate_harbor_task(task_dir: Path | str) -> None:
             else [plan.agent_phase]
         )
     ]
-    _validate_environment(
-        task,
-        environment_dir=task.paths.environment_dir,
-        task_env_config=task.config.environment,
-        network_policy=plans[0][2].agent_env_baseline,
-        phase_network_policies=agent_phases,
-        suffix="agent",
+    environments.append(
+        _make_environment(
+            task,
+            environment_dir=task.paths.environment_dir,
+            task_env_config=task.config.environment,
+            network_policy=plans[0][2].agent_env_baseline,
+            phase_network_policies=agent_phases,
+            suffix="agent",
+            purpose=purpose,
+            image_cache_dir=image_cache_dir,
+        )
     )
 
     for index, (step, mode, plan) in enumerate(plans):
@@ -125,14 +139,44 @@ def validate_harbor_task(task_dir: Path | str) -> None:
             step_tests = task.paths.step_tests_dir(step.name)
             if step_tests.exists():
                 environment_dir = step_tests
-        _validate_environment(
-            task,
-            environment_dir=environment_dir,
-            task_env_config=verifier_environment,
-            network_policy=plan.verifier_env_baseline,
-            phase_network_policies=[plan.verifier_phase],
-            suffix=f"verifier-{index}",
+        environments.append(
+            _make_environment(
+                task,
+                environment_dir=environment_dir,
+                task_env_config=verifier_environment,
+                network_policy=plan.verifier_env_baseline,
+                phase_network_policies=[plan.verifier_phase],
+                suffix=f"verifier-{index}",
+                purpose=purpose,
+                image_cache_dir=image_cache_dir,
+            )
         )
+    return environments
+
+
+def validate_harbor_task(task_dir: Path | str) -> None:
+    """Validate one Harbor task against URSA's Singularity constraints."""
+    _task_environments(Task(task_dir), purpose="validate")
+
+
+async def prebuild_harbor_task(
+    task_dir: Path | str,
+    *,
+    force_build: bool = False,
+    image_cache_dir: Path | str | None = None,
+) -> list[Path]:
+    """Build main, Compose-build, and separate-verifier SIFs for one task."""
+    environments = _task_environments(
+        Task(task_dir),
+        purpose="prebuild",
+        image_cache_dir=image_cache_dir,
+    )
+    paths: list[Path] = []
+    for environment in environments:
+        for path in await environment.build_sifs(force_build=force_build):
+            if path not in paths:
+                paths.append(path)
+    return paths
 
 
 def discover_harbor_tasks(paths: list[Path]) -> list[Path]:
@@ -175,4 +219,8 @@ def discover_harbor_tasks(paths: list[Path]) -> list[Path]:
     return sorted(tasks)
 
 
-__all__ = ["discover_harbor_tasks", "validate_harbor_task"]
+__all__ = [
+    "discover_harbor_tasks",
+    "prebuild_harbor_task",
+    "validate_harbor_task",
+]
