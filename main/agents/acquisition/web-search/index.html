@@ -2060,7 +2060,8 @@ acquisition agent for open-web research. It subclasses
 <a class="autorefs autorefs-internal" href="../../../reference/api/agents/#ursa.agents.acquisition_agents.BaseAcquisitionAgent"><code>BaseAcquisitionAgent</code></a>,
 so it uses the same acquire-then-summarize/RAG graph as ArxivAgent and
 OSTIAgent.</p>
-<p><code>WebSearchAgent</code> uses DDGS search, retrieves HTML or PDF content from result URLs, extracts readable text, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.</p>
+<p><code>WebSearchAgent</code> uses DDGS search (or the SerpBase Google Search API when
+<code>SERPBASE_API_KEY</code> is set), retrieves HTML or PDF content from result URLs, extracts readable text, optionally augments PDF text with image descriptions, and then summarizes the acquired content or runs the RAG path when an embedding model is configured.</p>
 <p>See also: <a class="autorefs autorefs-internal" href="../#acquisition-agents">Acquisition Agents</a>.</p>
 <h2 id="basic-usage">Basic usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.chat_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">init_chat_model</span>
@@ -2103,6 +2104,12 @@ OSTIAgent.</p>
 <td><code>str</code></td>
 <td><code>"Mozilla/5.0"</code></td>
 <td>User-Agent header used when retrieving web pages.</td>
+</tr>
+<tr>
+<td><code>SERPBASE_API_KEY</code></td>
+<td>env var</td>
+<td>unset</td>
+<td>When set, <code>_search</code> queries Google via the <a href="https://serpbase.dev">SerpBase API</a> (<code>https://api.serpbase.dev/google/search</code>) instead of DDGS. Unset or API failure → transparent DDGS fallback.</td>
 </tr>
 <tr>
 <td><code>summarize</code></td>
@@ -2166,11 +2173,11 @@ OSTIAgent.</p>
 </tr>
 </tbody>
 </table>
-<p><code>WebSearchAgent</code> requires the DDGS dependency imported as <code>ddgs.DDGS</code>. If it is unavailable, initialization raises <code>ImportError</code>.</p>
+<p><code>WebSearchAgent</code> requires the DDGS dependency imported as <code>ddgs.DDGS</code>. If it is unavailable, initialization raises <code>ImportError</code>. The SerpBase path uses only the <code>requests</code> library already used throughout the codebase — no extra dependency.</p>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <p><code>WebSearchAgent</code> implements the acquisition hooks required by <code>BaseAcquisitionAgent</code>:</p>
 <ul>
-<li><code>_search(query)</code> — uses DDGS text search with <code>max_results</code> and <code>backend="auto"</code>.</li>
+<li><code>_search(query)</code> — uses DDGS text search with <code>max_results</code> and <code>backend="auto"</code>, or the SerpBase Google Search API when <code>SERPBASE_API_KEY</code> is set (falling back to DDGS if the API is unreachable or returns nothing).</li>
 <li><code>_id(hit_or_item)</code> — hashes the result URL to create a stable cache ID.</li>
 <li><code>_materialize(hit)</code> — retrieves each result URL:</li>
 <li>PDF-looking URLs are downloaded and parsed as PDFs.</li>
