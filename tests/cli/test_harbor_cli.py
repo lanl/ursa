@@ -8,8 +8,12 @@ from typer.testing import CliRunner
 harbor = pytest.importorskip("harbor")
 
 from ursa.integrations import harbor as harbor_integration  # noqa: E402
+from ursa.integrations.harbor_singularity import (  # noqa: E402
+    DockerfileSingularityEnvironment,
+)
 from ursa.integrations.harbor_validation import (  # noqa: E402
     discover_harbor_tasks,
+    prebuild_harbor_task,
 )
 
 runner = CliRunner()
@@ -68,6 +72,72 @@ def test_validate_harbor_paths_reports_failures(tmp_path):
 
     assert result.exit_code == 1
     assert f"FAIL {task}" in result.stderr
+
+
+async def test_prebuild_harbor_task_builds_agent_and_verifier_sifs(
+    tmp_path, monkeypatch
+):
+    task = _task(tmp_path)
+    cache = tmp_path / "sif-cache"
+    observed: list[tuple[Path, Path, bool]] = []
+
+    async def build(
+        self: DockerfileSingularityEnvironment,
+        force_build: bool = False,
+    ) -> list[Path]:
+        observed.append((
+            self.environment_dir,
+            self._image_cache_dir,
+            force_build,
+        ))
+        return [cache / f"{self.environment_dir.name}.sif"]
+
+    monkeypatch.setattr(DockerfileSingularityEnvironment, "build_sifs", build)
+
+    paths = await prebuild_harbor_task(
+        task, force_build=True, image_cache_dir=cache
+    )
+
+    assert observed == [
+        (task / "environment", cache, True),
+        (task / "tests", cache, True),
+    ]
+    assert paths == [cache / "environment.sif", cache / "tests.sif"]
+
+
+def test_harbor_prebuild_command_reports_built_sifs(tmp_path, monkeypatch):
+    task = _task(tmp_path)
+    cache = tmp_path / "sif-cache"
+    observed = []
+
+    async def build(
+        task_dir: Path,
+        *,
+        force_build: bool,
+        image_cache_dir: Path | None,
+    ) -> list[Path]:
+        observed.append((task_dir, force_build, image_cache_dir))
+        return [cache / "agent.sif", cache / "verifier.sif"]
+
+    monkeypatch.setattr(
+        "ursa.integrations.harbor_validation.prebuild_harbor_task", build
+    )
+
+    result = runner.invoke(
+        harbor_integration.app,
+        [
+            "prebuild",
+            "--force",
+            "--image-cache-dir",
+            str(cache),
+            str(task),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed == [(task, True, cache)]
+    assert f"OK   {task}: 2 SIF file(s)" in result.stdout
+    assert "Pre-built 2 SIF file(s) for 1 Harbor task(s)." in result.stdout
 
 
 def test_harbor_runner_dispatches(monkeypatch):

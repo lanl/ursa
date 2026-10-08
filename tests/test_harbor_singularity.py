@@ -276,6 +276,53 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
     environment._cleanup_staging()
 
 
+async def test_build_sifs_builds_main_and_unique_compose_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    environment = _environment(tmp_path, compose=True)
+    helper = environment.environment_dir / "helper"
+    helper.mkdir()
+    (helper / "Dockerfile").write_text("FROM busybox:latest\n")
+    (environment.environment_dir / "docker-compose.yaml").write_text(
+        "services:\n"
+        "  main:\n"
+        "    build: .\n"
+        "  helper:\n"
+        "    build: helper\n"
+        "  duplicate:\n"
+        "    build: helper\n"
+        "  external:\n"
+        "    image: redis:7\n"
+    )
+    observed: list[tuple[bool, Path, Path]] = []
+
+    async def build(
+        force_build: bool,
+        *,
+        dockerfile_path: Path | None = None,
+        context_dir: Path | None = None,
+        **_kwargs: object,
+    ) -> Path:
+        dockerfile = dockerfile_path or environment._dockerfile_path
+        context = context_dir or environment.environment_dir
+        observed.append((force_build, dockerfile, context))
+        return tmp_path / f"{context.name}.sif"
+
+    monkeypatch.setattr(environment, "_build_dockerfile_sif", build)
+
+    paths = await environment.build_sifs(force_build=True)
+
+    assert paths == [tmp_path / "environment.sif", tmp_path / "helper.sif"]
+    assert observed == [
+        (
+            True,
+            environment.environment_dir / "Dockerfile",
+            environment.environment_dir,
+        ),
+        (True, helper / "Dockerfile", helper),
+    ]
+
+
 async def test_stop_removes_runtime_workdir_and_restart_uses_a_new_one(
     tmp_path: Path,
 ):

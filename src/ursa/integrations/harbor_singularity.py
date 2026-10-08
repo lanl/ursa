@@ -1258,6 +1258,53 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             target=target,
         )
 
+    async def build_sifs(self, force_build: bool = False) -> list[Path]:
+        """Build every Dockerfile-backed SIF without starting an instance.
+
+        This includes the main environment and each Compose sidecar with a
+        ``build`` definition. Compose services that specify only ``image`` are
+        left as runtime image URIs and therefore do not produce a managed SIF
+        path here.
+        """
+        paths: list[Path] = []
+        main_path = await self._build_main_sif(force_build or self._force_pull)
+        if main_path is not None:
+            paths.append(main_path)
+        if not self._uses_compose:
+            return paths
+
+        compose_config = self._load_compose_config()
+        main_build = self._main_compose_build_inputs()
+        if (
+            main_build is None
+            and "image" not in compose_config["services"]["main"]
+        ):
+            main_build = (
+                self._dockerfile_path,
+                self.environment_dir,
+                (),
+                None,
+            )
+        seen_builds = {main_build} if main_build is not None else set()
+        for name, service in compose_config["services"].items():
+            if name == "main" or "build" not in service:
+                continue
+            build = self._compose_build_inputs(service["build"])
+            if build in seen_builds:
+                continue
+            seen_builds.add(build)
+            dockerfile, context, build_args, target = build
+            path = await self._build_dockerfile_sif(
+                force_build or self._force_pull,
+                dockerfile_path=dockerfile,
+                context_dir=context,
+                build_args=build_args,
+                target=target,
+            )
+            if path not in paths:
+                paths.append(path)
+        return paths
+
     async def _compose_image(
         self,
         service_name: str,
