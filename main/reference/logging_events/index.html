@@ -2283,7 +2283,7 @@ fields consistently:</p>
   reports progress from agent teams and symposia.</li>
 <li><a class="autorefs autorefs-internal" title="ursa.util.events.ToolEvents" href="../api/util/#ursa.util.events.ToolEvents"><code>ToolEvents</code></a> reports
   tool progress and preserves
-  <a href="https://reference.langchain.com/python/langchain/tools/#langchain.tools.ToolRuntime"><code>ToolRuntime</code></a>
+  <a href="https://reference.langchain.com/python/langchain/tools/ToolRuntime"><code>ToolRuntime</code></a>
   metadata.</li>
 <li><a class="autorefs autorefs-internal" title="emit(message, *, stage, **payload)" href="../api/util/#ursa.util.events.ProgressEvents.emit"><code>emit(...)</code></a>
   and <a class="autorefs autorefs-internal" title="aemit(message, *, stage, **payload)
@@ -2497,7 +2497,7 @@ renderer.</p>
 </ul>
 <h3 id="build-events-into-an-agent">Build events into an agent<a class="headerlink" href="#build-events-into-an-agent" title="Permanent link">&para;</a></h3>
 <p>Agent graph nodes should accept the active
-<a href="https://reference.langchain.com/python/langchain-core/runnables/#langchain_core.runnables.RunnableConfig"><code>RunnableConfig</code></a>
+<a href="https://reference.langchain.com/python/langchain-core/runnables/config/RunnableConfig"><code>RunnableConfig</code></a>
 and call
 <a class="autorefs autorefs-internal" title="events(config=None)" href="../api/agents/#ursa.agents.base.BaseAgent.events"><code>self.events(config)</code></a>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain_core.runnables</span><span class="w"> </span><span class="kn">import</span> <span class="n">RunnableConfig</span>
@@ -2533,7 +2533,7 @@ and
 in async graph nodes.</p>
 <h3 id="build-events-into-a-tool">Build events into a tool<a class="headerlink" href="#build-events-into-a-tool" title="Permanent link">&para;</a></h3>
 <p>Tools construct events from their
-<a href="https://reference.langchain.com/python/langchain/tools/#langchain.tools.ToolRuntime"><code>ToolRuntime</code></a>,
+<a href="https://reference.langchain.com/python/langchain/tools/ToolRuntime"><code>ToolRuntime</code></a>,
 which preserves the runnable configuration, tool call ID, and owning agent or
 environment metadata:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">langchain.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolRuntime</span>

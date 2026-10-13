@@ -68,6 +68,8 @@ def _example_slug(folder: Path) -> str:
 
 def _github_ref() -> str:
     """Map Mike's docs version to this repository's source branch or tag."""
+    if source_ref := os.environ.get("URSA_DOCS_SOURCE_REF"):
+        return source_ref
     version = os.environ.get("MIKE_DOCS_VERSION", "main")
     if version == "main":
         return version
