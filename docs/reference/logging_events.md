@@ -36,7 +36,7 @@ fields consistently:
   reports progress from agent teams and symposia.
 - [`ToolEvents`][ursa.util.events.ToolEvents] reports
   tool progress and preserves
-  [`ToolRuntime`](https://reference.langchain.com/python/langchain/tools/#langchain.tools.ToolRuntime)
+  [`ToolRuntime`](https://reference.langchain.com/python/langchain/tools/ToolRuntime)
   metadata.
 - [`emit(...)`][ursa.util.events.ProgressEvents.emit]
   and [`aemit(...)`][ursa.util.events.ProgressEvents.aemit]
@@ -246,7 +246,7 @@ Before adding or changing event-producing code:
 ### Build events into an agent
 
 Agent graph nodes should accept the active
-[`RunnableConfig`](https://reference.langchain.com/python/langchain-core/runnables/#langchain_core.runnables.RunnableConfig)
+[`RunnableConfig`](https://reference.langchain.com/python/langchain-core/runnables/config/RunnableConfig)
 and call
 [`self.events(config)`][ursa.agents.base.BaseAgent.events]:
 
@@ -283,7 +283,7 @@ in async graph nodes.
 ### Build events into a tool
 
 Tools construct events from their
-[`ToolRuntime`](https://reference.langchain.com/python/langchain/tools/#langchain.tools.ToolRuntime),
+[`ToolRuntime`](https://reference.langchain.com/python/langchain/tools/ToolRuntime),
 which preserves the runnable configuration, tool call ID, and owning agent or
 environment metadata:
 
