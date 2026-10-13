@@ -663,7 +663,9 @@ async def open_status_from_slash_picker(pilot):
     await pilot.press("/")
     await await_screen(pilot, HotlistScreen)
     await pilot.press("s", "t", "a", "t", "u", "s", "enter")
-    return await await_screen(pilot, InformationScreen)
+    screen = await await_screen(pilot, InformationScreen)
+    await await_dom(pilot, screen, "#status-tabs Tab", count=2)
+    return screen
 
 
 async def test_slash_picker_lists_commands_and_fits_terminal(tmp_path):
