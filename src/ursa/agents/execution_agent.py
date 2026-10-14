@@ -308,24 +308,26 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         runtime: Runtime[AgentContext],
         config: RunnableConfig | None = None,
     ) -> ExecutionState:
-        """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
+        """Prepare messages, handle optional symlinks, and invoke the executor LLM.
 
-        This method copies the incoming state, ensures a workspace directory exists
-        (creating one with a default name when absent), optionally creates a symlink
+        This method copies the incoming state, optionally creates a symlink
         described by state["symlinkdir"], sets or injects the executor system prompt
         as the first message, and invokes the bound LLM. When logging is enabled,
         it persists the pre-invocation state to disk.
 
+        Configure the working directory with the agent constructor's ``workspace``
+        argument, for example, ``ExecutionAgent(llm=llm, workspace="./work")``.
+        The workspace is available through ``runtime.context.workspace``.
+
         Args:
             state: The current execution state. Expected keys include:
                 - "messages": Ordered list of System/Human/AI/Tool messages.
-                - "workspace": Optional path to the working directory.
                 - "symlinkdir": Optional dict with "source" and "dest" keys.
 
         Returns:
             ExecutionState: Partial state update containing:
                 - "messages": A list with the model's response as the latest entry.
-                - "workspace": The resolved workspace path.
+                - "symlinkdir": Symlink configuration and creation status, if supplied.
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
