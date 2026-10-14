@@ -188,7 +188,9 @@ As one example, \autoref{fig:helios} shows the use of URSA in the design of iner
 
 As a second example, \autoref{fig:lammps} shows atomistic calculations performed by URSA's LAMMPS Agent [@somasundaram] for a high-entropy alloy [@george2019high]. Such calculations are commonly employed in computational materials science to predict material properties and guide the design of novel materials.
 
-![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](lammps.png){width=70%}
+The simulation results shown in this figure were generated using the example script [`stiffness_tensor_of_hea.py`](https://github.com/lanl/ursa/blob/joss/examples/single_agent_examples/lammps_agent/stiffness_tensor_of_hea.py).
+
+![The stiffness tensor, i.e., the elastic constants calculated for the high entropy alloy Co-Cr-Fe-Mn-Ni. The atomistic calculation was performed by the LAMMPS agent.\label{fig:lammps}](figure2/new/C_ij_sym_heatmap.png){width=70%}
 
 # AI usage disclosure
 
