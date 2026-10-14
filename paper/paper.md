@@ -182,9 +182,9 @@ This environment is particularly well suited for scientific tasks that benefit f
 
 URSA is actively used in a growing number of scientific research applications, averaging ~2000 downloads a month on PyPI. While the framework was initially developed at Los Alamos National Laboratory, it is distributed as open-source software and is intended to support contributions and adoption by the broader scientific community.
 
-As one example, \autoref{fig:helios} shows the use of URSA in the design of inertial confinement fusion (ICF) capsules. In this workflow, URSA's planning and execution agents were used to autonomously explore candidate designs and optimize neutron yield. More details of this application can be found in @grosskopf2025ursa.
+As one example, \autoref{fig:helios} shows the use of URSA in the design of inertial confinement fusion (ICF) capsules. In this workflow, URSA's hypothesizer and execution agents explored candidate designs to optimize neutron yield. More details of this application can be found in @grosskopf2025ursa.
 
-![Comparison of URSA to Bayesian optimization (BO) for designing a direct-drive ICF design. The plots show the iterative running maximum neutron yield. Figure taken from @grosskopf2025ursa.\label{fig:helios}](helios.png){width=70%}
+![Comparison of URSA to Bayesian optimization (BO) for direct-drive ICF design, showing the running maximum neutron yield. URSA received a published double-shell ICF paper as literature context and a performance-target hint of $\log_{10}$ yield above 17; BO received neither. The initial Latin-hypercube evaluations for BO are omitted from the plot, and each URSA configuration was run once. Figure reproduced from @grosskopf2025ursa; the complete ICF workflow is not included in this repository.\label{fig:helios}](helios.png){width=70%}
 
 As a second example, \autoref{fig:lammps} shows atomistic calculations performed by URSA's LAMMPS Agent [@somasundaram] for a high-entropy alloy [@george2019high]. Such calculations are commonly employed in computational materials science to predict material properties and guide the design of novel materials.
 
