@@ -126,9 +126,9 @@ ursa --config config.yaml
 ```
 where the YAML configuration specifies details such as the desired LLM and other runtime options. Within the REPL, users can invoke individual agents using commands such as
 ```text
-ursa> plan Write a workflow for computing elastic constants
+ursa> #plan Write a workflow for computing elastic constants
       using a molecular dynamics simulation.
-ursa> execute Execute the plan.
+ursa> #execute Execute the plan.
 ```
 
 ### Web Dashboard
@@ -151,15 +151,20 @@ from langchain_core.messages import HumanMessage
 from ursa.agents import ExecutionAgent
 
 llm = init_chat_model(model="openai:gpt-5.4")
-agent = ExecutionAgent(llm=llm)
+agent = ExecutionAgent(
+    llm=llm,
+    workspace="./ursa-script-workspace",
+)
 
 result = agent.invoke({
     "messages": [
         HumanMessage(
-        content="Write and run a Python script that prints the first 10 prime numbers."
+            content=(
+                "Write and run a Python script that prints "
+                "the first 10 prime numbers."
+            )
         )
     ],
-    "workspace": "./ursa-script-workspace",
 })
 print(result["messages"][-1].content)
 ```
