@@ -1117,7 +1117,7 @@ async def test_agents_apply_agent_config_overrides(
 
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=EmbModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding", model_provider="fake"),
     )
 
     overrides = {}
@@ -1143,7 +1143,7 @@ async def test_thread_id_propagates_from_config(tmp_path, monkeypatch):
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
         thread_id="custom-thread",
-        emb_model=EmbModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding", model_provider="fake"),
     )
 
     hitl = HITL(config)
@@ -1159,7 +1159,7 @@ async def test_hitl_run_agent_forwards_callbacks(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=EmbModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding", model_provider="fake"),
     )
     hitl = HITL(config)
     captured = {}
@@ -1551,7 +1551,7 @@ def test_agent_config_unknown_agent_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=EmbModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding", model_provider="fake"),
     )
     config.agent_config = {
         "ghost": {"workspace": tmp_path / "ghost-workspace"},
@@ -1565,7 +1565,7 @@ def test_agent_config_none_value_errors(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=EmbModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding", model_provider="fake"),
     )
     with pytest.raises(ValidationError):
         config.agent_config = {"chat": None}
@@ -1576,7 +1576,7 @@ async def test_agent_config_unknown_option_raises(tmp_path, monkeypatch):
     _stub_hitl_dependencies(monkeypatch)
     config = UrsaConfig(
         workspace=tmp_path / "global-workspace",
-        emb_model=EmbModelConfig(model="fake-embedding"),
+        emb_model=EmbModelConfig(model="fake-embedding", model_provider="fake"),
     )
     config.agent_config = {"chat": {"nonexistent_option": True}}
 

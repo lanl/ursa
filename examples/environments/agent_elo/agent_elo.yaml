@@ -1,0 +1,35 @@
+name: numerical_integration_elo
+group: default
+
+description: >
+  A small evolutionary environment where competing agents develop and
+  improve numerical solutions to a simple scientific-computing problem.
+
+initial_rating: 1500
+k_factor: 32
+deaths_per_round: 1
+
+# Reproducible random pairing and Elo tie-breaking.
+seed: 12345
+
+# One env.invoke() runs both generations.
+generations: 2
+
+# Set this to a saved environment_state.json to resume a previous run.
+restart_from_json: null
+
+# Specify evaluation criteria in the task supplied to invoke().
+# judge_prompt is optional additional guidance.
+
+members:
+  - name: researcher_1
+    role: >
+      Independent computational scientist developing and validating
+      numerical methods.
+    agent: ExecutionAgent
+
+  - name: researcher_2
+    role: >
+      Independent computational scientist developing and validating
+      numerical methods.
+    agent: ExecutionAgent

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ursa import security
@@ -155,6 +156,51 @@ def test_environment_launch_validation_is_group_scoped_and_safe(
         assert "not available from the dashboard" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("Custom class was accepted")
+
+
+@pytest.mark.parametrize("setting", ["workspace", "agent_name"])
+def test_dashboard_elo_validation_rejects_member_overrides(
+    monkeypatch, tmp_path, setting
+):
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
+    monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
+    config_yaml = """\
+name: elo_workspace_test
+workspace: ./elo_run
+members:
+  - name: researcher_1
+    agent: ExecutionAgent
+  - name: researcher_2
+    agent: ExecutionAgent
+"""
+    with TestClient(
+        create_app(credential_store=MemoryCredentialStore())
+    ) as client:
+        valid = client.post(
+            "/environment-runs/validate",
+            json={"environment_type": "agent_elo", "config_yaml": config_yaml},
+        )
+        assert valid.status_code == 200
+        for workspace in ("./custom_workspace", "null"):
+            invalid_yaml = config_yaml.replace(
+                "  - name: researcher_1\n",
+                "  - name: researcher_1\n"
+                f"    config:\n      {setting}: {workspace}\n",
+            )
+            invalid = client.post(
+                "/environment-runs/validate",
+                json={
+                    "environment_type": "agent_elo",
+                    "config_yaml": invalid_yaml,
+                },
+            )
+            assert invalid.status_code == 400
+            detail = invalid.json()["detail"]
+            assert f"Member 'researcher_1' sets config.{setting}" in detail
+            if setting == "workspace":
+                assert "Set the top-level workspace instead" in detail
+            else:
+                assert "Remove config.agent_name" in detail
 
 
 def test_dashboard_can_validate_create_and_replace_environment_run(
@@ -379,3 +425,71 @@ async def test_environment_worker_builds_team_and_restores_member_secrets(
     assert seen["config"]["group"] == "default"
     assert seen["member_key"] == "member"
     assert __import__("os").environ.get("MEMBER_TEST_KEY") is None
+
+
+@pytest.mark.parametrize(
+    "extra,valid",
+    [
+        ("generations: 0", False),
+        ("deaths_per_round: 1.5", False),
+        ("k_factor: .inf", False),
+        ("member_timeout_seconds: -1", False),
+        ("unexpected: true", False),
+        ("generations: '2'\ndeaths_per_round: 0", True),
+    ],
+)
+def test_dashboard_elo_uses_config_constraints(
+    monkeypatch, tmp_path, extra, valid
+):
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
+    monkeypatch.setenv("URSA_DASHBOARD_GROUP", "default")
+    config_yaml = "name: elo\nmembers:\n  - name: a\n  - name: b\n" + extra
+    with TestClient(
+        create_app(credential_store=MemoryCredentialStore())
+    ) as client:
+        response = client.post(
+            "/environment-runs/validate",
+            json={
+                "environment_type": "agent_elo",
+                "config_yaml": config_yaml,
+            },
+        )
+    assert response.status_code == (200 if valid else 400)
+
+
+def test_dashboard_elo_launch_configuration_can_be_reloaded(
+    monkeypatch, tmp_path
+):
+    from ursa.environments.config import AgentEloConfig
+
+    monkeypatch.setattr(security, "URSA_CACHE_DIR", tmp_path / "ursa")
+    launch = validate_environment_launch(
+        "agent_elo",
+        """
+name: elo
+inference_providers:
+  local:
+    base_url: http://localhost:1234/v1
+    temperature: 0.7
+members:
+  - name: a
+    model:
+      model: openai:test
+      inference_provider: local
+      temperature: 0.2
+  - name: b
+""",
+        group="default",
+    )
+    restored = AgentEloConfig.model_validate(launch.config_mapping)
+    assert restored.members[0].model.base_url == "http://localhost:1234/v1"
+    assert restored.members[0].model.temperature == 0.2
+    restart = validate_environment_launch(
+        "agent_elo",
+        """
+name: elo
+restart_from_json: ./environment_state.json
+""",
+        group="default",
+    )
+    assert restart.config.members == []

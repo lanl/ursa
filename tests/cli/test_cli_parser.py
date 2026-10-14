@@ -830,8 +830,8 @@ def test_merge_ursa_config_validates_provider_after_merging_layers(
     assert config.llm_model.inference_provider == "openai_project"
 
 
-def test_model_config_kwargs_includes_extra():
-    cfg = ModelConfig(
+def test_chat_model_config_kwargs_includes_extra():
+    cfg = ChatModelConfig(
         model="openai:gpt-5",
         ssl_verify=False,
     )
@@ -909,8 +909,8 @@ def test_emb_model_kwargs_use_embedding_provider_argument():
     assert "model_provider" not in config.kwargs
 
 
-def test_model_config_openai_uses_truststore_client():
-    cfg = ModelConfig(model="openai:text-embedding-3-large")
+def test_chat_model_config_openai_uses_truststore_client():
+    cfg = ChatModelConfig(model="openai:text-embedding-3-large")
 
     kwargs = cfg.kwargs
 
@@ -920,8 +920,8 @@ def test_model_config_openai_uses_truststore_client():
     assert "http_async_client" in kwargs
 
 
-def test_model_config_ollama_uses_client_kwargs():
-    cfg = ModelConfig(model="ollama:nomic-embed-text:latest")
+def test_chat_model_config_ollama_uses_client_kwargs():
+    cfg = ChatModelConfig(model="ollama:nomic-embed-text:latest")
 
     kwargs = cfg.kwargs
 

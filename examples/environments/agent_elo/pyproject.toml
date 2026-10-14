@@ -1,0 +1,12 @@
+[project]
+name = "ursa-example-agent-elo"
+version = "0.1.0"
+description = "Evolve numerical-integration solutions with Agent Elo."
+requires-python = ">=3.11"
+dependencies = ["ursa-ai"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+ursa-ai = { path = "../../..", editable = true }

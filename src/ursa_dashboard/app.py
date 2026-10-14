@@ -105,6 +105,7 @@ from .credentials import (
     store_api_key,
 )
 from .environment_run_manager import (
+    ELO_STARTER_YAML,
     SYMPOSIUM_STARTER_YAML,
     TEAM_STARTER_YAML,
     EnvironmentDefinitionExistsError,
@@ -237,11 +238,16 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
         "yes",
         "on",
     }
+    # Agents whose `use_web` default follows the dashboard-wide opt-in
+    # (`--use-web` / URSA_DASHBOARD_USE_WEB). Kept in sync with the CLI fan-out
+    # in `ursa.cli.config` ("chat", "execute", "deep_review", "prompt") plus the
+    # dashboard-only planning/execution workflow.
     web_opt_in_agent_ids = {
         "chat_agent",
         "execution_agent",
         "planning_executor_workflow",
         "prompting_agent",
+        "deep_review_agent",
     }
     rag_tool_agent_ids = {
         "chat_agent",
@@ -5676,6 +5682,7 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
                 runs=runs,
                 team_starter_yaml=TEAM_STARTER_YAML,
                 symposium_starter_yaml=SYMPOSIUM_STARTER_YAML,
+                elo_starter_yaml=ELO_STARTER_YAML,
             )
         )
 

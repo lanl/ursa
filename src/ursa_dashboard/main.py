@@ -29,6 +29,13 @@ def main(
         resolve_path=True,
         help="YAML/JSON URSA config whose llm_model settings initialize the dashboard LLM endpoint.",
     ),
+    use_web: bool = typer.Option(
+        False,
+        "--use-web",
+        help="Enable web/arXiv/OSTI search tools for dashboard-created agents. "
+        "Mirrors `ursa --use-web`. Also settable via URSA_DASHBOARD_USE_WEB=1. "
+        "Individual runs can still override this in the UI.",
+    ),
 ):
     """Launch the Ursa Web Dashboard."""
     logging.basicConfig(level=logging.INFO)
@@ -43,6 +50,10 @@ def main(
             os.environ["URSA_DASHBOARD_CONFIG"] = str(config)
         else:
             os.environ.pop("URSA_DASHBOARD_CONFIG", None)
+        # Must be set before `uvicorn.run` below: `create_app` reads this env
+        # var at import/factory time, and worker subprocesses inherit it.
+        if use_web:
+            os.environ["URSA_DASHBOARD_USE_WEB"] = "1"
         if host in ["127.0.0.1", "localhost"]:
 
             def open_browser():
