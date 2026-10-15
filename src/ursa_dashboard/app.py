@@ -67,6 +67,7 @@ from ursa.util.inference_providers import (
     model_listing_provider,
     sort_provider_models,
 )
+from ursa.welcome_tasks import dashboard_payload
 
 from .api_models import (
     CredentialSetRequest,
@@ -3157,55 +3158,11 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     _welcomeTaskIndexes: {},
   };
 
-  // Add new examples here. The welcome screen chooses one task from each
-  // group on load; users can rotate the examples without leaving the page.
-  const WELCOME_TASK_LIBRARY = [
-    {
-      agentId: 'chat_agent',
-      label: 'Base',
-      purpose: 'Explore and explain',
-      tasks: [
-        {
-          title: 'Build intuition for Bayesian optimization',
-          prompt: 'Explain Expected Improvement and Upper Confidence Bound. Use one concrete optimization example, compare how the acquisition functions balance exploration and exploitation, and end with practical guidance about when to choose each one.'
-        },
-        {
-          title: 'Making a graph for a presentation',
-          prompt: 'Make a professional, clean PNG visualizing the spacings between the first 10,000 prime numbers. Include clear labels and a short Markdown note explaining the main patterns visible in the plot.'
-        }
-      ]
-    },
-    {
-      agentId: 'execution_agent',
-      label: 'Execute',
-      purpose: 'Analyze and create',
-      tasks: [
-        {
-          title: 'Benchmark coding algorithms',
-          prompt: 'Create a python function that finds the sum of the first N positive integers with a for loop. Time how long it takes to sum the first 10,000 and print the results to the console. Then add a new function that computes the same value using the built-in sum function, no loops. Compare the timing for these two methods on the first 100,000 integers, and check the results match. Finally, add a third function that uses a static formula the compute the same value. Compare the timing for all three methods on the first million integers, and check the results match.'
-        },
-        {
-          title: 'Compare EI and UCB experimentally',
-          prompt: 'Compare Expected Improvement and Upper Confidence Bound for optimizing the six-hump camel function and write a report summarizing the results. The report should include one professional, clean PNG image visualizing the results.'
-        }
-      ]
-    },
-    {
-      agentId: 'planning_executor_workflow',
-      label: 'Plan + Execute',
-      purpose: 'Plan a larger project',
-      tasks: [
-        {
-          title: 'Teach ML through a model comparison',
-          prompt: 'Download the Boston Housing Dataset and compare 5 different machine-learning predictors on hold-out prediction performance. Choose the models to make central ideas from machine learning clear to a student audience. Then write a presentation geared at an undergraduate audience using these results.'
-        },
-        {
-          title: 'Plan and deliver a reproducible data study',
-          prompt: 'Find a small public tabular dataset suitable for teaching classification. Plan and run a reproducible comparison of five models that illuminate different machine-learning ideas, then create an undergraduate-level presentation with a professional results visualization and clear takeaways.'
-        }
-      ]
-    }
-  ];
+  // Welcome tasks are curated in ursa/welcome_tasks.py 
+  // and injected below when the dashboard is rendered, so the same
+  // library can be reused elsewhere in URSA. The placeholder is replaced
+  // with a JSON array literal in ui_dashboard().
+  const WELCOME_TASK_LIBRARY = __WELCOME_TASK_LIBRARY__;
 
   function escHtml(s) {
     return String(s).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[c]));
@@ -7331,6 +7288,12 @@ textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 
         dashboard_js = DASHBOARD_JS.replace(
             "  init().catch", ONBOARDING_JS + "\n  init().catch"
+        )
+        # Swap the welcome-task placeholder for the curated library from
+        # ursa/welcome_tasks.py (see the comment above the placeholder).
+        dashboard_js = dashboard_js.replace(
+            "__WELCOME_TASK_LIBRARY__",
+            json.dumps(dashboard_payload(), separators=(",", ":")),
         )
         html_doc = f"""<!doctype html>
 <html lang=\"en\">

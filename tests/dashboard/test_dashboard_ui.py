@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ursa import security
+from ursa.welcome_tasks import WELCOME_TASK_LIBRARY
 from ursa_dashboard.app import create_app
 from ursa_dashboard.credentials import MemoryCredentialStore
 
@@ -38,6 +39,20 @@ def test_dashboard_always_uses_welcome_screen_and_closed_panels(
     assert 'id="agentList"' not in dashboard_html
     assert "Start a session</strong> in the sidebar" not in dashboard_html
     assert "background-size: cover;" in dashboard_html
+
+
+def test_welcome_tasks_are_injected_from_shared_library(
+    dashboard_html: str,
+) -> None:
+    """Welcome examples are curated in ursa.welcome_tasks.py and injected
+    into the client script when the dashboard is rendered."""
+    assert "const WELCOME_TASK_LIBRARY = __WELCOME_TASK_LIBRARY__" not in (
+        dashboard_html
+    )
+    assert "const WELCOME_TASK_LIBRARY = [" in dashboard_html
+    for group in WELCOME_TASK_LIBRARY:
+        assert f'"agentId":"{group.agent_id}"' in dashboard_html
+        assert f'"title":"{group.tasks[0].title}"' in dashboard_html
 
 
 def test_composer_uses_registry_driven_agent_buttons(
