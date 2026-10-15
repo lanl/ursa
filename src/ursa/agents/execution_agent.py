@@ -308,7 +308,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         runtime: Runtime[AgentContext],
         config: RunnableConfig | None = None,
     ) -> ExecutionState:
-        """Prepare messages, handle optional symlinks, and invoke the executor LLM.
+        """Prepare workspace, handle optional symlinks, and invoke the executor LLM.
 
         This method copies the incoming state, optionally creates a symlink
         described by state["symlinkdir"], sets or injects the executor system prompt
@@ -325,9 +325,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
                 - "symlinkdir": Optional dict with "source" and "dest" keys.
 
         Returns:
-            ExecutionState: Partial state update containing:
-                - "messages": A list with the model's response as the latest entry.
-                - "symlinkdir": Symlink configuration and creation status, if supplied.
+            Partial update to ExecutionState
         """
         # Add model to the state so it can be passed to tools like the URSA Arxiv or OSTI tools
         new_state = deepcopy(state)
