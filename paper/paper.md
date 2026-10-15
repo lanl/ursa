@@ -186,7 +186,7 @@ Agent Symposia let participants independently propose solutions, critique one an
 
 # Research impact statement
 
-URSA is actively used in a growing number of scientific research applications, averaging ~2000 downloads a month on PyPI. While the framework was initially developed at Los Alamos National Laboratory, it is distributed as open-source software and is intended to support contributions and adoption by the broader scientific community.
+URSA has been applied by the authors to scientific workflows, including inertial confinement fusion design and atomistic simulation. Developed at Los Alamos National Laboratory, it is distributed as open-source software to support use and contributions by the broader scientific community.
 
 As one example, \autoref{fig:helios} shows the use of URSA in the design of inertial confinement fusion (ICF) capsules. In this workflow, URSA's hypothesizer and execution agents explored candidate designs to optimize neutron yield. More details of this application can be found in @grosskopf2025ursa.
 
