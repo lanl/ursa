@@ -92,39 +92,48 @@ URSA builds on LangGraph by packaging reusable research agents, agents for runni
 
 # Software design
 
-URSA is built on top of LangGraph [@langgraph] and is agnostic to the underlying LLM. Its software architecture is organized around three main concepts: (i) reusable core and domain-specific agents, (ii) multiple user interfaces that expose a common execution engine, and (iii) execution environments that orchestrate collaboration among multiple agents.
+URSA uses LangGraph [@langgraph] to express agent workflows through explicit states, nodes, and transitions, and to support checkpointing. This makes stages such as planning, review, execution, and error recovery independently configurable. Reusing this infrastructure reduces the orchestration code maintained within URSA, while coupling its implementation to LangGraph's state model and APIs. URSA supports multiple model providers through LangChain's chat-model interface. However, an agent's performance does vary with the selected model.
 
 ## Agent Framework
 
-The separation of the framework into (i) core and (ii) domain-specific agents enables the same architectural components to be reused across different research problems.   
+URSA provides reusable core agents and domain-specific agents that combine them with scientific tools and knowledge. The agents below illustrate these capabilities; they are not an exhaustive list.
+
+Each agent has a configurable workspace for working files and command execution. Named agents maintain persistent state in separate directories organized by group and agent name. Callers can also supply a LangGraph checkpointer. Thread identifiers distinguish checkpointed conversations. Checkpoints preserve the agent's state rather than restoring external files or processes modified by tools.
+
+The `run_command` tool normally asks an LLM to assess a proposed shell command before executing it. `URSA_SAFETY_LEVEL` selects the screening policy: `default` assesses commands with explicit trust assumptions for configured executables, agent-created files, and LaTeX operations; `low` focuses on destructive commands and high-concern data extraction; `trusted` supplies a generic trust statement without the command; and `none` or `yolo` bypasses assessment. Unrecognized values use the default policy. LLM screening adds inference cost and can incorrectly accept or reject commands. It is a best-effort check: commands execute with the host process's permissions, and the workspace does not provide filesystem isolation.
 
 ### Core Agents
 
-URSA's core agents include, but are not limited to, the following:
+Examples of core agents include:
 
-* Planning Agent: This agent decomposes a user-specified scientific problem into a sequence of executable tasks. Implemented as a LangGraph workflow, it consists of three LLM-driven nodes: a planner node that generates an initial research plan, a reviewer node that evaluates and iteratively refines the plan, and a formalizer node that converts the approved plan into a structured JSON representation.
+* Planning Agent: Generates, reviews, and formalizes research plans as structured tasks.
 
-* Execution Agent: This agent carries out research tasks specified either in natural language or in the structured JSON format produced by the Planning Agent. It interacts with tools through LangGraph tool calls and through the Model Context Protocol (MCP), allowing virtually any user-provided executable to be incorporated into agent workflows. The Execution Agent also includes built-in tools for code generation and execution, file reading and writing, and system command execution. To improve safety, proposed system commands are screened by an LLM-driven safety node before execution.
+* Execution Agent: Carries out tasks using tools for code execution, file operations, and shell commands, with additional tools available through the Model Context Protocol (MCP).
 
 ### Domain-Specific Agents
 
-* Simulation Agent: The Simulation Agent supports the use of computationally intensive numerical simulation codes. This agent is constructed by orchestrating two Chat Agents within a LangGraph workflow. One agent is responsible for documentation and knowledge acquisition, while the other handles simulation setup, execution, debugging, and analysis. The documentation stage gathers information from user-provided manuals, web resources, scientific literature, and RAG-based knowledge bases [@gao2023retrieval] to construct a task-specific user guide. This guide is then passed to the simulation stage, which uses it to configure and execute simulation campaigns, analyze outputs, and iteratively resolve execution failures.
+Examples of domain-specific agents include:
 
-* Optimization Agent: The Optimization Agent is a self-contained LangGraph workflow for formulating and solving optimization and inverse-design problems from natural-language input. The agent first extracts the optimization problem, converts it into a structured mathematical representation, and optionally discretizes the problem when infinite-dimensional variables or constraints are detected. It then selects an appropriate solver, generates executable optimization code, runs feasibility checks using a dedicated tool, verifies the resulting formulation, and produces a final explanation of the solution. 
+* Simulation Agent: Coordinates two Chat Agents for documentation acquisition and simulation setup, execution, debugging, and analysis.
 
-* LAMMPS Agent: To illustrate how specialized a URSA agent can be, the Large-scale Atomic/Molecular Massively Parallel Simulator (LAMMPS) [@thompson2022lammps] Agent provides a dedicated workflow for molecular dynamics calculations [@somasundaram]. The agent is capable of autonomously orchestrating the full lifecycle of a molecular dynamics simulation, including interatomic potential selection, generation of LAMMPS input scripts, simulation execution, iterative error recovery, and post-processing of results. A key feature of the agent is its ability to leverage other agents within the URSA ecosystem for tasks such as visualization, literature review, and validation against published results.
+* Optimization Agent: Formulates optimization problems, selects solvers, generates code, and checks results.
+
+* LAMMPS Agent: Selects interatomic potentials, generates simulation inputs, runs the Large-scale Atomic/Molecular Massively Parallel Simulator (LAMMPS) [@thompson2022lammps], and supports error recovery and analysis [@somasundaram].
 
 ## User Interfaces
 
-URSA's framework is exposed through multiple interfaces that share the same underlying engine. 
+The CLI, web dashboard, Python API, and MCP interface expose URSA's agent capabilities.
 
 ### Command-Line Interface
 
-The command-line interface (CLI) provides an interactive Read-Eval-Print Loop (REPL) for executing agents and composing scientific workflows. A typical session is launched using
+The CLI starts with:
+
 ```bash
 ursa --config config.yaml
 ```
-where the YAML configuration specifies details such as the desired LLM and other runtime options. Within the REPL, users can invoke individual agents using commands such as
+
+The configuration selects models and runtime options. Within the REPL, agent names prefixed with `#` route requests:
+
 ```text
 ursa> #plan Write a workflow for computing elastic constants
       using a molecular dynamics simulation.
@@ -133,18 +142,12 @@ ursa> #execute Execute the plan.
 
 ### Web Dashboard
 
-URSA also provides a browser-based dashboard that exposes the same agent capabilities through a graphical interface. After installing the optional dashboard dependencies, the server can be started with
-```bash
-ursa-dashboard
-```
-or configured explicitly, for example,
-```bash
-ursa-dashboard --host 127.0.0.1 --port 8080
-```
+The web dashboard provides a graphical interface and can be launched with `ursa-dashboard` after installing the optional dashboard dependencies.
 
 ### Python Interface
 
-For integration into scientific software, URSA can be imported directly as a Python package. Agents may be instantiated, configured, and executed within Python scripts or Jupyter notebooks. A typical workflow consists of creating an agent instance and invoking it with a natural-language task:
+Python supports embedding agents in scripts and notebooks:
+
 ```python
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
@@ -168,20 +171,18 @@ result = agent.invoke({
 })
 print(result["messages"][-1].content)
 ```
-The Python interface is particularly useful for integration with existing simulation codes and high-performance computing workflows. 
 
 ## Agent Execution Environments
 
-URSA provides execution environments for composing multiple agents into larger scientific workflows. 
+URSA provides collaboration environments for delegation and comparison of alternative scientific arguments. Examples of these environments include Agent Teams and Agent Symposia.
 
 ### Agent Teams
 
-The Agent Teams environment coordinates multiple agents through a hierarchical collaboration model. A designated principal investigator (PI) agent receives the user's request, decomposes it into subtasks, and delegates those tasks to specialized agents through focused prompts. URSA's core Execution Agent serves as the default PI because it supports the delegation tools required to coordinate the team, although users may substitute their own tool-enabled agents. URSA's documentation includes several examples of Agent Teams, including workflows in which a PI delegates literature review tasks to a Chat Agent before synthesizing the results into a final response.
+Agent Teams use a principal investigator agent to delegate tasks and combine results. The Execution Agent serves as the default coordinator, although users can substitute other agents equipped with delegation tools.
 
 ### Agent Symposia
 
-The Agent Symposia environment follows a peer-review collaboration model, rather than a hierarchical one. Each participant agent develops its own solution or recommendation, critiques the responses of other participants, and iteratively refines its reasoning. The final response is then synthesized from the discussion. Different participants may bring different tools, assumptions, models, and reasoning styles.
-This environment is particularly well suited for scientific tasks that benefit from multiple independent perspectives, such as research planning, hypothesis generation, or evaluation of competing approaches.
+Agent Symposia let participants independently propose solutions, critique one another, and refine their responses before synthesis. Participants can bring different tools, models, and assumptions to the discussion.
 
 # Research impact statement
 
