@@ -23,6 +23,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from rich import get_console
 from rich.box import HEAVY
 from rich.console import Group
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
@@ -1453,7 +1454,14 @@ class Telemetry:
         otel_headers: str | Mapping | None = None,
         save_raw_snapshot: bool | None = None,
         save_raw_records: bool | None = None,
-    ):
+    ) -> Panel | str:
+        """Finalize the run and return the per-run report as a Rich renderable.
+
+        Saves and exports as configured and feeds the session rollup. The
+        report is printed to the console only when ``raw`` is true; by
+        default nothing is printed, because the TUI captures stdout and the
+        one-shot CLI uses stdout as the response channel.
+        """
         if not self.enable:
             return ""
 
@@ -1557,7 +1565,7 @@ class Telemetry:
         # --- Build header & attribution lines (markup-aware) ---
         header_lines = []
         header_lines.append(
-            f"[bold magenta]{agent_label}[/] [dim]•[/] thread [bold]{thread_id}[/] [dim]•[/] run [bold]{run_id}[/]"
+            f"[bold magenta]{escape(agent_label)}[/] [dim]•[/] thread [bold]{thread_id}[/] [dim]•[/] run [bold]{run_id}[/]"
         )
         if start_dt and end_dt:
             header_lines.append(
@@ -1612,4 +1620,14 @@ class Telemetry:
                 Text.from_markup(pricing_str),
             ]  # <- parse markup
 
+        panel = Panel.fit(
+            Group(*renderables),
+            title=f"[bold white]Metrics[/] • [cyan]{escape(agent_label)}[/]",
+            border_style="bright_magenta",
+            padding=(1, 2),
+            box=HEAVY,
+        )
+        if raw:
+            get_console().print(panel)
         _session_ingest(payload)
+        return panel
