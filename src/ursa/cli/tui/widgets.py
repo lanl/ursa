@@ -122,6 +122,7 @@ class PromptArea(TextArea):
             show=False,
             priority=True,
         ),
+        Binding("$", "skill_macro", "Choose skill", show=False, priority=True),
     ]
 
     class Submitted(Message):
@@ -142,7 +143,7 @@ class PromptArea(TextArea):
             language="markdown",
             soft_wrap=True,
             tab_behavior="indent",
-            placeholder="Ask URSA…  (@ files, # agents)",
+            placeholder="Ask URSA…  (@ files, # agents, $ skills)",
             id="prompt",
         )
         self.prompt_history: list[str] = []
@@ -154,7 +155,9 @@ class PromptArea(TextArea):
             if self.app.preferred_newline_key == "shift+enter"
             else "Ctrl+J"
         )
-        self.placeholder = f"Ask URSA…  (@ files, # agents, {key} newline)"
+        self.placeholder = (
+            f"Ask URSA…  (@ files, # agents, $ skills, {key} newline)"
+        )
 
     def _remember(self, text: str) -> None:
         if text and (
@@ -222,6 +225,9 @@ class PromptArea(TextArea):
 
     def action_command_macro(self) -> None:
         self._insert_macro("/")
+
+    def action_skill_macro(self) -> None:
+        self._insert_macro("$")
 
 
 class HotlistScreen(ModalScreen[str | None]):

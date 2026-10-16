@@ -24,18 +24,14 @@ import logging
 import re
 import sqlite3
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
     Generic,
-    Iterator,
-    Mapping,
-    Optional,
-    Sequence,
     TypeVar,
     final,
 )
@@ -262,15 +258,15 @@ class BaseAgent(Generic[TState], ABC):
     def __init__(
         self,
         llm: BaseChatModel,
-        workspace: Optional[Path] = None,
-        agent_name: Optional[str] = None,
-        group: Optional[str] = "default",
-        checkpointer: Optional[BaseCheckpointSaver] = None,
+        workspace: Path | None = None,
+        agent_name: str | None = None,
+        group: str | None = "default",
+        checkpointer: BaseCheckpointSaver | None = None,
         enable_metrics: bool = True,
         metrics_dir: str = "ursa_metrics",  # dir to save metrics, with a default
         autosave_metrics: bool = True,
-        otel_metrics: Optional[bool] = None,
-        thread_id: Optional[str] = None,
+        otel_metrics: bool | None = None,
+        thread_id: str | None = None,
         tokens_before_summarize: int = 50000,
         messages_to_keep: int = 20,
         max_single_tool_message_tokens: int = 100000,
@@ -325,10 +321,8 @@ class BaseAgent(Generic[TState], ABC):
             and self.group != DEFAULT_GROUP_NAME
         ):
             raise ValueError(
-                (
-                    f"Group '{self.group}' does not exist. "
-                    f"Please use `ursa create-group {self.group} <group_config_file>` to create"
-                )
+                f"Group '{self.group}' does not exist. "
+                f"Please use `ursa create-group {self.group} <group_config_file>` to create"
             )
         set_checkpointer = True if checkpointer else False
         set_name = True if agent_name else False
@@ -406,8 +400,8 @@ class BaseAgent(Generic[TState], ABC):
     def add_node(
         self,
         f: Callable[..., Mapping[str, Any]],
-        node_name: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        node_name: str | None = None,
+        agent_name: str | None = None,
         **kwargs,
     ) -> StateGraph:
         """Add a node to the state graph with token usage tracking.
@@ -516,16 +510,16 @@ class BaseAgent(Generic[TState], ABC):
     def _invoke_engine(
         self,
         invoke_method,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        otel_endpoint: Optional[str] = None,
-        otel_headers: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        otel_endpoint: str | None = None,
+        otel_headers: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
@@ -591,16 +585,16 @@ class BaseAgent(Generic[TState], ABC):
     async def _ainvoke_engine(
         self,
         invoke_method,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        otel_endpoint: Optional[str] = None,
-        otel_headers: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        otel_endpoint: str | None = None,
+        otel_headers: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ):
         BaseAgent._invoke_depth += 1
@@ -655,16 +649,16 @@ class BaseAgent(Generic[TState], ABC):
     @final
     def invoke(
         self,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         /,
         *,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Executes the agent with the provided inputs and configuration.
@@ -712,16 +706,16 @@ class BaseAgent(Generic[TState], ABC):
     @final
     async def ainvoke(
         self,
-        inputs: Optional[InputLike] = None,
+        inputs: InputLike | None = None,
         /,
         *,
         raw_debug: bool = False,
-        save_json: Optional[bool] = None,
-        save_otel: Optional[bool] = None,
-        metrics_path: Optional[str] = None,
-        save_raw_snapshot: Optional[bool] = None,
-        save_raw_records: Optional[bool] = None,
-        config: Optional[dict] = None,
+        save_json: bool | None = None,
+        save_otel: bool | None = None,
+        metrics_path: str | None = None,
+        save_raw_snapshot: bool | None = None,
+        save_raw_records: bool | None = None,
+        config: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Asynchrnously executes the agent with the provided inputs and configuration.

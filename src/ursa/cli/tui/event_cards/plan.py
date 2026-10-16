@@ -1,5 +1,3 @@
-# ruff: noqa: TID251
-
 """Plan generation and review event cards."""
 
 from collections.abc import Sequence

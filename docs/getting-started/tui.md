@@ -40,16 +40,17 @@ ursa
 ```
 
 You should see the full-screen URSA interface. Type `/` to browse app
-commands, `#` to route a message to an agent, or `@` to insert a workspace
-path.
+commands, `#` to route a message to an agent, `@` to insert a workspace
+path, or `$` to activate a skill.
 
 ### Full-screen interface controls
 
 | Input | Action |
 |---|---|
-| `/` | Browse application commands. Use `/keymap` for every keyboard shortcut. |
+| `/` | Browse application commands. Use `/keymap` for every keyboard shortcut, or `/skills` for the discovered [skills](../skills/index.md). |
 | `#` | Choose an agent and route the message to it. |
 | `@` | Insert a workspace file or directory into the message. |
+| `$` | Choose a [skill](../skills/index.md) to activate for this message. Typing `$write-python` by hand works too. |
 | **Enter** | Submit the message. |
 | **Shift+Enter** or **Ctrl+J** | Insert a newline. Some terminals cannot distinguish Shift+Enter, so Ctrl+J is the portable option. |
 | **Ctrl+Q** or `/exit` | Exit gracefully, waiting for an active turn to finish. |

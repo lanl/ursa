@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Mapping
+from typing import Any
 
 from langchain.chat_models import BaseChatModel
 
@@ -169,7 +170,7 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         *,
         llm: BaseChatModel,
         **kwargs: Any,
-    ) -> "AgentSymposiumEnvironment":
+    ) -> AgentSymposiumEnvironment:
         return cls(llm=llm, config=load_symposium_config(path), **kwargs)
 
     def _coerce_config(
@@ -490,13 +491,13 @@ class AgentSymposiumEnvironment(BaseEnvironment):
         if workspace is None or not hasattr(member, "workspace"):
             return await self._invoke_member_async(member, prompt, **kwargs)
 
-        original_workspace = getattr(member, "workspace")
-        setattr(member, "workspace", Path(workspace))
+        original_workspace = member.workspace
+        member.workspace = Path(workspace)
         Path(workspace).mkdir(parents=True, exist_ok=True)
         try:
             return await self._invoke_member_async(member, prompt, **kwargs)
         finally:
-            setattr(member, "workspace", original_workspace)
+            member.workspace = original_workspace
 
     async def _ainvoke(
         self, inputs: Mapping[str, Any], **config: Any

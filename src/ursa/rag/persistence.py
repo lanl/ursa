@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from langchain.chat_models import BaseChatModel
 from langchain.embeddings import Embeddings
@@ -58,10 +59,8 @@ def rag_group_dir(group_name: str = "default") -> Path:
 
 def _missing_group_error(group_name: str) -> ValueError:
     return ValueError(
-        (
-            f"Group '{group_name}' does not exist. "
-            f"Please use `ursa create-group {group_name} <group_config_file>` to create"
-        )
+        f"Group '{group_name}' does not exist. "
+        f"Please use `ursa create-group {group_name} <group_config_file>` to create"
     )
 
 

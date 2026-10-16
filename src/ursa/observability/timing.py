@@ -11,12 +11,12 @@ import os
 import re
 import time
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -84,7 +84,7 @@ def _to_snake(s: str) -> str:
     return s.lower()
 
 
-_SESSIONS: dict[str, "SessionRollup"] = {}
+_SESSIONS: dict[str, SessionRollup] = {}
 
 
 @dataclass
@@ -1090,7 +1090,7 @@ class Telemetry:
             "agent": agent,
             "thread_id": thread_id,
             "run_id": uuid4().hex,
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         })
 
     @property
@@ -1119,21 +1119,17 @@ class Telemetry:
                     getattr(self.runnable, "_starts", {})
                 ),
                 "agg": _as_dict(getattr(self.runnable, "agg", {})),
-                "buckets": list(
-                    getattr(self.runnable.agg, "buckets", lambda: [])()
-                ),
+                "buckets": list(getattr(self.runnable.agg, "buckets", list)()),
             },
             "tool": {
                 "_starts": _stringify_keys(getattr(self.tool, "_starts", {})),
                 "agg": _as_dict(getattr(self.tool, "agg", {})),
-                "buckets": list(
-                    getattr(self.tool.agg, "buckets", lambda: [])()
-                ),
+                "buckets": list(getattr(self.tool.agg, "buckets", list)()),
             },
             "llm": {
                 "_starts": _stringify_keys(getattr(self.llm, "_starts", {})),
                 "agg": _as_dict(getattr(self.llm, "agg", {})),
-                "buckets": list(getattr(self.llm.agg, "buckets", lambda: [])()),
+                "buckets": list(getattr(self.llm.agg, "buckets", list)()),
             },
         }
 
@@ -1431,7 +1427,7 @@ class Telemetry:
         out = {
             "context": {
                 **self.context,
-                "ended_at": datetime.now(timezone.utc).isoformat(),
+                "ended_at": datetime.now(UTC).isoformat(),
             },
             "tables": tables,
             "totals": self._totals(tables),

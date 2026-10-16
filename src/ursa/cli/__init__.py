@@ -263,9 +263,8 @@ def main(args=None):
             )
             return
 
-    if subcommand in RAG_METADATA_COMMANDS:
-        if handle_rag_command(cfg):
-            return
+    if subcommand in RAG_METADATA_COMMANDS and handle_rag_command(cfg):
+        return
 
     if subcommand in RAG_COMMANDS:
         cmd_config = cfg.get(subcommand, None)
