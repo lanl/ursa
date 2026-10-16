@@ -32,6 +32,8 @@ class PlanningExecutorWorkflow(BaseWorkflow):
         # checkpointer = SqliteSaver(conn)
 
     def _invoke(self, task: str, *, config: dict | None = None, **kw):
+        if isinstance(task, dict):
+            task = task["task"]
         invoke_config = dict(config or {})
         with console.status(
             "[bold deep_pink1]Planning overarching steps . . .",
@@ -88,6 +90,29 @@ class PlanningExecutorWorkflow(BaseWorkflow):
                     style="orange3 on black",
                 )
             )
+        return last_step_summary
+
+    async def _ainvoke(self, inputs, *, config=None, **kw):
+        """Run both agents on the caller's event loop and async checkpointer."""
+        task = inputs["task"]
+        invoke_config = dict(config or {})
+        planning_output = await self.planner.ainvoke(
+            f"Break this down into one step per technique:\n{task}",
+            config=invoke_config,
+        )
+        last_step_summary = "No previous step."
+        for step in planning_output["plan"].steps:
+            result = await self.executor.ainvoke(
+                f"You are contributing to the larger solution:\n{task}\n\n"
+                f"Previous-step summary:\n{last_step_summary}\n\n"
+                f"Current step:\n{step}\n\n"
+                "Execute this step and report results for the executor of the next step."
+                "Do not use placeholders."
+                "Run commands to execute code generated for the step if applicable."
+                "Only address the current step. Stay in your lane.",
+                config=invoke_config,
+            )
+            last_step_summary = self.executor.format_result(result)
         return last_step_summary
 
 

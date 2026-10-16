@@ -99,16 +99,19 @@ async def _close_checkpoint(checkpointer: Any) -> None:
 
 
 async def _run(config: dict[str, Any]) -> None:
-    from ursa.agents import BaseAgent
+    from ursa.agents import BaseAgent, ExecutionAgent, PlanningAgent
     from ursa.cli.callbacks import HITLLogEventHandler
     from ursa.cli.config import UrsaConfig, load_config_file
     from ursa.util import Checkpointer
+    from ursa.workflows import PlanningExecutorWorkflow
 
     agent_class = _import_symbol(config["agent_import_path"])
     if not isinstance(agent_class, type) or not issubclass(
-        agent_class, BaseAgent
+        agent_class, (BaseAgent, PlanningExecutorWorkflow)
     ):
-        raise TypeError("Configured class is not an URSA BaseAgent subclass")
+        raise TypeError(
+            "Configured class must be an URSA agent or plan-execute workflow"
+        )
 
     ursa_config = UrsaConfig.model_validate(
         load_config_file(Path(config["config_file"]))
@@ -128,27 +131,40 @@ async def _run(config: dict[str, Any]) -> None:
     previous_sigterm = signal.signal(signal.SIGTERM, terminate)
     failure: BaseException | None = None
     try:
-        agent_options = _agent_config(
-            ursa_config,
-            agent_class,
-            use_web=config.get("use_web"),
-        )
-        agent_options["checkpointer"] = checkpointer
-        agent = agent_class(
-            llm=ursa_config.llm_model.init_chat_model(),
-            workspace=ursa_config.workspace,
-            agent_name=ursa_config.agent_name or "harbor",
-            group=ursa_config.group,
-            thread_id=ursa_config.thread_id,
-            rag_tools=ursa_config.rag_tools,
-            rag_tool_embedding=(
-                ursa_config.emb_model.init_embedding()
-                if ursa_config.emb_model
-                else None
-            ),
-            **agent_options,
-        )
-        await _attach_mcp_tools(agent, ursa_config.mcp_servers)
+
+        def make_agent(cls: type[Any], role: str | None = None) -> Any:
+            options = _agent_config(
+                ursa_config, cls, use_web=config.get("use_web")
+            )
+            options["checkpointer"] = checkpointer
+            name = ursa_config.agent_name or "harbor"
+            thread = ursa_config.thread_id
+            return cls(
+                llm=ursa_config.llm_model.init_chat_model(),
+                workspace=ursa_config.workspace,
+                agent_name=f"{name}-{role}" if role else name,
+                group=ursa_config.group,
+                thread_id=f"{thread or name}-{role}" if role else thread,
+                rag_tools=ursa_config.rag_tools,
+                rag_tool_embedding=(
+                    ursa_config.emb_model.init_embedding()
+                    if ursa_config.emb_model
+                    else None
+                ),
+                **options,
+            )
+
+        is_workflow = issubclass(agent_class, PlanningExecutorWorkflow)
+        if is_workflow:
+            planner = make_agent(PlanningAgent, "planner")
+            executor = make_agent(ExecutionAgent, "executor")
+            await _attach_mcp_tools(executor, ursa_config.mcp_servers)
+            agent = agent_class(
+                planner, executor, workspace=ursa_config.workspace
+            )
+        else:
+            agent = make_agent(agent_class)
+            await _attach_mcp_tools(agent, ursa_config.mcp_servers)
         with (
             log_path.open("a", encoding="utf-8", buffering=1) as log_file,
             jsonl_path.open("a", encoding="utf-8", buffering=1) as jsonl_file,
@@ -169,7 +185,7 @@ async def _run(config: dict[str, Any]) -> None:
                 config["instruction"],
                 config={"callbacks": callbacks},
             )
-        result = agent.format_result(output)
+        result = output if is_workflow else agent.format_result(output)
         (logs_dir / "ursa_result.out").write_text(
             result
             if isinstance(result, str)

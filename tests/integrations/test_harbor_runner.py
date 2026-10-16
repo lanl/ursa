@@ -382,3 +382,52 @@ def test_jsonl_token_usage_streams_and_ignores_invalid_records(tmp_path):
             '{"input_tokens":9007199254740993}}\n'
         )
     assert _jsonl_token_usage(path) == (9007199254740993, None, None)
+
+
+@pytest.mark.asyncio
+async def test_runner_plan_execute_uses_async_agents_and_separate_threads(
+    tmp_path, monkeypatch
+):
+    from ursa import agents
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    created = []
+    calls = []
+
+    class Planner:
+        def __init__(self, **kwargs):
+            created.append(("planner", kwargs))
+
+        async def ainvoke(self, prompt, *, config):
+            calls.append(("plan", prompt, config))
+            return {"plan": SimpleNamespace(steps=["build", "verify"])}
+
+    class Executor:
+        def __init__(self, **kwargs):
+            created.append(("executor", kwargs))
+
+        async def ainvoke(self, prompt, *, config):
+            calls.append(("execute", prompt, config))
+            return {"answer": f"completed {len(calls)}"}
+
+        def format_result(self, result):
+            return result["answer"]
+
+    monkeypatch.setattr(agents, "PlanningAgent", Planner)
+    monkeypatch.setattr(agents, "ExecutionAgent", Executor)
+    await _runner_run({
+        "agent_import_path": "ursa.workflows:PlanningExecutorWorkflow",
+        "config_file": str(_runtime_config(tmp_path / "ursa.yaml")),
+        "workspace": str(tmp_path / "workspace"),
+        "log_dir": str(tmp_path / "agent"),
+        "instruction": "produce the simulation",
+    })
+    assert [call[0] for call in calls] == ["plan", "execute", "execute"]
+    assert all("produce the simulation" in call[1] for call in calls)
+    assert "completed 2" in calls[-1][1]
+    assert all(call[2]["callbacks"] for call in calls)
+    assert created[0][1]["checkpointer"] is created[1][1]["checkpointer"]
+    assert created[0][1]["thread_id"] != created[1][1]["thread_id"]
+    assert (tmp_path / "agent/ursa_result.out").read_text() == "completed 3"
+    with pytest.raises(ValueError, match="no active connection"):
+        await created[0][1]["checkpointer"].conn.execute("SELECT 1")
