@@ -20,7 +20,7 @@ The Execution Agent can:
 
 - create and edit files,
 - run shell commands,
-- install or import packages if asked,
+- install or import packages, including when resolving missing dependencies,
 - inspect outputs and continue iterating.
 
 Potential risks include:
@@ -31,6 +31,46 @@ Potential risks include:
 - executing unsafe generated code.
 
 Use a virtual machine, container, dedicated user account, or isolated environment for high-risk tasks.
+
+## File access outside the workspace
+
+The workspace is a working directory, not a filesystem security boundary.
+`read_file` intentionally permits reading files outside it without an LLM safety
+assessment, so workflows can access existing inputs and reference files. Relative
+paths are resolved from the workspace; absolute paths, `../` paths, and symlinks
+can reach other files readable by the URSA process. File contents may be sent to
+the configured model as tool results.
+
+Although `write_code` checks that its target resolves inside the workspace,
+this does not isolate the agent: shell commands and other tools retain the host
+process's permissions. Use operating-system permissions or an isolated environment
+to restrict access to files.
+
+## Command screening
+
+Set the `URSA_SAFETY_LEVEL` environment variable before launching URSA to select
+the LLM screening policy for `run_command`. Values are case-insensitive.
+
+| Value | Behavior |
+| --- | --- |
+| `default` (also used when unset) | Assesses the command with trust assumptions for configured executables, agent-created files, and LaTeX-related operations. The prompt also treats package installation for configured executables as safe. |
+| `low` | Asks the model to scrutinize destructive commands and flag high-concern attempts to extract sensitive information, while trusting workspace files. |
+| `trusted` | Still calls the model, but supplies only a generic statement that the agent is trusted, without the proposed command. This does not provide a command-specific assessment. |
+| `none` or `yolo` | Bypasses the LLM assessment and proceeds to command execution. |
+
+Unrecognized values use the default prompt. These policies are model judgments, not deterministic restrictions: they can accept unsafe
+commands or reject legitimate ones. They do not screen `read_file` or provide
+filesystem or network isolation.
+
+## Command timeout
+
+`run_command` executes through a shell with a fixed timeout of 600,000 seconds
+(approximately seven days). There is currently no configuration option for this
+timeout. A command containing an infinite loop can therefore occupy a run for a
+long time.
+
+For workloads requiring a shorter limit, use an external job scheduler or process
+supervisor with an appropriate wall-time limit.
 
 ## Web tools are opt in
 
