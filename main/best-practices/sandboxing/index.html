@@ -1443,6 +1443,33 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#file-access-outside-the-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      File access outside the workspace
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-screening" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command screening
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command timeout
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#web-tools-are-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       Web tools are opt in
@@ -2016,6 +2043,33 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#file-access-outside-the-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      File access outside the workspace
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-screening" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command screening
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#command-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command timeout
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#web-tools-are-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       Web tools are opt in
@@ -2102,7 +2156,7 @@
 <ul>
 <li>create and edit files,</li>
 <li>run shell commands,</li>
-<li>install or import packages if asked,</li>
+<li>install or import packages, including when resolving missing dependencies,</li>
 <li>inspect outputs and continue iterating.</li>
 </ul>
 <p>Potential risks include:</p>
@@ -2113,6 +2167,56 @@
 <li>executing unsafe generated code.</li>
 </ul>
 <p>Use a virtual machine, container, dedicated user account, or isolated environment for high-risk tasks.</p>
+<h2 id="file-access-outside-the-workspace">File access outside the workspace<a class="headerlink" href="#file-access-outside-the-workspace" title="Permanent link">&para;</a></h2>
+<p>The workspace is a working directory, not a filesystem security boundary.
+<code>read_file</code> intentionally permits reading files outside it without an LLM safety
+assessment, so workflows can access existing inputs and reference files. Relative
+paths are resolved from the workspace; absolute paths, <code>../</code> paths, and symlinks
+can reach other files readable by the URSA process. File contents may be sent to
+the configured model as tool results.</p>
+<p>Although <code>write_code</code> checks that its target resolves inside the workspace,
+this does not isolate the agent: shell commands and other tools retain the host
+process's permissions. Use operating-system permissions or an isolated environment
+to restrict access to files.</p>
+<h2 id="command-screening">Command screening<a class="headerlink" href="#command-screening" title="Permanent link">&para;</a></h2>
+<p>Set the <code>URSA_SAFETY_LEVEL</code> environment variable before launching URSA to select
+the LLM screening policy for <code>run_command</code>. Values are case-insensitive.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>default</code> (also used when unset)</td>
+<td>Assesses the command with trust assumptions for configured executables, agent-created files, and LaTeX-related operations. The prompt also treats package installation for configured executables as safe.</td>
+</tr>
+<tr>
+<td><code>low</code></td>
+<td>Asks the model to scrutinize destructive commands and flag high-concern attempts to extract sensitive information, while trusting workspace files.</td>
+</tr>
+<tr>
+<td><code>trusted</code></td>
+<td>Still calls the model, but supplies only a generic statement that the agent is trusted, without the proposed command. This does not provide a command-specific assessment.</td>
+</tr>
+<tr>
+<td><code>none</code> or <code>yolo</code></td>
+<td>Bypasses the LLM assessment and proceeds to command execution.</td>
+</tr>
+</tbody>
+</table>
+<p>Unrecognized values use the default prompt. These policies are model judgments, not deterministic restrictions: they can accept unsafe
+commands or reject legitimate ones. They do not screen <code>read_file</code> or provide
+filesystem or network isolation.</p>
+<h2 id="command-timeout">Command timeout<a class="headerlink" href="#command-timeout" title="Permanent link">&para;</a></h2>
+<p><code>run_command</code> executes through a shell with a fixed timeout of 600,000 seconds
+(approximately seven days). There is currently no configuration option for this
+timeout. A command containing an infinite loop can therefore occupy a run for a
+long time.</p>
+<p>For workloads requiring a shorter limit, use an external job scheduler or process
+supervisor with an appropriate wall-time limit.</p>
 <h2 id="web-tools-are-opt-in">Web tools are opt in<a class="headerlink" href="#web-tools-are-opt-in" title="Permanent link">&para;</a></h2>
 <p>URSA web tools are opt in for information-control reasons. They are disabled by default in core CLI configuration.</p>
 <p>Enable them only when you want URSA to make network requests through web-search tools:</p>
