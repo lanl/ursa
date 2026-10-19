@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -12,7 +12,15 @@ from argparse import SUPPRESS
 from importlib.metadata import PackageNotFoundError, metadata
 from importlib.metadata import version as package_version
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from typing import Annotated, Any
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 TOOL_PACKAGE = "ursa-ai"
 DEFAULT_GIT_REPOSITORY = "https://github.com/lanl/ursa"
@@ -21,6 +29,31 @@ _NOT_UV_TOOL = (
     "Cannot update: this copy of URSA was not installed with `uv tool install`.\n"
     "Update it using the same mechanism that installed it."
 )
+
+
+PackageName = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
+
+
+class InstallerConfig(BaseModel):
+    """Non-secret installation and setup defaults supplied by a site."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    python_version: PackageName = "3.13"
+    extras: list[PackageName] = Field(default_factory=lambda: ["dashboard"])
+    extra_packages: list[str] = Field(default_factory=list)
+    inference_providers: list[dict[str, Any]] = Field(default_factory=list)
+    llm_model: dict[str, Any] | None = None
+    emb_model: dict[str, Any] | None = None
+    mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("extra_packages")
+    @classmethod
+    def _valid_requirements(cls, values: list[str]) -> list[str]:
+        stripped = [value.strip() for value in values]
+        if any(not value or "\n" in value for value in stripped):
+            raise ValueError("requirements must be non-empty single lines")
+        return stripped
 
 
 def _command(commands, name, help, action):
@@ -160,38 +193,14 @@ def _modify(args) -> None:
             raise SystemExit(
                 "--installer-config cannot be combined with other modify options."
             )
-        config = load_installer_config(args.installer_config)
-        python_version = config.get("python_version", "3.13")
-        if not isinstance(python_version, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._-]*", python_version
-        ):
-            raise SystemExit(
-                "Invalid installer configuration: python_version must be a "
-                "version such as '3.13'"
-            )
-        extras = config.get("extras", ["dashboard"])
-        if not isinstance(extras, list) or not all(
-            isinstance(value, str)
-            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value)
-            for value in extras
-        ):
-            raise SystemExit(
-                "Invalid installer configuration: extras must be an array of "
-                "package extra names"
-            )
-        extra_packages = config.get("extra_packages", [])
-        if not isinstance(extra_packages, list) or not all(
-            isinstance(value, str) and value.strip() and "\n" not in value
-            for value in extra_packages
-        ):
-            raise SystemExit(
-                "Invalid installer configuration: extra_packages must be an "
-                "array of non-empty requirement strings"
-            )
+        try:
+            config = load_installer_config(args.installer_config)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from None
         upgrade(
-            extras=extras,
-            with_packages=[value.strip() for value in extra_packages],
-            python_version=python_version,
+            extras=config.extras,
+            with_packages=config.extra_packages,
+            python_version=config.python_version,
             clean=True,
         )
         return
@@ -204,17 +213,18 @@ def _modify(args) -> None:
     )
 
 
-def load_installer_config(path: Path) -> dict:
-    """Load an installer JSON object without interpreting its sections."""
-    from ursa.cli.installer_config import (
-        InstallerConfigError,
-        load_installer_json,
-    )
-
+def load_installer_config(path: Path) -> InstallerConfig:
+    """Load and validate a site-provided installer payload."""
     try:
-        return load_installer_json(path)
-    except InstallerConfigError as exc:
-        raise SystemExit(f"Invalid installer configuration: {exc}") from None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return InstallerConfig.model_validate(payload)
+    except (OSError, json.JSONDecodeError, ValidationError) as exc:
+        message = f"Invalid installer configuration: {exc}"
+        if isinstance(exc, ValidationError) and any(
+            error["type"] == "extra_forbidden" for error in exc.errors()
+        ):
+            message += ". Is this configuration for an unreleased URSA version?"
+        raise RuntimeError(message) from None
 
 
 def _read_requirements(receipt: Path) -> list[dict]:
@@ -281,21 +291,9 @@ def _uv_install() -> tuple[Path, Path]:
 
 def _source(requirement: dict) -> str:
     if git := requirement.get("git"):
-        parsed = urlsplit(git)
-        query = []
-        receipt_ref = None
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
-            if key == "rev":
-                receipt_ref = value
-            else:
-                query.append((key, value))
-        repository = urlunsplit((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urlencode(query),
-            "",
-        ))
+        # uv stores a resolved Git revision as ``?rev=...`` in its receipt,
+        # while a direct requirement spells the same source as ``@REV``.
+        repository, _, receipt_ref = git.partition("?rev=")
         ref = receipt_ref or next(
             (
                 requirement.get(key)
@@ -304,8 +302,7 @@ def _source(requirement: dict) -> str:
             ),
             None,
         )
-        fragment = f"#{parsed.fragment}" if parsed.fragment else ""
-        return f" @ git+{repository}{f'@{ref}' if ref else ''}{fragment}"
+        return f" @ git+{repository}{f'@{ref}' if ref else ''}"
     if url := requirement.get("url"):
         return f" @ {url}"
     if path := requirement.get("directory") or requirement.get("path"):
@@ -406,7 +403,10 @@ def build_upgrade_requirement(
     if ref is not None:
         if not ref.strip():
             raise SystemExit("Cannot update: ref cannot be empty.")
-        return f"{name} @ git+{original.get('git') or get_package_repository()}@{ref}"
+        repository = (
+            original.get("git") or get_package_repository()
+        ).partition("?rev=")[0]
+        return f"{name} @ git+{repository}@{ref}"
     return name + _source(original)
 
 

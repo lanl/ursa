@@ -46,12 +46,10 @@ installer_lock=''
 installer_lock_acquired=false
 cleanup() {
     rm -f \
-        "$installer_work/payload.json" \
         "$installer_work/ursa-paths" \
         "$installer_work/uv-install.sh"
     rmdir "$installer_work" 2>/dev/null || true
     if [ "$installer_lock_acquired" = true ]; then
-        rm -f "$installer_lock/pid"
         rmdir "$installer_lock" 2>/dev/null || true
     fi
 }
@@ -72,7 +70,6 @@ if ! mkdir "$installer_lock" 2>/dev/null; then
     fail "another URSA installation is already running (lock: $installer_lock)"
 fi
 installer_lock_acquired=true
-printf '%s\n' "$$" >"$installer_lock/pid"
 
 if [ -n "$config_file" ]; then
     [ -f "$config_file" ] \

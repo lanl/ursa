@@ -45,10 +45,16 @@ from ursa.cli.config import (
     EmbModelConfig,
     InferenceProviderConfig,
     UrsaConfig,
-    editable_model_values,
+    config_file_value,
     load_config_file,
 )
-from ursa.cli.installer_config import InstallerConfigError, load_installer_json
+from ursa.cli.doctor import (
+    CheckStatus,
+    probe_chat_model,
+    probe_embedding_model,
+    probe_mcp_server,
+)
+from ursa.cli.self import load_installer_config
 from ursa.cli.tui.widgets import (
     AdvancedYamlEditor,
     FuzzySelect,
@@ -61,7 +67,6 @@ from ursa.util.http import inject_truststore_into_ssl
 from ursa.util.inference_providers import list_provider_models
 from ursa.util.mcp import (
     _serialize_server_config,
-    start_mcp_client,
     validate_server_parameters,
 )
 from ursa.util.secrets import SecretReference, SecretTemplate
@@ -168,8 +173,8 @@ async def _run_doctor_in_login_shell(
 
 def load_setup_defaults(path: Path) -> dict[str, Any]:
     try:
-        return load_installer_json(path)
-    except InstallerConfigError as exc:
+        return load_installer_config(path).model_dump(exclude_none=True)
+    except RuntimeError as exc:
         raise SetupError(f"Could not load setup defaults: {exc}") from None
 
 
@@ -199,29 +204,6 @@ def _url(value: str, noun: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise SetupError(f"{noun} must be a complete HTTP URL.")
     return value
-
-
-def _secret(value: Any) -> SecretReference | None:
-    reference = SecretReference.maybe_validate(value)
-    return reference if isinstance(reference, SecretReference) else None
-
-
-def _secret_template(value: Any) -> SecretTemplate | None:
-    reference = SecretTemplate.maybe_validate(value)
-    return reference if isinstance(reference, SecretTemplate) else None
-
-
-def _serializable(value: Any) -> Any:
-    """Convert typed secret references at a YAML/config boundary."""
-    if isinstance(value, SecretReference):
-        return value.model_dump(mode="json", exclude_none=True)
-    if isinstance(value, Mapping):
-        return {key: _serializable(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_serializable(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_serializable(item) for item in value)
-    return deepcopy(value)
 
 
 def _friendly(exc: Exception, mcp: bool = False) -> str:
@@ -273,7 +255,8 @@ def _mcp(name: str, value: Any) -> dict[str, Any]:
 def _auth(config: Mapping[str, Any]) -> tuple[str, SecretTemplate | None]:
     headers = config.get("headers") or {}
     for header, value in headers.items():
-        if reference := _secret_template(value):
+        reference = SecretTemplate.maybe_validate(value)
+        if isinstance(reference, SecretTemplate):
             return str(header), reference
     return "Authorization", None
 
@@ -433,14 +416,14 @@ class _State:
                 continue
             value = deepcopy(value)
             for header, secret in (value.get("headers") or {}).items():
-                if not isinstance(secret, dict):
-                    if re.search(
-                        "auth|token|secret|password|api.key", header, re.I
-                    ):
-                        raise SetupError("Installer defaults contain a secret.")
-                elif reference := _secret_template(secret):
+                if not isinstance(secret, dict) and re.search(
+                    "auth|token|secret|password|api.key", header, re.I
+                ):
+                    raise SetupError("Installer defaults contain a secret.")
+                reference = SecretTemplate.maybe_validate(secret)
+                if isinstance(reference, SecretTemplate):
                     value["headers"][header] = reference
-                elif "template" in secret:
+                elif isinstance(secret, dict) and "template" in secret:
                     value["headers"][header] = SecretTemplate.model_validate({
                         **secret,
                         "keyring": True,
@@ -450,7 +433,9 @@ class _State:
 
     def provider(self, name: str):
         values = deepcopy(self.providers[name])
-        reference = _secret(values.get("api_key"))
+        reference = SecretReference.maybe_validate(values.get("api_key"))
+        if not isinstance(reference, SecretReference):
+            reference = None
         username = reference.keyring_username(name) if reference else None
         secret = self.pending.get(username) if username else None
         if secret:
@@ -476,12 +461,12 @@ class _State:
         if not self.providers or not self.models.get("llm"):
             raise SetupError("A provider and language model are required.")
         config = deepcopy(self.base)
-        config["inference_providers"] = _serializable(self.providers)
-        config["mcp_servers"] = _serializable(self.mcps)
-        config["llm_model"] = editable_model_values(self.models["llm"])
+        config["inference_providers"] = config_file_value(self.providers)
+        config["mcp_servers"] = config_file_value(self.mcps)
+        config["llm_model"] = self.models["llm"].editable_values()
         embedding = self.models.get("embedding")
         if embedding:
-            config["emb_model"] = editable_model_values(embedding)
+            config["emb_model"] = embedding.editable_values()
         else:
             config.pop("emb_model", None)
         UrsaConfig.model_validate(config)
@@ -1148,8 +1133,12 @@ class SetupApp(App[SetupAction]):
         return result
 
     async def _probe_mcp(self, name: str, config: dict[str, Any]) -> None:
-        client = start_mcp_client({name: self._runtime_mcp(name, config)})
-        await asyncio.wait_for(client.get_tools(server_name=name), timeout=15)
+        result = await asyncio.wait_for(
+            probe_mcp_server(name, self._runtime_mcp(name, config)),
+            timeout=15,
+        )
+        if result.status == CheckStatus.ERROR:
+            raise SetupError(str(result.message))
 
     async def _check(self, kind: str, name: str) -> bool:
         items = self.state.providers if kind == "provider" else self.state.mcps
@@ -1245,7 +1234,7 @@ class SetupApp(App[SetupAction]):
             summary = f"Base URL: {value.get('base_url') or 'default'}"
         else:
             summary = yaml.safe_dump(
-                _serializable(value), sort_keys=False
+                config_file_value(value), sort_keys=False
             ).strip()
         return title, summary
 
@@ -1280,9 +1269,10 @@ class SetupApp(App[SetupAction]):
             "127.0.0.1",
             "::1",
         }
+        reference = SecretReference.maybe_validate(values.get("api_key"))
         self.query_one("#provider-key-api-key", ApiKeyEntry).configure(
             name or "openai",
-            _secret(values.get("api_key")),
+            reference if isinstance(reference, SecretReference) else None,
             self._keys(),
             local,
         )
@@ -1437,7 +1427,9 @@ class SetupApp(App[SetupAction]):
             name or "", reference, self._keys(), reference is None
         )
         editor = self.query_one("#mcp-advanced", AdvancedYamlEditor)
-        editor.set_text(yaml.safe_dump(_serializable(config), sort_keys=False))
+        editor.set_text(
+            yaml.safe_dump(config_file_value(config), sort_keys=False)
+        )
         self._toggle_transport(transport)
         self._status("#mcp-validation-status", "○ Not tested")
 
@@ -1732,12 +1724,12 @@ class SetupApp(App[SetupAction]):
 
 def _probe_model(config, providers: dict[str, InferenceProviderConfig]) -> None:
     resolved = config.resolve_inference_provider(providers)
-    result = (
-        resolved.init_chat_model().invoke("Reply with only OK.")
+    message = (
+        probe_chat_model(resolved.init_chat_model())
         if isinstance(config, ChatModelConfig)
-        else resolved.init_embedding().embed_query("URSA setup validation")
+        else probe_embedding_model(resolved)
     )
-    if not result:
+    if not message:
         raise SetupError("The model returned no response.")
 
 
