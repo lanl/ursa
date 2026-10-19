@@ -7,11 +7,13 @@ the operating system credential store through the Python
 operation fails, URSA transparently falls back to
 `~/.config/ursa/keyring.yml`.
 
-The fallback file is created with `0600` permissions. URSA refuses to read or
-modify an existing fallback file with any group, other-user, or executable
-permission bits; permissions more restrictive than `0600` are accepted. The
-fallback is a plain-text YAML file, so protect it like any other credential
-file.
+On POSIX systems, the fallback file is created with `0600` permissions. URSA
+refuses to read or modify an existing fallback file with any group,
+other-user, or executable permission bits; permissions more restrictive than
+`0600` are accepted. On Windows, where POSIX permission bits do not represent
+access control, the file inherits the per-user ACL from the user's profile.
+The fallback is a plain-text YAML file, so protect it like any other
+credential file.
 
 ## Store a secret in the keyring
 

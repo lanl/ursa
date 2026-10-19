@@ -1,18 +1,28 @@
 from __future__ import annotations
 
+import multiprocessing
+import os
 import stat
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
 import yaml
+from filelock import FileLock
 from keyring.backend import KeyringBackend
 from keyring.errors import KeyringError, PasswordDeleteError
 
+import ursa.util.keyring as keyring_module
 from ursa.util.keyring import (
     FallbackKeyring,
     FileKeyring,
     InsecureKeyringPermissionsError,
     get_keyring,
+)
+
+_POSIX_MODE_TEST = pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows uses ACLs rather than POSIX permission bits",
 )
 
 
@@ -54,6 +64,16 @@ def file_mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def set_password_in_process(
+    path: Path,
+    started: multiprocessing.synchronize.Event,
+    finished: multiprocessing.synchronize.Event,
+) -> None:
+    started.set()
+    FileKeyring(path).set_password("ursa", "openai", "token")
+    finished.set()
+
+
 def test_file_keyring_creates_yaml_with_mode_600(tmp_path: Path) -> None:
     path = tmp_path / "config" / "ursa" / "keyring.yml"
     keyring = FileKeyring(path)
@@ -61,7 +81,8 @@ def test_file_keyring_creates_yaml_with_mode_600(tmp_path: Path) -> None:
     keyring.set_password("ursa", "openai", "token")
     keyring.set_password("ursa-ai", "dashboard:default:llm", "other")
 
-    assert file_mode(path) == 0o600
+    if os.name != "nt":
+        assert file_mode(path) == 0o600
     assert yaml.safe_load(path.read_text(encoding="utf-8")) == {
         "ursa": {"openai": "token"},
         "ursa-ai": {"dashboard:default:llm": "other"},
@@ -83,6 +104,7 @@ def test_file_keyring_uses_ursa_config_path_by_default(
     assert keyring.path.exists()
 
 
+@_POSIX_MODE_TEST
 def test_file_keyring_accepts_more_restrictive_permissions(
     tmp_path: Path,
 ) -> None:
@@ -94,6 +116,7 @@ def test_file_keyring_accepts_more_restrictive_permissions(
 
 
 @pytest.mark.parametrize("mode", [0o700, 0o640, 0o604, 0o666])
+@_POSIX_MODE_TEST
 def test_file_keyring_rejects_more_permissive_permissions(
     tmp_path: Path, mode: int
 ) -> None:
@@ -113,6 +136,7 @@ def test_file_keyring_rejects_more_permissive_permissions(
         keyring.delete_password("ursa", "openai")
 
 
+@_POSIX_MODE_TEST
 def test_file_keyring_preserves_restrictive_mode_when_updating(
     tmp_path: Path,
 ) -> None:
@@ -125,6 +149,55 @@ def test_file_keyring_preserves_restrictive_mode_when_updating(
 
     assert keyring.get_password("ursa", "openai") == "new"
     assert file_mode(path) == 0o400
+
+
+def test_file_keyring_does_not_use_posix_modes_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "keyring.yml"
+    monkeypatch.setattr(keyring_module, "_HAS_POSIX_FILE_MODES", False)
+
+    def unexpected_fchmod(descriptor: int, mode: int) -> None:
+        pytest.fail(f"unexpected fchmod({descriptor}, {mode})")
+
+    monkeypatch.setattr(
+        keyring_module,
+        "FileLock",
+        lambda *args, **kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(keyring_module.os, "fchmod", unexpected_fchmod)
+
+    keyring = FileKeyring(path)
+    keyring.set_password("ursa", "openai", "token")
+
+    assert keyring.get_password("ursa", "openai") == "token"
+
+
+def test_file_keyring_locks_updates_across_processes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "keyring.yml"
+    context = multiprocessing.get_context("spawn")
+    started = context.Event()
+    finished = context.Event()
+    process = context.Process(
+        target=set_password_in_process,
+        args=(path, started, finished),
+    )
+
+    with FileLock(path.with_name(f"{path.name}.lock")):
+        process.start()
+        assert started.wait(timeout=10)
+        assert not finished.wait(timeout=0.25)
+
+    process.join(timeout=10)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        pytest.fail("fallback keyring update remained blocked")
+
+    assert process.exitcode == 0
+    assert FileKeyring(path).get_password("ursa", "openai") == "token"
 
 
 def test_file_keyring_delete_removes_password(tmp_path: Path) -> None:
@@ -184,6 +257,7 @@ def test_fallback_keyring_uses_file_when_system_operations_fail(
     assert fallback.get_password("ursa", "openai") is None
 
 
+@_POSIX_MODE_TEST
 def test_fallback_keyring_rejects_insecure_file(
     tmp_path: Path,
 ) -> None:
