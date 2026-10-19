@@ -164,6 +164,7 @@ def _serialize_server_config(
     *,
     exclude_defaults: bool = True,
     exclude_none: bool = True,
+    exclude_unset: bool = False,
 ):
     """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
     config = {
@@ -171,6 +172,7 @@ def _serialize_server_config(
         **config.model_dump(
             exclude_defaults=exclude_defaults,
             exclude_none=exclude_none,
+            exclude_unset=exclude_unset,
         ),
     }
     for k, v in config.items():

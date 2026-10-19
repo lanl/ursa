@@ -1,8 +1,43 @@
+import json
 from pathlib import Path
 
 import pytest
 
 import ursa.cli.config as config_mod
+
+
+def test_editable_values_preserve_explicit_nulls_and_reject_secrets():
+    config = config_mod.UrsaConfig.model_validate({"emb_model": None})
+
+    assert config.editable_values() == {"emb_model": None}
+
+    literal = config_mod.UrsaConfig.model_validate({
+        "llm_model": {"model": "openai:gpt-test", "api_key": "secret"}
+    })
+    with pytest.raises(ValueError, match="Literal secrets cannot be saved"):
+        literal.editable_values()
+
+
+def test_editable_values_preserve_explicit_mcp_nulls():
+    config = config_mod.UrsaConfig.model_validate({
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": None,
+            }
+        }
+    })
+
+    assert config.editable_values()["mcp_servers"]["tools"]["headers"] is None
+
+
+def test_save_config_file_uses_the_path_format(tmp_path):
+    config = config_mod.UrsaConfig.model_validate({"emb_model": None})
+    path = tmp_path / "config.json"
+
+    assert config_mod.save_config_file(path, config) == path
+    assert json.loads(path.read_text()) == {"emb_model": None}
 
 
 def test_interpolate_env_replaces_existing_variable(monkeypatch):
