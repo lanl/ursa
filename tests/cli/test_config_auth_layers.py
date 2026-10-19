@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from jsonargparse import Namespace
@@ -197,8 +198,12 @@ def test_api_key_env_reference_resolves(monkeypatch):
 def test_api_key_keyring_reference(monkeypatch, setting, username):
     calls = []
     monkeypatch.setattr(
-        "keyring.get_password",
-        lambda system, user: calls.append((system, user)) or "secret",
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(
+            get_password=lambda system, user: (
+                calls.append((system, user)) or "secret"
+            )
+        ),
     )
     config = UrsaConfig(
         inference_providers={"acme": {"api_key": {"keyring": setting}}},

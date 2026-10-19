@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from ursa.cli import build_parser, main
@@ -21,8 +23,12 @@ def fake_keyring(monkeypatch):
     def set_password(service, username, password):
         values[(service, username)] = password
 
-    monkeypatch.setattr("ursa.cli.auth.keyring.get_password", get_password)
-    monkeypatch.setattr("ursa.cli.auth.keyring.set_password", set_password)
+    backend = SimpleNamespace(
+        get_password=get_password,
+        set_password=set_password,
+    )
+    monkeypatch.setattr("ursa.cli.auth.get_keyring", lambda: backend)
+    monkeypatch.setattr("ursa.util.secrets.get_keyring", lambda: backend)
     return values
 
 

@@ -12,6 +12,8 @@ from pydantic import (
     model_validator,
 )
 
+from ursa.util import get_keyring
+
 
 def _non_blank(value: str | None) -> str | None:
     if value is None:
@@ -55,14 +57,12 @@ class SecretReference(BaseModel):
             value = environ.get(self.env)
             return SecretStr(value) if value is not None else None
 
-        import keyring
-
         username = (
             default_keyring_username if self.keyring is True else self.keyring
         )
         if not username:
             raise ValueError("keyring=true requires a default username")
-        value = keyring.get_password("ursa", username)
+        value = get_keyring().get_password("ursa", username)
         if value is None:
             raise ValueError(
                 f"No secret found in the system keyring for '{username}'"
