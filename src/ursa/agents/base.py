@@ -968,6 +968,10 @@ class BaseAgent(Generic[TState], ABC):
         The method also avoids creating dangling tool-call pairs when possible by
         moving tool responses that correspond to summarized-away calls into the
         summarized block.
+
+        The summary request goes through ``tool_llm`` when the agent has one
+        and through ``llm`` otherwise, so plain ``BaseAgent`` subclasses can
+        summarize too.
         """
         if "messages" not in state:
             return state, False
@@ -1033,7 +1037,8 @@ class BaseAgent(Generic[TState], ABC):
                 )
             ),
         ]
-        summary = self.tool_llm.invoke(request)
+        summarizer = getattr(self, "tool_llm", None) or self.llm
+        summary = summarizer.invoke(request)
 
         if system_prompt is not None:
             head = [SystemMessage(content=system_prompt)]
