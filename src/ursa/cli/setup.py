@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shlex
@@ -10,7 +11,7 @@ import shutil
 import tempfile
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import redirect_stderr
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -110,6 +111,22 @@ def _list_setup_provider_models(
 def default_setup_config_path() -> Path:
     """Return the portable user config path managed by the wizard."""
     return Path.home() / ".config" / "ursa" / "config.yaml"
+
+
+def load_setup_defaults(path: Path) -> dict[str, Any]:
+    """Load non-secret setup defaults from an installer JSON payload."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SetupError(f"Could not read setup defaults: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise SetupError(
+            f"Setup defaults are not valid JSON: {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno})."
+        ) from None
+    if not isinstance(value, dict):
+        raise SetupError("Setup defaults must be a JSON object.")
+    return value
 
 
 def _secret_mapping(value: Any) -> dict[str, Any] | None:
@@ -520,6 +537,77 @@ class SetupState:
             state.mcp_verified[str(name)] = None
         return state
 
+    def apply_defaults(self, defaults: Mapping[str, Any]) -> None:
+        """Add site-provided defaults without replacing user configuration."""
+        providers = defaults.get("inference_providers", [])
+        if not isinstance(providers, list):
+            raise SetupError("inference_providers must be a JSON array.")
+        for item in providers:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"name", "base_url"}
+                or not all(isinstance(item[field], str) for field in item)
+            ):
+                raise SetupError(
+                    "Each inference provider default must contain only name "
+                    "and base_url strings."
+                )
+            name = _validate_name(item["name"], "Inference provider")
+            base_url = _validate_url(
+                item["base_url"], "Inference provider base URL"
+            )
+            if name in self.providers:
+                continue
+            kind: str = name.lower()
+            if kind not in PROVIDER_DEFAULT_URLS:
+                config = InferenceProviderConfig(base_url=base_url)
+                kind = model_listing_provider(config)
+            if kind not in PROVIDER_DEFAULT_URLS:
+                kind = "openai"
+            self.providers[name] = ProviderDraft(
+                name=name,
+                kind=kind,
+                base_url=base_url,
+                api_key_reference={"keyring": True},
+                keyring_username=name,
+            )
+            self.provider_verified[name] = None
+
+        servers = defaults.get("mcp_servers", {})
+        if not isinstance(servers, dict):
+            raise SetupError("mcp_servers must be a JSON object.")
+        for raw_name, raw_server in servers.items():
+            name = _validate_name(str(raw_name), "MCP server")
+            if name in self.mcp_servers:
+                continue
+            if not isinstance(raw_server, dict):
+                raise SetupError(f"MCP server '{name}' must be a JSON object.")
+            server = deepcopy(raw_server)
+            headers = server.get("headers")
+            if isinstance(headers, dict):
+                for header, raw_value in headers.items():
+                    if not isinstance(raw_value, dict):
+                        continue
+                    if _secret_mapping(raw_value) is not None:
+                        raise SetupError(
+                            f"MCP server '{name}' contains a secret reference. "
+                            "Installer defaults must not include API keys."
+                        )
+                    if "template" in raw_value:
+                        headers[header] = {
+                            **raw_value,
+                            "keyring": True,
+                        }
+            draft = MCPDraft.from_config(name, server)
+            try:
+                validate_server_parameters(draft.as_config())
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise SetupError(
+                    f"MCP server default '{name}' is invalid: {exc}"
+                ) from None
+            self.mcp_servers[name] = draft
+            self.mcp_verified[name] = None
+
     @staticmethod
     def _model_values(
         model: ChatModelConfig | EmbModelConfig,
@@ -716,15 +804,22 @@ class SetupApp(App[bool]):
         Binding("ctrl+q", "cancel", "Quit setup", priority=True),
     ]
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        defaults_json: Path | None = None,
+    ) -> None:
         super().__init__()
         self.state = SetupState.load(path or default_setup_config_path())
+        if defaults_json is not None:
+            self.state.apply_defaults(load_setup_defaults(defaults_json))
         self.current_page = "welcome"
         self.history: list[str] = []
         self.visited = {"welcome"}
         self.editing_provider: str | None = None
         self.editing_mcp: str | None = None
         self._provider_tab_names: dict[str, str] = {}
+        self._mcp_tab_names: dict[str, str] = {}
         self._provider_validation_lock = asyncio.Lock()
         self._providers_validating: set[str] = set()
         self._provider_list_spinner_frame = 0
@@ -733,6 +828,9 @@ class SetupApp(App[bool]):
         self._provider_spinner_frame = 0
         self._provider_spinner_timer = None
         self._mcp_validation_lock = asyncio.Lock()
+        self._mcps_validating: set[str] = set()
+        self._mcp_list_spinner_frame = 0
+        self._mcp_list_spinner_timer = None
         self._loaded_api_keys: dict[str, str | None] = {
             "provider": None,
             "mcp": None,
@@ -1155,15 +1253,10 @@ class SetupApp(App[bool]):
                 classes="page-copy",
             ),
             Label("Configured MCP servers"),
-            Select(
-                [("No MCP servers configured", NO_MODEL)],
-                value=NO_MODEL,
-                allow_blank=False,
-                id="mcps-list",
-            ),
+            TabbedContent(id="mcps-tabs"),
             Horizontal(
-                Button("Edit selected", id="mcp-edit"),
-                Button("Remove selected", id="mcp-remove", variant="error"),
+                Button("Edit", id="mcp-edit"),
+                Button("Remove", id="mcp-remove", variant="error"),
                 Button("Check again", id="mcps-retry"),
                 classes="manage-actions",
             ),
@@ -1231,6 +1324,10 @@ class SetupApp(App[bool]):
             0.12, self._advance_provider_list_spinner
         )
         self._provider_list_spinner_timer.pause()
+        self._mcp_list_spinner_timer = self.set_interval(
+            0.12, self._advance_mcp_list_spinner
+        )
+        self._mcp_list_spinner_timer.pause()
         self._model_spinner_timer = self.set_interval(
             0.12, self._advance_model_spinner
         )
@@ -1371,8 +1468,7 @@ class SetupApp(App[bool]):
         ) and "review" in self.visited
         lines.append(f"{mark('mcp', mcp_complete)}  MCP servers")
         lines.extend(
-            f"   ├─ {validation_marks[self.state.mcp_verified.get(name)]} "
-            f"{name}"
+            f"   ├─ {self._mcp_validation_mark(name)} {name}"
             for name in mcp_names
         )
         lines.append(f"{mark('review', self.current_page == 'done')}  Save")
@@ -1430,6 +1526,24 @@ class SetupApp(App[bool]):
         self._update_progress()
         self._update_provider_tabs()
         self._update_provider_connection_checking_message()
+
+    def _mcp_validation_mark(self, name: str) -> str:
+        if name in self._mcps_validating:
+            return self.MODEL_SPINNER_FRAMES[self._mcp_list_spinner_frame]
+        return {True: "✓", False: "✗", None: "○"}[
+            self.state.mcp_verified.get(name)
+        ]
+
+    def _advance_mcp_list_spinner(self) -> None:
+        if not self._mcps_validating:
+            if self._mcp_list_spinner_timer is not None:
+                self._mcp_list_spinner_timer.pause()
+            return
+        self._mcp_list_spinner_frame = (self._mcp_list_spinner_frame + 1) % len(
+            self.MODEL_SPINNER_FRAMES
+        )
+        self._update_progress()
+        self._update_mcp_tabs()
 
     def _update_provider_connection_checking_message(self) -> None:
         frame = self.MODEL_SPINNER_FRAMES[self._provider_list_spinner_frame]
@@ -1536,7 +1650,9 @@ class SetupApp(App[bool]):
                 KEYRING_SERVICE,
                 name,
             )
-        except keyring.errors.KeyringError:
+        except Exception:
+            # Backends do not consistently wrap command failures in
+            # KeyringError. A missing/unreadable entry is equivalent to no key.
             secret = None
         if generation != self._api_key_load_generation[prefix]:
             return
@@ -2745,28 +2861,109 @@ class SetupApp(App[bool]):
         self.editing_mcp = None
         self._show("mcps")
 
-    def _refresh_mcp_list(self) -> None:
-        options = [(name, name) for name in self.state.mcp_servers]
-        if not options:
-            options = [("No MCP servers configured", NO_MODEL)]
-        select = self.query_one("#mcps-list", Select)
-        select.set_options(options)
-        select.value = options[0][1]
+    async def _refresh_mcp_tabs(self) -> None:
+        tabs = self.query_one("#mcps-tabs", TabbedContent)
+        await tabs.clear_panes()
+        self._mcp_tab_names.clear()
+        if not self.state.mcp_servers:
+            pane_id = "mcp-pane-empty"
+            await tabs.add_pane(
+                TabPane(
+                    "No MCP servers configured",
+                    Static(
+                        "Add an MCP server, or continue without one.",
+                        classes="mcp-summary",
+                    ),
+                    id=pane_id,
+                )
+            )
+            return
+        for index, (name, server) in enumerate(self.state.mcp_servers.items()):
+            pane_id = f"mcp-pane-{index}"
+            title, summary = self._mcp_tab_content(name, server)
+            await tabs.add_pane(
+                TabPane(
+                    title,
+                    Static(summary, classes="mcp-summary", markup=False),
+                    id=pane_id,
+                )
+            )
+            self._mcp_tab_names[pane_id] = name
+
+    def _mcp_tab_content(self, name: str, server: MCPDraft) -> tuple[str, str]:
+        status = self.state.mcp_verified.get(name)
+        labels = {
+            True: "Verified",
+            False: "Verification failed",
+            None: "Checking connection",
+        }
+        endpoint = (
+            f"Command: {server.command}"
+            if server.transport == "stdio"
+            else f"URL: {server.url}"
+        )
+        credential = (
+            f"System keyring: {server.keyring_username or name}"
+            if server.auth
+            else "None"
+        )
+        summary = (
+            f"Status: {labels[status]}\n"
+            f"Transport: {server.transport}\n"
+            f"{endpoint}\n"
+            f"API token: {credential}"
+        )
+        if error := self.state.mcp_errors.get(name):
+            summary += f"\n\n{error}"
+        return f"{self._mcp_validation_mark(name)} {name}", summary
+
+    def _update_mcp_tabs(self) -> None:
+        tab_containers = self.query("#mcps-tabs")
+        if not tab_containers:
+            return
+        tabs = tab_containers.first(TabbedContent)
+        for pane_id, name in self._mcp_tab_names.items():
+            server = self.state.mcp_servers.get(name)
+            if server is None:
+                continue
+            title, summary = self._mcp_tab_content(name, server)
+            tabs.get_tab(pane_id).label = title
+            tabs.get_pane(pane_id).query_one(".mcp-summary", Static).update(
+                summary
+            )
+
+    def _active_mcp_name(self) -> str | None:
+        pane_id = self.query_one("#mcps-tabs", TabbedContent).active
+        return self._mcp_tab_names.get(pane_id)
 
     async def _verify_mcp_server(self, name: str) -> bool:
+        self._mcps_validating.add(name)
+        if len(self._mcps_validating) == 1:
+            self._mcp_list_spinner_frame = 0
+            if self._mcp_list_spinner_timer is not None:
+                self._mcp_list_spinner_timer.resume()
         self.state.mcp_verified[name] = None
         self.state.mcp_errors.pop(name, None)
         self._update_progress()
+        self._update_mcp_tabs()
         try:
             await probe_mcp_server(self.state.mcp_servers[name])
         except Exception as exc:
             self.state.mcp_verified[name] = False
             self.state.mcp_errors[name] = _friendly_mcp_error(exc)
-            self._update_progress()
             return False
-        self.state.mcp_verified[name] = True
-        self._update_progress()
-        return True
+        else:
+            self.state.mcp_verified[name] = True
+            return True
+        finally:
+            self._mcps_validating.discard(name)
+            if (
+                not self._mcps_validating
+                and self._mcp_list_spinner_timer is not None
+            ):
+                self._mcp_list_spinner_timer.pause()
+            self._update_progress()
+            self._update_mcp_tabs()
 
     async def _verify_all_mcp_servers(self, *, force: bool = False) -> bool:
         async with self._mcp_validation_lock:
@@ -2831,7 +3028,7 @@ class SetupApp(App[bool]):
             return False
 
     async def _prepare_mcps_page(self) -> None:
-        self._refresh_mcp_list()
+        await self._refresh_mcp_tabs()
         await self._verify_all_mcp_servers()
 
     def _refresh_review(self) -> None:
@@ -3100,16 +3297,16 @@ class SetupApp(App[bool]):
         elif button_id == "mcp-add":
             self._begin_mcp()
         elif button_id == "mcp-edit":
-            value = self.query_one("#mcps-list", Select).value
-            if isinstance(value, str) and value in self.state.mcp_servers:
+            value = self._active_mcp_name()
+            if value in self.state.mcp_servers:
                 self._begin_mcp(value)
         elif button_id == "mcp-remove":
-            value = self.query_one("#mcps-list", Select).value
-            if isinstance(value, str) and value in self.state.mcp_servers:
+            value = self._active_mcp_name()
+            if value in self.state.mcp_servers:
                 del self.state.mcp_servers[value]
                 self.state.mcp_verified.pop(value, None)
                 self.state.mcp_errors.pop(value, None)
-                self._refresh_mcp_list()
+                await self._refresh_mcp_tabs()
                 self._update_progress()
                 self._update_mcp_continue_button()
                 self._update_review_save_button()
@@ -3132,7 +3329,12 @@ class SetupApp(App[bool]):
             self.exit(True)
 
 
-def run_setup(path: Path | None = None) -> bool:
+def run_setup(
+    path: Path | None = None,
+    defaults_json: Path | None = None,
+) -> bool:
     """Launch the guided configuration application."""
     inject_truststore_into_ssl()
-    return bool(SetupApp(path or default_setup_config_path()).run())
+    return bool(
+        SetupApp(path or default_setup_config_path(), defaults_json).run()
+    )

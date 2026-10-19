@@ -34,6 +34,7 @@ from ursa.cli.setup import (
     SetupApp,
     SetupState,
     _friendly_validation_error,
+    load_setup_defaults,
     probe_mcp_server,
     run_setup,
     save_setup_state,
@@ -93,7 +94,86 @@ def test_run_setup_injects_truststore(monkeypatch, tmp_path):
     assert run_setup(path) is True
 
     inject.assert_called_once_with()
-    create_app.assert_called_once_with(path)
+    create_app.assert_called_once_with(path, None)
+
+
+def test_setup_state_applies_non_secret_installer_defaults(tmp_path):
+    defaults_path = tmp_path / "defaults.json"
+    defaults_path.write_text(
+        """
+{
+  "python_version": "3.13",
+  "inference_providers": [
+    {"name": "anthropic", "base_url": "https://api.anthropic.test"}
+  ],
+  "mcp_servers": {
+    "tools": {
+      "transport": "streamable_http",
+      "url": "https://tools.example/mcp",
+      "headers": {
+        "Authorization": {"template": "Bearer %s"}
+      },
+      "timeout": 30
+    }
+  }
+}
+"""
+    )
+    state = SetupState.load(tmp_path / "config.yaml")
+
+    state.apply_defaults(load_setup_defaults(defaults_path))
+
+    provider = state.providers["anthropic"]
+    assert provider.kind == "anthropic"
+    assert provider.base_url == "https://api.anthropic.test"
+    assert provider.api_key_reference == {"keyring": True}
+    server = state.mcp_servers["tools"]
+    assert server.auth is True
+    assert server.secret_reference == {
+        "keyring": True,
+        "template": "Bearer %s",
+    }
+    assert server.template == "Bearer %s"
+    assert server.extra == {"timeout": 30}
+
+
+def test_setup_defaults_do_not_replace_existing_entries(tmp_path):
+    state = configured_state(tmp_path / "config.yaml")
+
+    state.apply_defaults({
+        "inference_providers": [
+            {"name": "company", "base_url": "https://replacement.test/v1"}
+        ],
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable_http",
+                "url": "https://replacement.test/mcp",
+            }
+        },
+    })
+
+    assert state.providers["company"].base_url == "https://models.example/v1"
+    assert state.mcp_servers["tools"].url == "https://tools.example/mcp"
+
+
+def test_setup_defaults_reject_mcp_secret_references(tmp_path):
+    state = SetupState.load(tmp_path / "config.yaml")
+
+    with pytest.raises(ValueError, match="must not include API keys"):
+        state.apply_defaults({
+            "mcp_servers": {
+                "tools": {
+                    "transport": "streamable_http",
+                    "url": "https://tools.example/mcp",
+                    "headers": {
+                        "Authorization": {
+                            "keyring": True,
+                            "template": "Bearer %s",
+                        }
+                    },
+                }
+            }
+        })
 
 
 def test_setup_state_builds_keyring_only_configuration(tmp_path):
@@ -322,6 +402,7 @@ async def test_setup_app_railroads_first_run(monkeypatch, tmp_path):
         )
         await pilot.click("#models-save")
         await _wait_for(lambda: app.current_page == "mcps")
+        assert app.query_one("#mcps-tabs", TabbedContent)
         assert chat_probes == ["gpt-test"]
         assert embedding_probes == ["text-embedding-test"]
         assert "✓" in str(
@@ -1064,6 +1145,7 @@ async def test_mcp_server_is_validated_before_it_is_saved(
         app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
         await app._save_mcp()
         await _wait_for(lambda: app.current_page == "mcps")
+        await _wait_for(lambda: bool(app._mcp_tab_names))
 
         assert checked == ["tools"]
         assert app.state.mcp_verified["tools"] is True
@@ -1127,6 +1209,9 @@ async def test_failed_mcp_server_disables_review_until_retry_succeeds(
         app._show("mcps")
         await _wait_for(lambda: app.state.mcp_verified["tools"] is False)
 
+        tabs = app.query_one("#mcps-tabs", TabbedContent)
+        assert app._mcp_tab_names == {"mcp-pane-0": "tools"}
+        assert "✗ tools" in str(tabs.get_tab("mcp-pane-0").label)
         assert app.query_one("#mcps-next").disabled is True
         await pilot.click("#mcps-next")
         assert app.current_page == "mcps"
@@ -1138,6 +1223,34 @@ async def test_failed_mcp_server_disables_review_until_retry_succeeds(
         await pilot.click("#mcps-retry")
         await _wait_for(lambda: app.state.mcp_verified["tools"] is True)
         assert app.query_one("#mcps-next").disabled is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_tabs_select_the_server_to_edit(tmp_path):
+    app = SetupApp(tmp_path / "config.yaml")
+    for name in ("search", "storage"):
+        app.state.mcp_servers[name] = MCPDraft(
+            name=name,
+            transport="streamable_http",
+            url=f"https://{name}.example/mcp",
+        )
+        app.state.mcp_verified[name] = True
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._show("mcps")
+        await _wait_for(lambda: len(app._mcp_tab_names) == 2)
+
+        tabs = app.query_one("#mcps-tabs", TabbedContent)
+        assert app._mcp_tab_names == {
+            "mcp-pane-0": "search",
+            "mcp-pane-1": "storage",
+        }
+        await pilot.click(tabs.get_tab("mcp-pane-1"))
+        await _wait_for(lambda: tabs.active == "mcp-pane-1")
+        await pilot.click("#mcp-edit")
+
+        assert app.editing_mcp == "storage"
+        assert app.query_one("#mcp-name", Input).value == "storage"
 
 
 @pytest.mark.asyncio

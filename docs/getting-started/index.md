@@ -8,8 +8,8 @@ different endpoint.
 ## Install URSA
 
 URSA requires Python 3.11 or newer. On macOS and Linux, the guided installer
-installs `uv` if needed, installs URSA and the dashboard, then walks through
-provider, model, and optional MCP configuration:
+installs `uv` if needed, installs URSA and the dashboard with Python 3.13, then
+walks through provider, model, and optional MCP configuration:
 
 ```bash
 curl -LsSf https://lanl.github.io/ursa/install.sh | sh

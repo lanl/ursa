@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -82,6 +84,12 @@ def add_self_subcommands(subparsers) -> None:
         default=None,
         help=("Configuration path (default: ~/.config/ursa/config.yaml)"),
     )
+    setup.add_argument(
+        "--defaults-json",
+        type=Path,
+        default=None,
+        help="Non-secret provider and MCP defaults from an installer payload",
+    )
     _command(commands, "status", "Show installation details", show_status)
     doctor = _command(
         commands,
@@ -107,6 +115,12 @@ def add_self_subcommands(subparsers) -> None:
     modify.add_argument(
         "--with", dest="with_packages", action="append", default=None
     )
+    modify.add_argument(
+        "--installer-config",
+        type=Path,
+        default=None,
+        help="Apply a non-secret JSON installation recipe",
+    )
     modify.add_argument("--clean", action="store_true")
     source = modify.add_mutually_exclusive_group()
     source.add_argument("--version", help="Install an exact registry version")
@@ -117,10 +131,56 @@ def _setup(args) -> None:
     """Load Textual only when the interactive setup command is selected."""
     from ursa.cli.setup import run_setup
 
-    run_setup(args.config)
+    run_setup(args.config, args.defaults_json)
 
 
 def _modify(args) -> None:
+    if args.installer_config is not None:
+        if any((
+            args.extra,
+            args.with_packages,
+            args.version,
+            args.ref,
+            args.clean,
+        )):
+            raise SystemExit(
+                "--installer-config cannot be combined with other modify options."
+            )
+        config = load_installer_config(args.installer_config)
+        python_version = config.get("python_version", "3.13")
+        if not isinstance(python_version, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*", python_version
+        ):
+            raise SystemExit(
+                "Invalid installer configuration: python_version must be a "
+                "version such as '3.13'"
+            )
+        extras = config.get("extras", ["dashboard"])
+        if not isinstance(extras, list) or not all(
+            isinstance(value, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value)
+            for value in extras
+        ):
+            raise SystemExit(
+                "Invalid installer configuration: extras must be an array of "
+                "package extra names"
+            )
+        extra_packages = config.get("extra_packages", [])
+        if not isinstance(extra_packages, list) or not all(
+            isinstance(value, str) and value.strip() and "\n" not in value
+            for value in extra_packages
+        ):
+            raise SystemExit(
+                "Invalid installer configuration: extra_packages must be an "
+                "array of non-empty requirement strings"
+            )
+        upgrade(
+            extras=extras,
+            with_packages=[value.strip() for value in extra_packages],
+            python_version=python_version,
+            clean=True,
+        )
+        return
     upgrade(
         extras=args.extra,
         with_packages=args.with_packages,
@@ -128,6 +188,25 @@ def _modify(args) -> None:
         ref=args.ref,
         clean=args.clean,
     )
+
+
+def load_installer_config(path: Path) -> dict:
+    """Load an installer JSON object without interpreting its sections."""
+
+    def invalid(message: str) -> SystemExit:
+        return SystemExit(f"Invalid installer configuration: {message}")
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise invalid(f"could not read {path}: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise invalid(
+            f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from None
+    if not isinstance(payload, dict):
+        raise invalid("the payload must be a JSON object")
+    return payload
 
 
 def _read_requirements(receipt: Path) -> list[dict]:
@@ -313,12 +392,14 @@ def upgrade(
     with_packages: list[str] | None = None,
     version: str | None = None,
     ref: str | None = None,
+    python_version: str | None = None,
     clean: bool = False,
 ) -> None:
     """Replace the running process with uv update or install."""
     uv, receipt = _uv_install()
     changed = clean or any(
-        value is not None for value in (extras, with_packages, version, ref)
+        value is not None
+        for value in (extras, with_packages, version, ref, python_version)
     )
     if changed:
         selected = _merge(
@@ -347,7 +428,7 @@ def upgrade(
             "--reinstall",
             "--compile-bytecode",
             "--python",
-            str(Path(sys.executable).resolve()),
+            python_version or str(Path(sys.executable).resolve()),
         ]
         for package in packages:
             argv += ["--with", package]

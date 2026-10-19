@@ -111,6 +111,7 @@ nav:
       - Sandboxing and information control: best-practices/sandboxing.md
       - Contributing: best-practices/contributing.md
   - Reference:
+      - Administration: reference/administration.md
       - CLI reference: reference/cli.md
       - MCP reference: reference/mcp.md
       - Event logging: reference/logging_events.md

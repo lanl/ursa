@@ -104,13 +104,15 @@ Checkbox {
     padding-top: 1;
 }
 
-#providers-tabs {
+#providers-tabs,
+#mcps-tabs {
     width: 100%;
     height: 12;
     margin-bottom: 1;
 }
 
-.provider-summary {
+.provider-summary,
+.mcp-summary {
     width: 100%;
     height: auto;
     padding: 1 2;
