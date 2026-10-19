@@ -3,11 +3,12 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from threading import Barrier, Event
+from threading import Barrier, Event, current_thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import SecretStr
 
 from ursa.cli import build_parser, main
 from ursa.cli import doctor as doctor_mod
@@ -522,6 +523,107 @@ def test_provider_checks_validate_every_provider(monkeypatch):
         CheckStatus.ERROR,
     ]
     assert "credentials rejected" in result.checks[1].message
+
+
+def _resolved_keyring_config() -> UrsaConfig:
+    return UrsaConfig.model_validate({
+        "group": None,
+        "inference_providers": {
+            "shared": {"api_key": {"keyring": "shared-account"}}
+        },
+        "llm_model": {
+            "model": "chat-test",
+            "model_provider": "openai",
+            "inference_provider": "shared",
+        },
+        "emb_model": {
+            "model": "embedding-test",
+            "model_provider": "openai",
+            "inference_provider": "shared",
+        },
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {
+                    "Authorization": {
+                        "keyring": "shared-account",
+                        "template": "Bearer %s",
+                    }
+                },
+            }
+        },
+    }).resolve()
+
+
+def test_keyring_credentials_are_primed_once_on_the_calling_thread(
+    monkeypatch,
+):
+    config = _resolved_keyring_config()
+    calls = []
+
+    def get_password(service, username):
+        calls.append((service, username, current_thread()))
+        return "token"
+
+    monkeypatch.setattr("keyring.get_password", get_password)
+
+    context = doctor_mod._prime_keyring_credentials(
+        DoctorContext(config=config)
+    )
+
+    assert calls == [("ursa", "shared-account", current_thread())]
+    assert isinstance(config.inference_providers["shared"].api_key, SecretStr)
+    assert isinstance(config.llm_model.api_key, SecretStr)
+    assert isinstance(config.emb_model.api_key, SecretStr)
+    assert config.mcp_servers["tools"].headers["Authorization"] == (
+        "Bearer token"
+    )
+    assert not context.credential_errors
+    assert not context.mcp_credential_errors
+
+
+def test_keyring_failure_is_reused_without_blocking_other_checks(monkeypatch):
+    config = _resolved_keyring_config()
+    calls = []
+
+    def get_password(_service, _username):
+        calls.append(current_thread())
+        raise RuntimeError("keychain is locked")
+
+    monkeypatch.setattr("keyring.get_password", get_password)
+    context = doctor_mod._prime_keyring_credentials(
+        DoctorContext(config=config)
+    )
+    shared_provider = config.inference_providers["shared"]
+    list_models = MagicMock(return_value=[])
+    start_mcp = MagicMock(side_effect=AssertionError("MCP probe ran"))
+    monkeypatch.setattr(
+        "ursa.util.inference_providers.list_provider_models", list_models
+    )
+    monkeypatch.setattr("ursa.util.mcp.start_mcp_client", start_mcp)
+
+    provider_result = check_inference_providers(context)
+    llm_result = check_llm_models(context)
+    embedding_result = check_embedding_models(context)
+    mcp_result = check_mcp_servers(context)
+
+    assert calls == [current_thread()]
+    provider_checks = {check.name: check for check in provider_result.checks}
+    assert provider_checks["shared"].status is CheckStatus.ERROR
+    assert "locked" in provider_checks["shared"].message
+    assert all(
+        probe.status is CheckStatus.ERROR
+        for probe in llm_result.checks[0].checks
+    )
+    assert embedding_result.status is CheckStatus.ERROR
+    assert mcp_result.status is CheckStatus.ERROR
+    assert "Authorization: keychain is locked" in mcp_result.checks[0].message
+    assert all(
+        call.args[0] is not shared_provider
+        for call in list_models.call_args_list
+    )
+    start_mcp.assert_not_called()
 
 
 class _FakeChatResponse:

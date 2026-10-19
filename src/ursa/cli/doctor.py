@@ -25,11 +25,12 @@ from time import perf_counter
 from typing import Any
 
 from langchain_core.tools import tool
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from rich.console import Console
 from rich.text import Text
 
 from ursa.cli.config import UrsaConfig
+from ursa.util.secrets import SecretReference, SecretTemplate
 
 HEALTHCHECK_ENTRYPOINT_GROUP = "ursa-healthcheck"
 CHECK_DEADLINE_SECONDS = 60
@@ -97,6 +98,10 @@ class DoctorContext:
     config: UrsaConfig | None
     config_error: BaseException | None = None
     config_paths: tuple[Path, ...] = ()
+    credential_errors: Mapping[int, BaseException] = field(default_factory=dict)
+    mcp_credential_errors: Mapping[str, BaseException] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -192,11 +197,104 @@ def _secret_value(config: Any) -> str | None:
     return reference.get_secret_value()
 
 
+def _keyring_username(
+    reference: SecretReference, default_username: str | None = None
+) -> str:
+    username = (
+        default_username if reference.keyring is True else reference.keyring
+    )
+    if not isinstance(username, str) or not username:
+        raise ValueError("keyring=true requires a default username")
+    return username
+
+
+def _prime_keyring_credentials(context: DoctorContext) -> DoctorContext:
+    """Resolve keyring secrets before concurrent checks and terminal output."""
+    if context.config is None:
+        return context
+
+    cache: dict[str, SecretStr | BaseException] = {}
+    credential_errors: dict[int, BaseException] = {}
+    mcp_error_messages: dict[str, list[str]] = {}
+
+    def resolve(
+        reference: SecretReference, default_username: str | None = None
+    ) -> SecretStr | BaseException:
+        try:
+            username = _keyring_username(reference, default_username)
+        except _CHECK_FAILURES as exc:
+            return exc
+        if username not in cache:
+            try:
+                secret = reference.resolve(default_username)
+                if secret is None:
+                    raise ValueError(
+                        f"No secret found in the system keyring for "
+                        f"'{username}'"
+                    )
+                cache[username] = secret
+            except _CHECK_FAILURES as exc:
+                cache[username] = exc
+        return cache[username]
+
+    def prime_api_key(config: Any) -> None:
+        reference = getattr(config, "api_key", None)
+        if not isinstance(reference, SecretReference) or reference.keyring in (
+            None,
+            False,
+        ):
+            return
+        outcome = resolve(reference)
+        if isinstance(outcome, BaseException):
+            credential_errors[id(config)] = outcome
+        else:
+            config.api_key = outcome
+
+    for provider in context.config.inference_providers.values():
+        prime_api_key(provider)
+    prime_api_key(context.config.llm_model)
+    if context.config.emb_model is not None:
+        prime_api_key(context.config.emb_model)
+
+    for server_name, server in context.config.mcp_servers.items():
+        headers = getattr(server, "headers", None)
+        if not isinstance(headers, dict):
+            continue
+        for header_name, value in tuple(headers.items()):
+            reference = SecretTemplate.maybe_validate(value)
+            if not isinstance(
+                reference, SecretTemplate
+            ) or reference.keyring in (None, False):
+                continue
+            outcome = resolve(reference, server_name)
+            if isinstance(outcome, BaseException):
+                mcp_error_messages.setdefault(server_name, []).append(
+                    f"{header_name}: {_exception_message(outcome)}"
+                )
+            else:
+                headers[header_name] = (
+                    reference.template % outcome.get_secret_value()
+                )
+
+    mcp_credential_errors = {
+        name: RuntimeError("; ".join(messages))
+        for name, messages in mcp_error_messages.items()
+    }
+    return replace(
+        context,
+        credential_errors=credential_errors,
+        mcp_credential_errors=mcp_credential_errors,
+    )
+
+
 def _run_probe(
+    context: DoctorContext,
     name: str,
     config: Any,
     probe: Callable[[], str],
 ) -> CheckResult:
+    if credential_error := context.credential_errors.get(id(config)):
+        return _error_result(name, credential_error)
     secret = None
     try:
         secret = _secret_value(config)
@@ -443,7 +541,7 @@ def check_inference_providers(context: DoctorContext) -> CheckResult:
                 f"provider advertised {len(models)} model(s)"
             )
 
-        checks.append(_run_probe(name, provider, probe))
+        checks.append(_run_probe(context, name, provider, probe))
     if not checks:
         return CheckResult(
             "Inference providers",
@@ -478,8 +576,12 @@ class _DoctorStructuredResponse(BaseModel):
 ModelProbe = Callable[[Any], str]
 
 
-def _run_model_probe(config: Any, name: str, probe: ModelProbe) -> CheckResult:
-    return _run_probe(name, config, lambda: probe(config.init_chat_model()))
+def _run_model_probe(
+    context: DoctorContext, config: Any, name: str, probe: ModelProbe
+) -> CheckResult:
+    return _run_probe(
+        context, name, config, lambda: probe(config.init_chat_model())
+    )
 
 
 def _probe_chat(model: Any) -> str:
@@ -532,7 +634,7 @@ def check_llm_models(context: DoctorContext) -> CheckResult:
         return _configuration_error("LLM models")
     model = context.config.llm_model
     probes = tuple(
-        _run_model_probe(model, name, probe)
+        _run_model_probe(context, model, name, probe)
         for name, probe in (
             ("Chat invocation", _probe_chat),
             ("Forced tool use", _probe_forced_tool_use),
@@ -562,14 +664,23 @@ def check_embedding_models(context: DoctorContext) -> CheckResult:
         )
     config = context.config.emb_model
     result = _run_probe(
-        _model_label(config), config, lambda: _probe_embedding_model(config)
+        context,
+        _model_label(config),
+        config,
+        lambda: _probe_embedding_model(config),
     )
     return CheckResult.group("Embedding models", [result])
 
 
-async def _probe_mcp_server(name: str, server: Any) -> CheckResult:
+async def _probe_mcp_server(
+    name: str,
+    server: Any,
+    credential_error: BaseException | None = None,
+) -> CheckResult:
     from ursa.util.mcp import start_mcp_client
 
+    if credential_error is not None:
+        return _error_result(name, credential_error)
     try:
         client = start_mcp_client({name: server})
         tools = await client.get_tools(server_name=name)
@@ -582,11 +693,14 @@ async def _probe_mcp_server(name: str, server: Any) -> CheckResult:
         return _error_result(name, exc)
 
 
-async def _probe_mcp_servers(servers: Mapping[str, Any]) -> list[CheckResult]:
+async def _probe_mcp_servers(
+    servers: Mapping[str, Any],
+    credential_errors: Mapping[str, BaseException],
+) -> list[CheckResult]:
     return list(
         await asyncio.gather(
             *(
-                _probe_mcp_server(name, server)
+                _probe_mcp_server(name, server, credential_errors.get(name))
                 for name, server in servers.items()
             )
         )
@@ -601,7 +715,11 @@ def check_mcp_servers(context: DoctorContext) -> CheckResult:
         return CheckResult(
             "MCP servers", CheckStatus.WARN, "No MCP servers are configured"
         )
-    checks = asyncio.run(_probe_mcp_servers(context.config.mcp_servers))
+    checks = asyncio.run(
+        _probe_mcp_servers(
+            context.config.mcp_servers, context.mcp_credential_errors
+        )
+    )
     return CheckResult.group("MCP servers", checks)
 
 
@@ -901,6 +1019,10 @@ def run_doctor(
         config_error=config_error,
         config_paths=config_paths,
     )
+    try:
+        context = _prime_keyring_credentials(context)
+    except _CHECK_FAILURES as exc:
+        context = replace(context, config=None, config_error=exc)
     json_output = bool(getattr(args, "json", False))
     console = None
     try:
