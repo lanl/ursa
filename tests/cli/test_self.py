@@ -92,9 +92,65 @@ def test_self_setup_passes_installer_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr("ursa.cli.setup.run_setup", called)
     defaults = tmp_path / "defaults.json"
 
-    main(["self", "setup", "--defaults-json", str(defaults)])
+    main(["self", "setup", "--default-json", str(defaults)])
 
     called.assert_called_once_with(None, defaults)
+
+
+@pytest.mark.parametrize(
+    ("action_name", "executable"),
+    [
+        ("TERMINAL", "ursa"),
+        ("DASHBOARD", "ursa-dashboard"),
+    ],
+)
+def test_self_setup_replaces_process_after_tui_exits(
+    monkeypatch, action_name, executable
+):
+    from ursa.cli.setup import SetupAction
+
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr(
+        "ursa.cli.setup.run_setup",
+        MagicMock(return_value=SetupAction[action_name]),
+    )
+    execvp = MagicMock(side_effect=SystemExit(0))
+    monkeypatch.setattr("ursa.cli.self.os.execvp", execvp)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["self", "setup"])
+
+    assert exc_info.value.code == 0
+    execvp.assert_called_once_with(executable, [executable])
+
+
+def test_self_setup_exit_does_not_launch_process(monkeypatch):
+    from ursa.cli.setup import SetupAction
+
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr(
+        "ursa.cli.setup.run_setup",
+        MagicMock(return_value=SetupAction.EXIT),
+    )
+    execvp = MagicMock()
+    monkeypatch.setattr("ursa.cli.self.os.execvp", execvp)
+
+    main(["self", "setup"])
+
+    execvp.assert_not_called()
+
+
+def test_self_setup_reports_invalid_existing_configuration(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    path = tmp_path / "config.yaml"
+    path.write_text("[]\n")
+
+    with pytest.raises(
+        SystemExit, match="Could not start guided setup.*mapping"
+    ):
+        main(["self", "setup", "--config", str(path)])
 
 
 @pytest.mark.parametrize(
@@ -418,13 +474,12 @@ def test_installer_config_routes_complete_recipe(monkeypatch, tmp_path):
     )
 
 
-def test_installer_config_loader_leaves_unconsumed_sections_alone(tmp_path):
+def test_installer_config_loader_rejects_unknown_sections(tmp_path):
     config = tmp_path / "installer.json"
     config.write_text('{"site_metadata": {"name": "example"}}')
 
-    assert load_installer_config(config) == {
-        "site_metadata": {"name": "example"}
-    }
+    with pytest.raises(SystemExit, match="unknown field: site_metadata"):
+        load_installer_config(config)
 
 
 def test_main_self_update_preserves_recipe(monkeypatch):

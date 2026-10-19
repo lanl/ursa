@@ -407,6 +407,17 @@ class ModelConfig(BaseModel):
         return f"{self.inference_provider} - {self.base_url}"
 
 
+def editable_model_values(config: ModelConfig) -> dict[str, Any]:
+    """Return explicit model settings suitable for an editable YAML form."""
+    values = config.model_dump(
+        mode="json",
+        exclude_unset=True,
+        context={"include_defaults": False},
+    )
+    values.setdefault("model", config.model)
+    return values
+
+
 class ChatModelConfig(ModelConfig):
     """Configuration for instantiating a chat model"""
 

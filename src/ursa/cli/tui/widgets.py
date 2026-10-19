@@ -3,7 +3,7 @@
 """Reusable widgets and modal screens for the Textual CLI."""
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from itertools import islice
@@ -42,6 +42,7 @@ from ursa.cli.config import (
     EmbModelConfig,
     InferenceProviderConfig,
     ModelConfig,
+    editable_model_values,
 )
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
@@ -409,6 +410,80 @@ class FuzzySelect(Select):
                 overlay.reset_search()
 
 
+class AdvancedYamlEditor(Collapsible):
+    """Reusable collapsible YAML editor with validation presentation."""
+
+    def __init__(
+        self,
+        prefix: str,
+        text: str = "",
+        *,
+        editor_classes: str = "",
+        error_classes: str = "",
+        classes: str = "",
+        markup: bool = True,
+    ) -> None:
+        editor = TextArea(
+            text,
+            language="yaml",
+            show_line_numbers=True,
+            tab_behavior="indent",
+            id=f"{prefix}-config-yaml",
+            classes=editor_classes,
+        )
+        error = Static(
+            "",
+            id=f"{prefix}-yaml-error",
+            classes=f"{error_classes} hidden",
+            markup=markup,
+        )
+        super().__init__(
+            editor,
+            error,
+            title="Advanced",
+            collapsed=True,
+            id=f"{prefix}-advanced",
+            classes=classes,
+        )
+        self.prefix = prefix
+        self.error_markup = markup
+        self._validation_timer: Timer | None = None
+
+    def set_text(self, text: str) -> None:
+        """Replace editor text without emitting a change event."""
+        editor = self.query_one(TextArea)
+        if editor.text == text:
+            return
+        with self.prevent(TextArea.Changed):
+            editor.text = text
+
+    def set_validation(self, state: str, error: str = "") -> None:
+        """Display neutral, valid, or invalid validation state."""
+        editor = self.query_one(TextArea)
+        editor.remove_class("yaml-valid", "yaml-invalid")
+        if state != "neutral":
+            editor.add_class(f"yaml-{state}")
+        message = self.query_one(f"#{self.prefix}-yaml-error", Static)
+        message.update(Text(error) if self.error_markup else error)
+        message.set_class(not error, "hidden")
+
+    def schedule_validation(
+        self, delay: float, callback: Callable[[], None]
+    ) -> None:
+        """Debounce a validation callback owned by this editor."""
+        self.cancel_validation()
+        self._validation_timer = self.set_timer(delay, callback)
+
+    def cancel_validation(self) -> None:
+        """Cancel a pending validation callback, if any."""
+        if self._validation_timer is not None:
+            self._validation_timer.stop()
+            self._validation_timer = None
+
+    def on_unmount(self) -> None:
+        self.cancel_validation()
+
+
 class ThemeScreen(HotlistScreen):
     """Theme picker that previews highlighted themes over the current app."""
 
@@ -435,19 +510,55 @@ class ModelSelection:
     embedding: EmbModelConfig | None
 
 
-class ModelFieldLabel(Horizontal):
-    """Compact field label with an accented help affordance."""
+class HelpLabel(Horizontal):
+    """Compact field label with an accented tooltip affordance."""
 
-    def __init__(self, label: str, help_text: str, *, id: str) -> None:
-        super().__init__(id=id, classes="model-field-label")
+    DEFAULT_CSS = """
+    HelpLabel {
+        width: 100%;
+        height: 2;
+        padding-top: 1;
+    }
+
+    HelpLabel > .help-label-text,
+    HelpLabel > .help-label-bracket,
+    HelpLabel > .help-label-mark {
+        width: auto;
+        height: 1;
+    }
+
+    HelpLabel > .help-label-text {
+        margin-right: 1;
+    }
+
+    HelpLabel > .help-label-mark {
+        color: $accent;
+    }
+    """
+
+    def __init__(
+        self,
+        label: str,
+        help_text: str,
+        *,
+        id: str,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(id=id, classes=classes)
         self.label = label
         self.tooltip = help_text
 
     def compose(self) -> ComposeResult:
-        yield Static(self.label, classes="model-field-label-text")
-        yield Static("[", classes="model-field-help-bracket")
-        yield Static("?", classes="model-field-help-mark")
-        yield Static("]", classes="model-field-help-bracket")
+        yield Static(self.label, classes="help-label-text")
+        yield Static("[", classes="help-label-bracket")
+        yield Static("?", classes="help-label-mark")
+        yield Static("]", classes="help-label-bracket")
+
+    def set_label(self, label: str) -> None:
+        """Update the visible label while retaining its help tooltip."""
+        self.label = label
+        if self.is_mounted:
+            self.query_one(".help-label-text", Static).update(label)
 
 
 class ModelScreen(ModalScreen[ModelSelection | None]):
@@ -527,12 +638,11 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             "embedding": self.embedding,
         }
         self._yaml_values = {
-            prefix: self._configured_values(config)
+            prefix: editable_model_values(config)
             for prefix, config in self.drafts.items()
         }
         self.model_catalogs: dict[str, dict[str, ProviderModel]] = {}
         self._model_load_generation = {"chat": 0, "embedding": 0}
-        self._yaml_timers: dict[str, Timer] = {}
         self._syncing_controls = False
 
     @classmethod
@@ -625,10 +735,8 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         )
 
     @classmethod
-    def _field_label(
-        cls, label: str, field: str, prefix: str
-    ) -> ModelFieldLabel:
-        return ModelFieldLabel(
+    def _field_label(cls, label: str, field: str, prefix: str) -> HelpLabel:
+        return HelpLabel(
             label,
             cls.FIELD_HELP[field],
             id=f"{prefix}-{field}-label",
@@ -643,56 +751,31 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                         "chat",
                         self.chat,
                     )
-                    yield from self._advanced_editor("chat", self.chat)
+                    yield self._advanced_editor("chat", self.chat)
                 with TabPane("Embedding", id="embedding-model-tab"):
                     yield from self._model_fields(
                         "embedding",
                         self.embedding,
                     )
-                    yield from self._advanced_editor(
-                        "embedding", self.embedding
-                    )
+                    yield self._advanced_editor("embedding", self.embedding)
             with Horizontal(classes="settings-actions"):
                 yield Button("Cancel", id="model-cancel")
                 yield Button("Apply", id="model-apply", variant="primary")
 
     def _advanced_editor(
         self, prefix: str, config: ModelConfig
-    ) -> ComposeResult:
-        with Collapsible(
-            title="Advanced",
-            collapsed=True,
-            id=f"{prefix}-advanced",
+    ) -> AdvancedYamlEditor:
+        return AdvancedYamlEditor(
+            prefix,
+            self._dump_yaml(config),
+            editor_classes="model-yaml-editor",
+            error_classes="model-yaml-error",
             classes="model-advanced",
-        ):
-            yield TextArea(
-                self._dump_yaml(config),
-                language="yaml",
-                show_line_numbers=True,
-                tab_behavior="indent",
-                id=f"{prefix}-config-yaml",
-                classes="model-yaml-editor",
-            )
-            yield Static(
-                "",
-                id=f"{prefix}-yaml-error",
-                classes="model-yaml-error hidden",
-            )
-
-    @staticmethod
-    def _configured_values(config: ModelConfig) -> dict:
-        """Return editable values without materializing inherited defaults."""
-        dumped = config.model_dump(
-            mode="json",
-            exclude_unset=True,
-            context={"include_defaults": False},
         )
-        dumped.setdefault("model", config.model)
-        return dumped
 
     @classmethod
     def _dump_yaml(cls, config: ModelConfig) -> str:
-        return cls._dump_yaml_values(cls._configured_values(config))
+        return cls._dump_yaml_values(editable_model_values(config))
 
     @staticmethod
     def _dump_yaml_values(values: Mapping) -> str:
@@ -707,7 +790,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
 
     def _update_yaml_values(self, prefix: str, config: ModelConfig) -> None:
         """Patch structured fields without reordering the YAML mapping."""
-        configured = self._configured_values(config)
+        configured = editable_model_values(config)
         values = self._yaml_values[prefix]
         if config.inference_provider is not None:
             values.pop("base_url", None)
@@ -731,11 +814,6 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             group="model-discovery",
             exclusive=True,
         )
-
-    def on_unmount(self) -> None:
-        for timer in self._yaml_timers.values():
-            timer.stop()
-        self._yaml_timers.clear()
 
     def _next_model_load_generation(self, prefix: str) -> int:
         self._model_load_generation[prefix] += 1
@@ -895,10 +973,9 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             self._set_yaml_state(prefix, "valid")
             return
         self._set_yaml_state(prefix, "neutral")
-        timer = self._yaml_timers.pop(prefix, None)
-        if timer is not None:
-            timer.stop()
-        self._yaml_timers[prefix] = self.set_timer(
+        self.query_one(
+            f"#{prefix}-advanced", AdvancedYamlEditor
+        ).schedule_validation(
             self.YAML_VALIDATION_DELAY,
             lambda: self._validate_yaml(prefix, update_controls=True),
         )
@@ -945,13 +1022,9 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         return config
 
     def _set_yaml_state(self, prefix: str, state: str, error: str = "") -> None:
-        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
-        editor.remove_class("yaml-valid", "yaml-invalid")
-        if state != "neutral":
-            editor.add_class(f"yaml-{state}")
-        message = self.query_one(f"#{prefix}-yaml-error", Static)
-        message.update(Text(error))
-        message.set_class(not error, "hidden")
+        self.query_one(
+            f"#{prefix}-advanced", AdvancedYamlEditor
+        ).set_validation(state, error)
 
     def _update_controls_from_config(
         self, prefix: str, config: ModelConfig

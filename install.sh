@@ -15,34 +15,20 @@ usage() {
     cat <<'EOF'
 Install URSA with uv and start the guided setup.
 
-Usage: install.sh [--config FILE | --config-json JSON | --config-stdin]
+Usage: install.sh [--config FILE]
 
-  --config FILE       Read an installer JSON payload from FILE.
-  --config-json JSON  Read the payload directly from the argument.
-  --config-stdin      Read the payload from stdin. Download this script first;
-                      stdin is already occupied when using curl ... | sh.
+  --config FILE  Read an installer JSON payload from FILE.
 EOF
 }
 
-config_source=""
-config_value=""
+config_file=""
 while [ "$#" -gt 0 ]; do
     case $1 in
         --config)
             [ "$#" -ge 2 ] || fail "--config requires a file path"
-            config_source=file
-            config_value=$2
+            [ -z "$config_file" ] || fail "--config may only be specified once"
+            config_file=$2
             shift 2
-            ;;
-        --config-json)
-            [ "$#" -ge 2 ] || fail "--config-json requires a JSON payload"
-            config_source=argument
-            config_value=$2
-            shift 2
-            ;;
-        --config-stdin)
-            config_source=stdin
-            shift
             ;;
         -h|--help)
             usage
@@ -56,32 +42,49 @@ done
 
 installer_work=$(mktemp -d "${TMPDIR:-/tmp}/ursa-installer.XXXXXX") \
     || fail "could not create a temporary directory"
+installer_lock=''
+installer_lock_acquired=false
 cleanup() {
     rm -f \
         "$installer_work/payload.json" \
         "$installer_work/ursa-paths" \
         "$installer_work/uv-install.sh"
     rmdir "$installer_work" 2>/dev/null || true
+    if [ "$installer_lock_acquired" = true ]; then
+        rm -f "$installer_lock/pid"
+        rmdir "$installer_lock" 2>/dev/null || true
+    fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
-payload_file=""
-if [ -n "$config_source" ]; then
-    payload_file=$installer_work/payload.json
-    case $config_source in
-        file)
-            [ -f "$config_value" ] \
-                || fail "installer configuration not found: $config_value"
-            cp "$config_value" "$payload_file"
-            ;;
-        argument)
-            printf '%s\n' "$config_value" >"$payload_file"
-            ;;
-        stdin)
-            cat >"$payload_file"
-            ;;
-    esac
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+    installer_lock_root=$XDG_CACHE_HOME/ursa
+elif [ -n "${HOME:-}" ]; then
+    installer_lock_root=$HOME/.cache/ursa
+else
+    fail "HOME or XDG_CACHE_HOME is required to coordinate installation"
 fi
+mkdir -p "$installer_lock_root" \
+    || fail "could not create installer state at $installer_lock_root"
+installer_lock=$installer_lock_root/install.lock
+if ! mkdir "$installer_lock" 2>/dev/null; then
+    fail "another URSA installation is already running (lock: $installer_lock)"
+fi
+installer_lock_acquired=true
+printf '%s\n' "$$" >"$installer_lock/pid"
+
+if [ -n "$config_file" ]; then
+    [ -f "$config_file" ] \
+        || fail "installer configuration not found: $config_file"
+    config_file=$(CDPATH= cd -P "$(dirname "$config_file")" 2>/dev/null && pwd)/$(basename "$config_file") \
+        || fail "installer configuration has an invalid path: $config_file"
+fi
+
+# The documentation build replaces these requirements. The source copy is the
+# development installer and therefore follows the GitHub main branch.
+URSA_INSTALL_REQUIREMENT='ursa-ai @ git+https://github.com/lanl/ursa.git@main'
+URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard] @ git+https://github.com/lanl/ursa.git@main'
 
 download() {
     download_url=$1
@@ -153,8 +156,13 @@ else
 fi
 
 say "Installing URSA with Python 3.13…"
+if [ -n "$config_file" ]; then
+    ursa_requirement=$URSA_INSTALL_REQUIREMENT
+else
+    ursa_requirement=$URSA_DASHBOARD_REQUIREMENT
+fi
 set -- tool install --python 3.13 \
-    --force --upgrade --compile-bytecode ursa-ai
+    --force --upgrade --compile-bytecode "$ursa_requirement"
 "$uv_executable" "$@"
 
 tool_bin=$("$uv_executable" tool dir --bin)
@@ -167,15 +175,21 @@ uv_dir=$(dirname "$uv_executable")
 uv_dir=$(CDPATH= cd -P "$uv_dir" 2>/dev/null && pwd) \
     || fail "uv has an invalid executable path: $uv_executable"
 
-say "Applying selected extras and additional packages…"
-if [ -n "$payload_file" ]; then
-    set -- self modify --installer-config "$payload_file"
-else
-    set -- self modify --clean --extra dashboard
+if [ -n "$config_file" ]; then
+    if ! PATH="$uv_dir${PATH:+:$PATH}" \
+        "$ursa_executable" self modify --help 2>&1 \
+        | grep -q -- '--installer-config'
+    then
+        fail "installed URSA does not support this installer's configuration options. This installer may target an unreleased URSA version; use https://lanl.github.io/ursa/latest/install.sh or install the matching release."
+    fi
+    say "Applying selected extras and additional packages…"
+    set -- self modify --installer-config "$config_file"
+    if ! PATH="$uv_dir${PATH:+:$PATH}" "$ursa_executable" "$@"; then
+        fail "could not apply the installer configuration. It may contain an unknown option for this URSA release; is it intended for an unreleased version?"
+    fi
+    [ -x "$ursa_executable" ] \
+        || fail "URSA modification completed, but $ursa_executable is missing"
 fi
-PATH="$uv_dir${PATH:+:$PATH}" "$ursa_executable" "$@"
-[ -x "$ursa_executable" ] \
-    || fail "URSA modification completed, but $ursa_executable is missing"
 
 path_list=$installer_work/ursa-paths
 find_on_path ursa >"$path_list"
@@ -191,6 +205,7 @@ if [ "$installed_on_path" != true ]; then
     say "Adding uv's tool directory to PATH…"
     "$uv_executable" tool update-shell \
         || fail "URSA was installed at $ursa_executable, but $tool_bin could not be added to PATH"
+    say "Follow uv's instructions above to update this shell. Or restart your shell."
     PATH="$tool_bin${PATH:+:$PATH}"
     export PATH
     find_on_path ursa >"$path_list"
@@ -233,8 +248,14 @@ if [ "$other_ursa" = true ]; then
 fi
 
 set -- self setup
-if [ -n "$payload_file" ]; then
-    set -- "$@" --defaults-json "$payload_file"
+if [ -n "$config_file" ]; then
+    set -- "$@" --default-json "$config_file"
+fi
+
+if ! PATH="$uv_dir${PATH:+:$PATH}" \
+    "$ursa_executable" self setup --help 2>&1 | grep -q -- '--default-json'
+then
+    fail "installed URSA does not support this setup wizard. This installer may target an unreleased URSA version; use https://lanl.github.io/ursa/latest/install.sh or install the matching release."
 fi
 
 say "Starting guided setup…"
@@ -244,7 +265,11 @@ elif ( : </dev/tty ) 2>/dev/null; then
     "$ursa_executable" "$@" </dev/tty
 else
     say "No interactive terminal was found. Finish setup by running:"
-    say "  ursa self setup"
+    if [ -n "$config_file" ]; then
+        say "  ursa self setup --default-json $config_file"
+    else
+        say "  ursa self setup"
+    fi
 fi
 
-say "URSA is installed. Run 'ursa' or 'ursa-dashboard' to get started."
+say "URSA is installed. Run 'ursa' to get started."

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -85,7 +84,7 @@ def add_self_subcommands(subparsers) -> None:
         help=("Configuration path (default: ~/.config/ursa/config.yaml)"),
     )
     setup.add_argument(
-        "--defaults-json",
+        "--default-json",
         type=Path,
         default=None,
         help="Non-secret provider and MCP defaults from an installer payload",
@@ -129,9 +128,23 @@ def add_self_subcommands(subparsers) -> None:
 
 def _setup(args) -> None:
     """Load Textual only when the interactive setup command is selected."""
-    from ursa.cli.setup import run_setup
+    from ursa.cli.setup import SetupAction, SetupError, run_setup
 
-    run_setup(args.config, args.defaults_json)
+    try:
+        action = run_setup(args.config, args.default_json)
+    except SetupError as exc:
+        raise SystemExit(f"Could not start guided setup: {exc}") from None
+
+    executable = {
+        SetupAction.TERMINAL: "ursa",
+        SetupAction.DASHBOARD: "ursa-dashboard",
+    }.get(action)
+    if executable is None:
+        return
+    try:
+        os.execvp(executable, [executable])
+    except OSError as exc:
+        raise SystemExit(f"Could not launch {executable}: {exc}") from None
 
 
 def _modify(args) -> None:
@@ -192,21 +205,15 @@ def _modify(args) -> None:
 
 def load_installer_config(path: Path) -> dict:
     """Load an installer JSON object without interpreting its sections."""
-
-    def invalid(message: str) -> SystemExit:
-        return SystemExit(f"Invalid installer configuration: {message}")
+    from ursa.cli.installer_config import (
+        InstallerConfigError,
+        load_installer_json,
+    )
 
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise invalid(f"could not read {path}: {exc}") from None
-    except json.JSONDecodeError as exc:
-        raise invalid(
-            f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
-        ) from None
-    if not isinstance(payload, dict):
-        raise invalid("the payload must be a JSON object")
-    return payload
+        return load_installer_json(path)
+    except InstallerConfigError as exc:
+        raise SystemExit(f"Invalid installer configuration: {exc}") from None
 
 
 def _read_requirements(receipt: Path) -> list[dict]:
