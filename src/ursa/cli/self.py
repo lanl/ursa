@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tomllib
 from argparse import SUPPRESS
+from functools import partial
 from importlib.metadata import PackageNotFoundError, metadata
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -32,11 +33,32 @@ def _command(commands, name, help, action):
     return parser
 
 
+def _doctor(args, *, parser) -> None:
+    from ursa.cli.config import config_search_paths, merge_ursa_config
+    from ursa.cli.doctor import run_doctor
+
+    cfg = parser.parse_args([])
+    env_overrides = parser.parse_args([], defaults=False)
+    config_paths = tuple(config_search_paths(cfg))
+    try:
+        config = merge_ursa_config(cfg, env_overrides=env_overrides).resolve()
+        config_error = None
+    except (Exception, SystemExit) as exc:
+        config = None
+        config_error = exc
+    raise SystemExit(
+        run_doctor(
+            args,
+            config=config,
+            config_error=config_error,
+            config_paths=config_paths,
+        )
+    )
+
+
 def add_self_subcommands(subparsers) -> None:
     """Register commands without inspecting the installation."""
     from jsonargparse import ArgumentParser
-
-    from ursa.cli.doctor import run_doctor
 
     parser = ArgumentParser(
         description="Inspect and manage this URSA installation.",
@@ -54,7 +76,7 @@ def add_self_subcommands(subparsers) -> None:
         commands,
         "doctor",
         "Check the health of this URSA installation and its services",
-        run_doctor,
+        partial(_doctor, parser=subparsers.parent_parser),
     )
     doctor.add_argument(
         "--json",

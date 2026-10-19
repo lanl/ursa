@@ -1,9 +1,8 @@
-import asyncio
 import json
 import os
 import subprocess
 from pathlib import Path
-from threading import Barrier, Event, current_thread
+from threading import Barrier, current_thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -17,7 +16,6 @@ from ursa.cli.doctor import (
     CheckResult,
     CheckStatus,
     DoctorContext,
-    check_additional_healthchecks,
     check_configuration,
     check_embedding_models,
     check_inference_providers,
@@ -220,7 +218,7 @@ def test_runner_contains_system_exit_and_malformed_results():
 
     def exits(_context):
         called.append("exit")
-        raise SystemExit("plugin tried to exit")
+        raise SystemExit("check tried to exit")
 
     def malformed(_context):
         called.append("malformed")
@@ -261,179 +259,19 @@ def test_runner_executes_headings_concurrently_and_preserves_order():
     assert all(result.status is CheckStatus.OK for result in report.checks)
 
 
-def test_runner_times_out_a_check_without_waiting_for_its_thread(monkeypatch):
-    release = Event()
-    finished = Event()
-    monkeypatch.setattr(doctor_mod, "CHECK_DEADLINE_SECONDS", 0)
-
-    def stuck(_context):
-        try:
-            release.wait(timeout=10)
-            return CheckResult("stuck", CheckStatus.OK)
-        finally:
-            finished.set()
-
-    try:
-        report = run_checks(
-            DoctorContext(config=None),
-            checks=(stuck,),
-        )
-    finally:
-        release.set()
-
-    assert report.checks[0].status is CheckStatus.ERROR
-    assert report.checks[0].message == "Timed out after 0 seconds"
-    assert finished.wait(timeout=10), "detached test worker did not exit"
-
-
-@pytest.mark.asyncio
-async def test_async_runner_contains_check_originated_cancellation():
-    def cancelled(_context):
-        raise asyncio.CancelledError
-
-    report = await doctor_mod.run_checks_async(
-        DoctorContext(config=None),
-        checks=(
-            cancelled,
-            lambda _context: CheckResult("healthy", CheckStatus.OK),
-        ),
-    )
-
-    assert [check.status for check in report.checks] == [
-        CheckStatus.ERROR,
-        CheckStatus.OK,
-    ]
-
-
-@pytest.mark.asyncio
-async def test_async_runner_propagates_external_cancellation():
-    started = Event()
-    release = Event()
-    finished = Event()
-
-    def blocking(_context):
-        started.set()
-        try:
-            release.wait(timeout=10)
-            return CheckResult("blocking", CheckStatus.OK)
-        finally:
-            finished.set()
-
-    task = asyncio.create_task(
-        doctor_mod.run_checks_async(
-            DoctorContext(config=None), checks=(blocking,)
-        )
-    )
-    assert await asyncio.to_thread(started.wait, 10), "worker did not start"
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    release.set()
-    assert await asyncio.to_thread(finished.wait, 10), "worker did not exit"
-
-
-def test_interactive_spinner_uses_requested_frames_and_updates_progress(
-    monkeypatch,
-):
-    class FakeStatus:
-        def __init__(self):
-            self.started = False
-            self.stopped = False
-            self.updates = []
-
-        def start(self):
-            self.started = True
-
-        def stop(self):
-            self.stopped = True
-
-        def update(self, value):
-            self.updates.append(value)
-
-    class FakeConsole:
-        is_terminal = True
-
-        def __init__(self):
-            self.status_instance = FakeStatus()
-            self.initial = None
-            self.options = None
-
-        def status(self, initial, **options):
-            self.initial = initial
-            self.options = options
-            return self.status_instance
-
-    console = FakeConsole()
-    results = (
-        CheckResult("first", CheckStatus.OK),
-        CheckResult("second", CheckStatus.WARN),
-    )
-
-    def fake_run_checks(_context, *, progress=None):
-        for completed, result in enumerate(results, start=1):
-            if progress is not None:
-                progress(completed, len(results), result)
-        return CheckResult("URSA Doctor", CheckStatus.WARN, checks=results)
-
-    monkeypatch.setattr(doctor_mod, "run_checks", fake_run_checks)
-
-    report = doctor_mod._run_human_checks(DoctorContext(config=None), console)
-
-    status = console.status_instance
-    assert report.name == "URSA Doctor"
-    assert console.options["spinner"] == "dots"
-    assert status.started and status.stopped
-    assert len(status.updates) == len(results)
-    assert f"{len(results)}/{len(results)}" in status.updates[-1].plain
-    assert "complete" in status.updates[-1].plain
-
-
-def test_spinner_rendering_failures_do_not_interrupt_checks(monkeypatch):
-    class BrokenStatus:
-        def start(self):
-            pass
-
-        def stop(self):
-            raise RuntimeError("stop failed")
-
-        def update(self, _value):
-            raise RuntimeError("update failed")
-
-    class FakeConsole:
-        is_terminal = True
-
-        def status(self, *_args, **_kwargs):
-            return BrokenStatus()
-
-    report = CheckResult(
-        "URSA Doctor",
-        CheckStatus.OK,
-        checks=(CheckResult("healthy", CheckStatus.OK),),
-    )
-
-    def fake_run_checks(_context, *, progress=None):
-        if progress is not None:
-            progress(1, 1, report.checks[0])
-        return report
-
-    monkeypatch.setattr(doctor_mod, "run_checks", fake_run_checks)
-
-    actual = doctor_mod._run_human_checks(
-        DoctorContext(config=None), FakeConsole()
-    )
-
-    assert actual is report
-
-
 def test_path_check_lists_every_other_ursa(monkeypatch, tmp_path):
     first = tmp_path / "one" / "ursa"
     second = tmp_path / "two" / "ursa"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.touch()
+    second.touch()
     monkeypatch.setattr(
         doctor_mod,
         "_ursa_executables_on_path",
         lambda: [
-            doctor_mod._PathUrsa(str(first.parent), first),
-            doctor_mod._PathUrsa(str(second.parent), second),
+            (str(first.parent), first),
+            (str(second.parent), second),
         ],
     )
     monkeypatch.setattr(doctor_mod, "_running_ursa_path", lambda: first)
@@ -461,8 +299,8 @@ def test_path_discovery_preserves_the_responsible_path_entry(
 
     entries = doctor_mod._ursa_executables_on_path()
 
-    assert [entry.path_entry for entry in entries] == [first, second]
-    assert [entry.executable for entry in entries] == [
+    assert [entry[0] for entry in entries] == [first, second]
+    assert [entry[1] for entry in entries] == [
         Path(first, "ursa").absolute(),
         Path(second, "ursa").absolute(),
     ]
@@ -474,13 +312,19 @@ def test_path_check_marks_entries_that_shadow_current_ursa(
     shadowing = tmp_path / "one" / "ursa"
     current = tmp_path / "two" / "ursa"
     lower = tmp_path / "three" / "ursa"
+    shadowing.parent.mkdir()
+    current.parent.mkdir()
+    lower.parent.mkdir()
+    shadowing.touch()
+    current.touch()
+    lower.touch()
     monkeypatch.setattr(
         doctor_mod,
         "_ursa_executables_on_path",
         lambda: [
-            doctor_mod._PathUrsa(str(shadowing.parent), shadowing),
-            doctor_mod._PathUrsa(str(current.parent), current),
-            doctor_mod._PathUrsa(str(lower.parent), lower),
+            (str(shadowing.parent), shadowing),
+            (str(current.parent), current),
+            (str(lower.parent), lower),
         ],
     )
     monkeypatch.setattr(doctor_mod, "_running_ursa_path", lambda: current)
@@ -759,39 +603,6 @@ def test_mcp_check_accepts_an_empty_configuration():
     assert result.message == "No MCP servers are configured"
 
 
-def test_additional_entry_points_are_sorted_and_isolated(monkeypatch):
-    def warning_check(_context):
-        return CheckResult("ignored", CheckStatus.WARN, "degraded")
-
-    entries = [
-        SimpleNamespace(name="broken", load=lambda: lambda _context: 1 / 0),
-        SimpleNamespace(
-            name="zeta",
-            load=lambda: lambda _context: CheckResult(
-                "ignored", CheckStatus.OK
-            ),
-        ),
-        SimpleNamespace(name="alpha", load=lambda: warning_check),
-    ]
-
-    def discover(*, group):
-        assert group == "ursa-healthcheck"
-        return entries
-
-    monkeypatch.setattr(doctor_mod, "entry_points", discover)
-
-    result = check_additional_healthchecks(DoctorContext(config=None))
-
-    assert result.status is CheckStatus.ERROR
-    assert [check.name for check in result.checks] == [
-        "alpha",
-        "broken",
-        "zeta",
-    ]
-    assert result.checks[0].message == "degraded"
-    assert "division by zero" in result.checks[1].message
-
-
 def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
     report = CheckResult(
         "URSA doctor",
@@ -802,9 +613,10 @@ def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
     monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
-    return_code = main(["self", "doctor", "--json"])
+    with pytest.raises(SystemExit) as exit_info:
+        main(["self", "doctor", "--json"])
 
-    assert return_code == 1
+    assert exit_info.value.code == 1
     assert json.loads(capsys.readouterr().out) == report.as_dict()
 
 
