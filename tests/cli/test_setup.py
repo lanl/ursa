@@ -2,9 +2,10 @@ import stat
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import keyring
 import pytest
 import yaml
+from keyring.backends.fail import Keyring as FailingSystemKeyring
+from keyring.errors import KeyringError
 from textual.widgets import (
     Checkbox,
     Input,
@@ -40,7 +41,20 @@ from ursa.cli.tui.widgets import (
     ModelTabs,
 )
 from ursa.util.inference_providers import ProviderModel
-from ursa.util.secrets import SecretReference, SecretTemplate
+from ursa.util.secrets import (
+    FallbackKeyring,
+    FileKeyring,
+    SecretReference,
+    SecretTemplate,
+)
+
+
+@pytest.fixture(autouse=True)
+def setup_keyring(monkeypatch):
+    store = MagicMock()
+    store.get_password.return_value = None
+    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
+    return store
 
 
 def configured_state(path: Path) -> _State:
@@ -230,32 +244,30 @@ def test_output_preserves_unmanaged_config_and_secret_references(tmp_path):
     assert "provider-secret" not in yaml.safe_dump(config)
 
 
-def test_save_writes_keyring_then_atomic_private_config(monkeypatch, tmp_path):
+def test_save_writes_file_fallback_then_atomic_private_config(
+    monkeypatch, tmp_path
+):
     state = configured_state(tmp_path / "nested/config.yaml")
-    stored = []
-    monkeypatch.setattr(
-        "ursa.cli.setup.keyring.set_password",
-        lambda service, name, secret: stored.append((service, name, secret)),
+    fallback = FileKeyring(tmp_path / "keyring.json")
+    store = FallbackKeyring(
+        FailingSystemKeyring(),
+        fallback,
     )
+    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
 
     assert _save(state) == state.path
 
-    assert stored == [
-        ("ursa", "company", "provider-secret"),
-        ("ursa", "tools", "mcp-secret"),
-    ]
+    assert fallback.get_password("ursa", "company") == "provider-secret"
+    assert fallback.get_password("ursa", "tools") == "mcp-secret"
     assert stat.S_IMODE(state.path.stat().st_mode) == 0o600
     assert state.path.with_suffix(".yaml.lock").exists()
 
 
-def test_save_does_not_write_config_when_keyring_fails(monkeypatch, tmp_path):
+def test_save_does_not_write_config_when_keyring_fails(setup_keyring, tmp_path):
     state = configured_state(tmp_path / "config.yaml")
-    monkeypatch.setattr(
-        "ursa.cli.setup.keyring.set_password",
-        MagicMock(side_effect=keyring.errors.NoKeyringError()),
-    )
+    setup_keyring.set_password.side_effect = KeyringError("write failed")
 
-    with pytest.raises(keyring.errors.NoKeyringError):
+    with pytest.raises(KeyringError, match="write failed"):
         _save(state)
 
     assert not state.path.exists()
@@ -295,9 +307,8 @@ async def test_labels_have_help_and_ready_page_has_launch_actions(tmp_path):
 
 @pytest.mark.asyncio
 async def test_welcome_starts_the_railroaded_flow_with_progress_visible(
-    monkeypatch, tmp_path
+    tmp_path,
 ):
-    monkeypatch.setattr("ursa.cli.setup.keyring.get_password", lambda *_: None)
     app = SetupApp(tmp_path / "config.yaml")
 
     async with app.run_test(size=(120, 42)) as pilot:
@@ -314,11 +325,10 @@ async def test_welcome_starts_the_railroaded_flow_with_progress_visible(
 
 @pytest.mark.asyncio
 async def test_provider_form_uses_shared_masked_key_widget(
-    monkeypatch, tmp_path
+    setup_keyring, tmp_path
 ):
-    monkeypatch.setattr(
-        "ursa.cli.setup.keyring.get_password",
-        lambda service, name: "stored-secret" if name == "openai" else None,
+    setup_keyring.get_password.side_effect = (
+        lambda service, name: "stored-secret" if name == "openai" else None
     )
     app = SetupApp(tmp_path / "config.yaml")
 
@@ -368,7 +378,6 @@ async def test_provider_is_verified_before_appearing_in_tabs(
     monkeypatch, tmp_path
 ):
     models = [ProviderModel("gpt-test", "openai")]
-    monkeypatch.setattr("ursa.cli.setup.keyring.get_password", lambda *_: None)
     monkeypatch.setattr("ursa.cli.setup.list_provider_models", lambda _: models)
     app = SetupApp(tmp_path / "config.yaml")
 
