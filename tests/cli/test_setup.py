@@ -7,7 +7,9 @@ import yaml
 from keyring.backends.fail import Keyring as FailingSystemKeyring
 from keyring.errors import KeyringError
 from textual.widgets import (
+    Button,
     Checkbox,
+    Collapsible,
     Input,
     Select,
     Static,
@@ -26,8 +28,10 @@ from ursa.cli.setup import (
     SetupAction,
     SetupApp,
     SetupError,
+    _doctor_title,
     _friendly,
     _mcp,
+    _run_doctor_in_login_shell,
     _save,
     _State,
     load_setup_defaults,
@@ -350,6 +354,100 @@ def test_provider_errors_are_actionable(error, message):
 
 
 @pytest.mark.asyncio
+async def test_doctor_runs_in_login_shell_with_saved_config(
+    monkeypatch, tmp_path
+):
+    process = MagicMock(returncode=1)
+    process.communicate = AsyncMock(
+        return_value=(
+            b"URSA Doctor\n4 ok  |  2 warn  |  1 error\n",
+            None,
+        )
+    )
+    launch = AsyncMock(return_value=process)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", launch)
+    path = tmp_path / "config.yaml"
+
+    title, output, clean = await _run_doctor_in_login_shell(path, 68)
+
+    args = launch.await_args.args
+    assert args[:3] == ("bash", "--login", "-c")
+    assert args[3] == 'exec ursa --config "$1" self doctor'
+    assert args[4:] == ("ursa-setup", str(path))
+    assert launch.await_args.kwargs["env"]["COLUMNS"] == "68"
+    assert title == "❌ URSA Doctor — 2 warnings, 1 error"
+    assert output == "URSA Doctor\n4 ok  |  2 warn  |  1 error"
+    assert clean is False
+    assert _doctor_title("5 ok  |  0 warn  |  0 errors", 0).startswith("✅")
+
+
+@pytest.mark.parametrize("clean", [True, False])
+@pytest.mark.asyncio
+async def test_write_page_gates_ready_on_doctor_result(
+    monkeypatch, tmp_path, clean
+):
+    path = tmp_path / "config.yaml"
+    config_yaml = "use_web: true\n"
+
+    def save(_state):
+        path.write_text(config_yaml)
+        return path
+
+    async def inline(callback, *args, **kwargs):
+        return callback(*args, **kwargs)
+
+    doctor = AsyncMock(
+        return_value=(
+            (
+                "✅ URSA Doctor — 0 warnings, 0 errors"
+                if clean
+                else "⚠️ URSA Doctor — 1 warning, 0 errors"
+            ),
+            (
+                "4 ok  |  0 warn  |  0 errors"
+                if clean
+                else "3 ok  |  1 warn  |  0 errors"
+            ),
+            clean,
+        )
+    )
+    monkeypatch.setattr("ursa.cli.setup._save", save)
+    monkeypatch.setattr("ursa.cli.setup.asyncio.to_thread", inline)
+    monkeypatch.setattr("ursa.cli.setup._run_doctor_in_login_shell", doctor)
+    app = SetupApp(path)
+
+    async with app.run_test(size=(120, 42)):
+        app._show("review")
+        await app._save_config()
+        await app.workers.wait_for_complete()
+
+        assert app.page == ("done" if clean else "review")
+        assert app.query_one("#review-config-yaml", TextArea).text == (
+            config_yaml
+        )
+        if not clean:
+            assert app.query_one("#review-doctor", Collapsible).title == (
+                "⚠️ URSA Doctor — 1 warning, 0 errors"
+            )
+            assert app.query_one("#review-doctor-output", TextArea).text == (
+                "3 ok  |  1 warn  |  0 errors"
+            )
+            assert app.query_one("#review-doctor", Collapsible).collapsed is (
+                False
+            )
+            assert app.query_one("#review-save", Button).has_class("hidden")
+            assert not app.query_one("#review-retry", Button).has_class(
+                "hidden"
+            )
+            assert not app.query_one("#review-continue", Button).has_class(
+                "hidden"
+            )
+        called_path, columns = doctor.await_args.args
+        assert called_path == path
+        assert columns >= 20
+
+
+@pytest.mark.asyncio
 async def test_labels_have_help_and_ready_page_has_launch_actions(tmp_path):
     app = SetupApp(tmp_path / "config.yaml")
 
@@ -553,6 +651,61 @@ async def test_provider_failures_block_progress_and_show_first_three(
         )
         assert "broken-2" in message
         assert "broken-3" not in message
+
+
+@pytest.mark.parametrize(
+    ("kind", "plural", "items"),
+    [
+        (
+            "provider",
+            "providers",
+            {
+                "working": {"base_url": "https://working.example/v1"},
+                "broken": {"base_url": "https://broken.example/v1"},
+            },
+        ),
+        (
+            "mcp",
+            "mcps",
+            {
+                "working": {
+                    "transport": "streamable_http",
+                    "url": "https://working.example/mcp",
+                },
+                "broken": {
+                    "transport": "streamable_http",
+                    "url": "https://broken.example/mcp",
+                },
+            },
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_removing_failed_connection_immediately_updates_validation(
+    tmp_path, kind, plural, items
+):
+    app = SetupApp(tmp_path / "config.yaml")
+    configured = app.state.providers if kind == "provider" else app.state.mcps
+    configured.update(items)
+    app.state.verified[kind] = {"working": True, "broken": False}
+    app.state.errors[kind]["broken"] = "connection failed"
+
+    async with app.run_test(size=(120, 42)):
+        app.page = plural
+        app.query_one("#setup-pages").current = f"{plural}-page"
+        await app._tabs(kind)
+        app._update_verification_status(kind)
+        tabs = app.query_one(f"#{plural}-tabs", ConfiguredTabs)
+        tabs.active = f"{kind}-pane-1"
+
+        assert app.query_one(f"#{plural}-next", Button).disabled is True
+        button = app.query_one(f"#{kind}-remove", Button)
+        await app.button_pressed(Button.Pressed(button))
+
+        assert set(configured) == {"working"}
+        assert "broken" not in app.state.errors[kind]
+        assert app.query_one(f"#{plural}-next", Button).disabled is False
+        assert str(app.query_one(f"#{plural}-error", Static).content) == ""
 
 
 @pytest.mark.asyncio
