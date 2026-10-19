@@ -140,6 +140,10 @@ Changes since `v0.16.4`:
 
 ### CLI
 
+- Added a pipe-friendly `install.sh` that bootstraps `uv`, installs
+  `ursa-ai[dashboard]`, and launches a railroaded `ursa self setup` Textual
+  wizard for validated inference providers, model selection, keyring-backed
+  secrets, and connection-tested optional MCP servers.
 - Added an `ursa self` command to inspect and manage a `uv tool` installation,
   with `status`, `update` (preserving the install recipe), and `modify`
   (extras, extra packages, exact version, or Git ref) subcommands (#325).

@@ -24,7 +24,22 @@ are located at: [URSA Documentation](https://lanl.github.io/ursa)
 ## Installation
 
 URSA is published on PyPI as [`ursa-ai`](https://pypi.org/project/ursa-ai/) and supports Python 3.11 or newer.
-You can install it with `uv` or `pip`; `uv` is recommended for new projects.
+On macOS or Linux, the guided installer installs `uv` when needed, installs
+URSA with its dashboard, and opens the setup wizard:
+
+```bash
+curl -LsSf https://lanl.github.io/ursa/install.sh | sh
+```
+
+The same script is also available from
+`https://raw.githubusercontent.com/lanl/ursa/main/install.sh`.
+
+The wizard validates provider credentials, stores secrets in the operating
+system keyring, and writes `~/.config/ursa/config.yaml`. Run it again at any
+time with `ursa self setup`.
+
+You can also install URSA manually with `uv` or `pip`; `uv` is recommended for
+new projects.
 
 ## Documentation and examples
 

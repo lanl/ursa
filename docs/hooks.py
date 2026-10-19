@@ -177,7 +177,14 @@ def _examples_index(examples: list[tuple[Path, dict]]) -> str:
 
 
 def on_files(files: Files, config) -> Files:
-    """Expose example READMEs as virtual documentation pages."""
+    """Expose generated example pages and the installer in the docs site."""
+    files.append(
+        File.generated(
+            config,
+            "install.sh",
+            abs_src_path=str(REPOSITORY_ROOT / "install.sh"),
+        )
+    )
     examples = _examples()
     files.append(
         File.generated(

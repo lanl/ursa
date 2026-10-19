@@ -44,6 +44,18 @@ Use `ursa --help` to confirm the exact set in your installed version.
 
 ## Self management
 
+Create or update a user configuration with the guided terminal setup:
+
+```bash
+ursa self setup
+```
+
+The wizard validates an OpenAI, Anthropic, or LiteLLM provider, presents its
+available language and embedding models, optionally configures additional
+providers and MCP servers, connection-tests each selection, and stores
+credentials in the operating-system keyring. It writes
+`~/.config/ursa/config.yaml` only after final review.
+
 Installation status is available for every installation method:
 
 ```bash

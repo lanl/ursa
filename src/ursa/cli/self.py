@@ -70,6 +70,18 @@ def add_self_subcommands(subparsers) -> None:
         "self", parser, help=parser.description, dest="subcommand"
     ).default_env = False
     commands = parser.add_subcommands(required=True)
+    setup = _command(
+        commands,
+        "setup",
+        "Interactively configure providers, models, and MCP servers",
+        _setup,
+    )
+    setup.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=("Configuration path (default: ~/.config/ursa/config.yaml)"),
+    )
     _command(commands, "status", "Show installation details", show_status)
     doctor = _command(
         commands,
@@ -99,6 +111,13 @@ def add_self_subcommands(subparsers) -> None:
     source = modify.add_mutually_exclusive_group()
     source.add_argument("--version", help="Install an exact registry version")
     source.add_argument("--ref", help="Install a Git branch, tag, or commit")
+
+
+def _setup(args) -> None:
+    """Load Textual only when the interactive setup command is selected."""
+    from ursa.cli.setup import run_setup
+
+    run_setup(args.config)
 
 
 def _modify(args) -> None:

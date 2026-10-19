@@ -72,6 +72,19 @@ def test_self_status_command_uses_isolated_receipt(isolated_uv_tool, capsys):
     isolated_uv_tool["execv"].assert_not_called()
 
 
+def test_self_setup_command_routes_without_loading_runtime(
+    monkeypatch, tmp_path
+):
+    called = MagicMock(return_value=True)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr("ursa.cli.setup.run_setup", called)
+    path = tmp_path / "config.yaml"
+
+    main(["self", "setup", "--config", str(path)])
+
+    called.assert_called_once_with(path)
+
+
 @pytest.mark.parametrize(
     ("arguments", "expected_tail"),
     [

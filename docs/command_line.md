@@ -55,6 +55,12 @@ ursa self doctor --json
 `self doctor` resolves the configuration and runs live provider, model (chat,
 forced tool use, structured output, and embeddings), and MCP server checks.
 
+Run the guided provider, model, and MCP configuration at any time with:
+
+```bash
+ursa self setup
+```
+
 When installed with `uv tool install`, run `ursa self update` to update URSA
 or `ursa self modify --help` to change extras, additional packages, or the
 selected version/source revision.
