@@ -199,11 +199,19 @@ def _resolve_api_key(
 def _resolve_mcp_server(
     context: DoctorContext, name: str, server: Any
 ) -> tuple[Any, tuple[str, ...]]:
-    headers = getattr(server, "headers", None)
-    if not isinstance(server, BaseModel) or not isinstance(headers, Mapping):
+    if not isinstance(server, BaseModel):
         return server, ()
+
+    environment = getattr(server, "env", None)
+    secrets = (
+        [value for value in environment.values() if isinstance(value, str)]
+        if isinstance(environment, Mapping)
+        else []
+    )
+    headers = getattr(server, "headers", None)
+    if not isinstance(headers, Mapping):
+        return server, tuple(secrets)
     resolved = dict(headers)
-    secrets: list[str] = []
     for header, value in headers.items():
         reference = SecretTemplate.maybe_validate(value)
         if not isinstance(reference, SecretTemplate):
