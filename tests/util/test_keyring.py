@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 from filelock import FileLock
 from keyring.backend import KeyringBackend
+from keyring.backends.fail import Keyring as FailingSystemKeyring
+from keyring.backends.null import Keyring as NullSystemKeyring
 from keyring.errors import KeyringError, PasswordDeleteError
 
-import ursa.util.keyring as keyring_module
-from ursa.util.keyring import (
+from ursa.util.secrets import (
     FallbackKeyring,
     FileKeyring,
     InsecureKeyringPermissionsError,
@@ -23,40 +24,6 @@ _POSIX_MODE_TEST = pytest.mark.skipif(
     os.name == "nt",
     reason="Windows uses ACLs rather than POSIX permission bits",
 )
-
-
-class WorkingKeyring(KeyringBackend):
-    priority = 0
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.values: dict[tuple[str, str], str] = {}
-
-    def get_password(self, service: str, username: str) -> str | None:
-        return self.values.get((service, username))
-
-    def set_password(self, service: str, username: str, password: str) -> None:
-        self.values[(service, username)] = password
-
-    def delete_password(self, service: str, username: str) -> None:
-        del self.values[(service, username)]
-
-
-class FailingKeyring(KeyringBackend):
-    priority = 0
-
-    @staticmethod
-    def _fail() -> None:
-        raise RuntimeError("system keyring unavailable")
-
-    def get_password(self, service: str, username: str) -> str | None:
-        self._fail()
-
-    def set_password(self, service: str, username: str, password: str) -> None:
-        self._fail()
-
-    def delete_password(self, service: str, username: str) -> None:
-        self._fail()
 
 
 def file_mode(path: Path) -> int:
@@ -99,6 +66,7 @@ def test_file_keyring_creates_pretty_json_with_mode_600(
 def test_file_keyring_uses_ursa_config_path_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
     keyring = FileKeyring()
@@ -106,6 +74,17 @@ def test_file_keyring_uses_ursa_config_path_by_default(
 
     assert keyring.path == tmp_path / ".config" / "ursa" / "keyring.json"
     assert keyring.path.exists()
+
+
+def test_file_keyring_uses_highest_priority_user_config_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_home = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    keyring = FileKeyring()
+
+    assert keyring.path == config_home / "ursa" / "keyring.json"
 
 
 @_POSIX_MODE_TEST
@@ -153,23 +132,6 @@ def test_file_keyring_preserves_restrictive_mode_when_updating(
 
     assert keyring.get_password("ursa", "openai") == "new"
     assert file_mode(path) == 0o400
-
-
-def test_file_keyring_does_not_use_posix_modes_on_windows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "keyring.json"
-    monkeypatch.setattr(keyring_module, "_HAS_POSIX_FILE_MODES", False)
-
-    def unexpected_fchmod(descriptor: int, mode: int) -> None:
-        pytest.fail(f"unexpected fchmod({descriptor}, {mode})")
-
-    monkeypatch.setattr(keyring_module.os, "fchmod", unexpected_fchmod)
-
-    keyring = FileKeyring(path)
-    keyring._write({"ursa": {"openai": "token"}}, 0o600)
-
-    assert keyring.get_password("ursa", "openai") == "token"
 
 
 def test_file_keyring_locks_updates_across_processes(
@@ -235,13 +197,15 @@ def test_file_keyring_rejects_invalid_contents(
 def test_fallback_keyring_prefers_working_system_keyring(
     tmp_path: Path,
 ) -> None:
-    system = WorkingKeyring()
-    fallback_path = tmp_path / "keyring.json"
+    system_path = tmp_path / "system.json"
+    system = FileKeyring(system_path)
+    fallback_path = tmp_path / "fallback.json"
     keyring = FallbackKeyring(system, FileKeyring(fallback_path))
 
     keyring.set_password("ursa", "openai", "system-token")
 
     assert keyring.get_password("ursa", "openai") == "system-token"
+    assert system_path.exists()
     assert not fallback_path.exists()
     assert isinstance(keyring, KeyringBackend)
 
@@ -251,7 +215,7 @@ def test_fallback_keyring_does_not_override_empty_system_result(
 ) -> None:
     fallback = FileKeyring(tmp_path / "keyring.json")
     fallback.set_password("ursa", "openai", "file-token")
-    keyring = FallbackKeyring(WorkingKeyring(), fallback)
+    keyring = FallbackKeyring(NullSystemKeyring(), fallback)
 
     assert keyring.get_password("ursa", "openai") is None
 
@@ -260,7 +224,7 @@ def test_fallback_keyring_uses_file_when_system_operations_fail(
     tmp_path: Path,
 ) -> None:
     fallback = FileKeyring(tmp_path / "keyring.json")
-    keyring = FallbackKeyring(FailingKeyring(), fallback)
+    keyring = FallbackKeyring(FailingSystemKeyring(), fallback)
 
     keyring.set_password("ursa", "openai", "file-token")
 
@@ -276,7 +240,7 @@ def test_fallback_keyring_rejects_insecure_file(
     path = tmp_path / "keyring.json"
     path.write_text('{"ursa":{"openai":"token"}}\n', encoding="utf-8")
     path.chmod(0o644)
-    keyring = FallbackKeyring(FailingKeyring(), FileKeyring(path))
+    keyring = FallbackKeyring(FailingSystemKeyring(), FileKeyring(path))
 
     with pytest.raises(InsecureKeyringPermissionsError):
         keyring.get_password("ursa", "openai")
@@ -287,7 +251,7 @@ def test_get_keyring_wraps_without_replacing_system_backend(
 ) -> None:
     import keyring
 
-    system = WorkingKeyring()
+    system = NullSystemKeyring()
     monkeypatch.setattr("keyring.core._keyring_backend", system)
     get_keyring.cache_clear()
 

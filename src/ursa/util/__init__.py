@@ -5,7 +5,7 @@ import aiosqlite
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from ursa.util.keyring import get_keyring as get_keyring
+from ursa.util.secrets import get_keyring as get_keyring
 
 
 class Checkpointer:
