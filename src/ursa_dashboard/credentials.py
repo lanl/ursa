@@ -41,15 +41,9 @@ class KeyringCredentialStore:
 
     @staticmethod
     def _keyring():
-        try:
-            import keyring
-        except ImportError as e:  # pragma: no cover - installation failure
-            raise CredentialStoreError(
-                "Secure credential storage is unavailable. Install the "
-                "dashboard credential-store dependency or use an environment "
-                "variable."
-            ) from e
-        return keyring
+        from ursa.util import get_keyring
+
+        return get_keyring()
 
     def set_secret(self, credential_id: str, value: str) -> None:
         try:

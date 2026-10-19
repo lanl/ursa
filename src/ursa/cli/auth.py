@@ -10,14 +10,15 @@ from os import environ
 from pathlib import Path
 from typing import Any
 
-import keyring
 from jsonargparse import ArgumentParser, Namespace
+from keyring.errors import KeyringError
 
 from ursa.cli.config import (
     config_layers,
     deep_merge_dicts,
     load_config_file,
 )
+from ursa.util import get_keyring
 from ursa.util.secrets import SecretReference, SecretTemplate
 
 KEYRING_SERVICE = "ursa"
@@ -166,7 +167,7 @@ def _secret_lines(
             name += f" ({reference.keyring})"
         try:
             resolved = reference.resolve(default_username)
-        except (ValueError, keyring.errors.KeyringError):
+        except (ValueError, KeyringError):
             resolved = None
         line = (
             f"  {name}: {source} {'ok' if resolved is not None else 'missing'}"
@@ -235,5 +236,5 @@ def login(
         password = env_password or getpass.getpass(f"Secret for {name}: ")
         if not password:
             raise ValueError(f"Secret for '{name}' cannot be empty")
-        keyring.set_password(KEYRING_SERVICE, name, password)
+        get_keyring().set_password(KEYRING_SERVICE, name, password)
         print(f"Stored credential: {name}")  # noqa: T201
