@@ -4,13 +4,13 @@ import pytest
 
 from ursa.cli import build_parser, main
 from ursa.cli.auth import (
-    KEYRING_SERVICE,
     config_keyring_usernames,
     configured_secret_lines,
     list_credentials,
     login,
 )
-from ursa.cli.config import load_config_file
+from ursa.cli.config import UrsaConfig, load_config_file
+from ursa.util.secrets import KEYRING_SERVICE, keyring_usernames
 
 
 @pytest.fixture
@@ -97,6 +97,29 @@ mcp_servers:
         "shared-mcp",
         "tools",
     ]
+
+
+def test_keyring_discovery_accepts_typed_config() -> None:
+    config = UrsaConfig.model_validate({
+        "llm_model": {
+            "model": "openai:test",
+            "api_key": {"keyring": "model-account"},
+        },
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {
+                    "Authorization": {
+                        "keyring": True,
+                        "template": "Bearer %s",
+                    }
+                },
+            }
+        },
+    })
+
+    assert keyring_usernames(config) == ["model-account", "tools"]
 
 
 def test_config_login_prompts_for_each_discovered_secret(
@@ -365,7 +388,7 @@ llm_model:
         calls.append((reference.env, default_username))
         return None
 
-    monkeypatch.setattr("ursa.cli.auth.SecretReference.resolve", resolve)
+    monkeypatch.setattr("ursa.util.secrets.SecretReference.resolve", resolve)
 
     list_credentials(config)
 

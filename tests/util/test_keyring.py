@@ -7,9 +7,10 @@ import stat
 from pathlib import Path
 
 import pytest
+from keyring.backend import KeyringBackend
 from keyring.backends.fail import Keyring as FailingSystemKeyring
 from keyring.backends.null import Keyring as NullSystemKeyring
-from keyring.errors import KeyringError, PasswordDeleteError
+from keyring.errors import KeyringError, NoKeyringError, PasswordDeleteError
 
 from ursa.util.secrets import (
     FallbackKeyring,
@@ -188,14 +189,15 @@ def test_fallback_keyring_prefers_working_system_keyring(
     assert not fallback_path.exists()
 
 
-def test_fallback_keyring_does_not_override_empty_system_result(
+def test_fallback_keyring_uses_file_for_null_system_backend(
     tmp_path: Path,
 ) -> None:
     fallback = FileKeyring(tmp_path / "keyring.json")
-    fallback.set_password("ursa", "openai", "file-token")
     keyring = FallbackKeyring(NullSystemKeyring(), fallback)
 
-    assert keyring.get_password("ursa", "openai") is None
+    keyring.set_password("ursa", "openai", "file-token")
+
+    assert keyring.get_password("ursa", "openai") == "file-token"
 
 
 def test_fallback_keyring_uses_file_when_system_operations_fail(
@@ -209,6 +211,77 @@ def test_fallback_keyring_uses_file_when_system_operations_fail(
     assert keyring.get_password("ursa", "openai") == "file-token"
     keyring.delete_password("ursa", "openai")
     assert fallback.get_password("ursa", "openai") is None
+
+
+def test_fallback_keyring_does_not_return_to_a_recovered_system(
+    tmp_path: Path,
+) -> None:
+    class RecoveringKeyring(KeyringBackend):
+        priority = 0
+        failed = True
+
+        def get_password(self, _service, _username):
+            if self.failed:
+                raise NoKeyringError("offline")
+            return "stale-system-token"
+
+        def set_password(self, _service, _username, _password):
+            if self.failed:
+                raise NoKeyringError("offline")
+
+        def delete_password(self, _service, _username):
+            if self.failed:
+                raise NoKeyringError("offline")
+
+    system = RecoveringKeyring()
+    keyring = FallbackKeyring(system, FileKeyring(tmp_path / "keyring.json"))
+
+    keyring.set_password("ursa", "openai", "current-token")
+    system.failed = False
+
+    assert keyring.get_password("ursa", "openai") == "current-token"
+    keyring.delete_password("ursa", "openai")
+    assert keyring.get_password("ursa", "openai") is None
+
+
+def test_fallback_keyring_choice_persists_across_wrappers(
+    tmp_path: Path,
+) -> None:
+    fallback_path = tmp_path / "fallback.json"
+    first = FallbackKeyring(FailingSystemKeyring(), FileKeyring(fallback_path))
+    first.set_password("ursa", "openai", "fallback-token")
+    system = FileKeyring(tmp_path / "system.json")
+    system.set_password("ursa", "openai", "stale-system-token")
+
+    restarted = FallbackKeyring(system, FileKeyring(fallback_path))
+
+    assert restarted.get_password("ursa", "openai") == "fallback-token"
+
+
+def test_existing_fallback_file_does_not_hide_native_credentials(
+    tmp_path: Path,
+) -> None:
+    system = FileKeyring(tmp_path / "system.json")
+    fallback = FileKeyring(tmp_path / "fallback.json")
+    system.set_password("ursa", "native", "native-token")
+    fallback.set_password("ursa", "file", "file-token")
+
+    keyring = FallbackKeyring(system, fallback)
+
+    assert keyring.get_password("ursa", "native") == "native-token"
+
+
+def test_fallback_keyring_preserves_system_after_missing_delete(
+    tmp_path: Path,
+) -> None:
+    system = FileKeyring(tmp_path / "system.json")
+    system.set_password("ursa", "kept", "system-token")
+    keyring = FallbackKeyring(system, FileKeyring(tmp_path / "fallback.json"))
+
+    with pytest.raises(PasswordDeleteError):
+        keyring.delete_password("ursa", "missing")
+
+    assert keyring.get_password("ursa", "kept") == "system-token"
 
 
 def test_get_keyring_wraps_without_replacing_system_backend(
