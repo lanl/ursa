@@ -55,6 +55,10 @@ class FileKeyring(KeyringBackend):
     def selection_path(self) -> Path:
         return self.path.with_suffix(f"{self.path.suffix}.selected")
 
+    def _selection_lock(self) -> FileLock:
+        self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        return FileLock(f"{self.selection_path}.lock", mode=_ALLOWED_MODE)
+
     def mark_selected(self) -> None:
         """Persist that URSA selected the file backend."""
         self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -196,8 +200,22 @@ class FallbackKeyring(KeyringBackend):
         )
         self._lock = Lock()
 
-    def _call(self, method: str, *args: str) -> Any:
+    @contextmanager
+    def _operation_lock(self) -> Iterator[None]:
         with self._lock:
+            if isinstance(self.fallback, FileKeyring):
+                with self.fallback._selection_lock():
+                    yield
+            else:
+                yield
+
+    def _call(self, method: str, *args: str) -> Any:
+        with self._operation_lock():
+            if (
+                isinstance(self.fallback, FileKeyring)
+                and self.fallback.selection_path.exists()
+            ):
+                self._backend = self.fallback
             backend = self._backend
             if backend is self.fallback and isinstance(
                 self.fallback, FileKeyring
