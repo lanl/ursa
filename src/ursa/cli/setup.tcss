@@ -1,0 +1,213 @@
+Screen {
+    background: $background;
+}
+
+#setup-shell {
+    width: 100%;
+    height: 1fr;
+}
+
+#progress-panel {
+    width: 40;
+    height: 100%;
+    padding: 2 2;
+    border-right: solid $accent;
+    background: $surface;
+}
+
+#setup-banner {
+    width: 100%;
+    height: 4;
+    color: $accent;
+    text-style: bold;
+    content-align: center middle;
+}
+
+#setup-progress {
+    width: 100%;
+    height: auto;
+    margin-top: 2;
+    color: $text-muted;
+}
+
+#setup-main,
+#setup-pages,
+.setup-page {
+    width: 100%;
+    height: 100%;
+}
+
+#setup-main {
+    width: 1fr;
+}
+
+.setup-page {
+    padding: 1 2;
+    overflow-x: hidden;
+}
+
+.page-title {
+    height: 3;
+    color: $accent;
+    text-style: bold;
+}
+
+.page-copy {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+    color: $text-muted;
+}
+
+.path-box,
+.review-box {
+    width: 100%;
+    height: auto;
+    margin: 1 0;
+    padding: 1 2;
+    border: round $border;
+    background: $surface;
+}
+
+Label {
+    height: 2;
+    padding-top: 1;
+}
+
+Input,
+Select,
+SelectCurrent {
+    width: 100%;
+}
+
+Checkbox {
+    margin-top: 1;
+}
+
+.setup-actions {
+    width: 100%;
+    height: 4;
+    margin-top: 1;
+    align-horizontal: right;
+    padding-top: 1;
+}
+
+.setup-actions Button,
+.manage-actions Button {
+    min-width: 14;
+    margin-left: 1;
+}
+
+.manage-actions {
+    width: 100%;
+    height: 4;
+    padding-top: 1;
+}
+
+#providers-tabs {
+    width: 100%;
+    height: 12;
+    margin-bottom: 1;
+}
+
+.provider-summary {
+    width: 100%;
+    height: auto;
+    padding: 1 2;
+}
+
+.model-validation {
+    width: 100%;
+    height: 3;
+    padding-top: 1;
+}
+
+.model-validation-status {
+    width: 1fr;
+    height: 2;
+    color: $text-muted;
+}
+
+.model-validation-status.success {
+    color: $success;
+}
+
+.model-validation-status.error {
+    color: $error;
+}
+
+.setup-advanced {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
+
+#mcp-auth-fields {
+    width: 100%;
+    height: auto;
+}
+
+.api-key-entry {
+    width: 100%;
+    height: auto;
+}
+
+.api-key-row {
+    width: 100%;
+    height: 3;
+}
+
+.api-key-row Input {
+    width: 1fr;
+}
+
+.api-key-row Checkbox {
+    width: auto;
+    margin: 0 0 0 1;
+}
+
+#provider-url-row {
+    width: 100%;
+    height: 3;
+}
+
+#provider-url-row #provider-url {
+    width: 100%;
+}
+
+#provider-url-row.custom-url #provider-url {
+    width: 22;
+}
+
+#provider-url-row #provider-url-custom {
+    width: 1fr;
+    margin-left: 1;
+}
+
+#provider-url-row.selecting #provider-url {
+    width: 100%;
+}
+
+#provider-url-row.selecting #provider-url-custom {
+    display: none;
+}
+
+.form-message {
+    width: 100%;
+    min-height: 2;
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
+}
+
+.form-message.error {
+    color: $error;
+}
+
+.form-message.success {
+    color: $success;
+}
+
+.hidden {
+    display: none;
+}
