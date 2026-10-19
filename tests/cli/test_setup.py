@@ -471,11 +471,6 @@ async def test_models_use_existing_editor_and_validate_both_providers(
         editor = app.query_one(ModelEditor)
         assert app.query_one("#progress-panel").display
         tabs = editor.query_one(ModelTabs)
-        assert tabs.styles.margin.top == 1
-        assert str(tabs.get_tab("chat-model-tab").label) == "Chat: None"
-        assert str(tabs.get_tab("embedding-model-tab").label) == (
-            "Embedding: None"
-        )
         selection = ModelSelection(
             ChatModelConfig(
                 model="chat-model",

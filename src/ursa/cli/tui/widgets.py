@@ -611,8 +611,8 @@ class ModelTabs(TabbedContent):
     """
 
 
-class _ModelEditor:
-    """Shared chat and embedding model editor behavior."""
+class ModelEditor(Vertical):
+    """Chat and embedding model editor embeddable in another workflow."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -622,6 +622,13 @@ class _ModelEditor:
     NONE_VALUE = "__ursa_none__"
     YAML_VALIDATION_DELAY = 0.8
     STRUCTURED_FIELDS = ("model", "model_provider", "inference_provider")
+
+    class Submitted(Message):
+        """The model selection submitted by the editor, or ``None``."""
+
+        def __init__(self, selection: ModelSelection | None) -> None:
+            super().__init__()
+            self.selection = selection
 
     @staticmethod
     def _validation_error_text(error: ValidationError) -> str:
@@ -936,7 +943,12 @@ class _ModelEditor:
         try:
             models = await asyncio.to_thread(list_provider_models, config)
         except Exception as exc:  # noqa: BLE001
-            if generation != self._model_load_generation[prefix]:
+            if (
+                generation != self._model_load_generation[prefix]
+                or not self.is_mounted
+                or self.query_one_optional(f"#{prefix}-model-name", Select)
+                is None
+            ):
                 return
             self.model_catalogs[prefix] = {}
             current = self._choice_value(prefix, "model-name")
@@ -947,7 +959,11 @@ class _ModelEditor:
                 severity="warning",
             )
             return
-        if generation != self._model_load_generation[prefix]:
+        if (
+            generation != self._model_load_generation[prefix]
+            or not self.is_mounted
+            or self.query_one_optional(f"#{prefix}-model-name", Select) is None
+        ):
             return
         models = sort_provider_models(
             models, "embedding" if prefix == "embedding" else "chat"
@@ -1288,48 +1304,30 @@ class _ModelEditor:
                 select.expanded = False
 
     def _submit(self, selection: ModelSelection | None) -> None:
-        raise NotImplementedError
-
-
-class ModelEditor(_ModelEditor, Vertical):
-    """Model editor that can be embedded in another workflow."""
-
-    BINDINGS = _ModelEditor.BINDINGS
-    show_custom_choice = _ModelEditor.show_custom_choice
-    update_models_for_inference_provider = (
-        _ModelEditor.update_models_for_inference_provider
-    )
-    model_provider_changed = _ModelEditor.model_provider_changed
-    custom_model_changed = _ModelEditor.custom_model_changed
-    yaml_changed = _ModelEditor.yaml_changed
-    apply = _ModelEditor.apply
-    cancel_button = _ModelEditor.cancel_button
-
-    class Submitted(Message):
-        def __init__(self, selection: ModelSelection | None) -> None:
-            super().__init__()
-            self.selection = selection
-
-    def _submit(self, selection: ModelSelection | None) -> None:
         self.post_message(self.Submitted(selection))
 
 
-class ModelScreen(_ModelEditor, ModalScreen[ModelSelection | None]):
+class ModelScreen(ModalScreen[ModelSelection | None]):
     """Modal model editor used by the running TUI."""
 
-    BINDINGS = _ModelEditor.BINDINGS
-    show_custom_choice = _ModelEditor.show_custom_choice
-    update_models_for_inference_provider = (
-        _ModelEditor.update_models_for_inference_provider
-    )
-    model_provider_changed = _ModelEditor.model_provider_changed
-    custom_model_changed = _ModelEditor.custom_model_changed
-    yaml_changed = _ModelEditor.yaml_changed
-    apply = _ModelEditor.apply
-    cancel_button = _ModelEditor.cancel_button
+    def __init__(
+        self,
+        providers: Mapping[str, InferenceProviderConfig],
+        chat: ChatModelConfig,
+        embedding: EmbModelConfig | None,
+    ) -> None:
+        super().__init__()
+        self.providers = providers
+        self.chat = chat
+        self.embedding = embedding
 
-    def _submit(self, selection: ModelSelection | None) -> None:
-        self.dismiss(selection)
+    def compose(self) -> ComposeResult:
+        yield ModelEditor(self.providers, self.chat, self.embedding)
+
+    @on(ModelEditor.Submitted)
+    def editor_submitted(self, event: ModelEditor.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.selection)
 
 
 class InformationScreen(ModalScreen[None]):
