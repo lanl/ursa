@@ -37,10 +37,12 @@ from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
+    editable_model_values,
 )
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.tips import TIPS, random_tip, runtime_keymap
 from ursa.cli.tui.widgets import (
+    AdvancedYamlEditor,
     AgentsScreen,
     FuzzySelectOverlay,
     HotlistScreen,
@@ -1354,7 +1356,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
             update={"model": "programmatic-model"}
         )
         app.screen.drafts["chat"] = updated
-        app.screen._yaml_values["chat"] = app.screen._configured_values(updated)
+        app.screen._yaml_values["chat"] = editable_model_values(updated)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = app.screen._yaml_text("chat")
 
@@ -1592,21 +1594,32 @@ async def test_advanced_yaml_seeded_fuzz_never_mutates_running_config(
         advanced = app.screen.query_one("#chat-advanced", Collapsible)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         assert advanced.collapsed
+        assert editor.parent.display is False
         assert editor.language == "yaml"
 
+        advanced_title = advanced.query_one("CollapsibleTitle")
+        assert str(advanced_title.label) == "Advanced"
+        await pilot.click(advanced_title)
+        await pilot.pause()
+        assert advanced.collapsed is False
+        assert editor.parent.display is True
+
         for document, expected_valid in cases:
-            previous_timer = app.screen._yaml_timers.get("chat")
+            advanced_editor = app.screen.query_one(
+                "#chat-advanced", AdvancedYamlEditor
+            )
+            previous_timer = advanced_editor._validation_timer
             editor.text = document
             # Each Changed event must schedule its own validation before we
             # inspect the neutral state and stop that edit's debounce timer.
             assert await eventually(
                 pilot,
-                lambda: app.screen._yaml_timers.get("chat")
-                is not previous_timer,
+                lambda: advanced_editor._validation_timer is not previous_timer,
             )
             assert not editor.has_class("yaml-valid")
             assert not editor.has_class("yaml-invalid")
-            app.screen._yaml_timers["chat"].stop()
+            assert advanced_editor._validation_timer is not None
+            advanced_editor._validation_timer.stop()
 
             result = app.screen._validate_yaml(
                 "chat", update_controls=expected_valid
@@ -1665,7 +1678,9 @@ async def test_cancel_discards_yaml_with_pending_validation(
         await pilot.pause()
         # Flush the Changed event after the editor has emitted it to the screen.
         await pilot.pause()
-        timer = app.screen._yaml_timers["chat"]
+        advanced = app.screen.query_one("#chat-advanced", AdvancedYamlEditor)
+        timer = advanced._validation_timer
+        assert timer is not None
         assert timer._task is not None
         assert not timer._task.done()
 
@@ -1708,7 +1723,8 @@ async def test_yaml_debounce_restarts_from_latest_edit(tmp_path, monkeypatch):
             scheduled.append(timer)
             return timer
 
-        monkeypatch.setattr(app.screen, "set_timer", schedule_timer)
+        advanced = app.screen.query_one("#chat-advanced", AdvancedYamlEditor)
+        monkeypatch.setattr(advanced, "set_timer", schedule_timer)
         editor = app.screen.query_one("#chat-config-yaml", TextArea)
         editor.text = "model: first-edit\n"
         await eventually(

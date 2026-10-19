@@ -28,11 +28,11 @@ On macOS or Linux, the guided installer installs `uv` when needed, installs
 URSA with its dashboard, and opens the setup wizard:
 
 ```bash
-curl -LsSf https://lanl.github.io/ursa/install.sh | sh
+curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
 ```
 
-The same script is also available from
-`https://raw.githubusercontent.com/lanl/ursa/main/install.sh`.
+The development installer at
+`https://lanl.github.io/ursa/main/install.sh` installs URSA from GitHub main.
 
 The wizard validates provider credentials, stores secrets in the operating
 system keyring, and writes `~/.config/ursa/config.yaml`. Run it again at any

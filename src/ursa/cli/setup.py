@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import shlex
@@ -12,11 +11,13 @@ import tempfile
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from contextlib import redirect_stderr
+from contextlib import contextmanager, redirect_stderr
 from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import Enum
+from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Iterator, Literal
 from urllib.parse import urlparse
 
 import keyring
@@ -26,6 +27,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import (
     Button,
@@ -49,29 +51,39 @@ from ursa.cli.config import (
     InferenceProviderConfig,
     ModelConfig,
     UrsaConfig,
+    editable_model_values,
     load_config_file,
 )
-from ursa.cli.tui.widgets import FuzzySelect
+from ursa.cli.installer_config import InstallerConfigError, load_installer_json
+from ursa.cli.tui.widgets import AdvancedYamlEditor, FuzzySelect, HelpLabel
 from ursa.util.http import inject_truststore_into_ssl
 from ursa.util.inference_providers import (
     ProviderModel,
     list_provider_models,
     model_listing_provider,
     sort_provider_models,
-    supported_model_providers,
 )
-from ursa.util.mcp import start_mcp_client, validate_server_parameters
-from ursa.util.secrets import SecretReference, SecretTemplate
-
-ProviderKind = Literal["openai", "anthropic", "litellm", "ollama"]
+from ursa.util.mcp import (
+    _serialize_server_config,
+    start_mcp_client,
+    validate_server_parameters,
+)
+from ursa.util.secrets import (
+    SecretReference,
+    SecretTemplate,
+    iter_secret_references,
+)
 
 CUSTOM_MODEL = "__ursa_custom_model__"
 CUSTOM_PROVIDER_URL = "__ursa_custom_provider_url__"
-MCP_TOKEN_NEW = "__ursa_mcp_token_new__"
+PROVIDER_DEFAULT_URL = "__ursa_provider_default_url__"
 MCP_TOKEN_NONE = "__ursa_mcp_token_none__"
+API_KEY_ENV = "__ursa_api_key_env__"
 NO_MODEL = "__ursa_no_model__"
+ASCII_SPINNER_FRAMES = ("|", "/", "-", "\\")
 NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
-PROVIDER_DEFAULT_URLS: dict[ProviderKind, str] = {
+ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PROVIDER_DEFAULT_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "litellm": "http://localhost:4000",
@@ -116,17 +128,9 @@ def default_setup_config_path() -> Path:
 def load_setup_defaults(path: Path) -> dict[str, Any]:
     """Load non-secret setup defaults from an installer JSON payload."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise SetupError(f"Could not read setup defaults: {exc}") from None
-    except json.JSONDecodeError as exc:
-        raise SetupError(
-            f"Setup defaults are not valid JSON: {exc.msg} "
-            f"(line {exc.lineno}, column {exc.colno})."
-        ) from None
-    if not isinstance(value, dict):
-        raise SetupError("Setup defaults must be a JSON object.")
-    return value
+        return load_installer_json(path)
+    except InstallerConfigError as exc:
+        raise SetupError(f"Could not load setup defaults: {exc}") from None
 
 
 def _secret_mapping(value: Any) -> dict[str, Any] | None:
@@ -136,6 +140,13 @@ def _secret_mapping(value: Any) -> dict[str, Any] | None:
     ):
         return deepcopy(value)
     return None
+
+
+def _validation_error_summary(exc: ValidationError) -> str:
+    """Return the first validation error with its configuration path."""
+    detail = exc.errors(include_url=False, include_context=False)[0]
+    location = ".".join(str(part) for part in detail.get("loc", ()))
+    return f"{location or 'config'}: {detail['msg']}"
 
 
 def _friendly_validation_error(exc: Exception) -> str:
@@ -243,6 +254,31 @@ def _validate_url(value: str, noun: str) -> str:
     return value
 
 
+def _provider_defaults_to_no_key(base_url: str) -> bool:
+    """Return whether a convenience endpoint normally needs no credential."""
+    parsed = urlparse(base_url)
+    endpoint = (parsed.hostname or "").lower()
+    return endpoint in {"localhost", "127.0.0.1", "::1"} or (
+        "ollama" in endpoint or parsed.port == 11434
+    )
+
+
+def _is_sensitive_header(name: object) -> bool:
+    """Return whether a header name conventionally carries a credential."""
+    normalized = re.sub(r"[^a-z0-9]", "", str(name).lower())
+    return any(
+        marker in normalized
+        for marker in (
+            "auth",
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "apikey",
+        )
+    )
+
+
 def probe_chat_model(
     config: ChatModelConfig,
     providers: dict[str, InferenceProviderConfig],
@@ -272,27 +308,20 @@ class ProviderDraft:
     """Provider values retained while the user moves between setup pages."""
 
     name: str
-    kind: ProviderKind
-    base_url: str
+    base_url: str | None
     api_key_reference: dict[str, Any] | None = None
     pending_secret: str | None = field(default=None, repr=False)
     keyring_username: str | None = None
-    ssl_verify: bool = True
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, name: str, value: Any) -> ProviderDraft:
-        raw = dict(value) if isinstance(value, dict) else {}
+        if not isinstance(value, dict):
+            raise SetupError(
+                f"Inference provider '{name}' must be a YAML mapping."
+            )
+        raw = dict(value)
         config = InferenceProviderConfig.model_validate(raw)
-        configured_kind = (config.model_extra or {}).get("model_provider")
-        inferred = model_listing_provider(config)
-        kind = (
-            configured_kind
-            if configured_kind in PROVIDER_DEFAULT_URLS
-            else inferred
-        )
-        if kind not in PROVIDER_DEFAULT_URLS:
-            kind = "openai"
         pending_secret = None
         if isinstance(config.api_key, SecretStr):
             pending_secret = config.api_key.get_secret_value()
@@ -307,31 +336,29 @@ class ProviderDraft:
         )
         return cls(
             name=name,
-            kind=kind,
-            base_url=config.base_url or PROVIDER_DEFAULT_URLS[kind],
+            base_url=config.base_url,
             api_key_reference=reference,
             pending_secret=pending_secret,
             keyring_username=keyring_username,
-            ssl_verify=True,
-            extra={
-                key: deepcopy(value)
-                for key, value in (config.model_extra or {}).items()
-                if key != "model_provider"
-            },
+            extra=deepcopy(config.model_extra or {}),
         )
 
     def validation_config(
-        self, entered_secret: str = ""
+        self,
+        entered_secret: str = "",
+        *,
+        model_provider: str | None = None,
     ) -> InferenceProviderConfig:
         secret = entered_secret.strip() or self.pending_secret
         api_key: Any = SecretStr(secret) if secret else self.api_key_reference
-        if api_key is None:
-            raise SetupError("API key is required.")
+        extra = deepcopy(self.extra)
+        if model_provider is not None:
+            extra.setdefault("model_provider", model_provider)
         return InferenceProviderConfig(
+            **extra,
             base_url=self.base_url,
             api_key=api_key,
-            ssl_verify=self.ssl_verify,
-            model_provider=self.kind,
+            ssl_verify=True,
         )
 
     def as_config(self) -> dict[str, Any]:
@@ -339,16 +366,11 @@ class ProviderDraft:
         if self.pending_secret is not None:
             username = self.keyring_username or self.name
             reference = {"keyring": True if username == self.name else username}
-        if reference is None:
-            raise SetupError(
-                f"Inference provider '{self.name}' has no API key."
-            )
-        result: dict[str, Any] = {
-            **deepcopy(self.extra),
-            "model_provider": self.kind,
-            "base_url": self.base_url,
-            "api_key": reference,
-        }
+        result: dict[str, Any] = deepcopy(self.extra)
+        if self.base_url is not None:
+            result["base_url"] = self.base_url
+        if reference is not None:
+            result["api_key"] = reference
         return result
 
 
@@ -372,12 +394,36 @@ class MCPDraft:
 
     @classmethod
     def from_config(cls, name: str, value: Any) -> MCPDraft:
-        raw = dict(value) if isinstance(value, dict) else {}
-        transport = raw.get("transport", "streamable_http")
-        if transport == "streamable-http":
-            transport = "streamable_http"
-        if transport not in {"streamable_http", "sse", "stdio"}:
-            transport = "streamable_http"
+        if not isinstance(value, dict):
+            raise SetupError(f"MCP server '{name}' must be a YAML mapping.")
+        try:
+            parameters = validate_server_parameters(deepcopy(value))
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise SetupError(f"MCP server '{name}' is invalid: {exc}") from None
+        allowed = {"transport"}
+        for field_name, field_info in type(parameters).model_fields.items():
+            allowed.add(field_name)
+            if isinstance(field_info.alias, str):
+                allowed.add(field_info.alias)
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            fields = ", ".join(unknown)
+            raise SetupError(
+                f"MCP server '{name}' has unknown configuration "
+                f"field{'s' if len(unknown) != 1 else ''}: {fields}."
+            )
+        serialized = _serialize_server_config(
+            parameters,
+            exclude_defaults=False,
+            exclude_none=True,
+        )
+        raw = {"transport": serialized["transport"]}
+        raw.update({
+            field: deepcopy(serialized[field])
+            for field in value
+            if field != "transport" and field in serialized
+        })
+        transport = raw["transport"]
         headers = (
             raw.get("headers") if isinstance(raw.get("headers"), dict) else {}
         )
@@ -408,7 +454,7 @@ class MCPDraft:
             transport=transport,
             url=raw.get("url"),
             command=raw.get("command"),
-            args=[str(arg) for arg in raw.get("args", [])],
+            args=deepcopy(raw.get("args", [])),
             auth=reference is not None,
             header=header,
             template=template,
@@ -511,30 +557,65 @@ class SetupState:
     @classmethod
     def load(cls, path: Path) -> SetupState:
         path = path.expanduser()
-        raw = load_config_file(path) if path.is_file() else {}
+        try:
+            raw = load_config_file(path) if path.is_file() else {}
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            raise SetupError(
+                f"Could not load existing configuration: {exc}"
+            ) from None
         state = cls(path=path, base_config=deepcopy(raw))
-        for name, value in (raw.get("inference_providers") or {}).items():
+        raw_providers = raw.get("inference_providers", {})
+        if not isinstance(raw_providers, dict):
+            raise SetupError(
+                "Existing inference_providers configuration must be a mapping."
+            )
+        for name, value in raw_providers.items():
             state.providers[str(name)] = ProviderDraft.from_config(
                 str(name), value
             )
             state.provider_verified[str(name)] = None
         llm = raw.get("llm_model")
-        if isinstance(llm, dict):
+        if llm is not None:
+            if not isinstance(llm, dict):
+                raise SetupError(
+                    "Existing llm_model configuration must be a mapping."
+                )
             try:
                 state.llm_model = ChatModelConfig.model_validate(llm)
-            except ValidationError:
-                state.llm_model = None
+            except ValidationError as exc:
+                raise SetupError(
+                    "Existing llm_model configuration is invalid at "
+                    f"{_validation_error_summary(exc)}"
+                ) from None
         embedding = raw.get("emb_model")
-        if isinstance(embedding, dict):
+        if embedding is not None:
+            if not isinstance(embedding, dict):
+                raise SetupError(
+                    "Existing emb_model configuration must be a mapping."
+                )
             try:
                 state.embedding_model = EmbModelConfig.model_validate(embedding)
-            except ValidationError:
-                state.embedding_model = None
-        for name, value in (raw.get("mcp_servers") or {}).items():
+            except ValidationError as exc:
+                raise SetupError(
+                    "Existing emb_model configuration is invalid at "
+                    f"{_validation_error_summary(exc)}"
+                ) from None
+        raw_mcp_servers = raw.get("mcp_servers", {})
+        if not isinstance(raw_mcp_servers, dict):
+            raise SetupError(
+                "Existing mcp_servers configuration must be a mapping."
+            )
+        for name, value in raw_mcp_servers.items():
             state.mcp_servers[str(name)] = MCPDraft.from_config(
                 str(name), value
             )
             state.mcp_verified[str(name)] = None
+        collisions = sorted(set(state.providers) & set(state.mcp_servers))
+        if collisions:
+            raise SetupError(
+                "Inference providers and MCP servers must have unique names; "
+                f"used by both: {', '.join(collisions)}."
+            )
         return state
 
     def apply_defaults(self, defaults: Mapping[str, Any]) -> None:
@@ -542,6 +623,8 @@ class SetupState:
         providers = defaults.get("inference_providers", [])
         if not isinstance(providers, list):
             raise SetupError("inference_providers must be a JSON array.")
+        validated_providers: list[tuple[str, str]] = []
+        default_provider_names: set[str] = set()
         for item in providers:
             if (
                 not isinstance(item, dict)
@@ -553,23 +636,33 @@ class SetupState:
                     "and base_url strings."
                 )
             name = _validate_name(item["name"], "Inference provider")
+            if name in default_provider_names:
+                raise SetupError(
+                    f"Inference provider default '{name}' is duplicated."
+                )
+            default_provider_names.add(name)
             base_url = _validate_url(
                 item["base_url"], "Inference provider base URL"
             )
+            validated_providers.append((name, base_url))
+
+        for name, _ in validated_providers:
+            if name in self.mcp_servers:
+                raise SetupError(
+                    f"'{name}' is already used by an MCP server. Inference "
+                    "providers and MCP servers must have unique names."
+                )
+
+        for name, base_url in validated_providers:
+            PROVIDER_DEFAULT_URLS[name] = base_url
             if name in self.providers:
                 continue
-            kind: str = name.lower()
-            if kind not in PROVIDER_DEFAULT_URLS:
-                config = InferenceProviderConfig(base_url=base_url)
-                kind = model_listing_provider(config)
-            if kind not in PROVIDER_DEFAULT_URLS:
-                kind = "openai"
+            no_key = _provider_defaults_to_no_key(base_url)
             self.providers[name] = ProviderDraft(
                 name=name,
-                kind=kind,
                 base_url=base_url,
-                api_key_reference={"keyring": True},
-                keyring_username=name,
+                api_key_reference=None if no_key else {"keyring": True},
+                keyring_username=None if no_key else name,
             )
             self.provider_verified[name] = None
 
@@ -578,6 +671,11 @@ class SetupState:
             raise SetupError("mcp_servers must be a JSON object.")
         for raw_name, raw_server in servers.items():
             name = _validate_name(str(raw_name), "MCP server")
+            if name in self.providers:
+                raise SetupError(
+                    f"'{name}' is already used by an inference provider. "
+                    "Inference providers and MCP servers must have unique names."
+                )
             if name in self.mcp_servers:
                 continue
             if not isinstance(raw_server, dict):
@@ -587,6 +685,12 @@ class SetupState:
             if isinstance(headers, dict):
                 for header, raw_value in headers.items():
                     if not isinstance(raw_value, dict):
+                        if _is_sensitive_header(header):
+                            raise SetupError(
+                                f"MCP server '{name}' contains a literal "
+                                f"credential in header '{header}'. Installer "
+                                "defaults must not include API keys."
+                            )
                         continue
                     if _secret_mapping(raw_value) is not None:
                         raise SetupError(
@@ -599,12 +703,6 @@ class SetupState:
                             "keyring": True,
                         }
             draft = MCPDraft.from_config(name, server)
-            try:
-                validate_server_parameters(draft.as_config())
-            except (TypeError, ValueError, ValidationError) as exc:
-                raise SetupError(
-                    f"MCP server default '{name}' is invalid: {exc}"
-                ) from None
             self.mcp_servers[name] = draft
             self.mcp_verified[name] = None
 
@@ -612,31 +710,10 @@ class SetupState:
     def _model_values(
         model: ChatModelConfig | EmbModelConfig,
     ) -> dict[str, Any]:
-        values: dict[str, Any] = {
-            "model": model.model,
-            "inference_provider": model.inference_provider,
-        }
-        if model.model_provider is not None:
-            values["model_provider"] = model.model_provider
-        return values
-
-    def _merged_model_values(
-        self,
-        field_name: str,
-        model: ChatModelConfig | EmbModelConfig,
-    ) -> dict[str, Any]:
-        existing = self.base_config.get(field_name)
-        values = deepcopy(existing) if isinstance(existing, dict) else {}
-        for name in (
-            "model",
-            "model_provider",
-            "inference_provider",
-            "base_url",
-            "api_key",
-            "api_key_env",
-        ):
-            values.pop(name, None)
-        values.update(self._model_values(model))
+        values = editable_model_values(model)
+        if model.inference_provider is not None:
+            for name in ("base_url", "api_key", "api_key_env"):
+                values.pop(name, None)
         return values
 
     def configuration(self) -> dict[str, Any]:
@@ -649,15 +726,11 @@ class SetupState:
             name: provider.as_config()
             for name, provider in self.providers.items()
         }
-        config["llm_model"] = self._merged_model_values(
-            "llm_model", self.llm_model
-        )
+        config["llm_model"] = self._model_values(self.llm_model)
         if self.embedding_model is None:
             config.pop("emb_model", None)
         else:
-            config["emb_model"] = self._merged_model_values(
-                "emb_model", self.embedding_model
-            )
+            config["emb_model"] = self._model_values(self.embedding_model)
         config["mcp_servers"] = {
             name: server.as_config()
             for name, server in self.mcp_servers.items()
@@ -665,11 +738,8 @@ class SetupState:
         try:
             UrsaConfig.model_validate(config)
         except ValidationError as exc:
-            detail = exc.errors(include_url=False, include_context=False)[0]
-            location = ".".join(str(part) for part in detail.get("loc", ()))
             raise SetupError(
-                f"Configuration is invalid at {location or 'config'}: "
-                f"{detail['msg']}"
+                f"Configuration is invalid at {_validation_error_summary(exc)}"
             ) from None
         return config
 
@@ -693,80 +763,443 @@ class SetupState:
         """Return provider configs that can use pending, unsaved secrets."""
         return {
             name: _resolve_provider_secret(
-                provider.validation_config().resolve(name)
+                self.provider_validation_config(name)
             )
-            for name, provider in self.providers.items()
+            for name in self.providers
         }
+
+    def provider_validation_config(self, name: str) -> InferenceProviderConfig:
+        """Build a provider config using model protocol only when needed."""
+        provider = self.providers[name]
+        return provider.validation_config(
+            model_provider=self.provider_model_provider(name)
+        ).resolve(name)
+
+    def provider_model_provider(self, name: str) -> str | None:
+        """Return an explicit or model-derived provider protocol."""
+        provider = self.providers[name]
+        model_provider = provider.extra.get("model_provider")
+        if not isinstance(model_provider, str) or not model_provider:
+            model_provider = next(
+                (
+                    model.model_provider
+                    for model in (self.llm_model, self.embedding_model)
+                    if model is not None
+                    and model.inference_provider == name
+                    and model.model_provider
+                ),
+                None,
+            )
+        return model_provider
+
+
+@contextmanager
+def _setup_save_lock(path: Path) -> Iterator[None]:
+    """Serialize setup saves using a stable sibling advisory lock file."""
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a+b") as stream:
+        _lock_setup_file(stream)
+        try:
+            yield
+        finally:
+            _unlock_setup_file(stream)
+
+
+def _lock_setup_file(stream: BinaryIO) -> None:
+    """Acquire a blocking platform-native lock on the first file byte."""
+    if os.name == "nt":
+        import msvcrt
+
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_setup_file(stream: BinaryIO) -> None:
+    """Release a lock acquired by :func:`_lock_setup_file`."""
+    if os.name == "nt":
+        import msvcrt
+
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def save_setup_state(state: SetupState) -> Path:
     """Validate and atomically save config after keyring writes succeed."""
-    config = state.configuration()
     path = state.path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    for username, secret in state.secrets():
-        _quiet_keyring_call(
-            keyring.set_password, KEYRING_SERVICE, username, secret
-        )
+    with _setup_save_lock(path):
+        config = state.configuration()
+        for username, secret in state.secrets():
+            _quiet_keyring_call(
+                keyring.set_password, KEYRING_SERVICE, username, secret
+            )
 
-    content = yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if path.is_file():
-            shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
-        os.replace(temporary, path)
-        path.chmod(0o600)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+        content = yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if path.is_file():
+                shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+            os.replace(temporary, path)
+            path.chmod(0o600)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
     return path
 
 
 class ApiKeyEntry(Vertical):
-    """Reusable masked API-key input with a reveal control."""
+    """Reusable keyring selector and API-key input."""
+
+    class Changed(Message):
+        """The selected credential or its value changed."""
+
+        def __init__(self, entry: ApiKeyEntry) -> None:
+            super().__init__()
+            self.entry = entry
+
+    class Loading(Message):
+        """A keyring lookup started or finished."""
+
+        def __init__(self, entry: ApiKeyEntry, loading: bool) -> None:
+            super().__init__()
+            self.entry = entry
+            self.loading = loading
 
     def __init__(
         self,
         *,
+        source_id: str,
         input_id: str,
         show_id: str,
+        row_id: str,
+        fields_id: str,
         subject: str,
+        new_entry_label: str | None = None,
         id: str,
     ) -> None:
         super().__init__(id=id, classes="api-key-entry")
+        self._source_id = source_id
         self._input_id = input_id
         self._show_id = show_id
+        self._row_id = row_id
+        self._fields_id = fields_id
         self._placeholder = f"Enter the API Key for the {subject}"
+        self._new_entry_label = new_entry_label
+        self._name = ""
+        self._known_names: list[str] = []
+        self._loaded_secret: str | None = None
+        self._generation = 0
+        self._syncing = False
+        self._credential_loading = False
+        self._loading_spinner_frame = 0
+        self._loading_spinner_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
-        yield Label("API Key")
-        with Horizontal(classes="api-key-row"):
-            yield Input(
-                password=True,
-                placeholder=self._placeholder,
-                id=self._input_id,
+        with Horizontal(classes="credential-label-row"):
+            yield HelpLabel(
+                "Keyring",
+                "Choose a keyring entry, ENV for an environment variable, "
+                "or None when this connection does not need authentication.",
+                id=f"{self._source_id}-label",
+                classes="credential-source-label",
             )
-            yield Checkbox("Show", value=False, id=self._show_id)
+            yield HelpLabel(
+                "API Key",
+                "Enter the credential to save in the operating-system keyring. "
+                "Existing values load automatically and remain hidden unless "
+                "Show is selected.",
+                id=f"{self._input_id}-value-label",
+                classes="credential-value-label",
+            )
+        with Horizontal(id=self._row_id, classes="credential-row"):
+            yield ExpandingFuzzySelect(
+                [("None", MCP_TOKEN_NONE)],
+                value=MCP_TOKEN_NONE,
+                allow_blank=False,
+                id=self._source_id,
+                classes="credential-source",
+            )
+            with Horizontal(
+                id=self._fields_id,
+                classes="credential-value api-key-row hidden",
+            ):
+                yield Input(
+                    password=True,
+                    placeholder=self._placeholder,
+                    id=self._input_id,
+                )
+                yield Checkbox("Show", value=False, id=self._show_id)
 
-    def reset(self, secret: str = "") -> None:
-        """Reset the control to its masked state with an optional secret."""
+    @property
+    def source(self) -> str:
+        """Return the currently selected credential source."""
+        value = self.query_one(f"#{self._source_id}", FuzzySelect).value
+        return str(value)
+
+    def _options(self) -> list[tuple[str, str]]:
+        options = []
+        if self._name:
+            options.append((self._new_entry_label or self._name, self._name))
+        options.extend(
+            (name, name)
+            for name in dict.fromkeys(self._known_names)
+            if name and name != self._name
+        )
+        return [
+            *options,
+            ("ENV", API_KEY_ENV),
+            ("None", MCP_TOKEN_NONE),
+        ]
+
+    def configure(
+        self,
+        *,
+        name: str,
+        known_names: list[str],
+        reference: dict[str, Any] | None,
+        pending_secret: str | None,
+        default_to_name: bool,
+    ) -> None:
+        """Load a credential reference into the selector and input."""
+        self._generation += 1
+        self._name = name
+        self._known_names = list(known_names)
+        keyring_name = (reference or {}).get("keyring")
+        if (
+            isinstance(keyring_name, str)
+            and keyring_name not in self._known_names
+        ):
+            self._known_names.append(keyring_name)
+        if pending_secret is not None:
+            selected = keyring_name if isinstance(keyring_name, str) else name
+        elif reference and reference.get("env") is not None:
+            selected = API_KEY_ENV
+        elif reference and reference.get("keyring") not in (None, False):
+            keyring_name = reference["keyring"]
+            selected = name if keyring_name is True else str(keyring_name)
+        else:
+            selected = name if default_to_name else MCP_TOKEN_NONE
+        select = self.query_one(f"#{self._source_id}", FuzzySelect)
+        self._syncing = True
+        try:
+            with select.prevent(Select.Changed):
+                select.set_options(self._options())
+                select.value = selected
+            field = self.query_one(f"#{self._input_id}", Input)
+            with field.prevent(Input.Changed):
+                field.value = (
+                    str(reference["env"])
+                    if selected == API_KEY_ENV and reference is not None
+                    else pending_secret or ""
+                )
+            self._loaded_secret = None
+            self.query_one(f"#{self._show_id}", Checkbox).value = False
+        finally:
+            self._syncing = False
+        self._activate_source(selected, load=not pending_secret)
+
+    def set_name(self, name: str) -> None:
+        """Update the default keyring name as its owning form is edited."""
+        old_name = self._name
+        selected = self.source
+        self._name = name.strip()
+        select = self.query_one(f"#{self._source_id}", FuzzySelect)
+        options = self._options()
+        self._syncing = True
+        try:
+            with select.prevent(Select.Changed):
+                select.set_options(options)
+                if selected == old_name:
+                    select.value = self._name or MCP_TOKEN_NONE
+                    selected = str(select.value)
+                elif selected in {value for _, value in options}:
+                    select.value = selected
+                else:
+                    select.value = MCP_TOKEN_NONE
+                    selected = MCP_TOKEN_NONE
+        finally:
+            self._syncing = False
+        self._activate_source(selected, load=selected == self._name)
+
+    def values(
+        self,
+        *,
+        validate: bool = True,
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        """Return reference, pending secret, and keyring username."""
+        selected = self.source
+        field = self.query_one(f"#{self._input_id}", Input).value.strip()
+        if selected == MCP_TOKEN_NONE:
+            return None, None, None
+        if selected == API_KEY_ENV:
+            if not ENV_NAME_PATTERN.fullmatch(field):
+                if not validate:
+                    return {"env": field}, None, None
+                raise SetupError(
+                    "Enter the name of the environmental variable containing "
+                    "the API key."
+                )
+            return {"env": field}, None, None
+        pending = field if field and field != self._loaded_secret else None
+        reference = {"keyring": True if selected == self._name else selected}
+        return reference, pending, selected
+
+    def cancel_load(self) -> None:
+        """Invalidate any outstanding keyring result."""
+        self._generation += 1
+        self._set_loading(False)
+
+    def _activate_source(self, source: str, *, load: bool) -> None:
+        value_box = self.query_one(".credential-value", Horizontal)
+        value_box.set_class(source == MCP_TOKEN_NONE, "hidden")
+        label = self.query_one(".credential-value-label", HelpLabel)
         field = self.query_one(f"#{self._input_id}", Input)
-        field.value = secret
-        field.password = True
-        field.placeholder = self._placeholder
-        self.query_one(f"#{self._show_id}", Checkbox).value = False
+        show = self.query_one(f"#{self._show_id}", Checkbox)
+        environment = source == API_KEY_ENV
+        label.set_label(
+            "Environmental Variable with API Key" if environment else "API Key"
+        )
+        label.set_class(source == MCP_TOKEN_NONE, "hidden")
+        field.password = not environment and not show.value
+        field.placeholder = (
+            "e.g. OPENAI_API_KEY" if environment else self._placeholder
+        )
+        show.set_class(environment, "hidden")
+        if source in {MCP_TOKEN_NONE, API_KEY_ENV}:
+            self.cancel_load()
+            return
+        if load:
+            self._queue_load(source)
+
+    def _set_loading(self, loading: bool) -> None:
+        if self._credential_loading == loading:
+            if loading:
+                self._update_loading_placeholder()
+            return
+        self._credential_loading = loading
+        if loading:
+            self._loading_spinner_frame = 0
+            self._update_loading_placeholder()
+            if self._loading_spinner_timer is None:
+                self._loading_spinner_timer = self.set_interval(
+                    0.12, self._advance_loading_spinner
+                )
+            else:
+                self._loading_spinner_timer.resume()
+        else:
+            if self._loading_spinner_timer is not None:
+                self._loading_spinner_timer.pause()
+            placeholder = (
+                "e.g. OPENAI_API_KEY"
+                if self.source == API_KEY_ENV
+                else self._placeholder
+            )
+            self.query_one(
+                f"#{self._input_id}", Input
+            ).placeholder = placeholder
+        self.post_message(self.Loading(self, loading))
+
+    def _advance_loading_spinner(self) -> None:
+        if not self._credential_loading:
+            return
+        self._loading_spinner_frame = (self._loading_spinner_frame + 1) % len(
+            ASCII_SPINNER_FRAMES
+        )
+        self._update_loading_placeholder()
+
+    def _update_loading_placeholder(self) -> None:
+        frame = ASCII_SPINNER_FRAMES[self._loading_spinner_frame]
+        self.query_one(
+            f"#{self._input_id}", Input
+        ).placeholder = f"{frame} Loading API key from keyring"
+
+    def _queue_load(self, username: str) -> None:
+        field = self.query_one(f"#{self._input_id}", Input)
+        starting_value = field.value
+        if starting_value and starting_value != self._loaded_secret:
+            return
+        with field.prevent(Input.Changed):
+            field.value = ""
+        self._generation += 1
+        generation = self._generation
+        self._set_loading(True)
+        self.run_worker(
+            partial(self._load_keyring, username, generation),
+            group=f"{self.id}-keyring",
+            exclusive=True,
+        )
+
+    async def _load_keyring(self, username: str, generation: int) -> None:
+        field = self.query_one(f"#{self._input_id}", Input)
+        try:
+            secret = await asyncio.to_thread(
+                _quiet_keyring_call,
+                keyring.get_password,
+                KEYRING_SERVICE,
+                username,
+            )
+        except Exception:
+            secret = None
+        if generation != self._generation:
+            return
+        if not field.value:
+            self._syncing = True
+            try:
+                field.value = secret or ""
+            finally:
+                self._syncing = False
+            self._loaded_secret = secret or None
+        self._set_loading(False)
+
+    def on_unmount(self) -> None:
+        if self._loading_spinner_timer is not None:
+            self._loading_spinner_timer.stop()
 
     @on(Checkbox.Changed)
     def show_key_changed(self, event: Checkbox.Changed) -> None:
         self.query_one(f"#{self._input_id}", Input).password = not event.value
+
+    @on(Select.Changed)
+    def source_changed(self, event: Select.Changed) -> None:
+        if self._syncing or event.select.id != self._source_id:
+            return
+        self._syncing = True
+        try:
+            field = self.query_one(f"#{self._input_id}", Input)
+            with field.prevent(Input.Changed):
+                field.value = ""
+            self._loaded_secret = None
+        finally:
+            self._syncing = False
+        self._activate_source(str(event.value), load=True)
+        self.post_message(self.Changed(self))
+
+    @on(Input.Changed)
+    def key_changed(self, event: Input.Changed) -> None:
+        if not self._syncing and event.input.id == self._input_id:
+            if event.value != (self._loaded_secret or ""):
+                self.cancel_load()
+            self.post_message(self.Changed(self))
 
 
 class ExpandingFuzzySelect(FuzzySelect):
@@ -783,21 +1216,175 @@ class ExpandingFuzzySelect(FuzzySelect):
             parent.set_class(expanded, "selecting")
 
 
-class ProviderUrlSelect(ExpandingFuzzySelect):
-    """Provider URL selector."""
+class ConfiguredTabs(TabbedContent):
+    """Tabbed summaries keyed by stable configuration names."""
+
+    def __init__(self, *, id: str, pane_prefix: str) -> None:
+        empty_pane_id = f"{pane_prefix}-pane-empty"
+        super().__init__("", id=id)
+        self.compose_add_child(
+            TabPane(
+                "",
+                Static("", markup=False),
+                id=empty_pane_id,
+            )
+        )
+        self.pane_prefix = pane_prefix
+        self.names: dict[str, str] = {}
+        self._summary_class = ""
+        self._content: Callable[[str, Any], tuple[str, str]] | None = None
+        self._item_keys: tuple[str, ...] | None = None
+        self._pane_ids = {empty_pane_id}
+        self._items_lock = asyncio.Lock()
+
+    async def set_items(
+        self,
+        items: Mapping[str, Any],
+        *,
+        content: Callable[[str, Any], tuple[str, str]],
+        summary_class: str,
+        empty_title: str,
+        empty_message: str,
+    ) -> None:
+        """Reconcile panes while preserving name lookup for the active tab."""
+        async with self._items_lock:
+            item_keys = tuple(items)
+            self._summary_class = summary_class
+            self._content = content
+            if item_keys == self._item_keys:
+                self.update_items(items)
+                return
+
+            panes: list[tuple[str, str, str, str | None]] = []
+            if not items:
+                panes.append((
+                    f"{self.pane_prefix}-pane-empty",
+                    empty_title,
+                    empty_message,
+                    None,
+                ))
+            else:
+                for index, (name, item) in enumerate(items.items()):
+                    pane_id = f"{self.pane_prefix}-pane-{index}"
+                    title, summary = content(name, item)
+                    panes.append((pane_id, title, summary, name))
+
+            desired_ids = {pane_id for pane_id, *_ in panes}
+            for pane_id, title, summary, _ in panes:
+                if pane_id in self._pane_ids:
+                    continue
+                await self.add_pane(
+                    TabPane(
+                        title,
+                        Static(
+                            summary,
+                            classes=summary_class,
+                            markup=False,
+                        ),
+                        id=pane_id,
+                    )
+                )
+
+            for pane_id in self._pane_ids - desired_ids:
+                await self.remove_pane(pane_id)
+
+            self.names.clear()
+            self.names.update(
+                (pane_id, name)
+                for pane_id, _, _, name in panes
+                if name is not None
+            )
+            for pane_id, title, summary, _ in panes:
+                self.get_tab(pane_id).label = title
+                summary_widget = self.get_pane(pane_id).query_one(Static)
+                summary_widget.set_classes(summary_class)
+                summary_widget.update(summary)
+            self._pane_ids = desired_ids
+            self._item_keys = item_keys
+
+    def update_items(self, items: Mapping[str, Any]) -> None:
+        """Refresh labels and summaries without replacing panes."""
+        if self._content is None:
+            return
+        for pane_id, name in self.names.items():
+            item = items.get(name)
+            if item is None:
+                continue
+            title, summary = self._content(name, item)
+            self.get_tab(pane_id).label = title
+            self.get_pane(pane_id).query_one(
+                f".{self._summary_class}", Static
+            ).update(summary)
+
+    def active_name(self) -> str | None:
+        """Return the configured name represented by the active pane."""
+        return self.names.get(self.active)
 
 
-class MCPTokenSelect(ExpandingFuzzySelect):
-    """MCP API-token source selector."""
+class SetupAction(Enum):
+    """Action selected after setup has saved a working configuration."""
+
+    EXIT = "exit"
+    TERMINAL = "terminal"
+    DASHBOARD = "dashboard"
 
 
-class SetupApp(App[bool]):
+class SetupApp(App[SetupAction]):
     """Small, linear TUI for creating a working URSA configuration."""
 
     TITLE = "URSA setup"
     CSS_PATH = "setup.tcss"
-    MODEL_SPINNER_FRAMES = ("|", "/", "-", "\\")
+    DONE_ACTIONS = {
+        "setup-launch-terminal": (
+            "Launch URSA - Terminal",
+            SetupAction.TERMINAL,
+        ),
+        "setup-launch-dashboard": (
+            "Launch URSA - Dashboard",
+            SetupAction.DASHBOARD,
+        ),
+        "setup-exit": ("Exit", SetupAction.EXIT),
+    }
+    MODEL_SPINNER_FRAMES = ASCII_SPINNER_FRAMES
     MODEL_YAML_VALIDATION_DELAY = 0.8
+    FIELD_HELP = {
+        "provider-name": (
+            "A short, unique name used to refer to this inference provider in "
+            "URSA configuration."
+        ),
+        "provider-url": (
+            "The provider API endpoint. Choose a known endpoint or Other to "
+            "enter a custom URL."
+        ),
+        "model-provider": (
+            "The verified inference provider used to load and validate the "
+            "language and embedding models on this page."
+        ),
+        "llm": (
+            "The language model URSA uses for chat and agent tasks. Choose a "
+            "listed model or enter a custom model ID."
+        ),
+        "embedding": (
+            "An optional model that turns text into vectors for retrieval and "
+            "RAG. Choose None when embeddings are not needed."
+        ),
+        "mcp-name": (
+            "A short, unique name used to refer to this MCP server in URSA "
+            "configuration."
+        ),
+        "mcp-transport": (
+            "How URSA connects to the MCP server: remote HTTP, remote SSE, or "
+            "a local standard-input/output process."
+        ),
+        "mcp-url": "The full URL of the remote MCP server.",
+        "mcp-command": (
+            "The executable used to start a local MCP server, such as uvx or "
+            "npx."
+        ),
+        "mcp-args": (
+            "Command-line arguments passed to the local MCP server executable."
+        ),
+    }
     MCP_YAML_VALIDATION_DELAY = 0.8
     BINDINGS = [
         Binding("escape", "back", "Back", priority=True),
@@ -818,8 +1405,6 @@ class SetupApp(App[bool]):
         self.visited = {"welcome"}
         self.editing_provider: str | None = None
         self.editing_mcp: str | None = None
-        self._provider_tab_names: dict[str, str] = {}
-        self._mcp_tab_names: dict[str, str] = {}
         self._provider_validation_lock = asyncio.Lock()
         self._providers_validating: set[str] = set()
         self._provider_list_spinner_frame = 0
@@ -831,17 +1416,13 @@ class SetupApp(App[bool]):
         self._mcps_validating: set[str] = set()
         self._mcp_list_spinner_frame = 0
         self._mcp_list_spinner_timer = None
-        self._loaded_api_keys: dict[str, str | None] = {
-            "provider": None,
-            "mcp": None,
-        }
-        self._api_key_load_generation = {"provider": 0, "mcp": 0}
         self.model_validation: dict[str, bool | None] = {
             "llm": None,
             "embedding": None,
         }
         self._model_validation_loading = {"llm": False, "embedding": False}
         self._model_validation_text = {"llm": "", "embedding": ""}
+        self._model_load_generation = {"llm": 0, "embedding": 0}
         self._model_spinner_frame = 0
         self._model_spinner_timer = None
         self._model_yaml_values: dict[str, dict[str, Any]] = {
@@ -849,16 +1430,13 @@ class SetupApp(App[bool]):
             "embedding": {},
         }
         self._model_yaml_initialized: set[str] = set()
-        self._model_yaml_timers: dict[str, Timer] = {}
         self._syncing_model_controls = False
         self._mcp_validation_loading = False
         self._mcp_validation_text = ""
         self._mcp_spinner_frame = 0
         self._mcp_spinner_timer = None
         self._mcp_yaml_values: dict[str, Any] = {}
-        self._mcp_yaml_timer: Timer | None = None
         self._syncing_mcp_controls = False
-        self._mcp_active_token_source: str | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="setup-shell"):
@@ -881,54 +1459,49 @@ class SetupApp(App[bool]):
     def _actions(*buttons: Button) -> Horizontal:
         return Horizontal(*buttons, classes="setup-actions")
 
+    @classmethod
+    def _help_label(cls, label: str, field: str, *, id: str) -> HelpLabel:
+        return HelpLabel(label, cls.FIELD_HELP[field], id=id)
+
     @staticmethod
-    def _model_advanced_editor(prefix: str) -> Collapsible:
-        return Collapsible(
-            TextArea(
-                "",
-                language="yaml",
-                show_line_numbers=True,
-                tab_behavior="indent",
-                id=f"{prefix}-config-yaml",
-                classes="setup-model-yaml-editor",
-            ),
-            Static(
-                "",
-                id=f"{prefix}-yaml-error",
-                classes="setup-model-yaml-error hidden",
-                markup=False,
-            ),
-            title="Advanced",
-            collapsed=True,
-            id=f"{prefix}-advanced",
+    def _model_advanced_editor(prefix: str) -> AdvancedYamlEditor:
+        return AdvancedYamlEditor(
+            prefix,
+            editor_classes="setup-model-yaml-editor",
+            error_classes="setup-model-yaml-error",
             classes="setup-model-advanced",
+            markup=False,
         )
 
     @staticmethod
-    def _provider_url_options() -> list[tuple[str, str]]:
-        return [
+    def _provider_url_options(
+        *, include_provider_default: bool = False
+    ) -> list[tuple[str, str]]:
+        options = [
             *(
                 (f"{name} ({url})", url)
                 for name, url in PROVIDER_DEFAULT_URLS.items()
             ),
             ("Other", CUSTOM_PROVIDER_URL),
         ]
+        if include_provider_default:
+            options.insert(0, ("Provider default", PROVIDER_DEFAULT_URL))
+        return options
 
     def _known_keyring_usernames(self) -> list[str]:
-        names: set[str] = set()
-
-        def collect(value: Any) -> None:
-            if isinstance(value, dict):
-                keyring_name = value.get("keyring")
-                if isinstance(keyring_name, str):
-                    names.add(keyring_name)
-                for nested in value.values():
-                    collect(nested)
-            elif isinstance(value, list):
-                for nested in value:
-                    collect(nested)
-
-        collect(self.state.base_config)
+        names = {
+            reference.keyring
+            if isinstance(reference.keyring, str)
+            else default_username
+            for _, reference, default_username in iter_secret_references(
+                self.state.base_config
+            )
+            if reference.keyring not in (None, False)
+            and (
+                isinstance(reference.keyring, str)
+                or default_username is not None
+            )
+        }
         for name, provider in self.state.providers.items():
             reference = provider.api_key_reference or {}
             keyring_name = reference.get("keyring")
@@ -944,18 +1517,6 @@ class SetupApp(App[bool]):
             elif isinstance(keyring_name, str):
                 names.add(keyring_name)
         return sorted(names)
-
-    def _mcp_token_options(
-        self, selected: str | None = None
-    ) -> list[tuple[str, str]]:
-        names = set(self._known_keyring_usernames())
-        if selected not in {None, MCP_TOKEN_NONE, MCP_TOKEN_NEW}:
-            names.add(selected)
-        return [
-            *((name, name) for name in sorted(names)),
-            ("None", MCP_TOKEN_NONE),
-            ("New entry", MCP_TOKEN_NEW),
-        ]
 
     def _welcome_page(self) -> VerticalScroll:
         existing = self.state.path.is_file()
@@ -990,16 +1551,18 @@ class SetupApp(App[bool]):
                 "list. The key is hidden and is not written to YAML.",
                 classes="page-copy",
             ),
-            Label("Name"),
+            self._help_label("Name", "provider-name", id="provider-name-label"),
             Input(
                 value="openai",
                 placeholder="short name for the inference provider",
                 id="provider-name",
                 max_length=128,
             ),
-            Label("Base URL"),
+            self._help_label(
+                "Base URL", "provider-url", id="provider-url-label"
+            ),
             Horizontal(
-                ProviderUrlSelect(
+                ExpandingFuzzySelect(
                     self._provider_url_options(),
                     value=PROVIDER_DEFAULT_URLS["openai"],
                     allow_blank=False,
@@ -1013,8 +1576,11 @@ class SetupApp(App[bool]):
                 id="provider-url-row",
             ),
             ApiKeyEntry(
+                source_id="provider-key-source",
                 input_id="provider-key",
                 show_id="provider-show-key",
+                row_id="provider-key-row",
+                fields_id="provider-auth-fields",
                 subject="provider",
                 id="provider-api-key",
             ),
@@ -1041,15 +1607,19 @@ class SetupApp(App[bool]):
                 "and can be added later.",
                 classes="page-copy",
             ),
-            Label("Inference provider"),
+            self._help_label(
+                "Language model inference provider",
+                "model-provider",
+                id="models-provider-label",
+            ),
             Select(
                 [("Add and validate a provider first", NO_MODEL)],
                 value=NO_MODEL,
                 allow_blank=False,
                 id="model-provider",
             ),
-            Label("Language model"),
-            Select(
+            self._help_label("Language model", "llm", id="llm-label"),
+            FuzzySelect(
                 [("Loading models…", NO_MODEL)],
                 value=NO_MODEL,
                 allow_blank=False,
@@ -1070,8 +1640,23 @@ class SetupApp(App[bool]):
                 ),
                 classes="model-validation",
             ),
-            Label("Embedding model (optional)"),
+            self._help_label(
+                "Embedding model inference provider",
+                "model-provider",
+                id="embedding-provider-label",
+            ),
             Select(
+                [("Add and validate a provider first", NO_MODEL)],
+                value=NO_MODEL,
+                allow_blank=False,
+                id="embedding-provider",
+            ),
+            self._help_label(
+                "Embedding model (optional)",
+                "embedding",
+                id="embedding-label",
+            ),
+            FuzzySelect(
                 [("None", NO_MODEL)],
                 value=NO_MODEL,
                 allow_blank=False,
@@ -1109,7 +1694,7 @@ class SetupApp(App[bool]):
                 "review or edit that provider, or add another service.",
                 classes="page-copy",
             ),
-            TabbedContent(id="providers-tabs"),
+            ConfiguredTabs(id="providers-tabs", pane_prefix="provider"),
             Horizontal(
                 Button("Edit", id="provider-edit"),
                 Button("Remove", id="provider-remove", variant="error"),
@@ -1150,9 +1735,11 @@ class SetupApp(App[bool]):
                 "server URL or a local command.",
                 classes="page-copy",
             ),
-            Label("Name"),
+            self._help_label("Name", "mcp-name", id="mcp-name-label"),
             Input(placeholder="e.g. project_tools", id="mcp-name"),
-            Label("Transport"),
+            self._help_label(
+                "Transport", "mcp-transport", id="mcp-transport-label"
+            ),
             Select(
                 [
                     ("Remote HTTP (recommended)", "streamable_http"),
@@ -1164,37 +1751,26 @@ class SetupApp(App[bool]):
                 id="mcp-transport",
             ),
             Vertical(
-                Label("Server URL"),
+                self._help_label("Server URL", "mcp-url", id="mcp-url-label"),
                 Input(placeholder="https://example.com/mcp", id="mcp-url"),
-                Horizontal(
-                    Vertical(
-                        Label("API Token"),
-                        MCPTokenSelect(
-                            self._mcp_token_options(),
-                            value=MCP_TOKEN_NONE,
-                            allow_blank=False,
-                            id="mcp-token-source",
-                        ),
-                        id="mcp-token-selector",
-                    ),
-                    Vertical(
-                        ApiKeyEntry(
-                            input_id="mcp-token",
-                            show_id="mcp-show-key",
-                            subject="MCP server",
-                            id="mcp-api-key",
-                        ),
-                        id="mcp-auth-fields",
-                        classes="hidden",
-                    ),
-                    id="mcp-token-row",
+                ApiKeyEntry(
+                    source_id="mcp-token-source",
+                    input_id="mcp-token",
+                    show_id="mcp-show-key",
+                    row_id="mcp-token-row",
+                    fields_id="mcp-auth-fields",
+                    subject="MCP server",
+                    new_entry_label="New entry",
+                    id="mcp-api-key",
                 ),
                 id="mcp-remote-fields",
             ),
             Vertical(
-                Label("Command"),
+                self._help_label(
+                    "Command", "mcp-command", id="mcp-command-label"
+                ),
                 Input(placeholder="e.g. uvx", id="mcp-command"),
-                Label("Arguments"),
+                self._help_label("Arguments", "mcp-args", id="mcp-args-label"),
                 Input(
                     placeholder="e.g. mcp-server-fetch",
                     id="mcp-args",
@@ -1202,25 +1778,12 @@ class SetupApp(App[bool]):
                 id="mcp-local-fields",
                 classes="hidden",
             ),
-            Collapsible(
-                TextArea(
-                    "",
-                    language="yaml",
-                    show_line_numbers=True,
-                    tab_behavior="indent",
-                    id="mcp-config-yaml",
-                    classes="setup-mcp-yaml-editor",
-                ),
-                Static(
-                    "",
-                    id="mcp-yaml-error",
-                    classes="setup-mcp-yaml-error hidden",
-                    markup=False,
-                ),
-                title="Advanced",
-                collapsed=True,
-                id="mcp-advanced",
+            AdvancedYamlEditor(
+                "mcp",
+                editor_classes="setup-mcp-yaml-editor",
+                error_classes="setup-mcp-yaml-error",
                 classes="setup-mcp-advanced",
+                markup=False,
             ),
             Horizontal(
                 Static(
@@ -1253,7 +1816,7 @@ class SetupApp(App[bool]):
                 classes="page-copy",
             ),
             Label("Configured MCP servers"),
-            TabbedContent(id="mcps-tabs"),
+            ConfiguredTabs(id="mcps-tabs", pane_prefix="mcp"),
             Horizontal(
                 Button("Edit", id="mcp-edit"),
                 Button("Remove", id="mcp-remove", variant="error"),
@@ -1308,12 +1871,23 @@ class SetupApp(App[bool]):
         return VerticalScroll(
             Static("URSA is ready", classes="page-title"),
             Static("", id="done-copy", classes="page-copy", markup=False),
-            self._actions(
-                Button("Finish", variant="success", id="setup-finish")
-            ),
+            self._actions(*self._done_buttons()),
             id="done-page",
             classes="setup-page",
         )
+
+    @classmethod
+    def _done_buttons(cls) -> list[Button]:
+        return [
+            Button(
+                label,
+                id=button_id,
+                variant=(
+                    "default" if action is SetupAction.EXIT else "success"
+                ),
+            )
+            for button_id, (label, action) in cls.DONE_ACTIONS.items()
+        ]
 
     def on_mount(self) -> None:
         self._provider_spinner_timer = self.set_interval(
@@ -1342,17 +1916,11 @@ class SetupApp(App[bool]):
         self._update_review_save_button()
         self.query_one("#welcome-next", Button).focus()
 
-    def on_unmount(self) -> None:
-        for timer in self._model_yaml_timers.values():
-            timer.stop()
-        self._model_yaml_timers.clear()
-        if self._mcp_yaml_timer is not None:
-            self._mcp_yaml_timer.stop()
-            self._mcp_yaml_timer = None
-
     def _show(self, page: str, *, remember: bool = True) -> None:
         if page == self.current_page:
             return
+        if self.current_page == "models" and page != "models":
+            self._invalidate_model_loads()
         if remember:
             self.history.append(self.current_page)
         self.current_page = page
@@ -1377,7 +1945,7 @@ class SetupApp(App[bool]):
         self._show(page, remember=False)
 
     def action_cancel(self) -> None:
-        self.exit(False)
+        self.exit(SetupAction.EXIT)
 
     def _providers_are_verified(self) -> bool:
         return bool(self.state.providers) and all(
@@ -1605,83 +2173,37 @@ class SetupApp(App[bool]):
         widget.set_class(bool(message) and not success, "error")
         widget.set_class(bool(message) and success, "success")
 
-    @staticmethod
-    def _api_key_control_id(prefix: str) -> str:
-        return f"#{prefix}-api-key"
-
-    @staticmethod
-    def _api_key_input_id(prefix: str) -> str:
-        return "#provider-key" if prefix == "provider" else "#mcp-token"
-
-    def _reset_api_key(self, prefix: str, secret: str = "") -> None:
-        self._api_key_load_generation[prefix] += 1
-        self._loaded_api_keys[prefix] = None
-        self.query_one(self._api_key_control_id(prefix), ApiKeyEntry).reset(
-            secret
-        )
-
-    def _queue_api_key_load(self, prefix: str, name: str) -> None:
-        """Load a named key without blocking typing in the name field."""
-        self._api_key_load_generation[prefix] += 1
-        generation = self._api_key_load_generation[prefix]
-        self.run_worker(
-            self._load_api_key(prefix, name.strip(), generation),
-            group=f"{prefix}-api-key",
-            exclusive=True,
-        )
-
-    async def _load_api_key(
-        self, prefix: str, name: str, generation: int
-    ) -> None:
-        field = self.query_one(self._api_key_input_id(prefix), Input)
-        loaded_secret = self._loaded_api_keys[prefix]
-        if field.value and field.value != loaded_secret:
-            return
-        starting_value = field.value
-        if not name:
-            if field.value == loaded_secret:
-                field.value = ""
-            self._loaded_api_keys[prefix] = None
-            return
-        try:
-            secret = await asyncio.to_thread(
-                _quiet_keyring_call,
-                keyring.get_password,
-                KEYRING_SERVICE,
-                name,
-            )
-        except Exception:
-            # Backends do not consistently wrap command failures in
-            # KeyringError. A missing/unreadable entry is equivalent to no key.
-            secret = None
-        if generation != self._api_key_load_generation[prefix]:
-            return
-        if field.value != starting_value:
-            return
-        field.value = secret or ""
-        self._loaded_api_keys[prefix] = secret or None
-
     def _provider_values(
         self,
-    ) -> tuple[str, ProviderKind, str, str, str]:
+    ) -> tuple[
+        str,
+        str | None,
+        dict[str, Any] | None,
+        str | None,
+        str | None,
+    ]:
         name = _validate_name(
             self.query_one("#provider-name", Input).value, "Provider"
         )
         base_url = self._provider_url()
-        kind = self._provider_kind(name, base_url)
-        secret = self.query_one("#provider-key", Input).value.strip()
-        if not secret:
-            raise SetupError("API key is required.")
-        collision = name in self.state.mcp_servers
-        if collision:
+        reference, pending_secret, username = self.query_one(
+            "#provider-api-key", ApiKeyEntry
+        ).values()
+        if name in self.state.mcp_servers:
             raise SetupError(
                 "That name is already used by an MCP server. Choose a unique name "
                 "so keyring credentials cannot collide."
             )
-        return name, kind, base_url, secret, name
+        if name in self.state.providers and name != self.editing_provider:
+            raise SetupError(
+                f"An inference provider named '{name}' already exists."
+            )
+        return name, base_url, reference, pending_secret, username
 
-    def _provider_url(self) -> str:
-        selected = self.query_one("#provider-url", ProviderUrlSelect).value
+    def _provider_url(self) -> str | None:
+        selected = self.query_one("#provider-url", ExpandingFuzzySelect).value
+        if selected == PROVIDER_DEFAULT_URL:
+            return None
         value = (
             self.query_one("#provider-url-custom", Input).value
             if selected == CUSTOM_PROVIDER_URL
@@ -1689,65 +2211,63 @@ class SetupApp(App[bool]):
         )
         return _validate_url(value, "Base URL")
 
-    def _provider_kind(self, name: str, base_url: str) -> ProviderKind:
-        for kind, default_url in PROVIDER_DEFAULT_URLS.items():
-            if base_url == default_url:
-                return kind
-        original = self.state.providers.get(self.editing_provider or "")
-        if original is not None:
-            return original.kind
-        normalized_name = name.lower()
-        name_kind = next(
-            (kind for kind in PROVIDER_DEFAULT_URLS if kind == normalized_name),
-            None,
-        )
-        if name_kind is not None:
-            return name_kind
-        inferred = model_listing_provider(
-            InferenceProviderConfig(base_url=base_url)
-        )
-        return inferred if inferred in PROVIDER_DEFAULT_URLS else "openai"
-
     def _begin_provider(self, name: str | None = None) -> None:
         self.editing_provider = name
         provider = self.state.providers.get(name or "")
-        kind: ProviderKind = provider.kind if provider else "openai"
-        secret = provider.pending_secret or "" if provider else ""
-        self._reset_api_key("provider", secret)
-        selected_name = provider.name if provider else kind
+        selected_name = provider.name if provider else "openai"
         self.query_one("#provider-name", Input).value = selected_name
-        url = provider.base_url if provider else PROVIDER_DEFAULT_URLS[kind]
-        url_select = self.query_one("#provider-url", ProviderUrlSelect)
-        if url in PROVIDER_DEFAULT_URLS.values():
+        url = provider.base_url if provider else PROVIDER_DEFAULT_URLS["openai"]
+        url_select = self.query_one("#provider-url", ExpandingFuzzySelect)
+        url_select.set_options(
+            self._provider_url_options(
+                include_provider_default=provider is not None and url is None
+            )
+        )
+        if provider is not None and url is None:
+            url_select.value = PROVIDER_DEFAULT_URL
+            self.query_one("#provider-url-custom", Input).value = ""
+            self._toggle_provider_custom_url(PROVIDER_DEFAULT_URL)
+        elif url in PROVIDER_DEFAULT_URLS.values():
             url_select.value = url
             self.query_one("#provider-url-custom", Input).value = ""
             self._toggle_provider_custom_url(url)
         else:
             url_select.value = CUSTOM_PROVIDER_URL
-            self.query_one("#provider-url-custom", Input).value = url
+            self.query_one("#provider-url-custom", Input).value = url or ""
             self._toggle_provider_custom_url(CUSTOM_PROVIDER_URL)
-        self._queue_api_key_load("provider", selected_name)
+        self.query_one("#provider-api-key", ApiKeyEntry).configure(
+            name=selected_name,
+            known_names=self._known_keyring_usernames(),
+            reference=provider.api_key_reference if provider else None,
+            pending_secret=provider.pending_secret if provider else None,
+            default_to_name=not _provider_defaults_to_no_key(url or ""),
+        )
         self._set_message(self.query_one("#provider-error", Static), "")
         self._show("provider")
 
     async def _validate_provider(self) -> None:
         message = self.query_one("#provider-error", Static)
         try:
-            name, kind, url, entered_secret, keyring_username = (
+            name, url, reference, pending_secret, keyring_username = (
                 self._provider_values()
             )
             original = self.state.providers.get(self.editing_provider or "")
             draft = ProviderDraft(
                 name=name,
-                kind=kind,
                 base_url=url,
-                api_key_reference={"keyring": True},
-                pending_secret=entered_secret,
+                api_key_reference=reference,
+                pending_secret=pending_secret,
                 keyring_username=keyring_username,
-                ssl_verify=True,
                 extra=deepcopy(original.extra) if original else {},
             )
-            config = draft.validation_config().resolve(name)
+            model_provider = (
+                self.state.provider_model_provider(original.name)
+                if original is not None
+                else None
+            )
+            config = draft.validation_config(
+                model_provider=model_provider
+            ).resolve(name)
         except (SetupError, ValidationError) as exc:
             self._set_message(message, str(exc))
             return
@@ -1778,6 +2298,7 @@ class SetupApp(App[bool]):
         button.disabled = False
 
         original_name = self.editing_provider
+        self._invalidate_model_loads()
         if original_name and original_name != name:
             del self.state.providers[original_name]
             self.state.provider_models.pop(original_name, None)
@@ -1803,30 +2324,14 @@ class SetupApp(App[bool]):
         self._show("providers")
 
     async def _refresh_provider_tabs(self) -> None:
-        tabs = self.query_one("#providers-tabs", TabbedContent)
-        await tabs.clear_panes()
-        self._provider_tab_names.clear()
-        if not self.state.providers:
-            pane_id = "provider-pane-empty"
-            await tabs.add_pane(
-                TabPane(
-                    "No providers configured",
-                    Static("Add a provider to continue."),
-                    id=pane_id,
-                )
-            )
-            return
-        for index, (name, provider) in enumerate(self.state.providers.items()):
-            pane_id = f"provider-pane-{index}"
-            title, summary = self._provider_tab_content(name, provider)
-            await tabs.add_pane(
-                TabPane(
-                    title,
-                    Static(summary, classes="provider-summary", markup=False),
-                    id=pane_id,
-                )
-            )
-            self._provider_tab_names[pane_id] = name
+        tabs = self.query_one("#providers-tabs", ConfiguredTabs)
+        await tabs.set_items(
+            self.state.providers,
+            content=self._provider_tab_content,
+            summary_class="provider-summary",
+            empty_title="No providers configured",
+            empty_message="Add a provider to continue.",
+        )
 
     def _provider_tab_content(
         self, name: str, provider: ProviderDraft
@@ -1853,8 +2358,7 @@ class SetupApp(App[bool]):
             credential = "Not configured"
         summary = (
             f"Status: {labels[status]}\n"
-            f"Type: {provider.kind}\n"
-            f"Base URL: {provider.base_url}\n"
+            f"Base URL: {provider.base_url or '(provider default)'}\n"
             f"API key: {credential}"
         )
         if error := self.state.provider_errors.get(name):
@@ -1865,20 +2369,14 @@ class SetupApp(App[bool]):
         tab_containers = self.query("#providers-tabs")
         if not tab_containers:
             return
-        tabs = tab_containers.first(TabbedContent)
-        for pane_id, name in self._provider_tab_names.items():
-            provider = self.state.providers.get(name)
-            if provider is None:
-                continue
-            title, summary = self._provider_tab_content(name, provider)
-            tabs.get_tab(pane_id).label = title
-            tabs.get_pane(pane_id).query_one(
-                ".provider-summary", Static
-            ).update(summary)
+        tab_containers.first(ConfiguredTabs).update_items(self.state.providers)
 
     async def _prepare_providers_page(self) -> None:
+        if self.current_page != "providers":
+            return
         await self._refresh_provider_tabs()
-        self._start_provider_validation()
+        if self.current_page == "providers":
+            self._start_provider_validation()
 
     def _start_provider_validation(
         self, *, force: bool = False, continue_to_models: bool = False
@@ -1888,6 +2386,7 @@ class SetupApp(App[bool]):
                 force=force, continue_to_models=continue_to_models
             ),
             group="provider-validation",
+            exclusive=True,
         )
 
     async def _run_provider_validation(
@@ -1898,11 +2397,9 @@ class SetupApp(App[bool]):
             self._show("models")
 
     def _active_provider_name(self) -> str | None:
-        pane_id = self.query_one("#providers-tabs", TabbedContent).active
-        return self._provider_tab_names.get(pane_id)
+        return self.query_one("#providers-tabs", ConfiguredTabs).active_name()
 
     async def _verify_provider(self, name: str) -> bool:
-        provider = self.state.providers[name]
         self._providers_validating.add(name)
         if len(self._providers_validating) == 1:
             self._provider_list_spinner_frame = 0
@@ -1915,7 +2412,7 @@ class SetupApp(App[bool]):
         self._update_provider_connection_checking_message()
         try:
             try:
-                config = provider.validation_config().resolve(name)
+                config = self.state.provider_validation_config(name)
                 models = await asyncio.to_thread(
                     _list_setup_provider_models, config
                 )
@@ -2025,16 +2522,6 @@ class SetupApp(App[bool]):
         return "\n".join(lines)
 
     @staticmethod
-    def _configured_model_values(config: ModelConfig) -> dict[str, Any]:
-        values = config.model_dump(
-            mode="json",
-            exclude_unset=True,
-            context={"include_defaults": False},
-        )
-        values.setdefault("model", config.model)
-        return values
-
-    @staticmethod
     def _dump_model_yaml(values: dict[str, Any]) -> str:
         return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
 
@@ -2047,9 +2534,7 @@ class SetupApp(App[bool]):
             else self.state.embedding_model
         )
         if configured is not None:
-            self._model_yaml_values[prefix] = self._configured_model_values(
-                configured
-            )
+            self._model_yaml_values[prefix] = editable_model_values(configured)
         self._model_yaml_initialized.add(prefix)
 
     def _model_name_for_yaml(self, prefix: str) -> str:
@@ -2060,8 +2545,26 @@ class SetupApp(App[bool]):
             return self.query_one(f"#{prefix}-custom", Input).value.strip()
         return str(value)
 
+    @staticmethod
+    def _model_provider_selector(prefix: str) -> str:
+        return "#model-provider" if prefix == "llm" else "#embedding-provider"
+
+    def _invalidate_model_loads(self) -> None:
+        for prefix in self._model_load_generation:
+            self._model_load_generation[prefix] += 1
+
+    def _selected_model_provider(self, prefix: str) -> str | None:
+        value = self.query_one(
+            self._model_provider_selector(prefix), Select
+        ).value
+        return (
+            value
+            if isinstance(value, str) and value in self.state.providers
+            else None
+        )
+
     def _derived_model_provider(
-        self, prefix: str, provider_name: str, model_name: str
+        self, provider_name: str, model_name: str
     ) -> str:
         advertised = next(
             (
@@ -2072,7 +2575,14 @@ class SetupApp(App[bool]):
             None,
         )
         draft = self.state.providers[provider_name]
-        fallback = "openai" if draft.kind == "litellm" else draft.kind
+        configured = draft.extra.get("model_provider")
+        fallback = (
+            configured
+            if isinstance(configured, str) and configured
+            else model_listing_provider(
+                InferenceProviderConfig(base_url=draft.base_url)
+            )
+        )
         return (
             advertised.model_provider
             if advertised is not None and advertised.model_provider is not None
@@ -2082,18 +2592,15 @@ class SetupApp(App[bool]):
     def _sync_model_yaml_from_controls(self, prefix: str) -> None:
         if self._syncing_model_controls or not self.is_mounted:
             return
-        provider = self.query_one("#model-provider", Select).value
-        if (
-            not isinstance(provider, str)
-            or provider not in self.state.providers
-        ):
+        provider = self._selected_model_provider(prefix)
+        if provider is None:
             return
         self._initialize_model_yaml(prefix)
         values = deepcopy(self._model_yaml_values[prefix])
         model_name = self._model_name_for_yaml(prefix)
         values["model"] = model_name
         values["model_provider"] = self._derived_model_provider(
-            prefix, provider, model_name
+            provider, model_name
         )
         values["inference_provider"] = provider
         self._model_yaml_values[prefix] = values
@@ -2111,13 +2618,9 @@ class SetupApp(App[bool]):
     def _set_model_yaml_state(
         self, prefix: str, state: str, error: str = ""
     ) -> None:
-        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
-        editor.remove_class("yaml-valid", "yaml-invalid")
-        if state != "neutral":
-            editor.add_class(f"yaml-{state}")
-        message = self.query_one(f"#{prefix}-yaml-error", Static)
-        message.update(error)
-        message.set_class(not error, "hidden")
+        self.query_one(
+            f"#{prefix}-advanced", AdvancedYamlEditor
+        ).set_validation(state, error)
 
     def _update_model_control_from_yaml(
         self, prefix: str, config: ModelConfig
@@ -2160,7 +2663,7 @@ class SetupApp(App[bool]):
             config = config_type.model_validate(deepcopy(values))
             if prefix == "llm" and not config.model.strip():
                 raise ValueError("Language model must not be blank")
-            provider = self.query_one("#model-provider", Select).value
+            provider = self._selected_model_provider(prefix)
             if config.inference_provider != provider:
                 raise ValueError(
                     "inference_provider must match the selected inference "
@@ -2192,10 +2695,9 @@ class SetupApp(App[bool]):
             self._set_model_yaml_state(prefix, "valid")
             return
         self._set_model_yaml_state(prefix, "neutral")
-        timer = self._model_yaml_timers.pop(prefix, None)
-        if timer is not None:
-            timer.stop()
-        self._model_yaml_timers[prefix] = self.set_timer(
+        self.query_one(
+            f"#{prefix}-advanced", AdvancedYamlEditor
+        ).schedule_validation(
             self.MODEL_YAML_VALIDATION_DELAY,
             lambda: self._validate_model_yaml(prefix, update_controls=True),
         )
@@ -2204,140 +2706,140 @@ class SetupApp(App[bool]):
         options = [(name, name) for name in self.state.providers]
         if not options:
             options = [("Add and validate a provider first", NO_MODEL)]
-        select = self.query_one("#model-provider", Select)
-        current = (
+        llm_current = (
             self.state.llm_model.inference_provider
             if self.state.llm_model is not None
             else None
         )
-        select.set_options(options)
-        select.value = (
-            current if current in self.state.providers else options[0][1]
+        llm_current = (
+            llm_current
+            if llm_current in self.state.providers
+            else options[0][1]
         )
-        selected = str(select.value)
-        if selected in self.state.provider_models:
-            self._populate_model_choices(selected)
-        else:
-            self.call_after_refresh(self._load_selected_provider_models)
+        embedding_current = (
+            self.state.embedding_model.inference_provider
+            if self.state.embedding_model is not None
+            else llm_current
+        )
+        embedding_current = (
+            embedding_current
+            if embedding_current in self.state.providers
+            else options[0][1]
+        )
+        for prefix, current in (
+            ("llm", llm_current),
+            ("embedding", embedding_current),
+        ):
+            select = self.query_one(
+                self._model_provider_selector(prefix), Select
+            )
+            with self.prevent(Select.Changed):
+                select.set_options(options)
+                select.value = current
+            selected = str(select.value)
+            if selected in self.state.provider_models:
+                self._model_load_generation[prefix] += 1
+                self._populate_model_choices(prefix, selected)
+            else:
+                self._request_selected_provider_models(prefix, selected)
 
-    async def _load_selected_provider_models(self) -> None:
-        value = self.query_one("#model-provider", Select).value
-        if not isinstance(value, str) or value not in self.state.providers:
+    def _request_selected_provider_models(
+        self, prefix: str, value: str
+    ) -> None:
+        if value not in self.state.providers:
             return
+        self._model_load_generation[prefix] += 1
+        generation = self._model_load_generation[prefix]
+        self.run_worker(
+            self._load_selected_provider_models(prefix, value, generation),
+            group=f"setup-{prefix}-model-discovery",
+            exclusive=True,
+        )
+
+    async def _load_selected_provider_models(
+        self, prefix: str, value: str, generation: int
+    ) -> None:
         message = self.query_one("#models-error", Static)
         self._set_message(message, "Loading models…", success=True)
-        provider = self.state.providers[value]
         try:
-            config = provider.validation_config().resolve(value)
+            config = self.state.provider_validation_config(value)
             models = await asyncio.to_thread(
                 _list_setup_provider_models, config
             )
             if not models:
                 raise SetupError("This provider returned no models.")
         except Exception as exc:
+            if (
+                generation != self._model_load_generation[prefix]
+                or self.current_page != "models"
+                or value not in self.state.providers
+            ):
+                return
             self._set_message(message, _friendly_validation_error(exc))
+            return
+        if (
+            generation != self._model_load_generation[prefix]
+            or self.current_page != "models"
+            or value not in self.state.providers
+            or self.query_one(
+                self._model_provider_selector(prefix), Select
+            ).value
+            != value
+        ):
             return
         self.state.provider_models[value] = models
         self._set_message(message, f"Found {len(models)} models.", success=True)
-        self._populate_model_choices(value)
+        self._populate_model_choices(prefix, value)
 
     @staticmethod
     def _looks_like_embedding(model: ProviderModel) -> bool:
         name = model.name.casefold()
         return model.type == "embedding" or "embed" in name
 
-    def _populate_model_choices(self, provider_name: str) -> None:
+    def _populate_model_choices(self, prefix: str, provider_name: str) -> None:
         models = self.state.provider_models.get(provider_name, [])
-        chat = [
-            model for model in models if not self._looks_like_embedding(model)
-        ]
-        embedding = [
-            model for model in models if self._looks_like_embedding(model)
-        ]
-        chat_options = [
-            (model.name, model.name)
-            for model in sort_provider_models(chat or models, "chat")
-        ]
-        chat_options.append(("Enter a model ID…", CUSTOM_MODEL))
-        embedding_options = [("None", NO_MODEL)]
-        embedding_options.extend(
-            (model.name, model.name)
-            for model in sort_provider_models(embedding, "embedding")
-        )
-        embedding_options.append(("Enter a model ID…", CUSTOM_MODEL))
-        llm_select = self.query_one("#llm-choice", Select)
-        emb_select = self.query_one("#embedding-choice", Select)
-        llm_select.set_options(chat_options)
-        emb_select.set_options(embedding_options)
-        configured_llm = self.state.llm_model
-        llm_value = chat_options[0][1]
-        if (
-            configured_llm is not None
-            and configured_llm.inference_provider == provider_name
-        ):
-            values = {value for _, value in chat_options}
-            if configured_llm.model in values:
-                llm_value = configured_llm.model
-            else:
-                llm_value = CUSTOM_MODEL
-                self.query_one(
-                    "#llm-custom", Input
-                ).value = configured_llm.model
-        llm_select.value = llm_value
-        configured_emb = self.state.embedding_model
-        emb_value = NO_MODEL
-        if (
-            configured_emb is not None
-            and configured_emb.inference_provider == provider_name
-        ):
-            values = {value for _, value in embedding_options}
-            if configured_emb.model in values:
-                emb_value = configured_emb.model
-            else:
-                emb_value = CUSTOM_MODEL
-                self.query_one(
-                    "#embedding-custom", Input
-                ).value = configured_emb.model
-        emb_select.value = emb_value
-        self._toggle_custom_model("llm", llm_value)
-        self._toggle_custom_model("embedding", emb_value)
-        self._sync_model_yaml_from_controls("llm")
-        self._sync_model_yaml_from_controls("embedding")
-        self._reset_model_validation()
-
-    def _selected_model_name(self, prefix: str) -> str | None:
-        value = self.query_one(f"#{prefix}-choice", Select).value
-        if value == NO_MODEL:
-            return None
-        if value == CUSTOM_MODEL:
-            custom = self.query_one(f"#{prefix}-custom", Input).value.strip()
-            if not custom:
-                raise SetupError(
-                    "Enter a model ID or choose one from the list."
-                )
-            return custom
-        return str(value)
-
-    def _model_provider(
-        self, provider_name: str, model_name: str, model_type: str
-    ) -> str:
-        draft = self.state.providers[provider_name]
-        catalog = self.state.provider_models.get(provider_name, [])
-        advertised = next(
-            (model for model in catalog if model.name == model_name), None
-        )
-        fallback = "openai" if draft.kind == "litellm" else draft.kind
-        selected = advertised.model_provider if advertised else None
-        candidate = selected or fallback
-        supported = supported_model_providers(
-            "embedding" if model_type == "embedding" else "chat"
-        )
-        if candidate not in supported:
-            raise SetupError(
-                f"The '{candidate}' integration does not support {model_type} "
-                "models in this URSA installation. Choose another model or provider."
+        if prefix == "llm":
+            candidates = [
+                model
+                for model in models
+                if not self._looks_like_embedding(model)
+            ]
+            options = [
+                (model.name, model.name)
+                for model in sort_provider_models(candidates or models, "chat")
+            ]
+            configured = self.state.llm_model
+            value = options[0][1] if options else CUSTOM_MODEL
+        else:
+            candidates = [
+                model for model in models if self._looks_like_embedding(model)
+            ]
+            options = [("None", NO_MODEL)]
+            options.extend(
+                (model.name, model.name)
+                for model in sort_provider_models(candidates, "embedding")
             )
-        return candidate
+            configured = self.state.embedding_model
+            value = NO_MODEL
+        options.append(("Enter a model ID…", CUSTOM_MODEL))
+        select = self.query_one(f"#{prefix}-choice", Select)
+        select.set_options(options)
+        if (
+            configured is not None
+            and configured.inference_provider == provider_name
+        ):
+            available = {option_value for _, option_value in options}
+            if configured.model in available:
+                value = configured.model
+            else:
+                value = CUSTOM_MODEL
+                self.query_one(
+                    f"#{prefix}-custom", Input
+                ).value = configured.model
+        select.value = value
+        self._toggle_custom_model(prefix, value)
+        self._sync_model_yaml_from_controls(prefix)
+        self._reset_model_validation()
 
     def _set_model_validation_status(
         self,
@@ -2415,14 +2917,21 @@ class SetupApp(App[bool]):
 
     async def _save_models(self) -> None:
         message = self.query_one("#models-error", Static)
-        provider = self.query_one("#model-provider", Select).value
         try:
-            if (
-                not isinstance(provider, str)
-                or provider not in self.state.providers
-            ):
-                raise SetupError("Choose a validated inference provider.")
             for prefix in ("llm", "embedding"):
+                if self._selected_model_provider(prefix) is None:
+                    label = (
+                        "language model"
+                        if prefix == "llm"
+                        else "embedding model"
+                    )
+                    raise SetupError(
+                        f"Choose a validated inference provider for the {label}."
+                    )
+            for prefix in ("llm", "embedding"):
+                self.query_one(
+                    f"#{prefix}-advanced", AdvancedYamlEditor
+                ).cancel_validation()
                 editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
                 if editor.text == self._dump_model_yaml(
                     self._model_yaml_values[prefix]
@@ -2485,53 +2994,6 @@ class SetupApp(App[bool]):
     def _mcp_yaml_text(values: dict[str, Any]) -> str:
         return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
 
-    def _mcp_token_source(self, server: MCPDraft | None) -> str:
-        if server is None or not server.auth:
-            return MCP_TOKEN_NONE
-        if server.pending_secret is not None:
-            return MCP_TOKEN_NEW
-        reference = server.secret_reference or {}
-        keyring_name = reference.get("keyring")
-        if keyring_name is True:
-            return server.keyring_username or server.name
-        if isinstance(keyring_name, str):
-            return keyring_name
-        return MCP_TOKEN_NONE
-
-    def _set_mcp_token_options(self, selected: str) -> None:
-        control = self.query_one("#mcp-token-source", FuzzySelect)
-        control.set_options(self._mcp_token_options(selected))
-        control.value = selected
-
-    def _pending_keyring_secret(self, username: str) -> str:
-        for name, provider in self.state.providers.items():
-            if (provider.keyring_username or name) == username:
-                return provider.pending_secret or ""
-        for name, server in self.state.mcp_servers.items():
-            if (server.keyring_username or name) == username:
-                return server.pending_secret or ""
-        return ""
-
-    def _activate_mcp_token_source(self, value: object, *, reset: bool) -> None:
-        visible = isinstance(value, str) and value != MCP_TOKEN_NONE
-        self.query_one("#mcp-auth-fields").set_class(not visible, "hidden")
-        self.query_one("#mcp-token-row", Horizontal).set_class(
-            visible, "has-token"
-        )
-        if not visible:
-            self._mcp_active_token_source = MCP_TOKEN_NONE
-            return
-        username = (
-            self.query_one("#mcp-name", Input).value.strip()
-            if value == MCP_TOKEN_NEW
-            else value
-        )
-        if reset:
-            self._reset_api_key("mcp", self._pending_keyring_secret(username))
-        self._mcp_active_token_source = value
-        if username and not self.query_one("#mcp-token", Input).value:
-            self._queue_api_key_load("mcp", username)
-
     @staticmethod
     def _mcp_auth_header(
         values: dict[str, Any],
@@ -2548,7 +3010,12 @@ class SetupApp(App[bool]):
                     return str(name), template
         return "Authorization", "Bearer %s"
 
-    def _mcp_config_from_controls(self, base: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_config_from_controls(
+        self,
+        base: dict[str, Any],
+        *,
+        validate_credential: bool = False,
+    ) -> dict[str, Any]:
         values = deepcopy(base)
         transport = self.query_one("#mcp-transport", Select).value
         assert transport in {"streamable_http", "sse", "stdio"}
@@ -2575,19 +3042,11 @@ class SetupApp(App[bool]):
         header, template = self._mcp_auth_header(values)
         headers = values.get("headers")
         headers = deepcopy(headers) if isinstance(headers, dict) else {}
-        headers = {
-            name: value
-            for name, value in headers.items()
-            if _secret_mapping(value) is None
-        }
-        token_source = self.query_one("#mcp-token-source", FuzzySelect).value
-        if isinstance(token_source, str) and token_source != MCP_TOKEN_NONE:
-            server_name = self.query_one("#mcp-name", Input).value.strip()
-            reference: dict[str, Any]
-            if token_source == MCP_TOKEN_NEW or token_source == server_name:
-                reference = {"keyring": True}
-            else:
-                reference = {"keyring": token_source}
+        headers.pop(header, None)
+        reference, _, _ = self.query_one("#mcp-api-key", ApiKeyEntry).values(
+            validate=validate_credential
+        )
+        if reference is not None:
             headers[header] = {**reference, "template": template}
         if headers:
             values["headers"] = headers
@@ -2596,77 +3055,47 @@ class SetupApp(App[bool]):
         return values
 
     def _set_mcp_yaml_state(self, state: str, error: str = "") -> None:
-        editor = self.query_one("#mcp-config-yaml", TextArea)
-        editor.remove_class("yaml-valid", "yaml-invalid")
-        if state != "neutral":
-            editor.add_class(f"yaml-{state}")
-        message = self.query_one("#mcp-yaml-error", Static)
-        message.update(error)
-        message.set_class(not error, "hidden")
+        self.query_one("#mcp-advanced", AdvancedYamlEditor).set_validation(
+            state, error
+        )
 
     def _mcp_draft_from_values(
         self,
         name: str,
         values: dict[str, Any],
         *,
-        require_new_secret: bool,
+        overlay_credential: bool,
     ) -> MCPDraft:
         draft = MCPDraft.from_config(name, values)
-        if draft.auth and draft.keyring_username is None:
-            raise SetupError(
-                "Choose an API Token keyring entry instead of configuring an "
-                "environment secret in Advanced."
-            )
-        token_source = self.query_one("#mcp-token-source", FuzzySelect).value
-        if token_source == MCP_TOKEN_NEW:
-            secret = self.query_one("#mcp-token", Input).value.strip()
-            if require_new_secret and not secret:
-                raise SetupError("API token is required for a new entry.")
+        if not overlay_credential:
+            return draft
+        reference, pending, username = self.query_one(
+            "#mcp-api-key", ApiKeyEntry
+        ).values()
+        if reference is not None:
             draft.auth = True
-            draft.pending_secret = secret or None
-            draft.keyring_username = name
-            draft.secret_reference = {"keyring": True}
-        elif isinstance(token_source, str) and token_source != MCP_TOKEN_NONE:
-            secret = self.query_one("#mcp-token", Input).value.strip()
-            if require_new_secret and not secret:
-                raise SetupError(
-                    f"No API token was found for keyring entry '{token_source}'."
-                )
-            draft.auth = True
-            draft.keyring_username = token_source
-            draft.secret_reference = {
-                "keyring": True if token_source == name else token_source
-            }
-            draft.pending_secret = (
-                secret
-                if secret and secret != self._loaded_api_keys["mcp"]
-                else None
-            )
-        try:
-            validate_server_parameters(draft.as_config())
-        except (TypeError, ValueError, ValidationError) as exc:
-            raise SetupError(
-                f"MCP server configuration is invalid: {exc}"
-            ) from None
+            draft.secret_reference = reference
+            draft.pending_secret = pending
+            draft.keyring_username = username
         return draft
 
     def _update_mcp_controls_from_yaml(self, draft: MCPDraft) -> None:
-        current_source = self.query_one("#mcp-token-source", FuzzySelect).value
-        source = self._mcp_token_source(draft)
-        current_name = self.query_one("#mcp-name", Input).value.strip()
-        if current_source == MCP_TOKEN_NEW and source == current_name:
-            source = MCP_TOKEN_NEW
         self._syncing_mcp_controls = True
         try:
             self.query_one("#mcp-transport", Select).value = draft.transport
             self.query_one("#mcp-url", Input).value = draft.url or ""
             self.query_one("#mcp-command", Input).value = draft.command or ""
             self.query_one("#mcp-args", Input).value = shlex.join(draft.args)
-            self._set_mcp_token_options(source)
+            self.query_one("#mcp-api-key", ApiKeyEntry).configure(
+                name=draft.name,
+                known_names=self._known_keyring_usernames(),
+                reference=draft.secret_reference,
+                pending_secret=draft.pending_secret,
+                default_to_name=False,
+            )
         finally:
             self._syncing_mcp_controls = False
         self._toggle_mcp_transport(draft.transport)
-        self._activate_mcp_token_source(source, reset=source != current_source)
         self._set_mcp_validation_status(None, "○ Not tested")
 
     def _validate_mcp_yaml(self, *, update_controls: bool) -> MCPDraft | None:
@@ -2677,7 +3106,9 @@ class SetupApp(App[bool]):
                 raise SetupError("Configuration must be a YAML mapping.")
             name = self.query_one("#mcp-name", Input).value.strip() or "mcp"
             draft = self._mcp_draft_from_values(
-                name, values, require_new_secret=False
+                name,
+                values,
+                overlay_credential=not update_controls,
             )
         except (SetupError, yaml.YAMLError) as exc:
             self._set_mcp_yaml_state("invalid", str(exc))
@@ -2708,8 +3139,6 @@ class SetupApp(App[bool]):
             self.state.mcp_verified[name] = None
             self.state.mcp_errors.pop(name, None)
         transport = server.transport if server else "streamable_http"
-        token_source = self._mcp_token_source(server)
-        secret = server.pending_secret or "" if server else ""
         values = (
             server.as_config()
             if server is not None
@@ -2717,7 +3146,6 @@ class SetupApp(App[bool]):
         )
         self._syncing_mcp_controls = True
         try:
-            self._reset_api_key("mcp", secret)
             self.query_one("#mcp-name", Input).value = (
                 server.name if server else ""
             )
@@ -2731,7 +3159,13 @@ class SetupApp(App[bool]):
             self.query_one("#mcp-args", Input).value = (
                 shlex.join(server.args) if server else ""
             )
-            self._set_mcp_token_options(token_source)
+            self.query_one("#mcp-api-key", ApiKeyEntry).configure(
+                name=server.name if server else "",
+                known_names=self._known_keyring_usernames(),
+                reference=server.secret_reference if server else None,
+                pending_secret=server.pending_secret if server else None,
+                default_to_name=False,
+            )
             self._mcp_yaml_values = deepcopy(values)
             with self.prevent(TextArea.Changed):
                 self.query_one(
@@ -2741,8 +3175,6 @@ class SetupApp(App[bool]):
             self._syncing_mcp_controls = False
         self.query_one("#mcp-advanced", Collapsible).collapsed = True
         self._toggle_mcp_transport(transport)
-        self._mcp_active_token_source = token_source
-        self._activate_mcp_token_source(token_source, reset=False)
         self._set_mcp_yaml_state("valid" if server else "neutral")
         self._set_mcp_validation_status(None, "○ Not tested")
         self._set_message(self.query_one("#mcp-error", Static), "")
@@ -2750,6 +3182,7 @@ class SetupApp(App[bool]):
         self._show("mcp")
 
     def _mcp_values(self) -> MCPDraft:
+        self.query_one("#mcp-advanced", AdvancedYamlEditor).cancel_validation()
         name = _validate_name(
             self.query_one("#mcp-name", Input).value, "MCP server"
         )
@@ -2765,9 +3198,15 @@ class SetupApp(App[bool]):
             raise SetupError(f"Advanced YAML is invalid: {exc}") from None
         if not isinstance(values, dict):
             raise SetupError("Advanced configuration must be a YAML mapping.")
-        values = self._mcp_config_from_controls(values)
+        if name in self.state.mcp_servers and name != self.editing_mcp:
+            raise SetupError(f"An MCP server named '{name}' already exists.")
+        values = self._mcp_config_from_controls(
+            values, validate_credential=True
+        )
         draft = self._mcp_draft_from_values(
-            name, values, require_new_secret=True
+            name,
+            values,
+            overlay_credential=True,
         )
         self._mcp_yaml_values = deepcopy(values)
         self._set_mcp_yaml_state("valid")
@@ -2862,33 +3301,14 @@ class SetupApp(App[bool]):
         self._show("mcps")
 
     async def _refresh_mcp_tabs(self) -> None:
-        tabs = self.query_one("#mcps-tabs", TabbedContent)
-        await tabs.clear_panes()
-        self._mcp_tab_names.clear()
-        if not self.state.mcp_servers:
-            pane_id = "mcp-pane-empty"
-            await tabs.add_pane(
-                TabPane(
-                    "No MCP servers configured",
-                    Static(
-                        "Add an MCP server, or continue without one.",
-                        classes="mcp-summary",
-                    ),
-                    id=pane_id,
-                )
-            )
-            return
-        for index, (name, server) in enumerate(self.state.mcp_servers.items()):
-            pane_id = f"mcp-pane-{index}"
-            title, summary = self._mcp_tab_content(name, server)
-            await tabs.add_pane(
-                TabPane(
-                    title,
-                    Static(summary, classes="mcp-summary", markup=False),
-                    id=pane_id,
-                )
-            )
-            self._mcp_tab_names[pane_id] = name
+        tabs = self.query_one("#mcps-tabs", ConfiguredTabs)
+        await tabs.set_items(
+            self.state.mcp_servers,
+            content=self._mcp_tab_content,
+            summary_class="mcp-summary",
+            empty_title="No MCP servers configured",
+            empty_message="Add an MCP server, or continue without one.",
+        )
 
     def _mcp_tab_content(self, name: str, server: MCPDraft) -> tuple[str, str]:
         status = self.state.mcp_verified.get(name)
@@ -2902,11 +3322,15 @@ class SetupApp(App[bool]):
             if server.transport == "stdio"
             else f"URL: {server.url}"
         )
-        credential = (
-            f"System keyring: {server.keyring_username or name}"
-            if server.auth
-            else "None"
-        )
+        reference = server.secret_reference or {}
+        if server.pending_secret is not None:
+            credential = "System keyring (saved on completion)"
+        elif reference.get("env"):
+            credential = f"Environment variable: {reference['env']}"
+        elif server.auth:
+            credential = f"System keyring: {server.keyring_username or name}"
+        else:
+            credential = "None"
         summary = (
             f"Status: {labels[status]}\n"
             f"Transport: {server.transport}\n"
@@ -2921,20 +3345,12 @@ class SetupApp(App[bool]):
         tab_containers = self.query("#mcps-tabs")
         if not tab_containers:
             return
-        tabs = tab_containers.first(TabbedContent)
-        for pane_id, name in self._mcp_tab_names.items():
-            server = self.state.mcp_servers.get(name)
-            if server is None:
-                continue
-            title, summary = self._mcp_tab_content(name, server)
-            tabs.get_tab(pane_id).label = title
-            tabs.get_pane(pane_id).query_one(".mcp-summary", Static).update(
-                summary
-            )
+        tab_containers.first(ConfiguredTabs).update_items(
+            self.state.mcp_servers
+        )
 
     def _active_mcp_name(self) -> str | None:
-        pane_id = self.query_one("#mcps-tabs", TabbedContent).active
-        return self._mcp_tab_names.get(pane_id)
+        return self.query_one("#mcps-tabs", ConfiguredTabs).active_name()
 
     async def _verify_mcp_server(self, name: str) -> bool:
         self._mcps_validating.add(name)
@@ -3027,9 +3443,31 @@ class SetupApp(App[bool]):
             self._update_review_save_button()
             return False
 
+    def _start_mcp_validation(
+        self, *, force: bool = False, continue_to_review: bool = False
+    ) -> None:
+        self.run_worker(
+            self._run_mcp_validation(
+                force=force,
+                continue_to_review=continue_to_review,
+            ),
+            group="mcp-validation",
+            exclusive=True,
+        )
+
+    async def _run_mcp_validation(
+        self, *, force: bool, continue_to_review: bool
+    ) -> None:
+        verified = await self._verify_all_mcp_servers(force=force)
+        if verified and continue_to_review and self.current_page == "mcps":
+            self._show("review")
+
     async def _prepare_mcps_page(self) -> None:
+        if self.current_page != "mcps":
+            return
         await self._refresh_mcp_tabs()
-        await self._verify_all_mcp_servers()
+        if self.current_page == "mcps":
+            self._start_mcp_validation()
 
     def _refresh_review(self) -> None:
         try:
@@ -3117,10 +3555,12 @@ class SetupApp(App[bool]):
         )
         self._show("done")
 
-    def _toggle_custom_model(self, prefix: str, value: object) -> None:
-        self.query_one(f"#{prefix}-custom", Input).set_class(
-            value != CUSTOM_MODEL, "hidden"
-        )
+    def _toggle_custom_model(self, prefix: str, value: object) -> bool:
+        inputs = self.query(f"#{prefix}-custom")
+        if not inputs:
+            return False
+        inputs.first(Input).set_class(value != CUSTOM_MODEL, "hidden")
+        return True
 
     def _toggle_provider_custom_url(self, value: object) -> None:
         custom = value == CUSTOM_PROVIDER_URL
@@ -3142,33 +3582,68 @@ class SetupApp(App[bool]):
 
     @on(Input.Changed, "#provider-name")
     def provider_name_changed(self, event: Input.Changed) -> None:
-        self._queue_api_key_load("provider", event.value)
+        self.query_one("#provider-api-key", ApiKeyEntry).set_name(event.value)
 
     @on(Select.Changed, "#provider-url")
     def provider_url_changed(self, event: Select.Changed) -> None:
-        select = self.query_one("#provider-url", ProviderUrlSelect)
+        select = self.query_one("#provider-url", ExpandingFuzzySelect)
         if event.value != select.value:
             return
         self._toggle_provider_custom_url(event.value)
+        value = (
+            self.query_one("#provider-url-custom", Input).value
+            if event.value == CUSTOM_PROVIDER_URL
+            else ""
+            if event.value == PROVIDER_DEFAULT_URL
+            else str(event.value)
+        )
+        self._set_default_provider_credential(value)
 
-    @on(Select.Changed, "#model-provider")
-    async def model_provider_changed(self, event: Select.Changed) -> None:
+    @on(Input.Changed, "#provider-url-custom")
+    def provider_custom_url_changed(self, event: Input.Changed) -> None:
+        if (
+            self.query_one("#provider-url", ExpandingFuzzySelect).value
+            == CUSTOM_PROVIDER_URL
+        ):
+            self._set_default_provider_credential(event.value)
+
+    def _set_default_provider_credential(self, base_url: str) -> None:
+        if self.editing_provider is not None:
+            return
+        entry = self.query_one("#provider-api-key", ApiKeyEntry)
+        name = self.query_one("#provider-name", Input).value.strip()
+        source = entry.source
+        source_select = entry.query_one(".credential-source", FuzzySelect)
+        no_key = bool(base_url) and _provider_defaults_to_no_key(base_url)
+        if no_key and source == name:
+            source_select.value = MCP_TOKEN_NONE
+        elif not no_key and source == MCP_TOKEN_NONE:
+            source_select.value = name
+
+    @on(Select.Changed, "#model-provider, #embedding-provider")
+    def model_provider_changed(self, event: Select.Changed) -> None:
         if not self.is_mounted or event.value not in self.state.providers:
             return
+        prefix = (
+            "embedding" if event.select.id == "embedding-provider" else "llm"
+        )
         if event.value in self.state.provider_models:
-            self._populate_model_choices(str(event.value))
+            self._model_load_generation[prefix] += 1
+            self._populate_model_choices(prefix, str(event.value))
         else:
-            await self._load_selected_provider_models()
+            self._request_selected_provider_models(prefix, str(event.value))
 
     @on(Select.Changed, "#llm-choice")
     def llm_choice_changed(self, event: Select.Changed) -> None:
-        self._toggle_custom_model("llm", event.value)
+        if not self._toggle_custom_model("llm", event.value):
+            return
         self._sync_model_yaml_from_controls("llm")
         self._reset_model_validation()
 
     @on(Select.Changed, "#embedding-choice")
     def embedding_choice_changed(self, event: Select.Changed) -> None:
-        self._toggle_custom_model("embedding", event.value)
+        if not self._toggle_custom_model("embedding", event.value):
+            return
         self._sync_model_yaml_from_controls("embedding")
         self._reset_model_validation()
 
@@ -3187,25 +3662,11 @@ class SetupApp(App[bool]):
         self._toggle_mcp_transport(event.value)
         self._sync_mcp_yaml_from_controls()
 
-    @on(Select.Changed, "#mcp-token-source")
-    def mcp_token_source_changed(self, event: Select.Changed) -> None:
-        if self._syncing_mcp_controls:
-            return
-        control = self.query_one("#mcp-token-source", FuzzySelect)
-        if event.value != control.value:
-            return
-        self._activate_mcp_token_source(
-            event.value, reset=event.value != self._mcp_active_token_source
-        )
-        self._sync_mcp_yaml_from_controls()
-
     @on(Input.Changed, "#mcp-name")
     def mcp_name_changed(self, event: Input.Changed) -> None:
         if self._syncing_mcp_controls:
             return
-        source = self.query_one("#mcp-token-source", FuzzySelect).value
-        if source == MCP_TOKEN_NEW:
-            self._queue_api_key_load("mcp", event.value)
+        self.query_one("#mcp-api-key", ApiKeyEntry).set_name(event.value)
         self._sync_mcp_yaml_from_controls()
 
     @on(Input.Changed, "#mcp-url, #mcp-command, #mcp-args")
@@ -3213,10 +3674,22 @@ class SetupApp(App[bool]):
         if not self._syncing_mcp_controls:
             self._sync_mcp_yaml_from_controls()
 
-    @on(Input.Changed, "#mcp-token")
-    def mcp_token_changed(self, _event: Input.Changed) -> None:
-        if not self._syncing_mcp_controls:
+    @on(ApiKeyEntry.Changed)
+    def api_key_changed(self, event: ApiKeyEntry.Changed) -> None:
+        if event.entry.id == "mcp-api-key" and not self._syncing_mcp_controls:
+            self._sync_mcp_yaml_from_controls()
             self._set_mcp_validation_status(None, "○ Not tested")
+
+    @on(ApiKeyEntry.Loading)
+    def api_key_loading(self, event: ApiKeyEntry.Loading) -> None:
+        button_id = (
+            "#provider-save"
+            if event.entry.id == "provider-api-key"
+            else "#mcp-save"
+        )
+        buttons = self.query(button_id)
+        if buttons:
+            buttons.first(Button).disabled = event.loading
 
     @on(TextArea.Changed, "#mcp-config-yaml")
     def mcp_yaml_changed(self, event: TextArea.Changed) -> None:
@@ -3227,9 +3700,7 @@ class SetupApp(App[bool]):
             self._set_mcp_yaml_state("valid")
             return
         self._set_mcp_yaml_state("neutral")
-        if self._mcp_yaml_timer is not None:
-            self._mcp_yaml_timer.stop()
-        self._mcp_yaml_timer = self.set_timer(
+        self.query_one("#mcp-advanced", AdvancedYamlEditor).schedule_validation(
             self.MCP_YAML_VALIDATION_DELAY,
             lambda: self._validate_mcp_yaml(update_controls=True),
         )
@@ -3270,6 +3741,7 @@ class SetupApp(App[bool]):
                         "URSA needs at least one inference provider.",
                     )
                 else:
+                    self._invalidate_model_loads()
                     del self.state.providers[value]
                     self.state.provider_models.pop(value, None)
                     self.state.provider_verified.pop(value, None)
@@ -3313,10 +3785,9 @@ class SetupApp(App[bool]):
         elif button_id == "mcp-save":
             await self._save_mcp()
         elif button_id == "mcps-next":
-            if await self._verify_all_mcp_servers():
-                self._show("review")
+            self._start_mcp_validation(continue_to_review=True)
         elif button_id == "mcps-retry":
-            await self._verify_all_mcp_servers(force=True)
+            self._start_mcp_validation(force=True)
         elif button_id == "review-providers":
             self._show("providers")
         elif button_id == "review-models":
@@ -3325,16 +3796,17 @@ class SetupApp(App[bool]):
             self._show("mcps")
         elif button_id == "review-save":
             await self._save_configuration()
-        elif button_id == "setup-finish":
-            self.exit(True)
+        elif button_id in self.DONE_ACTIONS:
+            self.exit(self.DONE_ACTIONS[button_id][1])
 
 
 def run_setup(
     path: Path | None = None,
     defaults_json: Path | None = None,
-) -> bool:
+) -> SetupAction:
     """Launch the guided configuration application."""
     inject_truststore_into_ssl()
-    return bool(
+    return (
         SetupApp(path or default_setup_config_path(), defaults_json).run()
+        or SetupAction.EXIT
     )

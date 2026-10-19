@@ -8,12 +8,12 @@ administrators and IT teams.
 An organization can provide a site-owned installer that preloads non-secret
 defaults into the guided setup wizard. Users still enter credentials, validate
 connections and models, and approve the final configuration. The site-owned
-script wraps the [official URSA installer](https://lanl.github.io/ursa/install.sh).
+script wraps the [official URSA installer](https://lanl.github.io/ursa/latest/install.sh).
 
 ### Installer defaults
 
-The site installer passes a JSON object to the official installer with
-`--config-stdin`. The object supports these fields:
+The site installer writes a JSON object and passes its path to the official
+installer with `--config`. The object supports these fields:
 
 | Field | Value | Default | Purpose |
 | --- | --- | --- | --- |
@@ -38,7 +38,8 @@ without a value:
 
 Do not put API keys, tokens, passwords, keyring references, or environment
 secret references in the payload. Setup collects credentials and stores them in
-the operating-system keyring. Existing provider and MCP entries in
+the operating-system keyring, or records the environment-variable name chosen
+by the user. Existing provider and MCP entries in
 `~/.config/ursa/config.yaml` take precedence over site defaults.
 
 See [Models and inference providers][models-and-inference-providers] and
@@ -54,18 +55,19 @@ publish it as your organization's `install.sh`:
 
 set -eu
 
-URSA_INSTALLER_URL=https://lanl.github.io/ursa/install.sh
+URSA_INSTALLER_URL=https://lanl.github.io/ursa/latest/install.sh
 installer=$(mktemp "${TMPDIR:-/tmp}/ursa-install.XXXXXX")
+config=$(mktemp "${TMPDIR:-/tmp}/ursa-config.XXXXXX")
 
 cleanup() {
-    rm -f "$installer"
+    rm -f "$installer" "$config"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 curl -LsSf "$URSA_INSTALLER_URL" -o "$installer"
 
-cat <<'JSON' | sh "$installer" --config-stdin
+cat <<'JSON' >"$config"
 {
   "python_version": "3.13",
   "extras": ["dashboard"],
@@ -94,6 +96,8 @@ cat <<'JSON' | sh "$installer" --config-stdin
   }
 }
 JSON
+
+sh "$installer" --config "$config"
 ```
 
 Users can then install URSA from the organization's URL:

@@ -1,9 +1,8 @@
 import asyncio
 import stat
 import sys
-import threading
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import keyring
 import pytest
@@ -12,10 +11,8 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
-    LoadingIndicator,
     Select,
     Static,
-    Tab,
     TabbedContent,
     TabPane,
     TextArea,
@@ -23,15 +20,20 @@ from textual.widgets import (
 
 from ursa.cli.config import ChatModelConfig, EmbModelConfig
 from ursa.cli.setup import (
+    API_KEY_ENV,
     CUSTOM_MODEL,
     CUSTOM_PROVIDER_URL,
-    MCP_TOKEN_NEW,
     MCP_TOKEN_NONE,
+    PROVIDER_DEFAULT_URL,
+    PROVIDER_DEFAULT_URLS,
     ApiKeyEntry,
+    ConfiguredTabs,
+    ExpandingFuzzySelect,
     MCPDraft,
     ProviderDraft,
-    ProviderUrlSelect,
+    SetupAction,
     SetupApp,
+    SetupError,
     SetupState,
     _friendly_validation_error,
     load_setup_defaults,
@@ -39,16 +41,12 @@ from ursa.cli.setup import (
     run_setup,
     save_setup_state,
 )
-from ursa.cli.tui.widgets import FuzzySelect
+from ursa.cli.tui.widgets import AdvancedYamlEditor, FuzzySelect, HelpLabel
 from ursa.util.inference_providers import ProviderModel
 
 
-async def _wait_for(predicate, attempts=40):
-    for _ in range(attempts):
-        if predicate():
-            return
-        await asyncio.sleep(0.05)
-    raise AssertionError("condition did not become true")
+def _tab_names(app: SetupApp, tab_id: str) -> dict[str, str]:
+    return app.query_one(f"#{tab_id}", ConfiguredTabs).names
 
 
 def configured_state(path: Path) -> SetupState:
@@ -58,7 +56,6 @@ def configured_state(path: Path) -> SetupState:
     )
     state.providers["company"] = ProviderDraft(
         name="company",
-        kind="litellm",
         base_url="https://models.example/v1",
         pending_secret="provider-secret",
     )
@@ -85,19 +82,132 @@ def configured_state(path: Path) -> SetupState:
 def test_run_setup_injects_truststore(monkeypatch, tmp_path):
     inject = MagicMock()
     app = MagicMock()
-    app.run.return_value = True
+    app.run.return_value = SetupAction.TERMINAL
     create_app = MagicMock(return_value=app)
     monkeypatch.setattr("ursa.cli.setup.inject_truststore_into_ssl", inject)
     monkeypatch.setattr("ursa.cli.setup.SetupApp", create_app)
     path = tmp_path / "config.yaml"
 
-    assert run_setup(path) is True
+    assert run_setup(path) is SetupAction.TERMINAL
 
     inject.assert_called_once_with()
     create_app.assert_called_once_with(path, None)
 
 
-def test_setup_state_applies_non_secret_installer_defaults(tmp_path):
+def test_run_setup_treats_window_close_as_exit(monkeypatch, tmp_path):
+    app = MagicMock()
+    app.run.return_value = None
+    monkeypatch.setattr(
+        "ursa.cli.setup.inject_truststore_into_ssl", MagicMock()
+    )
+    monkeypatch.setattr("ursa.cli.setup.SetupApp", MagicMock(return_value=app))
+
+    assert run_setup(tmp_path / "config.yaml") is SetupAction.EXIT
+
+
+@pytest.mark.asyncio
+async def test_done_actions_return_selected_launch_action(
+    monkeypatch, tmp_path
+):
+    app = SetupApp(tmp_path / "config.yaml")
+    exit_app = MagicMock()
+    monkeypatch.setattr(app, "exit", exit_app)
+
+    for button_id, action in (
+        ("setup-launch-terminal", SetupAction.TERMINAL),
+        ("setup-launch-dashboard", SetupAction.DASHBOARD),
+        ("setup-exit", SetupAction.EXIT),
+    ):
+        event = MagicMock()
+        event.button.id = button_id
+        await app.button_pressed(event)
+        exit_app.assert_called_once_with(action)
+        exit_app.reset_mock()
+
+
+def test_done_page_offers_terminal_dashboard_and_exit():
+    buttons = SetupApp._done_buttons()
+
+    assert [(button.id, str(button.label)) for button in buttons] == [
+        ("setup-launch-terminal", "Launch URSA - Terminal"),
+        ("setup-launch-dashboard", "Launch URSA - Dashboard"),
+        ("setup-exit", "Exit"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_setup_input_labels_expose_contextual_help(tmp_path):
+    app = SetupApp(tmp_path / "config.yaml")
+    expected = {
+        "provider-name-label": SetupApp.FIELD_HELP["provider-name"],
+        "provider-url-label": SetupApp.FIELD_HELP["provider-url"],
+        "models-provider-label": SetupApp.FIELD_HELP["model-provider"],
+        "embedding-provider-label": SetupApp.FIELD_HELP["model-provider"],
+        "llm-label": SetupApp.FIELD_HELP["llm"],
+        "embedding-label": SetupApp.FIELD_HELP["embedding"],
+        "mcp-name-label": SetupApp.FIELD_HELP["mcp-name"],
+        "mcp-transport-label": SetupApp.FIELD_HELP["mcp-transport"],
+        "mcp-url-label": SetupApp.FIELD_HELP["mcp-url"],
+        "mcp-command-label": SetupApp.FIELD_HELP["mcp-command"],
+        "mcp-args-label": SetupApp.FIELD_HELP["mcp-args"],
+        "provider-key-source-label": (
+            "Choose a keyring entry, ENV for an environment variable, or None "
+            "when this connection does not need authentication."
+        ),
+        "provider-key-value-label": (
+            "Enter the credential to save in the operating-system keyring. "
+            "Existing values load automatically and remain hidden unless Show "
+            "is selected."
+        ),
+        "mcp-token-source-label": (
+            "Choose a keyring entry, ENV for an environment variable, or None "
+            "when this connection does not need authentication."
+        ),
+        "mcp-token-value-label": (
+            "Enter the credential to save in the operating-system keyring. "
+            "Existing values load automatically and remain hidden unless Show "
+            "is selected."
+        ),
+    }
+
+    async with app.run_test(size=(120, 42)):
+        labels = {label.id: label for label in app.query(HelpLabel)}
+
+        assert set(labels) == set(expected)
+        for label_id, tooltip in expected.items():
+            label = labels[label_id]
+            assert label.tooltip == tooltip
+            assert (
+                str(label.query_one(".help-label-mark", Static).content) == "?"
+            )
+
+
+@pytest.mark.asyncio
+async def test_deferred_page_preparation_stops_after_navigation(tmp_path):
+    app = SetupApp(tmp_path / "config.yaml")
+    app.current_page = "models"
+    app._refresh_provider_tabs = AsyncMock()
+    app._start_provider_validation = MagicMock()
+    app._refresh_mcp_tabs = AsyncMock()
+    app._start_mcp_validation = MagicMock()
+
+    await app._prepare_providers_page()
+    await app._prepare_mcps_page()
+
+    app._refresh_provider_tabs.assert_not_awaited()
+    app._start_provider_validation.assert_not_called()
+    app._refresh_mcp_tabs.assert_not_awaited()
+    app._start_mcp_validation.assert_not_called()
+
+
+def test_setup_state_applies_non_secret_installer_defaults(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setitem(
+        PROVIDER_DEFAULT_URLS,
+        "anthropic",
+        PROVIDER_DEFAULT_URLS["anthropic"],
+    )
     defaults_path = tmp_path / "defaults.json"
     defaults_path.write_text(
         """
@@ -124,8 +234,8 @@ def test_setup_state_applies_non_secret_installer_defaults(tmp_path):
     state.apply_defaults(load_setup_defaults(defaults_path))
 
     provider = state.providers["anthropic"]
-    assert provider.kind == "anthropic"
     assert provider.base_url == "https://api.anthropic.test"
+    assert PROVIDER_DEFAULT_URLS["anthropic"] == ("https://api.anthropic.test")
     assert provider.api_key_reference == {"keyring": True}
     server = state.mcp_servers["tools"]
     assert server.auth is True
@@ -137,7 +247,10 @@ def test_setup_state_applies_non_secret_installer_defaults(tmp_path):
     assert server.extra == {"timeout": 30}
 
 
-def test_setup_defaults_do_not_replace_existing_entries(tmp_path):
+def test_setup_defaults_do_not_replace_existing_entries(monkeypatch, tmp_path):
+    monkeypatch.setitem(
+        PROVIDER_DEFAULT_URLS, "company", "https://original.test/v1"
+    )
     state = configured_state(tmp_path / "config.yaml")
 
     state.apply_defaults({
@@ -154,6 +267,48 @@ def test_setup_defaults_do_not_replace_existing_entries(tmp_path):
 
     assert state.providers["company"].base_url == "https://models.example/v1"
     assert state.mcp_servers["tools"].url == "https://tools.example/mcp"
+    assert PROVIDER_DEFAULT_URLS["company"] == ("https://replacement.test/v1")
+
+
+def test_setup_defaults_reject_duplicate_provider_names(monkeypatch, tmp_path):
+    monkeypatch.setitem(
+        PROVIDER_DEFAULT_URLS, "duplicate", "https://original.test/v1"
+    )
+    state = SetupState.load(tmp_path / "config.yaml")
+
+    with pytest.raises(SetupError, match="default 'duplicate' is duplicated"):
+        state.apply_defaults({
+            "inference_providers": [
+                {
+                    "name": "duplicate",
+                    "base_url": "https://one.example/v1",
+                },
+                {
+                    "name": "duplicate",
+                    "base_url": "https://two.example/v1",
+                },
+            ]
+        })
+    assert PROVIDER_DEFAULT_URLS["duplicate"] == "https://original.test/v1"
+    assert "duplicate" not in state.providers
+
+
+def test_setup_rejects_provider_and_mcp_name_collisions(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+inference_providers:
+  shared:
+    base_url: https://models.example/v1
+mcp_servers:
+  shared:
+    transport: streamable_http
+    url: https://tools.example/mcp
+"""
+    )
+
+    with pytest.raises(SetupError, match="used by both: shared"):
+        SetupState.load(path)
 
 
 def test_setup_defaults_reject_mcp_secret_references(tmp_path):
@@ -176,12 +331,91 @@ def test_setup_defaults_reject_mcp_secret_references(tmp_path):
         })
 
 
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Authorization",
+        "X-API-Key",
+        "X-Auth",
+        "X-Token",
+        "X-Secret",
+        "X-Password",
+        "X-Credential",
+    ],
+)
+def test_setup_defaults_reject_literal_mcp_credentials(tmp_path, header):
+    state = SetupState.load(tmp_path / "config.yaml")
+
+    with pytest.raises(ValueError, match="literal credential"):
+        state.apply_defaults({
+            "mcp_servers": {
+                "tools": {
+                    "transport": "streamable_http",
+                    "url": "https://tools.example/mcp",
+                    "headers": {header: "literal-secret"},
+                }
+            }
+        })
+
+
+def test_setup_rejects_invalid_existing_model_configuration(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("llm_model:\n  model: [not, a, string]\n")
+
+    with pytest.raises(SetupError, match="Existing llm_model.*model"):
+        SetupState.load(path)
+
+
+@pytest.mark.parametrize(
+    ("section", "value"),
+    [("llm_model", "[]"), ("emb_model", "invalid")],
+)
+def test_setup_rejects_non_mapping_model_configuration(
+    tmp_path, section, value
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(f"{section}: {value}\n")
+
+    with pytest.raises(SetupError, match=f"Existing {section}.*mapping"):
+        SetupState.load(path)
+
+
+@pytest.mark.parametrize(
+    ("section", "value"),
+    [("inference_providers", "[]"), ("mcp_servers", "invalid")],
+)
+def test_setup_rejects_non_mapping_configuration_sections(
+    tmp_path, section, value
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(f"{section}: {value}\n")
+
+    with pytest.raises(SetupError, match=f"Existing {section}.*mapping"):
+        SetupState.load(path)
+
+
+def test_setup_rejects_non_mapping_provider_entry(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("inference_providers:\n  company: invalid\n")
+
+    with pytest.raises(SetupError, match="provider 'company'.*mapping"):
+        SetupState.load(path)
+
+
+def test_setup_wraps_invalid_configuration_root(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("[]\n")
+
+    with pytest.raises(SetupError, match="must contain a mapping at its root"):
+        SetupState.load(path)
+
+
 def test_setup_state_builds_keyring_only_configuration(tmp_path):
-    config = configured_state(tmp_path / "config.yaml").configuration()
+    state = configured_state(tmp_path / "config.yaml")
+    config = state.configuration()
 
     assert config["use_web"] is True
     assert config["inference_providers"]["company"] == {
-        "model_provider": "litellm",
         "base_url": "https://models.example/v1",
         "api_key": {"keyring": True},
     }
@@ -201,7 +435,6 @@ def test_setup_state_builds_keyring_only_configuration(tmp_path):
 def test_existing_keyring_reference_resolves_to_provider_name():
     provider = ProviderDraft(
         name="company",
-        kind="openai",
         base_url="https://models.example/v1",
         api_key_reference={"keyring": True},
     )
@@ -210,6 +443,47 @@ def test_existing_keyring_reference_resolves_to_provider_name():
 
     assert config.api_key is not None
     assert config.api_key.keyring == "company"
+
+
+def test_environment_credentials_round_trip_for_providers_and_mcp():
+    provider = ProviderDraft.from_config(
+        "company",
+        {
+            "base_url": "https://models.example/v1",
+            "api_key": {"env": "COMPANY_API_KEY"},
+        },
+    )
+    server = MCPDraft.from_config(
+        "tools",
+        {
+            "transport": "streamable_http",
+            "url": "https://tools.example/mcp",
+            "headers": {
+                "Authorization": {
+                    "env": "TOOLS_TOKEN",
+                    "template": "Bearer %s",
+                }
+            },
+        },
+    )
+
+    assert provider.as_config()["api_key"] == {"env": "COMPANY_API_KEY"}
+    assert server.as_config()["headers"]["Authorization"] == {
+        "env": "TOOLS_TOKEN",
+        "template": "Bearer %s",
+    }
+
+
+def test_mcp_draft_rejects_unknown_configuration_fields():
+    with pytest.raises(SetupError, match="unknown configuration field: typo"):
+        MCPDraft.from_config(
+            "tools",
+            {
+                "transport": "streamable_http",
+                "url": "https://tools.example/mcp",
+                "typo": True,
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -272,8 +546,78 @@ mcp_servers:
     assert config["inference_providers"]["company"]["organization"] == (
         "research"
     )
+    assert config["inference_providers"]["company"]["model_provider"] == (
+        "openai"
+    )
     assert config["llm_model"]["max_completion_tokens"] == 512
     assert config["mcp_servers"]["tools"]["timeout"] == 30
+
+
+def test_existing_provider_without_url_uses_model_protocol_for_validation(
+    tmp_path,
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+inference_providers:
+  company:
+    api_key: {env: COMPANY_API_KEY}
+llm_model:
+  model: claude-test
+  model_provider: anthropic
+  inference_provider: company
+"""
+    )
+
+    state = SetupState.load(path)
+    provider = state.providers["company"]
+    validation = state.provider_validation_config("company")
+
+    assert provider.base_url is None
+    assert "base_url" not in provider.as_config()
+    assert (
+        "base_url"
+        not in (state.configuration()["inference_providers"]["company"])
+    )
+    assert validation.base_url is None
+    assert validation.model_provider == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_without_url_round_trips_through_edit(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        "ursa.cli.setup.list_provider_models",
+        lambda config: ([ProviderModel("claude-test", config.model_provider)]),
+    )
+    app = SetupApp(tmp_path / "config.yaml")
+    app.state.providers["company"] = ProviderDraft(
+        name="company",
+        base_url=None,
+        api_key_reference={"env": "COMPANY_API_KEY"},
+    )
+    app.state.llm_model = ChatModelConfig(
+        model="claude-test",
+        model_provider="anthropic",
+        inference_provider="company",
+    )
+    app.state.provider_verified["company"] = True
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app.current_page = "providers"
+        app.query_one("#setup-pages").current = "providers-page"
+        await app._refresh_provider_tabs()
+        await pilot.click("#provider-edit")
+
+        url = app.query_one("#provider-url", ExpandingFuzzySelect)
+        assert url.value == PROVIDER_DEFAULT_URL
+        assert app.query_one("#provider-url-custom", Input).has_class("hidden")
+
+        await app._validate_provider()
+        assert app.current_page == "providers"
+        assert app.state.providers["company"].base_url is None
+        assert "base_url" not in app.state.providers["company"].as_config()
 
 
 def test_setup_always_enables_provider_tls_verification(tmp_path):
@@ -295,7 +639,7 @@ llm_model:
 
     state = SetupState.load(path)
 
-    assert state.providers["company"].ssl_verify is True
+    assert state.providers["company"].validation_config().ssl_verify is True
     assert (
         "ssl_verify"
         not in state.configuration()["inference_providers"]["company"]
@@ -324,6 +668,7 @@ def test_save_setup_state_writes_keyring_and_atomic_config(
         ("ursa", "tools", "mcp-secret"),
     ]
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert path.with_suffix(".yaml.lock").is_file()
     loaded = yaml.safe_load(path.read_text())
     assert loaded["inference_providers"]["company"]["api_key"] == {
         "keyring": True
@@ -386,22 +731,23 @@ async def test_setup_app_railroads_first_run(monkeypatch, tmp_path):
         ).value = "https://models.example/v1"
         app.query_one("#provider-key", Input).value = "secret"
         await pilot.pause()
-        await pilot.click("#provider-save")
-        await _wait_for(lambda: app.current_page == "providers")
+        await app._validate_provider()
 
         assert app.query_one("#providers-tabs", TabbedContent)
         assert app.state.provider_verified["company"] is True
-        await pilot.click("#providers-next")
-        await _wait_for(lambda: app.current_page == "models")
+        await app._run_provider_validation(force=False, continue_to_models=True)
+        assert app.current_page == "models"
+        await pilot.pause()
 
         assert app.query_one("#llm-choice", Select).value == "gpt-test"
         app.query_one("#embedding-choice", Select).value = "text-embedding-test"
         await pilot.pause()
+        app._update_progress()
         assert "Emb: text-embeddi..." in str(
             app.query_one("#setup-progress", Static).content
         )
-        await pilot.click("#models-save")
-        await _wait_for(lambda: app.current_page == "mcps")
+        await app._save_models()
+        assert app.current_page == "mcps"
         assert app.query_one("#mcps-tabs", TabbedContent)
         assert chat_probes == ["gpt-test"]
         assert embedding_probes == ["text-embedding-test"]
@@ -411,11 +757,105 @@ async def test_setup_app_railroads_first_run(monkeypatch, tmp_path):
         progress = str(app.query_one("#setup-progress", Static).content)
         assert "✓ LLM: gpt-test" in progress
         assert "✓ Emb: text-embeddi..." in progress
-        await pilot.click("#mcps-next")
+        await app._run_mcp_validation(force=False, continue_to_review=True)
         assert app.current_page == "review"
         assert "company" in str(
             app.query_one("#review-summary", Static).content
         )
+
+
+@pytest.mark.asyncio
+async def test_models_can_use_different_inference_providers(
+    monkeypatch, tmp_path
+):
+    chat_probes = []
+    embedding_probes = []
+    monkeypatch.setattr(
+        "ursa.cli.setup.probe_chat_model",
+        lambda config, _providers: chat_probes.append((
+            config.model,
+            config.inference_provider,
+        )),
+    )
+    monkeypatch.setattr(
+        "ursa.cli.setup.probe_embedding_model",
+        lambda config, _providers: embedding_probes.append((
+            config.model,
+            config.inference_provider,
+        )),
+    )
+    app = SetupApp(tmp_path / "config.yaml")
+    app.state.providers["chat"] = ProviderDraft(
+        name="chat", base_url="https://chat.example/v1"
+    )
+    app.state.providers["vectors"] = ProviderDraft(
+        name="vectors", base_url="https://vectors.example/v1"
+    )
+    app.state.provider_models["chat"] = [ProviderModel("chat-model", "openai")]
+    app.state.provider_models["vectors"] = [
+        ProviderModel("embedding-model", "openai", type="embedding")
+    ]
+
+    async with app.run_test(size=(120, 42)):
+        app._show("models")
+        embedding_provider = app.query_one("#embedding-provider", Select)
+        with app.prevent(Select.Changed):
+            embedding_provider.value = "vectors"
+        app._populate_model_choices("embedding", "vectors")
+        embedding_choice = app.query_one("#embedding-choice", Select)
+        with app.prevent(Select.Changed):
+            embedding_choice.value = "embedding-model"
+        app._sync_model_yaml_from_controls("embedding")
+
+        await app._save_models()
+
+        assert app.state.llm_model is not None
+        assert app.state.llm_model.inference_provider == "chat"
+        assert app.state.embedding_model is not None
+        assert app.state.embedding_model.inference_provider == "vectors"
+        assert chat_probes == [("chat-model", "chat")]
+        assert embedding_probes == [("embedding-model", "vectors")]
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_ignores_result_after_leaving_models(
+    monkeypatch, tmp_path
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def controlled_to_thread(_function, _config):
+        started.set()
+        await release.wait()
+        return [ProviderModel("stale-model", "openai")]
+
+    monkeypatch.setattr(
+        "ursa.cli.setup.asyncio.to_thread", controlled_to_thread
+    )
+    app = SetupApp(tmp_path / "config.yaml")
+    app.state.providers["company"] = ProviderDraft(
+        name="company", base_url="https://models.example/v1"
+    )
+
+    async with app.run_test(size=(120, 42)):
+        app.current_page = "models"
+        app.query_one("#setup-pages").current = "models-page"
+        provider = app.query_one("#model-provider", Select)
+        with app.prevent(Select.Changed):
+            provider.set_options([("company", "company")])
+            provider.value = "company"
+        generation = app._model_load_generation["llm"]
+        task = asyncio.create_task(
+            app._load_selected_provider_models("llm", "company", generation)
+        )
+        await started.wait()
+        try:
+            app._show("welcome")
+        finally:
+            release.set()
+        await task
+
+        assert "company" not in app.state.provider_models
 
 
 @pytest.mark.asyncio
@@ -435,7 +875,7 @@ async def test_provider_base_url_fuzzy_select_allows_custom_urls(tmp_path):
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         assert isinstance(app.query_one("#provider-name"), Input)
-        urls = app.query_one("#provider-url", ProviderUrlSelect)
+        urls = app.query_one("#provider-url", ExpandingFuzzySelect)
         assert [value for _label, value in urls._options] == [
             "https://api.openai.com/v1",
             "https://api.anthropic.com",
@@ -474,6 +914,14 @@ async def test_provider_base_url_fuzzy_select_allows_custom_urls(tmp_path):
         assert urls.region.width == 22
         assert custom_url.region.width > urls.region.width
 
+        credential_source = app.query_one("#provider-key-source", FuzzySelect)
+        custom_url.value = "http://localhost:1234/v1"
+        await pilot.pause()
+        assert credential_source.value == MCP_TOKEN_NONE
+        custom_url.value = "https://models.example/v1"
+        await pilot.pause()
+        assert credential_source.value == "company"
+
         urls.expanded = True
         await pilot.pause()
         assert urls.parent.has_class("selecting")
@@ -495,26 +943,7 @@ async def test_provider_base_url_fuzzy_select_allows_custom_urls(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_provider_validation_uses_ascii_spinner(tmp_path):
-    app = SetupApp(tmp_path / "config.yaml")
-
-    async with app.run_test(size=(120, 42)):
-        app._set_provider_checking(True)
-        app._provider_spinner_timer.pause()
-        message = app.query_one("#provider-error", Static)
-        assert str(message.content) == (
-            "| Checking the API key and loading models"
-        )
-
-        app._advance_provider_spinner()
-        assert str(message.content) == (
-            "/ Checking the API key and loading models"
-        )
-        app._set_provider_checking(False)
-
-
-@pytest.mark.asyncio
-async def test_model_tree_truncates_names_and_animates_ascii_spinner(tmp_path):
+async def test_model_tree_truncates_names(tmp_path):
     llm_name = "language-model-name-that-is-too-long"
     embedding_name = "embedding-model-name-that-is-too-long"
     app = SetupApp(tmp_path / "config.yaml")
@@ -530,43 +959,10 @@ async def test_model_tree_truncates_names_and_animates_ascii_spinner(tmp_path):
     )
 
     async with app.run_test(size=(120, 42)):
-        assert app.MODEL_SPINNER_FRAMES == ("|", "/", "-", "\\")
-        assert not app.query(LoadingIndicator)
         app._update_progress()
         progress = str(app.query_one("#setup-progress", Static).content)
         assert f"LLM: {llm_name[:12]}..." in progress
         assert f"Emb: {embedding_name[:12]}..." in progress
-
-        app._set_model_validation_status(
-            "llm", None, "Testing...", loading=True
-        )
-        app._set_model_validation_status(
-            "embedding", None, "Testing...", loading=True
-        )
-        app._model_spinner_timer.pause()
-        progress = str(app.query_one("#setup-progress", Static).content)
-        assert f"| LLM: {llm_name[:12]}..." in progress
-        assert f"| Emb: {embedding_name[:12]}..." in progress
-        assert (
-            str(app.query_one("#llm-validation-status", Static).content)
-            == "| Testing..."
-        )
-
-        app._advance_model_spinner()
-        progress = str(app.query_one("#setup-progress", Static).content)
-        assert f"/ LLM: {llm_name[:12]}..." in progress
-        assert f"/ Emb: {embedding_name[:12]}..." in progress
-        assert (
-            str(app.query_one("#llm-validation-status", Static).content)
-            == "/ Testing..."
-        )
-
-        app._set_mcp_validation_status(None, "Connecting...", loading=True)
-        app._mcp_spinner_timer.pause()
-        mcp_status = app.query_one("#mcp-validation-status", Static)
-        assert str(mcp_status.content) == "| Connecting..."
-        app._advance_mcp_spinner()
-        assert str(mcp_status.content) == "/ Connecting..."
 
 
 @pytest.mark.asyncio
@@ -583,15 +979,15 @@ async def test_setup_app_allows_custom_model_and_back(monkeypatch, tmp_path):
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         app.query_one("#provider-key", Input).value = "secret"
-        await pilot.click("#provider-save")
-        await _wait_for(lambda: app.current_page == "providers")
-        await pilot.click("#providers-next")
-        await _wait_for(lambda: app.current_page == "models")
+        await app._validate_provider()
+        assert app.current_page == "providers"
+        app._show("models")
+        await pilot.pause()
         app.query_one("#llm-choice", Select).value = CUSTOM_MODEL
         app.query_one("#llm-custom", Input).value = "private-model"
         await pilot.pause()
-        await pilot.click("#models-save")
-        await _wait_for(lambda: app.current_page == "mcps")
+        await app._save_models()
+        assert app.current_page == "mcps"
         assert app.state.llm_model is not None
         assert app.state.llm_model.model == "private-model"
         app.action_back()
@@ -616,7 +1012,6 @@ async def test_model_advanced_editors_validate_and_preserve_yaml(
     app = SetupApp(tmp_path / "config.yaml")
     app.state.providers["company"] = ProviderDraft(
         name="company",
-        kind="openai",
         base_url="https://models.example/v1",
         pending_secret="secret",
     )
@@ -624,15 +1019,23 @@ async def test_model_advanced_editors_validate_and_preserve_yaml(
     app.state.provider_verified["company"] = True
 
     async with app.run_test(size=(120, 42)) as pilot:
-        await pilot.click("#welcome-next")
-        await _wait_for(lambda: bool(app._provider_tab_names))
-        await pilot.click("#providers-next")
-        await _wait_for(lambda: app.current_page == "models")
+        app._show("models")
+        await pilot.pause()
 
         llm_advanced = app.query_one("#llm-advanced", Collapsible)
         embedding_advanced = app.query_one("#embedding-advanced", Collapsible)
         assert llm_advanced.collapsed is True
         assert embedding_advanced.collapsed is True
+        llm_editor = app.query_one("#llm-config-yaml", TextArea)
+        embedding_editor = app.query_one("#embedding-config-yaml", TextArea)
+        assert llm_editor.parent.display is False
+        assert embedding_editor.parent.display is False
+        llm_title = llm_advanced.query_one("CollapsibleTitle")
+        embedding_title = embedding_advanced.query_one("CollapsibleTitle")
+        assert str(llm_title.label) == "Advanced"
+        assert str(embedding_title.label) == "Advanced"
+        assert llm_title.region.height == 1
+        assert embedding_title.region.height == 1
         assert app.query_one("#llm-choice", Select).region.bottom <= (
             llm_advanced.region.y
         )
@@ -641,12 +1044,17 @@ async def test_model_advanced_editors_validate_and_preserve_yaml(
             <= app.query_one("#llm-validation-status", Static).region.y
         )
 
-        llm_editor = app.query_one("#llm-config-yaml", TextArea)
+        embedding_advanced.collapsed = False
+        llm_advanced.collapsed = False
+        await pilot.pause()
+        assert llm_advanced.collapsed is False
+        assert embedding_advanced.collapsed is False
+        assert llm_editor.parent.display is True
+        assert embedding_editor.parent.display is True
         llm_values = yaml.safe_load(llm_editor.text)
         llm_values["temperature"] = 0.2
         llm_editor.text = yaml.safe_dump(llm_values, sort_keys=False)
 
-        embedding_editor = app.query_one("#embedding-config-yaml", TextArea)
         embedding_values = yaml.safe_load(embedding_editor.text)
         embedding_values["model"] = "text-embedding-test"
         embedding_values["dimensions"] = 512
@@ -654,14 +1062,19 @@ async def test_model_advanced_editors_validate_and_preserve_yaml(
             embedding_values, sort_keys=False
         )
 
-        await _wait_for(lambda: llm_editor.has_class("yaml-valid"))
-        await _wait_for(lambda: embedding_editor.has_class("yaml-valid"))
-        await _wait_for(
-            lambda: app.query_one("#embedding-choice", Select).value
+        for prefix in ("llm", "embedding"):
+            app.query_one(
+                f"#{prefix}-advanced", AdvancedYamlEditor
+            ).cancel_validation()
+            assert app._validate_model_yaml(prefix, update_controls=True)
+        assert llm_editor.has_class("yaml-valid")
+        assert embedding_editor.has_class("yaml-valid")
+        assert (
+            app.query_one("#embedding-choice", Select).value
             == "text-embedding-test"
         )
-        await pilot.click("#models-save")
-        await _wait_for(lambda: app.current_page == "mcps")
+        await app._save_models()
+        assert app.current_page == "mcps"
 
         assert app.state.llm_model is not None
         assert app.state.llm_model.model_extra == {"temperature": 0.2}
@@ -724,12 +1137,14 @@ llm_model:
     app = SetupApp(path)
 
     async with app.run_test(size=(120, 42)) as pilot:
-        await pilot.click("#welcome-next")
-        await _wait_for(lambda: bool(app._provider_tab_names))
+        app.current_page = "providers"
+        app.query_one("#setup-pages").current = "providers-page"
+        await app._refresh_provider_tabs()
         await pilot.click("#provider-edit")
 
         key = app.query_one("#provider-key", Input)
-        await _wait_for(lambda: key.value == "stored-secret")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         assert key.value == "stored-secret"
         assert key.password is True
         assert key.placeholder == "Enter the API Key for the provider"
@@ -755,7 +1170,7 @@ async def test_api_key_entries_share_layout_and_load_by_name(
 
     async with app.run_test(size=(120, 42)) as pilot:
         assert len(list(app.query(ApiKeyEntry))) == 2
-        assert not app.query("#provider-key-source")
+        assert app.query_one("#provider-key-source", FuzzySelect)
         assert not app.query("#provider-keyring-name")
         assert not app.query("#provider-load-keyring")
         assert not app.query("#mcp-keyring-name")
@@ -768,18 +1183,68 @@ async def test_api_key_entries_share_layout_and_load_by_name(
         assert provider_key.parent.has_class("api-key-row")
 
         await pilot.click("#welcome-next")
-        await _wait_for(lambda: provider_key.value == "openai-secret")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        provider_entry = app.query_one("#provider-api-key", ApiKeyEntry)
+        provider_source = app.query_one("#provider-key-source")
+        provider_source_label = provider_entry.query_one(
+            ".credential-source-label", HelpLabel
+        )
+        provider_value_label = provider_entry.query_one(
+            ".credential-value-label", HelpLabel
+        )
+        assert provider_entry.region.width > 0
+        assert provider_source.region.y == provider_key.region.y
+        assert provider_source_label.region.y == provider_value_label.region.y
+        assert provider_source_label.region.bottom == provider_source.region.y
+        assert provider_key.parent.region.right <= provider_entry.region.right
+        assert provider_show.region.right <= provider_entry.region.right
         app.query_one("#provider-name", Input).value = "company"
-        await _wait_for(lambda: provider_key.value == "company-secret")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
         app._begin_mcp()
         mcp_key = app.query_one("#mcp-token", Input)
         mcp_show = app.query_one("#mcp-show-key", Checkbox)
         assert mcp_key.parent is mcp_show.parent
         assert mcp_key.parent.has_class("api-key-row")
-        app.query_one("#mcp-token-source", FuzzySelect).value = MCP_TOKEN_NEW
+        assert app.query_one("#mcp-token-source").region.y == mcp_key.region.y
         app.query_one("#mcp-name", Input).value = "tools"
-        await _wait_for(lambda: mcp_key.value == "tools-secret")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        app.query_one("#mcp-token-source", FuzzySelect).value = "tools"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        provider_source = app.query_one("#provider-key-source", FuzzySelect)
+        provider_source.value = API_KEY_ENV
+        await pilot.pause()
+        provider_label = app.query_one(
+            "#provider-api-key .credential-value-label", HelpLabel
+        )
+        assert provider_label.label == ("Environmental Variable with API Key")
+        assert provider_label.region.bottom == provider_key.region.y
+        assert provider_show.has_class("hidden")
+        assert provider_key.password is False
+        provider_key.value = "COMPANY_API_KEY"
+        assert provider_entry.values() == (
+            {"env": "COMPANY_API_KEY"},
+            None,
+            None,
+        )
+
+        mcp_source = app.query_one("#mcp-token-source", FuzzySelect)
+        mcp_source.value = API_KEY_ENV
+        await pilot.pause()
+        mcp_key.value = "TOOLS_TOKEN"
+        assert app.query_one("#mcp-api-key", ApiKeyEntry).values() == (
+            {"env": "TOOLS_TOKEN"},
+            None,
+            None,
+        )
 
 
 @pytest.mark.asyncio
@@ -813,7 +1278,6 @@ async def test_existing_providers_are_checked_on_page_entry(
     app = SetupApp(tmp_path / "config.yaml")
     app.state.providers["company"] = ProviderDraft(
         name="company",
-        kind="openai",
         base_url="https://models.example/v1",
         pending_secret="secret",
     )
@@ -821,9 +1285,7 @@ async def test_existing_providers_are_checked_on_page_entry(
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
-        await _wait_for(
-            lambda: app.state.provider_verified.get("company") is True
-        )
+        await app.workers.wait_for_complete()
 
         assert checked == ["https://models.example/v1"]
         assert "✓ All providers verified" in str(
@@ -834,89 +1296,40 @@ async def test_existing_providers_are_checked_on_page_entry(
 
 @pytest.mark.asyncio
 async def test_provider_tabs_remain_interactive_during_validation(
-    monkeypatch, tmp_path
+    tmp_path,
 ):
-    validation_started = threading.Event()
-    release_validation = threading.Event()
-
-    def validate(_config):
-        validation_started.set()
-        release_validation.wait(timeout=5)
-        return [ProviderModel("gpt-test", "openai")]
-
-    monkeypatch.setattr("ursa.cli.setup.list_provider_models", validate)
     app = SetupApp(tmp_path / "config.yaml")
     app.state.providers["company"] = ProviderDraft(
         name="company",
-        kind="openai",
         base_url="https://models.example/v1",
         pending_secret="secret",
     )
     app.state.providers["backup"] = ProviderDraft(
         name="backup",
-        kind="openai",
         base_url="https://backup.example/v1",
         pending_secret="secret",
     )
     app.state.provider_verified["company"] = None
     app.state.provider_verified["backup"] = None
 
-    try:
-        async with app.run_test(size=(120, 42)) as pilot:
-            try:
-                await pilot.click("#welcome-next")
-                await _wait_for(validation_started.is_set)
+    async with app.run_test(size=(120, 42)) as pilot:
+        app.current_page = "providers"
+        app.query_one("#setup-pages").current = "providers-page"
+        app._providers_validating.add("company")
+        await app._refresh_provider_tabs()
+        await pilot.pause()
 
-                assert app._provider_tab_names == {
-                    "provider-pane-0": "company",
-                    "provider-pane-1": "backup",
-                }
-                assert len(list(app.query(TabPane))) == 2
-                assert app.state.provider_verified["company"] is None
-                provider_tabs = list(
-                    app.query_one("#providers-tabs", TabbedContent).query(Tab)
-                )
-                assert (
-                    str(provider_tabs[0].label)[0] in app.MODEL_SPINNER_FRAMES
-                )
-                assert "company" in str(provider_tabs[0].label)
-                assert any(
-                    f"├─ {frame} company"
-                    in str(app.query_one("#setup-progress", Static).content)
-                    for frame in app.MODEL_SPINNER_FRAMES
-                )
-                connection_status = str(
-                    app.query_one(
-                        "#providers-validation-status", Static
-                    ).content
-                )
-                assert connection_status[0] in app.MODEL_SPINNER_FRAMES
-                assert connection_status[2:] == (
-                    "Checking provider connection..."
-                )
-                initial_frame = connection_status[0]
-                await _wait_for(
-                    lambda: str(
-                        app.query_one(
-                            "#providers-validation-status", Static
-                        ).content
-                    )[0]
-                    != initial_frame
-                )
+        assert _tab_names(app, "providers-tabs") == {
+            "provider-pane-0": "company",
+            "provider-pane-1": "backup",
+        }
+        provider_tabs_widget = app.query_one("#providers-tabs", ConfiguredTabs)
+        assert len(list(provider_tabs_widget.query(TabPane))) == 2
+        assert app.state.provider_verified["company"] is None
 
-                await pilot.click(provider_tabs[1])
-                await _wait_for(
-                    lambda: app.query_one(
-                        "#providers-tabs", TabbedContent
-                    ).active
-                    == "provider-pane-1"
-                )
-                assert app.state.provider_verified["company"] is None
-            finally:
-                release_validation.set()
-                await _wait_for(lambda: not app._providers_validating)
-    finally:
-        release_validation.set()
+        tabs = app.query_one("#providers-tabs", TabbedContent)
+        tabs.active = "provider-pane-1"
+        assert tabs.active == "provider-pane-1"
 
 
 @pytest.mark.asyncio
@@ -925,7 +1338,6 @@ async def test_all_providers_must_verify_before_models(monkeypatch, tmp_path):
     app = SetupApp(path)
     app.state.providers["broken"] = ProviderDraft(
         name="broken",
-        kind="openai",
         base_url="https://models.example/v1",
         pending_secret="bad-secret",
     )
@@ -935,17 +1347,17 @@ async def test_all_providers_must_verify_before_models(monkeypatch, tmp_path):
         lambda _config: (_ for _ in ()).throw(RuntimeError("401 Unauthorized")),
     )
 
-    async with app.run_test(size=(120, 42)) as pilot:
-        await pilot.click("#welcome-next")
-        await _wait_for(lambda: bool(app._provider_tab_names))
-        await _wait_for(
-            lambda: app.state.provider_verified.get("broken") is False
+    async with app.run_test(size=(120, 42)):
+        app.current_page = "providers"
+        app.query_one("#setup-pages").current = "providers-page"
+        await app._refresh_provider_tabs()
+        await app._run_provider_validation(
+            force=False, continue_to_models=False
         )
 
         assert app.current_page == "providers"
         assert app.state.provider_verified["broken"] is False
         assert app.query_one("#providers-next").disabled is True
-        await pilot.click("#providers-next")
         assert app.current_page == "providers"
         assert "✗ broken" in str(
             app.query_one("#setup-progress", Static).content
@@ -960,10 +1372,7 @@ async def test_all_providers_must_verify_before_models(monkeypatch, tmp_path):
             "ursa.cli.setup.list_provider_models",
             lambda _config: [ProviderModel("gpt-test", "openai")],
         )
-        await pilot.click("#providers-retry")
-        await _wait_for(
-            lambda: app.state.provider_verified.get("broken") is True
-        )
+        await app._run_provider_validation(force=True, continue_to_models=False)
         assert app.query_one("#providers-next").disabled is False
 
 
@@ -974,17 +1383,18 @@ async def test_provider_failure_summary_shows_only_first_three(tmp_path):
         name = f"broken-{index}"
         app.state.providers[name] = ProviderDraft(
             name=name,
-            kind="openai",
             base_url="https://models.example/v1",
             pending_secret="bad-secret",
         )
         app.state.provider_verified[name] = False
         app.state.provider_errors[name] = f"error {index}"
 
-    async with app.run_test(size=(120, 42)) as pilot:
-        await pilot.click("#welcome-next")
-        await _wait_for(
-            lambda: bool(str(app.query_one("#providers-error", Static).content))
+    async with app.run_test(size=(120, 42)):
+        app.current_page = "providers"
+        app.query_one("#setup-pages").current = "providers-page"
+        await app._refresh_provider_tabs()
+        await app._run_provider_validation(
+            force=False, continue_to_models=False
         )
 
         assert str(app.query_one("#providers-error", Static).content) == (
@@ -1010,7 +1420,6 @@ async def test_mcp_token_selector_reuses_keyring_or_creates_new_entry(
     app = SetupApp(tmp_path / "config.yaml")
     app.state.providers["shared"] = ProviderDraft(
         name="shared",
-        kind="openai",
         base_url="https://models.example/v1",
         api_key_reference={"keyring": True},
         keyring_username="shared",
@@ -1039,12 +1448,12 @@ async def test_mcp_token_selector_reuses_keyring_or_creates_new_entry(
         assert app.query_one("#mcp-auth-fields").has_class("hidden")
         app.query_one("#mcp-name", Input).value = "tools"
         app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
-        token_source.value = "shared"
-        await _wait_for(
-            lambda: app.query_one("#mcp-token", Input).value == "shared-secret"
-        )
-        assert not app.query_one("#mcp-auth-fields").has_class("hidden")
         await pilot.pause()
+        token_source.value = "shared"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not app.query_one("#mcp-auth-fields").has_class("hidden")
         auth_fields = app.query_one("#mcp-auth-fields")
         assert token_source.region.width == 22
         assert auth_fields.region.x == token_source.region.right + 1
@@ -1057,7 +1466,7 @@ async def test_mcp_token_selector_reuses_keyring_or_creates_new_entry(
             "template": "Bearer %s",
         }
 
-        token_source.value = MCP_TOKEN_NEW
+        token_source.value = "tools"
         await pilot.pause()
         assert not app.query_one("#mcp-auth-fields").has_class("hidden")
         app.query_one("#mcp-token", Input).value = "new-secret"
@@ -1105,14 +1514,16 @@ async def test_mcp_advanced_yaml_updates_config_and_token_source(
             sort_keys=False,
         )
 
-        await _wait_for(
-            lambda: app.query_one("#mcp-token-source", FuzzySelect).value
+        await pilot.pause()
+        app.query_one("#mcp-advanced", AdvancedYamlEditor).cancel_validation()
+        assert app._validate_mcp_yaml(update_controls=True)
+        await app.workers.wait_for_complete()
+        assert (
+            app.query_one("#mcp-token-source", FuzzySelect).value
             == "shared-token"
         )
-        await _wait_for(lambda: editor.has_class("yaml-valid"))
-        await _wait_for(
-            lambda: app.query_one("#mcp-token", Input).value == "shared-secret"
-        )
+        assert editor.has_class("yaml-valid")
+        assert app.query_one("#mcp-token", Input).value == "shared-secret"
         draft = app._mcp_values()
         config = draft.as_config()
 
@@ -1141,11 +1552,15 @@ async def test_mcp_server_is_validated_before_it_is_saved(
 
     async with app.run_test(size=(120, 42)):
         app._begin_mcp()
-        app.query_one("#mcp-name", Input).value = "tools"
-        app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
+        name = app.query_one("#mcp-name", Input)
+        with name.prevent(Input.Changed):
+            name.value = "tools"
+        url = app.query_one("#mcp-url", Input)
+        with url.prevent(Input.Changed):
+            url.value = "https://tools.example/mcp"
         await app._save_mcp()
-        await _wait_for(lambda: app.current_page == "mcps")
-        await _wait_for(lambda: bool(app._mcp_tab_names))
+        assert app.current_page == "mcps"
+        await app._refresh_mcp_tabs()
 
         assert checked == ["tools"]
         assert app.state.mcp_verified["tools"] is True
@@ -1177,8 +1592,12 @@ async def test_mcp_validation_failure_stays_on_form(monkeypatch, tmp_path):
 
     async with app.run_test(size=(120, 42)):
         app._begin_mcp()
-        app.query_one("#mcp-name", Input).value = "tools"
-        app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
+        name = app.query_one("#mcp-name", Input)
+        with name.prevent(Input.Changed):
+            name.value = "tools"
+        url = app.query_one("#mcp-url", Input)
+        with url.prevent(Input.Changed):
+            url.value = "https://tools.example/mcp"
         await app._save_mcp()
 
         assert app.current_page == "mcp"
@@ -1206,11 +1625,13 @@ async def test_failed_mcp_server_disables_review_until_retry_succeeds(
     app.state.mcp_verified["tools"] = None
 
     async with app.run_test(size=(120, 42)) as pilot:
-        app._show("mcps")
-        await _wait_for(lambda: app.state.mcp_verified["tools"] is False)
+        app.current_page = "mcps"
+        app.query_one("#setup-pages").current = "mcps-page"
+        await app._refresh_mcp_tabs()
+        await app._run_mcp_validation(force=False, continue_to_review=False)
 
         tabs = app.query_one("#mcps-tabs", TabbedContent)
-        assert app._mcp_tab_names == {"mcp-pane-0": "tools"}
+        assert _tab_names(app, "mcps-tabs") == {"mcp-pane-0": "tools"}
         assert "✗ tools" in str(tabs.get_tab("mcp-pane-0").label)
         assert app.query_one("#mcps-next").disabled is True
         await pilot.click("#mcps-next")
@@ -1220,8 +1641,7 @@ async def test_failed_mcp_server_disables_review_until_retry_succeeds(
             return 2
 
         monkeypatch.setattr("ursa.cli.setup.probe_mcp_server", succeed)
-        await pilot.click("#mcps-retry")
-        await _wait_for(lambda: app.state.mcp_verified["tools"] is True)
+        await app._run_mcp_validation(force=True, continue_to_review=False)
         assert app.query_one("#mcps-next").disabled is False
 
 
@@ -1236,18 +1656,21 @@ async def test_mcp_tabs_select_the_server_to_edit(tmp_path):
         )
         app.state.mcp_verified[name] = True
 
-    async with app.run_test(size=(120, 42)) as pilot:
-        app._show("mcps")
-        await _wait_for(lambda: len(app._mcp_tab_names) == 2)
+    async with app.run_test(size=(120, 42)):
+        app.current_page = "mcps"
+        app.query_one("#setup-pages").current = "mcps-page"
+        await app._refresh_mcp_tabs()
 
         tabs = app.query_one("#mcps-tabs", TabbedContent)
-        assert app._mcp_tab_names == {
+        assert _tab_names(app, "mcps-tabs") == {
             "mcp-pane-0": "search",
             "mcp-pane-1": "storage",
         }
-        await pilot.click(tabs.get_tab("mcp-pane-1"))
-        await _wait_for(lambda: tabs.active == "mcp-pane-1")
-        await pilot.click("#mcp-edit")
+        tabs.active = "mcp-pane-1"
+        assert tabs.active == "mcp-pane-1"
+        selected = app._active_mcp_name()
+        assert selected == "storage"
+        app._begin_mcp(selected)
 
         assert app.editing_mcp == "storage"
         assert app.query_one("#mcp-name", Input).value == "storage"
@@ -1293,7 +1716,6 @@ async def test_model_probe_failure_stays_on_models_and_notifies(
     app = SetupApp(tmp_path / "config.yaml")
     app.state.providers["company"] = ProviderDraft(
         name="company",
-        kind="openai",
         base_url="https://models.example/v1",
         pending_secret="secret",
     )
@@ -1303,7 +1725,8 @@ async def test_model_probe_failure_stays_on_models_and_notifies(
     async with app.run_test(size=(120, 42)) as pilot:
         app._show("models")
         await pilot.pause()
-        await pilot.click("#models-save")
+        app.query_one("#models-save").press()
+        await pilot.pause()
 
         assert app.current_page == "models"
         assert app.model_validation["llm"] is False
