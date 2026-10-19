@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import json
 import multiprocessing
 import os
 import stat
 from pathlib import Path
 
 import pytest
-import yaml
 from filelock import FileLock
 from keyring.backend import KeyringBackend
 from keyring.errors import KeyringError, PasswordDeleteError
@@ -73,8 +73,10 @@ def _set_password_in_process(
     finished.set()
 
 
-def test_file_keyring_creates_yaml_with_mode_600(tmp_path: Path) -> None:
-    path = tmp_path / "config" / "ursa" / "keyring.yml"
+def test_file_keyring_creates_pretty_json_with_mode_600(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config" / "ursa" / "keyring.json"
     keyring = FileKeyring(path)
 
     keyring.set_password("ursa", "openai", "token")
@@ -82,10 +84,21 @@ def test_file_keyring_creates_yaml_with_mode_600(tmp_path: Path) -> None:
 
     if os.name != "nt":
         assert file_mode(path) == 0o600
-    assert yaml.safe_load(path.read_text(encoding="utf-8")) == {
+    contents = path.read_text(encoding="utf-8")
+    assert json.loads(contents) == {
         "ursa": {"openai": "token"},
         "ursa-ai": {"dashboard:default:llm": "other"},
     }
+    assert contents == (
+        "{\n"
+        '  "ursa": {\n'
+        '    "openai": "token"\n'
+        "  },\n"
+        '  "ursa-ai": {\n'
+        '    "dashboard:default:llm": "other"\n'
+        "  }\n"
+        "}\n"
+    )
     assert keyring.get_password("ursa", "openai") == "token"
     assert keyring.get_password("ursa", "missing") is None
     assert isinstance(keyring, KeyringBackend)
@@ -99,7 +112,7 @@ def test_file_keyring_uses_ursa_config_path_by_default(
     keyring = FileKeyring()
     keyring.set_password("ursa", "openai", "token")
 
-    assert keyring.path == tmp_path / ".config" / "ursa" / "keyring.yml"
+    assert keyring.path == tmp_path / ".config" / "ursa" / "keyring.json"
     assert keyring.path.exists()
 
 
@@ -107,8 +120,8 @@ def test_file_keyring_uses_ursa_config_path_by_default(
 def test_file_keyring_accepts_more_restrictive_permissions(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "keyring.yml"
-    path.write_text("ursa:\n  openai: token\n", encoding="utf-8")
+    path = tmp_path / "keyring.json"
+    path.write_text('{"ursa":{"openai":"token"}}\n', encoding="utf-8")
     path.chmod(0o400)
 
     assert FileKeyring(path).get_password("ursa", "openai") == "token"
@@ -119,8 +132,8 @@ def test_file_keyring_accepts_more_restrictive_permissions(
 def test_file_keyring_rejects_more_permissive_permissions(
     tmp_path: Path, mode: int
 ) -> None:
-    path = tmp_path / "keyring.yml"
-    path.write_text("ursa:\n  openai: token\n", encoding="utf-8")
+    path = tmp_path / "keyring.json"
+    path.write_text('{"ursa":{"openai":"token"}}\n', encoding="utf-8")
     path.chmod(mode)
     keyring = FileKeyring(path)
 
@@ -139,7 +152,7 @@ def test_file_keyring_rejects_more_permissive_permissions(
 def test_file_keyring_preserves_restrictive_mode_when_updating(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "keyring.yml"
+    path = tmp_path / "keyring.json"
     keyring = FileKeyring(path)
     keyring.set_password("ursa", "openai", "old")
     path.chmod(0o400)
@@ -153,7 +166,7 @@ def test_file_keyring_preserves_restrictive_mode_when_updating(
 def test_file_keyring_does_not_use_posix_modes_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "keyring.yml"
+    path = tmp_path / "keyring.json"
     monkeypatch.setattr(keyring_module, "_HAS_POSIX_FILE_MODES", False)
 
     def unexpected_fchmod(descriptor: int, mode: int) -> None:
@@ -170,7 +183,7 @@ def test_file_keyring_does_not_use_posix_modes_on_windows(
 def test_file_keyring_locks_updates_across_processes(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "keyring.yml"
+    path = tmp_path / "keyring.json"
     context = multiprocessing.get_context("spawn")
     started = context.Event()
     finished = context.Event()
@@ -198,7 +211,7 @@ def test_file_keyring_locks_updates_across_processes(
 
 
 def test_file_keyring_delete_removes_password(tmp_path: Path) -> None:
-    keyring = FileKeyring(tmp_path / "keyring.yml")
+    keyring = FileKeyring(tmp_path / "keyring.json")
     keyring.set_password("ursa", "openai", "token")
 
     keyring.delete_password("ursa", "openai")
@@ -208,12 +221,12 @@ def test_file_keyring_delete_removes_password(tmp_path: Path) -> None:
         keyring.delete_password("ursa", "openai")
 
 
-def test_file_keyring_rejects_invalid_yaml(tmp_path: Path) -> None:
-    path = tmp_path / "keyring.yml"
-    path.write_text("ursa: [", encoding="utf-8")
+def test_file_keyring_rejects_invalid_json(tmp_path: Path) -> None:
+    path = tmp_path / "keyring.json"
+    path.write_text('{"ursa":', encoding="utf-8")
     path.chmod(0o600)
 
-    with pytest.raises(KeyringError, match="not valid YAML"):
+    with pytest.raises(KeyringError, match="not valid JSON"):
         FileKeyring(path).get_password("ursa", "openai")
 
 
@@ -221,7 +234,7 @@ def test_fallback_keyring_prefers_working_system_keyring(
     tmp_path: Path,
 ) -> None:
     system = WorkingKeyring()
-    fallback_path = tmp_path / "keyring.yml"
+    fallback_path = tmp_path / "keyring.json"
     keyring = FallbackKeyring(system, FileKeyring(fallback_path))
 
     keyring.set_password("ursa", "openai", "system-token")
@@ -234,7 +247,7 @@ def test_fallback_keyring_prefers_working_system_keyring(
 def test_fallback_keyring_does_not_override_empty_system_result(
     tmp_path: Path,
 ) -> None:
-    fallback = FileKeyring(tmp_path / "keyring.yml")
+    fallback = FileKeyring(tmp_path / "keyring.json")
     fallback.set_password("ursa", "openai", "file-token")
     keyring = FallbackKeyring(WorkingKeyring(), fallback)
 
@@ -244,7 +257,7 @@ def test_fallback_keyring_does_not_override_empty_system_result(
 def test_fallback_keyring_uses_file_when_system_operations_fail(
     tmp_path: Path,
 ) -> None:
-    fallback = FileKeyring(tmp_path / "keyring.yml")
+    fallback = FileKeyring(tmp_path / "keyring.json")
     keyring = FallbackKeyring(FailingKeyring(), fallback)
 
     keyring.set_password("ursa", "openai", "file-token")
@@ -258,8 +271,8 @@ def test_fallback_keyring_uses_file_when_system_operations_fail(
 def test_fallback_keyring_rejects_insecure_file(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "keyring.yml"
-    path.write_text("ursa:\n  openai: token\n", encoding="utf-8")
+    path = tmp_path / "keyring.json"
+    path.write_text('{"ursa":{"openai":"token"}}\n', encoding="utf-8")
     path.chmod(0o644)
     keyring = FallbackKeyring(FailingKeyring(), FileKeyring(path))
 
@@ -274,9 +287,13 @@ def test_get_keyring_wraps_without_replacing_system_backend(
 
     system = WorkingKeyring()
     monkeypatch.setattr("keyring.core._keyring_backend", system)
+    get_keyring.cache_clear()
 
-    configured = get_keyring()
+    try:
+        configured = get_keyring()
 
-    assert keyring.get_keyring() is system
-    assert configured.system is system
-    assert get_keyring() is configured
+        assert keyring.get_keyring() is system
+        assert configured.system is system
+        assert get_keyring() is configured
+    finally:
+        get_keyring.cache_clear()

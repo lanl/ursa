@@ -5,14 +5,14 @@ URSA can read secrets from environment variables or from a keyring. It prefers
 the operating system credential store through the Python
 [keyring package](https://pypi.org/project/keyring/). If a system keyring
 operation fails, URSA transparently falls back to
-`~/.config/ursa/keyring.yml`.
+`~/.config/ursa/keyring.json`.
 
 On POSIX systems, the fallback file is created with `0600` permissions. URSA
 refuses to read or modify an existing fallback file with any group,
 other-user, or executable permission bits; permissions more restrictive than
 `0600` are accepted. On Windows, where POSIX permission bits do not represent
 access control, the file inherits the per-user ACL from the user's profile.
-The fallback is a plain-text YAML file, so protect it like any other
+The fallback is a plain-text JSON file, so protect it like any other
 credential file.
 
 ## Store a secret in the keyring

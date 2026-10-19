@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import tempfile
 from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
 
 import keyring
-import yaml
 from filelock import FileLock
 from keyring.backend import KeyringBackend
 from keyring.errors import KeyringError, PasswordDeleteError
 
-_DEFAULT_KEYRING_PATH = Path("~/.config/ursa/keyring.yml")
 _ALLOWED_MODE = 0o600
 _HAS_POSIX_FILE_MODES = os.name == "posix"
 
@@ -24,21 +24,16 @@ class InsecureKeyringPermissionsError(KeyringError):
 
 
 class FileKeyring(KeyringBackend):
-    """Store keyring entries in a permission-checked YAML file."""
+    """Store keyring entries in a permission-checked JSON file."""
 
     priority = 0
 
     def __init__(self, path: Path | None = None) -> None:
         super().__init__()
-        self._path = path
-
-    @property
-    def path(self) -> Path:
-        """Return the configured path, expanding the current user's home."""
-        return (
-            self._path
-            if self._path is not None
-            else _DEFAULT_KEYRING_PATH.expanduser()
+        self.path = (
+            Path("~/.config/ursa/keyring.json").expanduser()
+            if path is None
+            else path
         )
 
     @property
@@ -84,10 +79,10 @@ class FileKeyring(KeyringBackend):
             with os.fdopen(descriptor, encoding="utf-8") as stream:
                 descriptor = -1
                 try:
-                    raw = yaml.safe_load(stream)
-                except yaml.YAMLError as e:
+                    raw = json.load(stream)
+                except json.JSONDecodeError as e:
                     raise KeyringError(
-                        f"Fallback keyring file is not valid YAML: {path}"
+                        f"Fallback keyring file is not valid JSON: {path}"
                     ) from e
         finally:
             if descriptor >= 0:
@@ -133,7 +128,8 @@ class FileKeyring(KeyringBackend):
                 os.fchmod(descriptor, mode)
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 descriptor = -1
-                yaml.safe_dump(data, stream, sort_keys=True)
+                json.dump(data, stream, indent=2, sort_keys=True)
+                stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, path)
@@ -200,16 +196,10 @@ class FallbackKeyring(KeyringBackend):
             self.fallback.delete_password(service, username)
 
 
-_cached_keyring: FallbackKeyring | None = None
-
-
+@cache
 def get_keyring() -> FallbackKeyring:
     """Return URSA's native-first keyring without changing global state."""
     system = keyring.get_keyring()
     if isinstance(system, FallbackKeyring):
         return system
-
-    global _cached_keyring
-    if _cached_keyring is None or _cached_keyring.system is not system:
-        _cached_keyring = FallbackKeyring(system)
-    return _cached_keyring
+    return FallbackKeyring(system)
