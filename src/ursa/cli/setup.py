@@ -320,6 +320,31 @@ class _State:
                 provider,
             )
             self.verified["provider"].setdefault(name, None)
+        for config_key, model_name, model_type in (
+            ("llm_model", "llm", ChatModelConfig),
+            ("emb_model", "embedding", EmbModelConfig),
+        ):
+            if config_key in self.base or model_name in self.models:
+                continue
+            value = payload.get(config_key)
+            if value is None:
+                continue
+            if not isinstance(value, Mapping):
+                raise SetupError(
+                    f"Installer default {config_key} must be a mapping."
+                )
+            provider = value.get("inference_provider")
+            if not isinstance(provider, str) or provider not in self.providers:
+                continue
+            try:
+                model = model_type.model_validate(value)
+            except ValidationError as exc:
+                raise SetupError(
+                    f"Installer default {config_key} is invalid: {exc}"
+                ) from None
+            if isinstance(model.api_key, SecretStr):
+                raise SetupError("Installer defaults contain a secret.")
+            self.models[model_name] = model
         for name, value in payload.get("mcp_servers", {}).items():
             name = _name(name, "MCP server name")
             if name in self.providers:
@@ -1174,7 +1199,7 @@ class SetupApp(App[SetupAction]):
                     else {}
                 ),
             }).resolve(name)
-            self._status("#provider-error", VALIDATING)
+            self._status("#provider-error", f"{VALIDATING} Validating {name}")
             models = await asyncio.to_thread(list_provider_models, typed)
             if not models:
                 raise SetupError("The provider returned no models.")

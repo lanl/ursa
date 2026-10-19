@@ -466,6 +466,15 @@ def test_installer_config_routes_complete_recipe(monkeypatch, tmp_path):
   "inference_providers": [
     {"name": "company", "base_url": "https://models.example/v1"}
   ],
+  "llm_model": {
+    "model": "chat-default",
+    "inference_provider": "company"
+  },
+  "emb_model": {
+    "model": "embedding-default",
+    "model_provider": "openai",
+    "inference_provider": "company"
+  },
   "mcp_servers": {}
 }
 """

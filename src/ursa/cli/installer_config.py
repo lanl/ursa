@@ -11,6 +11,8 @@ INSTALLER_CONFIG_FIELDS = frozenset({
     "extras",
     "extra_packages",
     "inference_providers",
+    "llm_model",
+    "emb_model",
     "mcp_servers",
 })
 

@@ -21,6 +21,8 @@ installer with `--config`. The object supports these fields:
 | `extras` | Array of strings | `["dashboard"]` | URSA extras to install. |
 | `extra_packages` | Array of requirement strings | `[]` | Additional packages to install. |
 | `inference_providers` | Array of provider objects with `name` | `[]` | Provider defaults shown in setup. |
+| `llm_model` | Model configuration object | None | Default chat model shown in setup. |
+| `emb_model` | Model configuration object | None | Default embedding model shown in setup. |
 | `mcp_servers` | Object keyed by server name | `{}` | MCP server defaults shown in setup. |
 
 Provider defaults use the normal inference-provider configuration with an added
@@ -40,8 +42,11 @@ provide its formatting template without a value:
 Named keyring and environment-variable references are safe to include when a
 site needs to share one credential between entries. Do not put API keys,
 tokens, or passwords in the payload. Setup collects credential values and
-stores them in the operating-system keyring. Existing provider and MCP entries in
-`~/.config/ursa/config.yaml` take precedence over site defaults.
+stores them in the operating-system keyring. Model defaults use the normal
+model configuration shape and must name an `inference_provider`. A model
+default is ignored when that provider is not configured. Existing provider,
+model, and MCP entries in `~/.config/ursa/config.yaml` take precedence over
+site defaults.
 
 See [Models and inference providers][models-and-inference-providers] and
 [Secrets][secrets] for the corresponding configuration formats.
@@ -85,6 +90,16 @@ cat <<'JSON' >"$config"
       "base_url": "https://api.anthropic.com"
     }
   ],
+  "llm_model": {
+    "model": "gpt-5.4",
+    "model_provider": "openai",
+    "inference_provider": "company"
+  },
+  "emb_model": {
+    "model": "text-embedding-3-large",
+    "model_provider": "openai",
+    "inference_provider": "company"
+  },
   "mcp_servers": {
     "company_tools": {
       "transport": "streamable_http",
