@@ -6,7 +6,6 @@ import json
 import os
 import stat
 import tempfile
-from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
 
@@ -30,11 +29,7 @@ class FileKeyring(KeyringBackend):
 
     def __init__(self, path: Path | None = None) -> None:
         super().__init__()
-        self.path = (
-            Path("~/.config/ursa/keyring.json").expanduser()
-            if path is None
-            else path
-        )
+        self.path = path or Path.home() / ".config" / "ursa" / "keyring.json"
 
     @property
     def lock_path(self) -> Path:
@@ -56,8 +51,7 @@ class FileKeyring(KeyringBackend):
         return mode
 
     def _write_lock(self) -> FileLock:
-        path = self.path
-        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         return FileLock(self.lock_path, mode=_ALLOWED_MODE)
 
     def _read(self) -> tuple[dict[str, dict[str, str]], int]:
@@ -74,50 +68,29 @@ class FileKeyring(KeyringBackend):
                 f"Could not open fallback keyring file {path}: {e}"
             ) from e
 
-        try:
-            mode = self._validate_stat(path, os.fstat(descriptor))
-            with os.fdopen(descriptor, encoding="utf-8") as stream:
-                descriptor = -1
-                try:
-                    raw = json.load(stream)
-                except json.JSONDecodeError as e:
-                    raise KeyringError(
-                        f"Fallback keyring file is not valid JSON: {path}"
-                    ) from e
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-
-        if raw is None:
-            return {}, mode
-        if not isinstance(raw, Mapping):
-            raise KeyringError(
-                f"Fallback keyring file must contain a mapping: {path}"
-            )
-
-        data: dict[str, dict[str, str]] = {}
-        for service, passwords in raw.items():
-            if not isinstance(service, str) or not isinstance(
-                passwords, Mapping
-            ):
+        with os.fdopen(descriptor, encoding="utf-8") as stream:
+            mode = self._validate_stat(path, os.fstat(stream.fileno()))
+            try:
+                data = json.load(stream)
+            except json.JSONDecodeError as e:
                 raise KeyringError(
-                    f"Fallback keyring file has an invalid entry: {path}"
-                )
-            entries: dict[str, str] = {}
-            for username, password in passwords.items():
-                if not isinstance(username, str) or not isinstance(
-                    password, str
-                ):
-                    raise KeyringError(
-                        f"Fallback keyring file has an invalid entry: {path}"
-                    )
-                entries[username] = password
-            data[service] = entries
+                    f"Fallback keyring file is not valid JSON: {path}"
+                ) from e
+
+        if not isinstance(data, dict) or any(
+            not isinstance(passwords, dict)
+            or any(
+                not isinstance(password, str) for password in passwords.values()
+            )
+            for passwords in data.values()
+        ):
+            raise KeyringError(
+                f"Fallback keyring file has an invalid entry: {path}"
+            )
         return data, mode
 
     def _write(self, data: dict[str, dict[str, str]], mode: int) -> None:
         path = self.path
-        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             dir=path.parent,
             prefix=f".{path.name}.",

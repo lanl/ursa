@@ -85,20 +85,12 @@ def test_file_keyring_creates_pretty_json_with_mode_600(
     if os.name != "nt":
         assert file_mode(path) == 0o600
     contents = path.read_text(encoding="utf-8")
-    assert json.loads(contents) == {
+    expected = {
         "ursa": {"openai": "token"},
         "ursa-ai": {"dashboard:default:llm": "other"},
     }
-    assert contents == (
-        "{\n"
-        '  "ursa": {\n'
-        '    "openai": "token"\n'
-        "  },\n"
-        '  "ursa-ai": {\n'
-        '    "dashboard:default:llm": "other"\n'
-        "  }\n"
-        "}\n"
-    )
+    assert json.loads(contents) == expected
+    assert contents == f"{json.dumps(expected, indent=2, sort_keys=True)}\n"
     assert keyring.get_password("ursa", "openai") == "token"
     assert keyring.get_password("ursa", "missing") is None
     assert isinstance(keyring, KeyringBackend)
@@ -107,7 +99,7 @@ def test_file_keyring_creates_pretty_json_with_mode_600(
 def test_file_keyring_uses_ursa_config_path_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
     keyring = FileKeyring()
     keyring.set_password("ursa", "openai", "token")
@@ -221,12 +213,22 @@ def test_file_keyring_delete_removes_password(tmp_path: Path) -> None:
         keyring.delete_password("ursa", "openai")
 
 
-def test_file_keyring_rejects_invalid_json(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("contents", "error"),
+    [
+        ('{"ursa":', "not valid JSON"),
+        ("[]", "invalid entry"),
+        ('{"ursa":{"openai":1}}', "invalid entry"),
+    ],
+)
+def test_file_keyring_rejects_invalid_contents(
+    tmp_path: Path, contents: str, error: str
+) -> None:
     path = tmp_path / "keyring.json"
-    path.write_text('{"ursa":', encoding="utf-8")
+    path.write_text(contents, encoding="utf-8")
     path.chmod(0o600)
 
-    with pytest.raises(KeyringError, match="not valid JSON"):
+    with pytest.raises(KeyringError, match=error):
         FileKeyring(path).get_password("ursa", "openai")
 
 
