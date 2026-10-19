@@ -5,7 +5,9 @@ URSA can read secrets from environment variables or from a keyring. It prefers
 the operating system credential store through the Python
 [keyring package](https://pypi.org/project/keyring/). If a system keyring
 operation fails, URSA transparently falls back to
-`~/.config/ursa/keyring.json`.
+`keyring.json` alongside the highest-priority user configuration file. This is
+normally `~/.config/ursa/keyring.json` on Linux and follows `XDG_CONFIG_HOME`
+when it is set.
 
 On POSIX systems, the fallback file is created with `0600` permissions. URSA
 refuses to read or modify an existing fallback file with any group,
