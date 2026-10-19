@@ -113,8 +113,6 @@ class _PathUrsa:
 DoctorCheck = Callable[[DoctorContext], CheckResult]
 ProgressCallback = Callable[[int, int, CheckResult], None]
 
-_SPINNER_NAME = "dots"  # ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏
-
 
 def _configuration_error(heading: str) -> CheckResult:
     return CheckResult(
@@ -987,7 +985,7 @@ def _run_human_checks(context: DoctorContext, console: Console) -> CheckResult:
     try:
         status = console.status(
             _progress_text(0, len(BUILTIN_CHECKS)),
-            spinner=_SPINNER_NAME,
+            spinner="dots",
             spinner_style="cyan",
             refresh_per_second=12.5,
         )
