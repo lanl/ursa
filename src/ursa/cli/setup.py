@@ -270,7 +270,12 @@ class _State:
     def _provider(name: str, value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise SetupError(f"Inference provider '{name}' must be a mapping.")
-        parsed = InferenceProviderConfig.model_validate(value)
+        try:
+            parsed = InferenceProviderConfig.model_validate(value)
+        except ValidationError as exc:
+            raise SetupError(
+                f"Inference provider '{name}' is invalid: {exc}"
+            ) from None
         result = deepcopy(value)
         result.pop("ssl_verify", None)
         if isinstance(parsed.api_key, SecretReference):
@@ -280,9 +285,16 @@ class _State:
     def defaults(self, payload: Mapping[str, Any]) -> None:
         seen = set()
         for item in payload.get("inference_providers", []):
-            assert isinstance(item, dict) and set(item) == {"name", "base_url"}
-            name = _name(item["name"], "Provider name")
-            base = _url(item["base_url"], "Provider URL")
+            if not isinstance(item, dict):
+                raise SetupError("Provider defaults must be mappings.")
+            value = deepcopy(item)
+            try:
+                name = _name(value.pop("name"), "Provider name")
+                base = _url(value["base_url"], "Provider URL")
+            except KeyError as exc:
+                raise SetupError(
+                    f"Provider default is missing '{exc.args[0]}'."
+                ) from None
             if name in seen:
                 raise SetupError(f"Provider default '{name}' is duplicated.")
             seen.add(name)
@@ -294,16 +306,18 @@ class _State:
                 "127.0.0.1",
                 "::1",
             }
+            value["base_url"] = base
+            if "api_key" not in value and not local:
+                value["api_key"] = SecretReference(keyring=True)
+            provider = self._provider(name, value)
+            if isinstance(
+                InferenceProviderConfig.model_validate(provider).api_key,
+                SecretStr,
+            ):
+                raise SetupError("Installer defaults contain a secret.")
             self.providers.setdefault(
                 name,
-                {
-                    "base_url": base,
-                    **(
-                        {}
-                        if local
-                        else {"api_key": SecretReference(keyring=True)}
-                    ),
-                },
+                provider,
             )
             self.verified["provider"].setdefault(name, None)
         for name, value in payload.get("mcp_servers", {}).items():
@@ -319,8 +333,8 @@ class _State:
                         "auth|token|secret|password|api.key", header, re.I
                     ):
                         raise SetupError("Installer defaults contain a secret.")
-                elif _secret_template(secret):
-                    raise SetupError("Installer defaults contain a secret.")
+                elif reference := _secret_template(secret):
+                    value["headers"][header] = reference
                 elif "template" in secret:
                     value["headers"][header] = SecretTemplate.model_validate({
                         **secret,
@@ -489,6 +503,8 @@ class ApiKeyEntry(Vertical):
             )
 
     def rename(self, name: str) -> None:
+        if not name:
+            return
         select = self.query_one(f"#{self.prefix}-source", Select)
         source, old = select.value, self.entry_name
         self.entry_name = name

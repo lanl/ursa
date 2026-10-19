@@ -177,21 +177,37 @@ def test_installer_defaults_add_providers_and_mcp_without_replacing(tmp_path):
         "inference_providers": [
             {"name": "company", "base_url": "https://replacement.test/v1"},
             {"name": "ollama", "base_url": "http://localhost:11434"},
+            {
+                "name": "hosted",
+                "base_url": "https://models.example/v1",
+                "reasoning_effort": "high",
+                "api_key": {"keyring": "shared"},
+            },
         ],
         "mcp_servers": {
             "search": {
                 "transport": "streamable_http",
                 "url": "https://search.example/mcp",
-                "headers": {"Authorization": {"template": "Bearer %s"}},
+                "headers": {
+                    "Authorization": {
+                        "keyring": "shared",
+                        "template": "Bearer %s",
+                    }
+                },
             }
         },
     })
 
     assert state.providers["company"]["base_url"] == "https://models.example/v1"
     assert state.providers["ollama"] == {"base_url": "http://localhost:11434"}
+    assert state.providers["hosted"] == {
+        "base_url": "https://models.example/v1",
+        "reasoning_effort": "high",
+        "api_key": SecretReference(keyring="shared"),
+    }
     assert PROVIDER_DEFAULT_URLS["company"] == "https://replacement.test/v1"
     assert state.mcps["search"]["headers"]["Authorization"] == (
-        SecretTemplate(keyring=True, template="Bearer %s")
+        SecretTemplate(keyring="shared", template="Bearer %s")
     )
 
 
@@ -202,6 +218,16 @@ def test_installer_defaults_reject_duplicate_names_and_secrets(tmp_path):
             "inference_providers": [
                 {"name": "same", "base_url": "https://one.test/v1"},
                 {"name": "same", "base_url": "https://two.test/v1"},
+            ]
+        })
+    with pytest.raises(SetupError, match="contain a secret"):
+        state.defaults({
+            "inference_providers": [
+                {
+                    "name": "unsafe",
+                    "base_url": "https://models.example/v1",
+                    "api_key": "secret",
+                }
             ]
         })
     with pytest.raises(SetupError, match="contain a secret"):
@@ -371,6 +397,28 @@ async def test_shared_key_widget_supports_environment_and_none(tmp_path):
         )
         source.value = MCP_TOKEN_NONE
         assert entry.values() == CredentialValue()
+
+
+@pytest.mark.asyncio
+async def test_empty_provider_name_stays_on_form_with_validation_error(
+    tmp_path,
+):
+    app = SetupApp(tmp_path / "config.yaml")
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        name = app.query_one("#provider-name", Input)
+        source = app.query_one("#provider-key-source", Select)
+
+        name.value = ""
+        await pilot.pause()
+
+        assert source.value == "openai"
+        await pilot.click("#provider-save")
+        assert app.page == "provider"
+        assert "must start with a letter" in str(
+            app.query_one("#provider-error", Static).content
+        )
 
 
 @pytest.mark.asyncio

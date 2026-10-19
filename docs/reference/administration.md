@@ -20,13 +20,14 @@ installer with `--config`. The object supports these fields:
 | `python_version` | String | `"3.13"` | Python version for URSA. |
 | `extras` | Array of strings | `["dashboard"]` | URSA extras to install. |
 | `extra_packages` | Array of requirement strings | `[]` | Additional packages to install. |
-| `inference_providers` | Array of `{name, base_url}` objects | `[]` | Provider defaults shown in setup. |
+| `inference_providers` | Array of provider objects with `name` | `[]` | Provider defaults shown in setup. |
 | `mcp_servers` | Object keyed by server name | `{}` | MCP server defaults shown in setup. |
 
-Provider defaults contain only `name` and `base_url`. MCP defaults use the
-normal [MCP server configuration][mcp-server-configuration] shape, excluding
-credentials. To prompt for an MCP bearer token, provide its formatting template
-without a value:
+Provider defaults use the normal inference-provider configuration with an added
+`name` field. MCP defaults use the normal
+[MCP server configuration][mcp-server-configuration] shape. To prompt for a
+bearer token using a keyring entry named after the provider or MCP server,
+provide its formatting template without a value:
 
 ```json
 {
@@ -36,10 +37,10 @@ without a value:
 }
 ```
 
-Do not put API keys, tokens, passwords, keyring references, or environment
-secret references in the payload. Setup collects credentials and stores them in
-the operating-system keyring, or records the environment-variable name chosen
-by the user. Existing provider and MCP entries in
+Named keyring and environment-variable references are safe to include when a
+site needs to share one credential between entries. Do not put API keys,
+tokens, or passwords in the payload. Setup collects credential values and
+stores them in the operating-system keyring. Existing provider and MCP entries in
 `~/.config/ursa/config.yaml` take precedence over site defaults.
 
 See [Models and inference providers][models-and-inference-providers] and

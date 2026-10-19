@@ -12,6 +12,7 @@ from argparse import SUPPRESS
 from importlib.metadata import PackageNotFoundError, metadata
 from importlib.metadata import version as package_version
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 TOOL_PACKAGE = "ursa-ai"
 DEFAULT_GIT_REPOSITORY = "https://github.com/lanl/ursa"
@@ -280,7 +281,22 @@ def _uv_install() -> tuple[Path, Path]:
 
 def _source(requirement: dict) -> str:
     if git := requirement.get("git"):
-        ref = next(
+        parsed = urlsplit(git)
+        query = []
+        receipt_ref = None
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            if key == "rev":
+                receipt_ref = value
+            else:
+                query.append((key, value))
+        repository = urlunsplit((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query),
+            "",
+        ))
+        ref = receipt_ref or next(
             (
                 requirement.get(key)
                 for key in ("branch", "tag", "rev")
@@ -288,7 +304,8 @@ def _source(requirement: dict) -> str:
             ),
             None,
         )
-        return f" @ git+{git}{f'@{ref}' if ref else ''}"
+        fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+        return f" @ git+{repository}{f'@{ref}' if ref else ''}{fragment}"
     if url := requirement.get("url"):
         return f" @ {url}"
     if path := requirement.get("directory") or requirement.get("path"):
