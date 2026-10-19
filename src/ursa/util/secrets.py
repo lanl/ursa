@@ -214,7 +214,7 @@ def _non_blank(value: str | None) -> str | None:
 
 
 class SecretReference(BaseModel):
-    """A reference to a secret in the environment or system keyring."""
+    """A reference to a secret in the environment or keyring."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -253,9 +253,7 @@ class SecretReference(BaseModel):
             raise ValueError("keyring=true requires a default username")
         value = get_keyring().get_password("ursa", username)
         if value is None:
-            raise ValueError(
-                f"No secret found in the system keyring for '{username}'"
-            )
+            raise ValueError(f"No secret found in the keyring for '{username}'")
         return SecretStr(value)
 
     def get_secret_value(

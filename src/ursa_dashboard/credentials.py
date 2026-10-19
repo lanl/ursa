@@ -34,7 +34,7 @@ class CredentialStore(Protocol):
 
 
 class KeyringCredentialStore:
-    """Store dashboard credentials in the operating system credential store."""
+    """Store dashboard credentials in the keyring."""
 
     def __init__(self, *, service_name: str = "ursa-ai") -> None:
         self.service_name = service_name
@@ -52,7 +52,7 @@ class KeyringCredentialStore:
             )
         except Exception as e:
             raise CredentialStoreError(
-                "The operating system credential store could not save the key."
+                "The keyring could not save the key."
             ) from e
 
     def get_secret(self, credential_id: str) -> str | None:
@@ -62,7 +62,7 @@ class KeyringCredentialStore:
             )
         except Exception as e:
             raise CredentialStoreError(
-                "The operating system credential store could not read the key."
+                "The keyring could not read the key."
             ) from e
 
     def delete_secret(self, credential_id: str) -> None:
@@ -73,12 +73,12 @@ class KeyringCredentialStore:
             keyring.delete_password(self.service_name, credential_id)
         except Exception as e:
             raise CredentialStoreError(
-                "The operating system credential store could not remove the key."
+                "The keyring could not remove the key."
             ) from e
 
 
 class MemoryCredentialStore:
-    """In-memory credential store for tests and embedded integrations."""
+    """In-memory keyring for tests and embedded integrations."""
 
     def __init__(self) -> None:
         self._values: dict[str, str] = {}
@@ -135,7 +135,7 @@ def store_api_key(
 def read_api_key(
     store: CredentialStore, *, credential_id: str
 ) -> tuple[str, str] | None:
-    """Read and validate a bound key from the secure credential store."""
+    """Read and validate a bound key from the keyring."""
     raw = store.get_secret(credential_id)
     if raw is None:
         return None

@@ -1,4 +1,4 @@
-"""Manage URSA credentials in the operating-system keyring."""
+"""Manage URSA credentials in the keyring."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def add_auth_subcommands(subparsers) -> None:
     subparsers.add_subcommand(
         "auth",
         auth_parser,
-        help="Manage credentials in the system keyring",
+        help="Manage credentials in the keyring",
         dest="subcommand",
     )
     auth_subparsers = auth_parser.add_subcommands(required=True)
@@ -54,7 +54,7 @@ def add_auth_subcommands(subparsers) -> None:
     )
     login_parser.add_argument("--handler", default=None, help=SUPPRESS)
     auth_subparsers.add_subcommand(
-        "login", login_parser, help="Store credentials in the system keyring"
+        "login", login_parser, help="Store credentials in the keyring"
     )
     login_parser.set_defaults(handler=login)
 
