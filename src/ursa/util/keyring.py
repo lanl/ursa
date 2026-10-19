@@ -11,12 +11,14 @@ from pathlib import Path
 
 import keyring
 import yaml
+from filelock import FileLock
 from keyring.backend import KeyringBackend
 from keyring.errors import KeyringError, PasswordDeleteError
 
 _DEFAULT_KEYRING_PATH = Path("~/.config/ursa/keyring.yml")
 _ALLOWED_MODE = 0o600
-_file_lock = threading.RLock()
+_HAS_POSIX_FILE_MODES = os.name == "posix"
+_thread_lock = threading.RLock()
 
 
 class InsecureKeyringPermissionsError(KeyringError):
@@ -41,6 +43,11 @@ class FileKeyring(KeyringBackend):
             else _DEFAULT_KEYRING_PATH.expanduser()
         )
 
+    @property
+    def lock_path(self) -> Path:
+        """Return the sidecar path used to coordinate fallback updates."""
+        return self.path.with_name(f"{self.path.name}.lock")
+
     @staticmethod
     def _validate_stat(path: Path, result: os.stat_result) -> int:
         mode = stat.S_IMODE(result.st_mode)
@@ -48,12 +55,17 @@ class FileKeyring(KeyringBackend):
             raise KeyringError(
                 f"Fallback keyring path is not a regular file: {path}"
             )
-        if mode & ~_ALLOWED_MODE:
+        if _HAS_POSIX_FILE_MODES and mode & ~_ALLOWED_MODE:
             raise InsecureKeyringPermissionsError(
                 f"Fallback keyring file {path} has permissions {mode:03o}; "
                 "permissions must be 600 or more restrictive"
             )
         return mode
+
+    def _write_lock(self) -> FileLock:
+        path = self.path
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        return FileLock(self.lock_path, mode=_ALLOWED_MODE)
 
     def _read(self) -> tuple[dict[str, dict[str, str]], int]:
         path = self.path
@@ -119,7 +131,8 @@ class FileKeyring(KeyringBackend):
         )
         temporary_path = Path(temporary_name)
         try:
-            os.fchmod(descriptor, mode)
+            if _HAS_POSIX_FILE_MODES:
+                os.fchmod(descriptor, mode)
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 descriptor = -1
                 yaml.safe_dump(data, stream, sort_keys=True)
@@ -133,28 +146,30 @@ class FileKeyring(KeyringBackend):
 
     def get_password(self, service: str, username: str) -> str | None:
         """Return an entry from the fallback keyring, if present."""
-        with _file_lock:
+        with _thread_lock:
             data, _ = self._read()
             return data.get(service, {}).get(username)
 
     def set_password(self, service: str, username: str, password: str) -> None:
         """Set an entry, creating the fallback file with mode 0600."""
-        with _file_lock:
-            data, mode = self._read()
-            data.setdefault(service, {})[username] = password
-            self._write(data, mode)
+        with _thread_lock:
+            with self._write_lock():
+                data, mode = self._read()
+                data.setdefault(service, {})[username] = password
+                self._write(data, mode)
 
     def delete_password(self, service: str, username: str) -> None:
         """Delete an entry from the fallback keyring."""
-        with _file_lock:
-            data, mode = self._read()
-            passwords = data.get(service)
-            if passwords is None or username not in passwords:
-                raise PasswordDeleteError("Password not found")
-            del passwords[username]
-            if not passwords:
-                del data[service]
-            self._write(data, mode)
+        with _thread_lock:
+            with self._write_lock():
+                data, mode = self._read()
+                passwords = data.get(service)
+                if passwords is None or username not in passwords:
+                    raise PasswordDeleteError("Password not found")
+                del passwords[username]
+                if not passwords:
+                    del data[service]
+                self._write(data, mode)
 
 
 class FallbackKeyring(KeyringBackend):
