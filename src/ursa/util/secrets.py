@@ -4,7 +4,7 @@ import json
 import os
 import stat
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from functools import cache
 from os import environ
@@ -29,10 +29,6 @@ from ursa.util.crossplatform import user_config_paths
 _ALLOWED_MODE = 0o600
 
 
-class InsecureKeyringPermissionsError(KeyringError):
-    """Raised when the fallback file's owner or mode is insecure."""
-
-
 class FileKeyring(KeyringBackend):
     """Store keyring entries in a permission-checked JSON file."""
 
@@ -42,17 +38,14 @@ class FileKeyring(KeyringBackend):
         super().__init__()
         self.path = path or user_config_paths()[-1].with_name("keyring.json")
 
-    @property
-    def lock_path(self) -> Path:
-        """Return the sidecar path used to coordinate fallback updates."""
-        return self.path.with_name(f"{self.path.name}.lock")
-
     def _write_lock(self) -> FileLock:
         self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        return FileLock(self.lock_path, mode=_ALLOWED_MODE)
+        return FileLock(
+            self.path.with_name(f"{self.path.name}.lock"), mode=_ALLOWED_MODE
+        )
 
     @contextmanager
-    def _open(self, path: Path, write: bool = False) -> Iterator[TextIO]:
+    def _open(self, path: Path, write: bool = False) -> Generator[TextIO]:
         temporary_path: Path | None = None
         descriptor = -1
         mode = _ALLOWED_MODE
@@ -80,25 +73,25 @@ class FileKeyring(KeyringBackend):
                     raise
                 except OSError as e:
                     raise KeyringError(
-                        f"Could not open fallback keyring file {path}: {e}"
+                        f"Could not open keyring file {path}: {e}"
                     ) from e
 
             result = os.fstat(descriptor)
             mode = stat.S_IMODE(result.st_mode)
             if not stat.S_ISREG(result.st_mode):
                 raise KeyringError(
-                    f"Fallback keyring path is not a regular file: {path}"
+                    f"Keyring path is not a regular file: {path}"
                 )
             if hasattr(os, "getuid"):
                 current_uid = os.getuid()
                 if result.st_uid != current_uid:
-                    raise InsecureKeyringPermissionsError(
-                        f"Fallback keyring file {path} is owned by uid "
+                    raise KeyringError(
+                        f"keyring file {path} is owned by uid "
                         f"{result.st_uid}; current uid is {current_uid}"
                     )
             if os.name == "posix" and mode & ~_ALLOWED_MODE:
-                raise InsecureKeyringPermissionsError(
-                    f"Fallback keyring file {path} has permissions "
+                raise KeyringError(
+                    f"Keyring file {path} has permissions "
                     f"{mode:03o}; permissions must be 600 or more restrictive"
                 )
 
@@ -125,7 +118,7 @@ class FileKeyring(KeyringBackend):
                     data = json.load(stream)
                 except json.JSONDecodeError as e:
                     raise KeyringError(
-                        f"Fallback keyring file is not valid JSON: {self.path}"
+                        f"Keyring file is not valid JSON: {self.path}"
                     ) from e
         except FileNotFoundError:
             return {}
@@ -138,7 +131,7 @@ class FileKeyring(KeyringBackend):
             for passwords in data.values()
         ):
             raise KeyringError(
-                f"Fallback keyring file has an invalid entry: {self.path}"
+                f"Keyring file has an invalid entry: {self.path}"
             )
         return data
 
@@ -148,19 +141,19 @@ class FileKeyring(KeyringBackend):
             stream.write("\n")
 
     def get_password(self, service: str, username: str) -> str | None:
-        """Return an entry from the fallback keyring, if present."""
+        """Return an entry from the keyring, if present."""
         data = self._read()
         return data.get(service, {}).get(username)
 
     def set_password(self, service: str, username: str, password: str) -> None:
-        """Set an entry in the fallback file."""
+        """Set an entry in the keyring file."""
         with self._write_lock():
             data = self._read()
             data.setdefault(service, {})[username] = password
             self._write(data)
 
     def delete_password(self, service: str, username: str) -> None:
-        """Delete an entry from the fallback keyring."""
+        """Delete an entry from the keyring file."""
         with self._write_lock():
             data = self._read()
             passwords = data.get(service)
@@ -208,10 +201,7 @@ class FallbackKeyring(KeyringBackend):
 @cache
 def get_keyring() -> FallbackKeyring:
     """Return URSA's native-first keyring without changing global state."""
-    system = keyring.get_keyring()
-    if isinstance(system, FallbackKeyring):
-        return system
-    return FallbackKeyring(system)
+    return FallbackKeyring(keyring.get_keyring())
 
 
 def _non_blank(value: str | None) -> str | None:
