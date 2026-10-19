@@ -136,6 +136,46 @@ Checkbox {
     color: $error;
 }
 
+.setup-model-advanced {
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+.setup-model-advanced > CollapsibleTitle {
+    height: 1;
+    padding: 0;
+    color: $text-muted;
+    background: transparent;
+}
+
+.setup-model-yaml-editor {
+    height: 12;
+    margin: 0;
+    border: round $border;
+}
+
+.setup-model-yaml-editor.yaml-valid {
+    border: round $success;
+}
+
+.setup-model-yaml-editor.yaml-invalid {
+    border: round $error;
+}
+
+.setup-model-yaml-error {
+    width: 1fr;
+    height: auto;
+    max-height: 6;
+    color: $error;
+    text-wrap: wrap;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
 .setup-advanced {
     width: 100%;
     height: auto;
@@ -206,6 +246,10 @@ Checkbox {
 
 .form-message.success {
     color: $success;
+}
+
+.setup-page > * {
+    margin-right: 1;
 }
 
 .hidden {
