@@ -42,7 +42,6 @@ from ursa.cli.config import (
     EmbModelConfig,
     InferenceProviderConfig,
     ModelConfig,
-    editable_model_values,
 )
 from ursa.cli.runtime import HITL
 from ursa.cli.tui.agent_info import AgentDetails, ToolDetails, load_agent_tools
@@ -700,7 +699,7 @@ class ModelEditor(Vertical):
             "embedding": self.embedding,
         }
         self._yaml_values = {
-            prefix: editable_model_values(config)
+            prefix: config.editable_values()
             for prefix, config in self.drafts.items()
         }
         self.model_catalogs: dict[str, dict[str, ProviderModel]] = {}
@@ -870,7 +869,7 @@ class ModelEditor(Vertical):
 
     @classmethod
     def _dump_yaml(cls, config: ModelConfig) -> str:
-        return cls._dump_yaml_values(editable_model_values(config))
+        return cls._dump_yaml_values(config.editable_values())
 
     @staticmethod
     def _dump_yaml_values(values: Mapping) -> str:
@@ -885,7 +884,7 @@ class ModelEditor(Vertical):
 
     def _update_yaml_values(self, prefix: str, config: ModelConfig) -> None:
         """Patch structured fields without reordering the YAML mapping."""
-        configured = editable_model_values(config)
+        configured = config.editable_values()
         values = self._yaml_values[prefix]
         if config.inference_provider is not None:
             values.pop("base_url", None)

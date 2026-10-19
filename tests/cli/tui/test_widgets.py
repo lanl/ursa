@@ -38,7 +38,6 @@ from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
-    editable_model_values,
 )
 from ursa.cli.tui.app import UrsaTextualApp
 from ursa.cli.tui.tips import TIPS, random_tip, runtime_keymap
@@ -1305,7 +1304,7 @@ async def test_programmatic_control_sync_suppresses_queued_events(
             update={"model": "programmatic-model"}
         )
         model_editor.drafts["chat"] = updated
-        model_editor._yaml_values["chat"] = editable_model_values(updated)
+        model_editor._yaml_values["chat"] = updated.editable_values()
         yaml_editor = model_editor.query_one("#chat-config-yaml", TextArea)
         yaml_editor.text = model_editor._yaml_text("chat")
 

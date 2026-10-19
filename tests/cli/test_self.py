@@ -302,6 +302,9 @@ def test_upgrade_requirement_preserves_uv_git_revision(tmp_path):
     assert build_upgrade_requirement(receipt, extras=["dashboard"]) == (
         "ursa-ai[dashboard] @ git+https://example.test/ursa.git@abc123"
     )
+    assert build_upgrade_requirement(receipt, ref="release") == (
+        "ursa-ai @ git+https://example.test/ursa.git@release"
+    )
 
 
 def test_version_and_ref_requirements(monkeypatch, tmp_path):
@@ -498,7 +501,7 @@ def test_installer_config_loader_rejects_unknown_sections(tmp_path):
     config = tmp_path / "installer.json"
     config.write_text('{"site_metadata": {"name": "example"}}')
 
-    with pytest.raises(SystemExit, match="unknown field: site_metadata"):
+    with pytest.raises(RuntimeError, match="unreleased URSA version"):
         load_installer_config(config)
 
 

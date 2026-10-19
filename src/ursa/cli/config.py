@@ -42,6 +42,23 @@ LoggingLevel = Literal[
     "debug", "info", "notice", "warning", "error", "critical"
 ]
 
+_CONFIG_VALUE_ADAPTER = TypeAdapter(Any)
+
+
+def _config_fallback(value: Any) -> Any:
+    return vars(value) if hasattr(value, "__dict__") else str(value)
+
+
+def config_file_value(value: Any, *, include_defaults: bool = False) -> Any:
+    """Use Pydantic's serializers at JSON/YAML configuration boundaries."""
+    return _CONFIG_VALUE_ADAPTER.dump_python(
+        value,
+        mode="json",
+        exclude_none=not include_defaults,
+        context={"include_defaults": include_defaults},
+        fallback=_config_fallback,
+    )
+
 
 def _strip_blank_optional_strings(value: Any) -> str | Any | None:
     """Normalize blank strings to ``None`` after stripping whitespace.
@@ -406,16 +423,15 @@ class ModelConfig(BaseModel):
             return self.base_url
         return f"{self.inference_provider} - {self.base_url}"
 
-
-def editable_model_values(config: ModelConfig) -> dict[str, Any]:
-    """Return explicit model settings suitable for an editable YAML form."""
-    values = config.model_dump(
-        mode="json",
-        exclude_unset=True,
-        context={"include_defaults": False},
-    )
-    values.setdefault("model", config.model)
-    return values
+    def editable_values(self) -> dict[str, Any]:
+        """Return explicit settings suitable for an editable YAML form."""
+        values = self.model_dump(
+            mode="json",
+            exclude_unset=True,
+            context={"include_defaults": False},
+        )
+        values.setdefault("model", self.model)
+        return values
 
 
 class ChatModelConfig(ModelConfig):
