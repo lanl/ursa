@@ -9,7 +9,6 @@ from ursa.cli.self import (
     TOOL_PACKAGE,
     build_upgrade_requirement,
     get_package_repository,
-    load_installer_config,
     show_status,
     upgrade,
 )
@@ -83,18 +82,7 @@ def test_self_setup_command_routes_without_loading_runtime(
 
     main(["self", "setup", "--config", str(path)])
 
-    called.assert_called_once_with(path, None)
-
-
-def test_self_setup_passes_installer_defaults(monkeypatch, tmp_path):
-    called = MagicMock(return_value=True)
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    monkeypatch.setattr("ursa.cli.setup.run_setup", called)
-    defaults = tmp_path / "defaults.json"
-
-    main(["self", "setup", "--default-json", str(defaults)])
-
-    called.assert_called_once_with(None, defaults)
+    called.assert_called_once_with(path)
 
 
 @pytest.mark.parametrize(
@@ -354,7 +342,7 @@ def test_local_install_can_switch_to_git_ref(monkeypatch, tmp_path):
     monkeypatch.setattr("ursa.cli.self.os.execv", execv)
 
     with pytest.raises(SystemExit, match="0"):
-        upgrade(ref="main", python_version="3.12")
+        upgrade(ref="main")
 
     uv = str(Path("/bin/uv"))
     execv.assert_called_once_with(
@@ -367,7 +355,7 @@ def test_local_install_can_switch_to_git_ref(monkeypatch, tmp_path):
             "--reinstall",
             "--compile-bytecode",
             "--python",
-            "3.12",
+            str(Path(sys.executable).resolve()),
             "--with",
             "pytest>=8",
             "ursa-ai @ git+https://example.test/ursa.git@main",
@@ -456,53 +444,6 @@ def test_main_routes_upgrade_before_config(monkeypatch):
         ref=None,
         clean=False,
     )
-
-
-def test_installer_config_routes_complete_recipe(monkeypatch, tmp_path):
-    config = tmp_path / "installer.json"
-    config.write_text(
-        """
-{
-  "python_version": "3.12",
-  "extras": ["dashboard", "fm"],
-  "extra_packages": ["company-plugin>=1"],
-  "inference_providers": [
-    {"name": "company", "base_url": "https://models.example/v1"}
-  ],
-  "llm_model": {
-    "model": "chat-default",
-    "inference_provider": "company"
-  },
-  "emb_model": {
-    "model": "embedding-default",
-    "model_provider": "openai",
-    "inference_provider": "company"
-  },
-  "mcp_servers": {}
-}
-"""
-    )
-    called = MagicMock(side_effect=SystemExit(0))
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    monkeypatch.setattr("ursa.cli.self.upgrade", called)
-
-    with pytest.raises(SystemExit, match="0"):
-        main(["self", "modify", "--installer-config", str(config)])
-
-    called.assert_called_once_with(
-        extras=["dashboard", "fm"],
-        with_packages=["company-plugin>=1"],
-        python_version="3.12",
-        clean=True,
-    )
-
-
-def test_installer_config_loader_rejects_unknown_sections(tmp_path):
-    config = tmp_path / "installer.json"
-    config.write_text('{"site_metadata": {"name": "example"}}')
-
-    with pytest.raises(RuntimeError, match="unreleased URSA version"):
-        load_installer_config(config)
 
 
 def test_main_self_update_preserves_recipe(monkeypatch):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -12,15 +11,6 @@ from argparse import SUPPRESS
 from importlib.metadata import PackageNotFoundError, metadata
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Annotated, Any
-
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    field_validator,
-)
 
 TOOL_PACKAGE = "ursa-ai"
 DEFAULT_GIT_REPOSITORY = "https://github.com/lanl/ursa"
@@ -29,31 +19,6 @@ _NOT_UV_TOOL = (
     "Cannot update: this copy of URSA was not installed with `uv tool install`.\n"
     "Update it using the same mechanism that installed it."
 )
-
-
-PackageName = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
-
-
-class InstallerConfig(BaseModel):
-    """Non-secret installation and setup defaults supplied by a site."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    python_version: PackageName = "3.13"
-    extras: list[PackageName] = Field(default_factory=lambda: ["dashboard"])
-    extra_packages: list[str] = Field(default_factory=list)
-    inference_providers: list[dict[str, Any]] = Field(default_factory=list)
-    llm_model: dict[str, Any] | None = None
-    emb_model: dict[str, Any] | None = None
-    mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
-
-    @field_validator("extra_packages")
-    @classmethod
-    def _valid_requirements(cls, values: list[str]) -> list[str]:
-        stripped = [value.strip() for value in values]
-        if any(not value or "\n" in value for value in stripped):
-            raise ValueError("requirements must be non-empty single lines")
-        return stripped
 
 
 def _command(commands, name, help, action):
@@ -115,13 +80,7 @@ def add_self_subcommands(subparsers) -> None:
         "--config",
         type=Path,
         default=None,
-        help=("Configuration path (default: ~/.config/ursa/config.yaml)"),
-    )
-    setup.add_argument(
-        "--default-json",
-        type=Path,
-        default=None,
-        help="Non-secret provider and MCP defaults from an installer payload",
+        help="Configuration path (default: platform user config path)",
     )
     _command(commands, "status", "Show installation details", show_status)
     doctor = _command(
@@ -148,12 +107,6 @@ def add_self_subcommands(subparsers) -> None:
     modify.add_argument(
         "--with", dest="with_packages", action="append", default=None
     )
-    modify.add_argument(
-        "--installer-config",
-        type=Path,
-        default=None,
-        help="Apply a non-secret JSON installation recipe",
-    )
     modify.add_argument("--clean", action="store_true")
     source = modify.add_mutually_exclusive_group()
     source.add_argument("--version", help="Install an exact registry version")
@@ -165,7 +118,7 @@ def _setup(args) -> None:
     from ursa.cli.setup import SetupAction, SetupError, run_setup
 
     try:
-        action = run_setup(args.config, args.default_json)
+        action = run_setup(args.config)
     except SetupError as exc:
         raise SystemExit(f"Could not start guided setup: {exc}") from None
 
@@ -182,28 +135,6 @@ def _setup(args) -> None:
 
 
 def _modify(args) -> None:
-    if args.installer_config is not None:
-        if any((
-            args.extra,
-            args.with_packages,
-            args.version,
-            args.ref,
-            args.clean,
-        )):
-            raise SystemExit(
-                "--installer-config cannot be combined with other modify options."
-            )
-        try:
-            config = load_installer_config(args.installer_config)
-        except RuntimeError as exc:
-            raise SystemExit(str(exc)) from None
-        upgrade(
-            extras=config.extras,
-            with_packages=config.extra_packages,
-            python_version=config.python_version,
-            clean=True,
-        )
-        return
     upgrade(
         extras=args.extra,
         with_packages=args.with_packages,
@@ -211,20 +142,6 @@ def _modify(args) -> None:
         ref=args.ref,
         clean=args.clean,
     )
-
-
-def load_installer_config(path: Path) -> InstallerConfig:
-    """Load and validate a site-provided installer payload."""
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return InstallerConfig.model_validate(payload)
-    except (OSError, json.JSONDecodeError, ValidationError) as exc:
-        message = f"Invalid installer configuration: {exc}"
-        if isinstance(exc, ValidationError) and any(
-            error["type"] == "extra_forbidden" for error in exc.errors()
-        ):
-            message += ". Is this configuration for an unreleased URSA version?"
-        raise RuntimeError(message) from None
 
 
 def _read_requirements(receipt: Path) -> list[dict]:
@@ -416,14 +333,12 @@ def upgrade(
     with_packages: list[str] | None = None,
     version: str | None = None,
     ref: str | None = None,
-    python_version: str | None = None,
     clean: bool = False,
 ) -> None:
     """Replace the running process with uv update or install."""
     uv, receipt = _uv_install()
     changed = clean or any(
-        value is not None
-        for value in (extras, with_packages, version, ref, python_version)
+        value is not None for value in (extras, with_packages, version, ref)
     )
     if changed:
         selected = _merge(
@@ -452,7 +367,7 @@ def upgrade(
             "--reinstall",
             "--compile-bytecode",
             "--python",
-            python_version or str(Path(sys.executable).resolve()),
+            str(Path(sys.executable).resolve()),
         ]
         for package in packages:
             argv += ["--with", package]

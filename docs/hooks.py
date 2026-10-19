@@ -29,10 +29,6 @@ TEMPLATES = Environment(
     keep_trailing_newline=True,
 )
 MARKDOWN_LINK = re.compile(r"(!?)\[([^]]+)]\(([^)]+)\)")
-INSTALL_REQUIREMENT = (
-    "URSA_INSTALL_REQUIREMENT="
-    "'ursa-ai @ git+https://github.com/lanl/ursa.git@main'"
-)
 INSTALL_DASHBOARD_REQUIREMENT = (
     "URSA_DASHBOARD_REQUIREMENT="
     "'ursa-ai[dashboard] @ git+https://github.com/lanl/ursa.git@main'"
@@ -190,18 +186,17 @@ def _installer_script() -> str:
     version = os.environ.get("MIKE_DOCS_VERSION", "main")
     if version == "main":
         return script
-    requirement = f"URSA_INSTALL_REQUIREMENT='ursa-ai=={version}'"
-    dashboard = f"URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard]=={version}'"
-    if (
-        INSTALL_REQUIREMENT not in script
-        or INSTALL_DASHBOARD_REQUIREMENT not in script
-    ):
-        raise ValueError(
-            "install.sh is missing its documentation requirement markers"
-        )
-    return script.replace(INSTALL_REQUIREMENT, requirement).replace(
-        INSTALL_DASHBOARD_REQUIREMENT, dashboard
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version) is None:
+        raise ValueError(f"Unsafe MIKE_DOCS_VERSION: {version!r}")
+    dashboard = (
+        f"URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard]=={version}'\n"
+        "URSA_COMMIT=''"
     )
+    if INSTALL_DASHBOARD_REQUIREMENT not in script:
+        raise ValueError(
+            "install.sh is missing its documentation requirement marker"
+        )
+    return script.replace(INSTALL_DASHBOARD_REQUIREMENT, dashboard)
 
 
 def on_files(files: Files, config) -> Files:

@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from docs import hooks
 
 INSTALL_SCRIPT = Path(__file__).parents[2] / "install.sh"
@@ -23,6 +25,7 @@ def _fake_installation(
         '  printf "%s\\n" "$TOOL_BIN"\n'
         'elif [ "$1 $2" = "tool update-shell" ]; then\n'
         '  printf "source %s/env\\n" "$HOME/.local/bin"\n'
+        '  exit "${UPDATE_SHELL_STATUS:-0}"\n'
         "fi\n"
     )
     uv.chmod(0o755)
@@ -31,8 +34,7 @@ def _fake_installation(
         "#!/bin/sh\n"
         'printf "ursa %s\\n" "$*" >> "$INSTALL_LOG"\n'
         'case "$*" in\n'
-        '  "self modify --help") printf "%s\\n" "--installer-config" ;;\n'
-        '  "self setup --help") printf "%s\\n" "--default-json" ;;\n'
+        '  "self setup --help") exit 0 ;;\n'
         '  "--version") printf "%s\\n" "ursa 1.0.0" ;;\n'
         "esac\n"
     )
@@ -46,32 +48,26 @@ def _fake_installation(
     return environment, log, ursa
 
 
-def test_install_script_is_posix_shell_and_runs_guided_setup():
-    subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
-    script = INSTALL_SCRIPT.read_text()
+def _run_installer(environment, *, script=None, check=True):
+    return subprocess.run(
+        ["sh", INSTALL_SCRIPT] if script is None else ["sh"],
+        env=environment,
+        stdin=subprocess.DEVNULL if script is None else None,
+        input=script,
+        capture_output=True,
+        text=True,
+        check=check,
+    )
 
-    assert "https://astral.sh/uv/install.sh" in script
-    assert "--python 3.13" in script
-    assert "self modify --installer-config" in script
-    assert "Usage: install.sh [--config FILE]" in script
-    assert "--config-stdin" not in script
-    assert "tool dir --bin" in script
-    assert '"$ursa_executable" "$@" </dev/tty' in script
-    assert "import json" not in script
-    assert "python3" not in script
+
+def test_install_script_is_posix_shell():
+    subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
 
 
 def test_install_script_uses_existing_uv_and_tool_bin(tmp_path):
     environment, log, _ursa = _fake_installation(tmp_path)
 
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    result = _run_installer(environment)
 
     commands = log.read_text()
     assert (
@@ -112,14 +108,7 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
     environment["UV_INSTALLER"] = str(uv_installer)
     environment["UV_PAYLOAD"] = str(uv_payload)
 
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    result = _run_installer(environment)
 
     assert "Installing uv" in result.stdout
     assert (tmp_path / ".local" / "bin" / "uv").is_file()
@@ -127,98 +116,28 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
     assert "URSA is installed" in result.stdout
 
 
-def test_install_script_rejects_concurrent_installation(tmp_path):
+def test_install_script_selects_requested_commit(tmp_path):
     environment, log, _ursa = _fake_installation(tmp_path)
-    lock = tmp_path / ".cache" / "ursa" / "install.lock"
-    lock.mkdir(parents=True)
+    environment["URSA_COMMIT"] = "0123456789abcdef"
 
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-    )
+    _run_installer(environment)
 
-    assert result.returncode != 0
-    assert "another URSA installation is already running" in result.stderr
-    assert lock.is_dir()
-    assert not log.exists()
-
-
-def test_install_script_applies_json_install_options_from_file(tmp_path):
-    environment, log, _ursa = _fake_installation(tmp_path)
-    config = tmp_path / "installer.json"
-    config.write_text(
-        '{"python_version":"3.12","extras":["dashboard","fm"],'
-        '"extra_packages":["acme-plugin>=1"],'
-        '"inference_providers":[],"mcp_servers":{}}'
-    )
-
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT, "--config", str(config)],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    commands = log.read_text()
     assert (
-        "uv tool install --python 3.13 --force --upgrade --compile-bytecode "
-        "ursa-ai @ git+https://github.com/lanl/ursa.git@main" in commands
+        "git+https://github.com/lanl/ursa.git@0123456789abcdef"
+        in log.read_text()
     )
-    assert f"ursa self modify --installer-config {config}" in commands
-    assert f"ursa self setup --default-json {config}" in result.stdout
 
 
 def test_install_script_explains_release_mismatch(tmp_path):
     environment, _log, ursa = _fake_installation(tmp_path)
-    ursa.write_text("#!/bin/sh\nexit 0\n")
+    ursa.write_text("#!/bin/sh\nexit 1\n")
     ursa.chmod(0o755)
-    config = tmp_path / "installer.json"
-    config.write_text("{}")
 
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT, "--config", str(config)],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_installer(environment, check=False)
 
     assert result.returncode != 0
     assert "may target an unreleased URSA version" in result.stderr
     assert "https://lanl.github.io/ursa/latest/install.sh" in result.stderr
-
-
-def test_install_script_warns_and_lists_all_ursa_paths(tmp_path):
-    bin_dir = tmp_path / "bin"
-    old_bin = tmp_path / "old-bin"
-    tool_bin = tmp_path / "tool-bin"
-    old_bin.mkdir()
-    environment, _log, installed_ursa = _fake_installation(
-        tmp_path,
-        path=f"{bin_dir}:{old_bin}:{tool_bin}:/usr/bin:/bin",
-    )
-    old_ursa = old_bin / "ursa"
-    old_ursa.write_text('#!/bin/sh\nprintf "ursa 0.9.0\\n"\n')
-    old_ursa.chmod(0o755)
-
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    assert "Warning: other URSA executables are also on PATH" in result.stdout
-    assert f"- {old_ursa} (other installation; ursa 0.9.0)" in result.stdout
-    assert f"- {installed_ursa} (installed now; ursa 1.0.0)" in result.stdout
-    assert f"resolves 'ursa' to: {old_ursa}" in result.stdout
 
 
 def test_install_script_repairs_uv_tool_bin_missing_from_path(tmp_path):
@@ -227,13 +146,7 @@ def test_install_script_repairs_uv_tool_bin_missing_from_path(tmp_path):
         tmp_path, path=f"{bin_dir}:/usr/bin:/bin"
     )
 
-    result = subprocess.run(
-        ["sh", INSTALL_SCRIPT],
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_installer(environment)
 
     assert result.returncode == 0
     assert "Adding uv's tool directory to PATH" in result.stdout
@@ -242,15 +155,63 @@ def test_install_script_repairs_uv_tool_bin_missing_from_path(tmp_path):
     assert "URSA is installed" in result.stdout
 
 
+def test_install_succeeds_when_shell_path_was_already_updated(tmp_path):
+    bin_dir = tmp_path / "bin"
+    environment, _log, _ursa = _fake_installation(
+        tmp_path, path=f"{bin_dir}:/usr/bin:/bin"
+    )
+    environment["UPDATE_SHELL_STATUS"] = "2"
+
+    result = _run_installer(environment)
+
+    assert result.returncode == 0
+    assert "add " in result.stdout
+    assert " to PATH" in result.stdout
+
+
+def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
+    environment, _log, ursa = _fake_installation(tmp_path)
+    old_ursa = Path(environment["PATH"].split(":", 1)[0]) / "ursa"
+    old_ursa.write_text("#!/bin/sh\nexit 0\n")
+    old_ursa.chmod(0o755)
+
+    result = _run_installer(environment)
+
+    assert f"Warning: {old_ursa} currently takes precedence over {ursa}" in (
+        result.stdout
+    )
+    assert f"Run '{ursa}'" in result.stdout
+
+
 def test_docs_builds_release_and_main_installers(monkeypatch):
     monkeypatch.setenv("MIKE_DOCS_VERSION", "2.4.1")
     release = hooks._installer_script()
-    assert "URSA_INSTALL_REQUIREMENT='ursa-ai==2.4.1'" in release
     assert "URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard]==2.4.1'" in release
 
     monkeypatch.setenv("MIKE_DOCS_VERSION", "main")
     main = hooks._installer_script()
     assert "git+https://github.com/lanl/ursa.git@main" in main
+
+
+def test_release_installer_ignores_commit_override_and_streams(
+    monkeypatch, tmp_path
+):
+    environment, log, _ursa = _fake_installation(tmp_path)
+    environment["URSA_COMMIT"] = "0123456789abcdef"
+    monkeypatch.setenv("MIKE_DOCS_VERSION", "2.4.1")
+
+    _run_installer(environment, script=hooks._installer_script())
+
+    commands = log.read_text()
+    assert "ursa-ai[dashboard]==2.4.1" in commands
+    assert "0123456789abcdef" not in commands
+
+
+def test_docs_rejects_unsafe_installer_version(monkeypatch):
+    monkeypatch.setenv("MIKE_DOCS_VERSION", "1.0'; touch /tmp/owned; '")
+
+    with pytest.raises(ValueError, match="Unsafe MIKE_DOCS_VERSION"):
+        hooks._installer_script()
 
 
 def test_docs_workflow_publishes_versioned_installers():

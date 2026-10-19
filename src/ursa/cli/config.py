@@ -1,6 +1,8 @@
 import json
 import logging
+import os
 import re
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from os import environ
@@ -9,6 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Literal, Self
 
 import yaml
+from filelock import FileLock
 from jsonargparse import Namespace
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.embeddings import Embeddings, init_embeddings
@@ -620,6 +623,15 @@ class UrsaConfig(BaseModel):
         """Return this config after applying canonical resolution."""
         return resolve_ursa_config(self)
 
+    def editable_values(self) -> dict[str, Any]:
+        """Return explicitly configured values suitable for a config file."""
+        _reject_literal_secrets(self)
+        return self.model_dump(
+            mode="json",
+            exclude_unset=True,
+            context={"include_defaults": False},
+        )
+
     def model_merge(self, *others: dict[str, Any]) -> Self:
         """Merge higher-priority config layers and validate the result once."""
         fields_set = set(self.model_fields_set)
@@ -670,8 +682,9 @@ class UrsaConfig(BaseModel):
         return {
             server: _serialize_server_config(
                 config,
-                exclude_defaults=not include_defaults,
-                exclude_none=not include_defaults,
+                exclude_defaults=False,
+                exclude_none=False,
+                exclude_unset=not include_defaults,
             )
             for server, config in mcp_servers.items()
         }
@@ -679,7 +692,11 @@ class UrsaConfig(BaseModel):
 
 def load_config_file(path: Path) -> dict[str, Any]:
     """Load raw config-file data for merging before validation."""
-    loader = yaml.safe_load if path.suffix in [".yaml", ".yml"] else json.load
+    loader = (
+        yaml.safe_load
+        if path.suffix.lower() in {".yaml", ".yml"}
+        else json.load
+    )
     with open(path, "r") as fid:
         data = loader(fid)
 
@@ -690,6 +707,59 @@ def load_config_file(path: Path) -> dict[str, Any]:
             f"Configuration file '{path}' must contain a mapping at its root"
         )
     return deep_interp_env(data)
+
+
+def _reject_literal_secrets(value: Any) -> None:
+    if isinstance(value, SecretStr):
+        raise ValueError(
+            "Literal secrets cannot be saved; use an environment or keyring "
+            "secret reference"
+        )
+    if isinstance(value, BaseModel):
+        for name in type(value).model_fields:
+            _reject_literal_secrets(getattr(value, name))
+        _reject_literal_secrets(value.model_extra)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _reject_literal_secrets(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_literal_secrets(item)
+
+
+def save_config_file(path: Path, config: UrsaConfig) -> Path:
+    """Atomically write an editable configuration with private permissions."""
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(f"{path.suffix}.lock")
+    with FileLock(lock_path, mode=0o600):
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+        )
+        temporary = Path(temporary_name)
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                values = config.editable_values()
+                if path.suffix.lower() in {".yaml", ".yml"}:
+                    yaml.safe_dump(
+                        values,
+                        stream,
+                        sort_keys=False,
+                        allow_unicode=True,
+                    )
+                else:
+                    json.dump(values, stream, indent=2)
+                    stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    return path
 
 
 def config_path_from_namespace(cfg: Namespace) -> Path | None:
