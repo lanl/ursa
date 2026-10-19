@@ -566,7 +566,10 @@ def test_keyring_credentials_are_primed_once_on_the_calling_thread(
         calls.append((service, username, current_thread()))
         return "token"
 
-    monkeypatch.setattr("keyring.get_password", get_password)
+    monkeypatch.setattr(
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(get_password=get_password),
+    )
 
     context = doctor_mod._prime_keyring_credentials(
         DoctorContext(config=config)
@@ -591,7 +594,10 @@ def test_keyring_failure_is_reused_without_blocking_other_checks(monkeypatch):
         calls.append(current_thread())
         raise RuntimeError("keychain is locked")
 
-    monkeypatch.setattr("keyring.get_password", get_password)
+    monkeypatch.setattr(
+        "ursa.util.secrets.get_keyring",
+        lambda: SimpleNamespace(get_password=get_password),
+    )
     context = doctor_mod._prime_keyring_credentials(
         DoctorContext(config=config)
     )
