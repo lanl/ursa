@@ -258,6 +258,22 @@ def test_fallback_keyring_choice_persists_across_wrappers(
     assert restarted.get_password("ursa", "openai") == "fallback-token"
 
 
+def test_existing_wrapper_rechecks_persisted_fallback_choice(
+    tmp_path: Path,
+) -> None:
+    fallback_path = tmp_path / "fallback.json"
+    first = FallbackKeyring(FailingSystemKeyring(), FileKeyring(fallback_path))
+    system = FileKeyring(tmp_path / "system.json")
+    system.set_password("ursa", "openai", "stale-system-token")
+    existing = FallbackKeyring(system, FileKeyring(fallback_path))
+
+    first.set_password("ursa", "openai", "fallback-token")
+    existing.set_password("ursa", "openai", "updated-fallback-token")
+
+    assert existing.get_password("ursa", "openai") == "updated-fallback-token"
+    assert system.get_password("ursa", "openai") == "stale-system-token"
+
+
 def test_existing_fallback_file_does_not_hide_native_credentials(
     tmp_path: Path,
 ) -> None:
