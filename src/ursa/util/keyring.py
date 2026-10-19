@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
-import threading
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -18,7 +17,6 @@ from keyring.errors import KeyringError, PasswordDeleteError
 _DEFAULT_KEYRING_PATH = Path("~/.config/ursa/keyring.yml")
 _ALLOWED_MODE = 0o600
 _HAS_POSIX_FILE_MODES = os.name == "posix"
-_thread_lock = threading.RLock()
 
 
 class InsecureKeyringPermissionsError(KeyringError):
@@ -26,7 +24,7 @@ class InsecureKeyringPermissionsError(KeyringError):
 
 
 class FileKeyring(KeyringBackend):
-    """Store keyring entries in a YAML file readable only by its owner."""
+    """Store keyring entries in a permission-checked YAML file."""
 
     priority = 0
 
@@ -146,30 +144,27 @@ class FileKeyring(KeyringBackend):
 
     def get_password(self, service: str, username: str) -> str | None:
         """Return an entry from the fallback keyring, if present."""
-        with _thread_lock:
-            data, _ = self._read()
-            return data.get(service, {}).get(username)
+        data, _ = self._read()
+        return data.get(service, {}).get(username)
 
     def set_password(self, service: str, username: str, password: str) -> None:
-        """Set an entry, creating the fallback file with mode 0600."""
-        with _thread_lock:
-            with self._write_lock():
-                data, mode = self._read()
-                data.setdefault(service, {})[username] = password
-                self._write(data, mode)
+        """Set an entry in the fallback file."""
+        with self._write_lock():
+            data, mode = self._read()
+            data.setdefault(service, {})[username] = password
+            self._write(data, mode)
 
     def delete_password(self, service: str, username: str) -> None:
         """Delete an entry from the fallback keyring."""
-        with _thread_lock:
-            with self._write_lock():
-                data, mode = self._read()
-                passwords = data.get(service)
-                if passwords is None or username not in passwords:
-                    raise PasswordDeleteError("Password not found")
-                del passwords[username]
-                if not passwords:
-                    del data[service]
-                self._write(data, mode)
+        with self._write_lock():
+            data, mode = self._read()
+            passwords = data.get(service)
+            if passwords is None or username not in passwords:
+                raise PasswordDeleteError("Password not found")
+            del passwords[username]
+            if not passwords:
+                del data[service]
+            self._write(data, mode)
 
 
 class FallbackKeyring(KeyringBackend):
