@@ -713,7 +713,7 @@ def check_mcp_servers(context: DoctorContext) -> CheckResult:
         return _configuration_error("MCP servers")
     if not context.config.mcp_servers:
         return CheckResult(
-            "MCP servers", CheckStatus.WARN, "No MCP servers are configured"
+            "MCP servers", CheckStatus.OK, "No MCP servers are configured"
         )
     checks = asyncio.run(
         _probe_mcp_servers(
