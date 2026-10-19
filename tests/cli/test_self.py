@@ -293,6 +293,17 @@ def test_upgrade_requirement_preserves_file_source(tmp_path):
     )
 
 
+def test_upgrade_requirement_preserves_uv_git_revision(tmp_path):
+    receipt = _receipt(
+        tmp_path / "receipt.toml",
+        '{ name = "ursa-ai", git = "https://example.test/ursa.git?rev=abc123" }',
+    )
+
+    assert build_upgrade_requirement(receipt, extras=["dashboard"]) == (
+        "ursa-ai[dashboard] @ git+https://example.test/ursa.git@abc123"
+    )
+
+
 def test_version_and_ref_requirements(monkeypatch, tmp_path):
     registry = _receipt(
         tmp_path / "registry.toml",
