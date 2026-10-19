@@ -1039,11 +1039,93 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 continue
         return task.result()
 
+    @staticmethod
+    def _stream_subprocess_chunk(stream: Any, chunk: bytes) -> None:
+        try:
+            binary_stream = getattr(stream, "buffer", None)
+            if binary_stream is not None:
+                binary_stream.write(chunk)
+                binary_stream.flush()
+            else:
+                stream.write(chunk.decode(errors="replace"))
+                stream.flush()
+        except (OSError, UnicodeError, ValueError):
+            # Console output is best effort; captured output remains available.
+            pass
+
+    async def _communicate(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        stream_output: bool,
+    ) -> tuple[bytes, bytes]:
+        if not stream_output:
+            return await process.communicate()
+        if process.stdout is None or process.stderr is None:
+            raise RuntimeError("Subprocess output pipes are unavailable")
+
+        async def read_stream(
+            reader: asyncio.StreamReader, destination: Any
+        ) -> bytes:
+            chunks = []
+            while chunk := await reader.read(64 * 1024):
+                chunks.append(chunk)
+                self._stream_subprocess_chunk(destination, chunk)
+            return b"".join(chunks)
+
+        stdout, stderr = await asyncio.gather(
+            read_stream(process.stdout, sys.stdout),
+            read_stream(process.stderr, sys.stderr),
+        )
+        await process.wait()
+        return stdout, stderr
+
+    def _record_command_failure(
+        self,
+        path: Path | None,
+        command: tuple[str, ...],
+        *,
+        return_code: int | None,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+    ) -> str:
+        if path is None:
+            return ""
+        absolute = path.absolute()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as log:
+                log.write("=== failed build command ===\n")
+                log.write(f"command: {shlex.join(command)}\n")
+                code = (
+                    "not started" if return_code is None else str(return_code)
+                )
+                log.write(f"exit code: {code}\n")
+                log.write("--- stdout ---\n")
+                log.write(stdout.decode(errors="replace"))
+                if stdout and not stdout.endswith(b"\n"):
+                    log.write("\n")
+                log.write("--- stderr ---\n")
+                log.write(stderr.decode(errors="replace"))
+                if stderr and not stderr.endswith(b"\n"):
+                    log.write("\n")
+                log.write("\n")
+            path.chmod(0o600)
+        except OSError as exc:
+            self.logger.error(
+                "Could not write failed build output to %s: %s", absolute, exc
+            )
+            return f"\nBuild log could not be written to {absolute}: {exc}"
+        self.logger.error("Build output written to %s", absolute)
+        return f"\nBuild log: {absolute}"
+
     async def _run(
         self,
         *command: str,
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
+        stream_output: bool = False,
+        failure_log_path: Path | None = None,
     ) -> None:
         try:
             process = await asyncio.create_subprocess_exec(
@@ -1056,20 +1138,42 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 env=env,
             )
         except OSError as exc:
-            raise RuntimeError(
-                f"Could not start command ({' '.join(command)}): {exc}"
-            ) from exc
-        try:
-            stdout, stderr = await process.communicate()
-        except asyncio.CancelledError:
-            await self._await_cleanup(self._terminate_host_process(process))
-            raise
-        if process.returncode:
-            detail = stderr.decode(errors="replace") or stdout.decode(
-                errors="replace"
+            log_note = self._record_command_failure(
+                failure_log_path,
+                command,
+                return_code=None,
+                stderr=str(exc).encode(),
             )
             raise RuntimeError(
-                f"Command failed ({' '.join(command)}): {detail}"
+                f"Could not start command ({shlex.join(command)}): {exc}"
+                f"{log_note}"
+            ) from exc
+        communication = asyncio.create_task(
+            self._communicate(process, stream_output=stream_output)
+        )
+        try:
+            stdout, stderr = await asyncio.shield(communication)
+        except asyncio.CancelledError:
+            await self._await_cleanup(self._terminate_host_process(process))
+            await self._await_cleanup(communication)
+            raise
+        if process.returncode:
+            log_note = self._record_command_failure(
+                failure_log_path,
+                command,
+                return_code=process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+            details = []
+            if stdout:
+                details.append("stdout:\n" + stdout.decode(errors="replace"))
+            if stderr:
+                details.append("stderr:\n" + stderr.decode(errors="replace"))
+            detail = "\n".join(details) or "<no output>"
+            raise RuntimeError(
+                f"Command failed ({shlex.join(command)}) with exit code "
+                f"{process.returncode}:\n{detail}{log_note}"
             )
 
     async def _build_with(
@@ -1082,6 +1186,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         context_dir: Path,
         build_args: tuple[str, ...],
         target: str | None,
+        build_log_path: Path,
     ) -> None:
         builder_name = Path(builder).name
         tag = f"ursa-harbor-{output.stem}-{builder_name}-{secrets.token_hex(8)}"
@@ -1109,6 +1214,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 "--file",
                 str(dockerfile_path),
                 str(context_dir),
+                stream_output=True,
+                failure_log_path=build_log_path,
             )
             with tempfile.TemporaryDirectory(
                 prefix="ursa-harbor-oci-"
@@ -1116,15 +1223,28 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                 archive = Path(temp_dir) / "image.tar"
                 if builder_name == "buildah":
                     await self._run(
-                        builder, "push", tag, f"docker-archive:{archive}"
+                        builder,
+                        "push",
+                        tag,
+                        f"docker-archive:{archive}",
+                        failure_log_path=build_log_path,
                     )
                 else:
-                    await self._run(builder, "save", "-o", str(archive), tag)
+                    await self._run(
+                        builder,
+                        "save",
+                        "-o",
+                        str(archive),
+                        tag,
+                        failure_log_path=build_log_path,
+                    )
                 await self._run(
                     self._instance_runtime(),
                     "build",
                     str(temporary),
                     f"docker-archive://{archive}",
+                    stream_output=True,
+                    failure_log_path=build_log_path,
                 )
                 temporary.replace(output)
         finally:
@@ -1168,6 +1288,8 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     "podman, or docker"
                 )
             temporary = output.with_suffix(".tmp.sif")
+            build_log_path = output.with_suffix(".build.log")
+            build_log_path.unlink(missing_ok=True)
             failures = []
             for builder in builders:
                 try:
@@ -1180,12 +1302,21 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                         context_dir,
                         build_args,
                         target,
+                        build_log_path,
                     )
+                    build_log_path.unlink(missing_ok=True)
                     return output
                 except RuntimeError as exc:
                     failures.append(str(exc))
+            log_note = (
+                f" Build log: {build_log_path.absolute()}"
+                if build_log_path.is_file()
+                else ""
+            )
             raise RuntimeError(
-                "No container builder succeeded: " + "; ".join(failures)
+                "No container builder succeeded: "
+                + "; ".join(failures)
+                + log_note
             )
 
     def _compose_key(self, service: str) -> str:

@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import sys
 import weakref
 from pathlib import Path
 
@@ -67,6 +68,84 @@ def _environment(
 
 def _option_value(command: list[str], option: str) -> str:
     return command[command.index(option) + 1]
+
+
+async def test_run_streams_and_records_complete_failed_build_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    environment = _environment(tmp_path)
+    build_log = tmp_path / "cached-image.build.log"
+
+    with pytest.raises(RuntimeError) as raised:
+        await environment._run(
+            sys.executable,
+            "-c",
+            "import sys; print('builder stdout'); "
+            "print('builder stderr', file=sys.stderr); raise SystemExit(7)",
+            stream_output=True,
+            failure_log_path=build_log,
+        )
+
+    captured = capsys.readouterr()
+    assert "builder stdout" in captured.out
+    assert "builder stderr" in captured.err
+    message = str(raised.value)
+    assert "builder stdout" in message
+    assert "builder stderr" in message
+    assert f"Build log: {build_log}" in message
+    log = build_log.read_text()
+    assert "exit code: 7" in log
+    assert "builder stdout" in log
+    assert "builder stderr" in log
+    assert build_log.stat().st_mode & 0o777 == 0o600
+
+
+async def test_build_with_streams_builder_and_apptainer_builds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    environment = _environment(tmp_path)
+    output = tmp_path / "cached-image.sif"
+    temporary = tmp_path / "cached-image.tmp.sif"
+    build_log = tmp_path / "cached-image.build.log"
+    observed: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    async def capture(*command: str, **kwargs: object) -> None:
+        observed.append((command, kwargs))
+        if command[:2] == (environment._runtime_path, "build"):
+            Path(command[2]).write_bytes(b"sif")
+
+    monkeypatch.setattr(environment, "_run", capture)
+
+    await environment._build_with(
+        "docker",
+        output,
+        temporary,
+        False,
+        environment._dockerfile_path,
+        environment.environment_dir,
+        (),
+        None,
+        build_log,
+    )
+
+    builder_build = observed[0]
+    assert builder_build[0][:2] == ("docker", "build")
+    assert builder_build[1] == {
+        "stream_output": True,
+        "failure_log_path": build_log,
+    }
+    apptainer_build = next(
+        item
+        for item in observed
+        if item[0][:2] == (environment._runtime_path, "build")
+    )
+    assert apptainer_build[1] == {
+        "stream_output": True,
+        "failure_log_path": build_log,
+    }
+    save = next(item for item in observed if item[0][:2] == ("docker", "save"))
+    assert save[1] == {"failure_log_path": build_log}
+    assert output.read_bytes() == b"sif"
 
 
 async def test_direct_runtime_commands_use_isolated_host_workdirs(
