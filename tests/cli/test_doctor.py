@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import subprocess
 from pathlib import Path
 from threading import Barrier, Event
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from ursa.cli.doctor import (
     check_configuration,
     check_embedding_models,
     check_inference_providers,
+    check_installation_integrity,
     check_llm_models,
     check_mcp_servers,
     check_ursa_on_path,
@@ -84,6 +86,105 @@ def test_configuration_check_reports_no_files_and_resolution_failure():
     assert result.checks[0].status is CheckStatus.OK
     assert result.checks[1].status is CheckStatus.ERROR
     assert result.checks[1].message == "merge failed"
+
+
+def test_installation_integrity_checks_receipt_dependencies_and_storage(
+    monkeypatch, tmp_path
+):
+    prefix = tmp_path / "tool"
+    prefix.mkdir()
+    (prefix / "uv-receipt.toml").write_text(
+        '[tool]\nrequirements = [{ name = "ursa-ai", specifier = ">=1" }]\n',
+        encoding="utf-8",
+    )
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="Checked 42 packages", stderr=""
+    )
+    run = MagicMock(return_value=completed)
+    monkeypatch.setattr(doctor_mod.sys, "prefix", str(prefix))
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda _name: "/bin/uv")
+    monkeypatch.setattr(doctor_mod.subprocess, "run", run)
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
+
+    result = check_installation_integrity(
+        DoctorContext(config=SimpleNamespace(workspace=tmp_path / "workspace"))
+    )
+
+    assert result.status is CheckStatus.OK
+    assert [check.name for check in result.checks] == [
+        "uv tool receipt",
+        "Python dependencies",
+        "Workspace",
+        "URSA cache",
+    ]
+    assert all(check.status is CheckStatus.OK for check in result.checks)
+    assert "ursa-ai>=1" in result.checks[0].message
+    run.assert_called_once_with(
+        [
+            "/bin/uv",
+            "pip",
+            "check",
+            "--python",
+            doctor_mod.sys.executable,
+            "--no-progress",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=55,
+    )
+
+
+def test_installation_integrity_reports_independent_failures(
+    monkeypatch, tmp_path
+):
+    prefix = tmp_path / "tool"
+    prefix.mkdir()
+    (prefix / "uv-receipt.toml").write_text(
+        "[tool]\nrequirements = []\n", encoding="utf-8"
+    )
+    workspace = tmp_path / "not-a-directory"
+    workspace.write_text("occupied", encoding="utf-8")
+    monkeypatch.setattr(doctor_mod.sys, "prefix", str(prefix))
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda _name: "/bin/uv")
+    monkeypatch.setattr(
+        doctor_mod.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="broken dependency"
+        ),
+    )
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
+
+    result = check_installation_integrity(
+        DoctorContext(config=SimpleNamespace(workspace=workspace))
+    )
+
+    assert [check.status for check in result.checks] == [
+        CheckStatus.ERROR,
+        CheckStatus.ERROR,
+        CheckStatus.ERROR,
+        CheckStatus.OK,
+    ]
+    assert "invalid" in result.checks[0].message.lower()
+    assert result.checks[1].message == "broken dependency"
+
+
+def test_installation_integrity_warns_when_uv_or_config_are_unavailable(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(doctor_mod.sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda _name: None)
+    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
+
+    result = check_installation_integrity(DoctorContext(config=None))
+
+    assert [check.status for check in result.checks] == [
+        CheckStatus.OK,
+        CheckStatus.WARN,
+        CheckStatus.WARN,
+        CheckStatus.OK,
+    ]
 
 
 def test_result_tree_aggregates_status_and_drives_both_renderers():
@@ -581,11 +682,7 @@ def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
         checks=(CheckResult("broken", CheckStatus.ERROR, "boom"),),
     )
 
-    def fake_checks(_context):
-        print("unstructured probe output")
-        return report
-
-    monkeypatch.setattr(doctor_mod, "run_checks", fake_checks)
+    monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
     return_code = main(["self", "doctor", "--json"])
@@ -605,7 +702,7 @@ def test_human_output_falls_back_to_json_when_rich_rendering_fails(
     monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
     monkeypatch.setattr(
         doctor_mod,
-        "report_renderable",
+        "_print_report",
         MagicMock(side_effect=RuntimeError("renderer failed")),
     )
 
