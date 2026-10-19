@@ -2,9 +2,9 @@
 
 Avoid storing API keys and other credentials directly in configuration files.
 URSA can read secrets from environment variables or from a keyring. It prefers
-the operating system credential store through the Python [keyring
-package](https://pypi.org/project/keyring/). If a system keyring operation
-fails, URSA transparently falls back to `keyring.json` alongside the
+the platform's native keyring through the Python [keyring
+package](https://pypi.org/project/keyring/). If a native keyring operation fails,
+URSA transparently falls back to `keyring.json` alongside the
 [highest-priority user configuration
 file](./files-and-env.md#configuration-precedence).
 
