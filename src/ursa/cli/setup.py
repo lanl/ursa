@@ -39,7 +39,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from ursa.cli.auth import KEYRING_SERVICE
+from ursa.cli.auth import KEYRING_SERVICE, keyring_usernames
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -63,7 +63,7 @@ from ursa.util.mcp import (
     start_mcp_client,
     validate_server_parameters,
 )
-from ursa.util.secrets import SecretReference, iter_secret_references
+from ursa.util.secrets import SecretReference, SecretTemplate
 
 CUSTOM_PROVIDER_URL = "__ursa_custom_provider_url__"
 PROVIDER_DEFAULT_URL = "__ursa_provider_default_url__"
@@ -120,12 +120,27 @@ def _url(value: str, noun: str) -> str:
     return value
 
 
-def _secret(value: Any) -> dict[str, Any] | None:
-    if isinstance(value, dict) and (
-        value.get("env") or value.get("keyring") not in (None, False)
-    ):
-        return deepcopy(value)
-    return None
+def _secret(value: Any) -> SecretReference | None:
+    reference = SecretReference.maybe_validate(value)
+    return reference if isinstance(reference, SecretReference) else None
+
+
+def _secret_template(value: Any) -> SecretTemplate | None:
+    reference = SecretTemplate.maybe_validate(value)
+    return reference if isinstance(reference, SecretTemplate) else None
+
+
+def _serializable(value: Any) -> Any:
+    """Convert typed secret references at a YAML/config boundary."""
+    if isinstance(value, SecretReference):
+        return value.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, Mapping):
+        return {key: _serializable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_serializable(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_serializable(item) for item in value)
+    return deepcopy(value)
 
 
 def _friendly(exc: Exception, mcp: bool = False) -> str:
@@ -164,19 +179,31 @@ def _mcp(name: str, value: Any) -> dict[str, Any]:
     serialized = _serialize_server_config(
         parsed, exclude_defaults=False, exclude_none=True
     )
-    return {
+    result = {
         key: deepcopy(serialized[key])
         for key in ("transport", *value)
         if key in serialized
     }
+    if headers := getattr(parsed, "headers", None):
+        result["headers"] = deepcopy(headers)
+    return result
 
 
-def _auth(config: Mapping[str, Any]) -> tuple[str, dict[str, Any] | None]:
+def _auth(config: Mapping[str, Any]) -> tuple[str, SecretTemplate | None]:
     headers = config.get("headers") or {}
     for header, value in headers.items():
-        if reference := _secret(value):
+        if reference := _secret_template(value):
             return str(header), reference
     return "Authorization", None
+
+
+@dataclass(frozen=True)
+class CredentialValue:
+    """A credential reference plus an optional unsaved keyring value."""
+
+    reference: SecretReference | None = None
+    pending: str | None = None
+    username: str | None = None
 
 
 @dataclass
@@ -242,9 +269,11 @@ class _State:
     def _provider(name: str, value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise SetupError(f"Inference provider '{name}' must be a mapping.")
-        InferenceProviderConfig.model_validate(value)
+        parsed = InferenceProviderConfig.model_validate(value)
         result = deepcopy(value)
         result.pop("ssl_verify", None)
+        if isinstance(parsed.api_key, SecretReference):
+            result["api_key"] = parsed.api_key
         return result
 
     def defaults(self, payload: Mapping[str, Any]) -> None:
@@ -268,7 +297,11 @@ class _State:
                 name,
                 {
                     "base_url": base,
-                    **({} if local else {"api_key": {"keyring": True}}),
+                    **(
+                        {}
+                        if local
+                        else {"api_key": SecretReference(keyring=True)}
+                    ),
                 },
             )
             self.verified["provider"].setdefault(name, None)
@@ -285,19 +318,21 @@ class _State:
                         "auth|token|secret|password|api.key", header, re.I
                     ):
                         raise SetupError("Installer defaults contain a secret.")
-                elif _secret(secret):
+                elif _secret_template(secret):
                     raise SetupError("Installer defaults contain a secret.")
                 elif "template" in secret:
-                    secret["keyring"] = True
+                    value["headers"][header] = SecretTemplate.model_validate({
+                        **secret,
+                        "keyring": True,
+                    })
             self.mcps[name] = _mcp(name, value)
             self.verified["mcp"][name] = None
 
     def provider(self, name: str):
         values = deepcopy(self.providers[name])
         reference = _secret(values.get("api_key"))
-        username = name if not reference else reference.get("keyring")
-        username = name if username is True else username
-        secret = self.pending.get(str(username))
+        username = reference.keyring_username(name) if reference else None
+        secret = self.pending.get(username) if username else None
         if secret:
             values["api_key"] = SecretStr(secret)
         if not values.get("model_provider"):
@@ -321,8 +356,8 @@ class _State:
         if not self.providers or not self.models.get("llm"):
             raise SetupError("A provider and language model are required.")
         config = deepcopy(self.base)
-        config["inference_providers"] = deepcopy(dict(self.providers))
-        config["mcp_servers"] = deepcopy(dict(self.mcps))
+        config["inference_providers"] = _serializable(self.providers)
+        config["mcp_servers"] = _serializable(self.mcps)
         config["llm_model"] = editable_model_values(self.models["llm"])
         embedding = self.models.get("embedding")
         if embedding:
@@ -401,13 +436,13 @@ class ApiKeyEntry(Vertical):
     def configure(
         self,
         name: str,
-        reference: dict[str, Any] | None,
+        reference: SecretReference | None,
         known: list[str],
         no_key: bool = False,
     ) -> None:
         self.entry_name, self.known = name, known
-        keyring_name = reference.get("keyring") if reference else None
-        if reference and reference.get("env"):
+        keyring_name = reference.keyring if reference else None
+        if reference and reference.env:
             source = API_KEY_ENV
         elif no_key and not reference:
             source = MCP_TOKEN_NONE
@@ -421,7 +456,7 @@ class ApiKeyEntry(Vertical):
         with self.prevent(Select.Changed):
             select.set_options(options)
             select.value = source
-        initial = reference.get("env", "") if source == API_KEY_ENV else ""
+        initial = reference.env if source == API_KEY_ENV and reference else ""
         self._source(source, initial)
 
     def _source(self, source: object, initial: str = "") -> None:
@@ -474,21 +509,21 @@ class ApiKeyEntry(Vertical):
         key.value = secret or ""
         key.placeholder = f"Enter the API Key for the {self.subject}"
 
-    def values(self) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    def values(self) -> CredentialValue:
         source = self.query_one(f"#{self.prefix}-source", Select).value
         value = self.query_one(f"#{self.prefix}-key", Input).value.strip()
         if source == MCP_TOKEN_NONE:
-            return None, None, None
+            return CredentialValue()
         if source == API_KEY_ENV:
             if not ENV_NAME.fullmatch(value):
                 raise SetupError("Enter a valid environment variable name.")
-            return {"env": value}, None, None
+            return CredentialValue(SecretReference(env=value))
         username = str(source)
-        reference = {
-            "keyring": username if username != self.entry_name else True
-        }
+        reference = SecretReference(
+            keyring=username if username != self.entry_name else True
+        )
         pending = value if value and value != self.loaded else None
-        return reference, pending, username
+        return CredentialValue(reference, pending, username)
 
     @on(Select.Changed)
     def source_changed(self, event: Select.Changed) -> None:
@@ -933,27 +968,16 @@ class SetupApp(App[SetupAction]):
             "inference_providers": self.state.providers,
             "mcp_servers": self.state.mcps,
         }
-        return sorted({
-            str(
-                reference.keyring
-                if isinstance(reference.keyring, str)
-                else default
-            )
-            for _, reference, default in iter_secret_references(config)
-            if reference.keyring not in (None, False)
-        })
+        return keyring_usernames(config)
 
     def _runtime_mcp(self, name: str, config: dict[str, Any]):
         result = deepcopy(config)
         header, reference = _auth(result)
         if reference:
-            key = reference.get("keyring")
-            username = name if key is True else str(key)
-            secret = self.state.pending.get(username)
+            username = reference.keyring_username(name)
+            secret = self.state.pending.get(username) if username else None
             if secret:
-                result["headers"][header] = (
-                    reference.get("template", "%s") % secret
-                )
+                result["headers"][header] = reference.template % secret
         return result
 
     async def _probe_mcp(self, name: str, config: dict[str, Any]) -> None:
@@ -1043,7 +1067,9 @@ class SetupApp(App[SetupAction]):
         if kind == "provider":
             summary = f"Base URL: {value.get('base_url') or 'default'}"
         else:
-            summary = yaml.safe_dump(value, sort_keys=False).strip()
+            summary = yaml.safe_dump(
+                _serializable(value), sort_keys=False
+            ).strip()
         return title, summary
 
     async def _tabs(self, kind: str) -> None:
@@ -1106,7 +1132,7 @@ class SetupApp(App[SetupAction]):
                     "Base URL",
                 )
             )
-            reference, pending, username = self.query_one(
+            credential = self.query_one(
                 "#provider-key-api-key", ApiKeyEntry
             ).values()
             values = deepcopy(self.state.providers.get(original or "", {}))
@@ -1114,13 +1140,17 @@ class SetupApp(App[SetupAction]):
             values.update({} if base is None else {"base_url": base})
             if base is None:
                 values.pop("base_url", None)
-            if reference:
-                values["api_key"] = reference
+            if credential.reference:
+                values["api_key"] = credential.reference
             else:
                 values.pop("api_key", None)
             typed = InferenceProviderConfig.model_validate({
                 **values,
-                **({"api_key": SecretStr(pending)} if pending else {}),
+                **(
+                    {"api_key": SecretStr(credential.pending)}
+                    if credential.pending
+                    else {}
+                ),
             }).resolve(name)
             self._status("#provider-error", SPINNER)
             models = await asyncio.to_thread(list_provider_models, typed)
@@ -1134,8 +1164,8 @@ class SetupApp(App[SetupAction]):
             self.state.verified["provider"].pop(original, None)
         self.state.providers[name] = values
         self.state.verified["provider"][name] = True
-        if pending and username:
-            self.state.pending[username] = pending
+        if credential.pending and credential.username:
+            self.state.pending[credential.username] = credential.pending
         self._show("providers")
 
     async def _prepare_models(self) -> None:
@@ -1230,7 +1260,7 @@ class SetupApp(App[SetupAction]):
             name or "", reference, self._keys(), reference is None
         )
         editor = self.query_one("#mcp-advanced", AdvancedYamlEditor)
-        editor.set_text(yaml.safe_dump(config, sort_keys=False))
+        editor.set_text(yaml.safe_dump(_serializable(config), sort_keys=False))
         self._toggle_transport(transport)
         self._status("#mcp-validation-status", "○ Not tested")
 
@@ -1249,28 +1279,29 @@ class SetupApp(App[SetupAction]):
             )
             config.pop("url", None)
             config.pop("headers", None)
-            return name, _mcp(name, config), None, None
+            return name, _mcp(name, config), CredentialValue()
         config["url"] = _url(self.query_one("#mcp-url", Input).value, "MCP URL")
         config.pop("command", None)
         config.pop("args", None)
-        reference, pending, username = self.query_one(
-            "#mcp-token-api-key", ApiKeyEntry
-        ).values()
+        credential = self.query_one("#mcp-token-api-key", ApiKeyEntry).values()
         header, old = _auth(config)
         headers = config.setdefault("headers", {})
         if old:
             headers.pop(header, None)
-        if reference:
-            template = (old or {}).get("template", "Bearer %s")
-            headers[header] = {**reference, "template": template}
+        if credential.reference:
+            headers[header] = SecretTemplate.model_validate({
+                **credential.reference.model_dump(exclude_none=True),
+                "template": old.template if old else "Bearer %s",
+            })
         if not headers:
             config.pop("headers")
-        return name, _mcp(name, config), pending, username
+        return name, _mcp(name, config), credential
 
     async def _save_mcp(self) -> None:
-        pending = username = previous = None
+        credential = CredentialValue()
+        previous = None
         try:
-            name, config, pending, username = self._mcp_values()
+            name, config, credential = self._mcp_values()
             original = self.editing["mcp"]
             if (
                 name in self.state.providers
@@ -1278,17 +1309,17 @@ class SetupApp(App[SetupAction]):
                 and name != original
             ):
                 raise SetupError(f"The name '{name}' is already configured.")
-            if pending and username:
-                previous = self.state.pending.get(username)
-                self.state.pending[username] = pending
+            if credential.pending and credential.username:
+                previous = self.state.pending.get(credential.username)
+                self.state.pending[credential.username] = credential.pending
             self._status("#mcp-validation-status", SPINNER)
             await self._probe_mcp(name, config)
         except Exception as exc:
-            if pending and username:
+            if credential.pending and credential.username:
                 if previous is None:
-                    self.state.pending.pop(username, None)
+                    self.state.pending.pop(credential.username, None)
                 else:
-                    self.state.pending[username] = previous
+                    self.state.pending[credential.username] = previous
             message = _friendly(exc, True)
             self._status("#mcp-validation-status", f"✗ {message}", True)
             self.notify(message, severity="error", markup=False)

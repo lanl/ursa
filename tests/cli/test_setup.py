@@ -21,6 +21,7 @@ from ursa.cli.setup import (
     PROVIDER_DEFAULT_URLS,
     ApiKeyEntry,
     ConfiguredTabs,
+    CredentialValue,
     SetupAction,
     SetupApp,
     SetupError,
@@ -39,6 +40,7 @@ from ursa.cli.tui.widgets import (
     ModelTabs,
 )
 from ursa.util.inference_providers import ProviderModel
+from ursa.util.secrets import SecretReference, SecretTemplate
 
 
 def configured_state(path: Path) -> _State:
@@ -125,7 +127,7 @@ mcp_servers:
 
     assert state.providers["company"] == {
         "base_url": "https://models.example/v1",
-        "api_key": {"env": "COMPANY_KEY"},
+        "api_key": SecretReference(env="COMPANY_KEY"),
     }
     assert state.models["llm"].model == "gpt-test"
     assert state.mcps["tools"]["transport"] == "streamable_http"
@@ -174,10 +176,9 @@ def test_installer_defaults_add_providers_and_mcp_without_replacing(tmp_path):
     assert state.providers["company"]["base_url"] == "https://models.example/v1"
     assert state.providers["ollama"] == {"base_url": "http://localhost:11434"}
     assert PROVIDER_DEFAULT_URLS["company"] == "https://replacement.test/v1"
-    assert state.mcps["search"]["headers"]["Authorization"] == {
-        "keyring": True,
-        "template": "Bearer %s",
-    }
+    assert state.mcps["search"]["headers"]["Authorization"] == (
+        SecretTemplate(keyring=True, template="Bearer %s")
+    )
 
 
 def test_installer_defaults_reject_duplicate_names_and_secrets(tmp_path):
@@ -355,9 +356,11 @@ async def test_shared_key_widget_supports_environment_and_none(tmp_path):
 
         source.value = API_KEY_ENV
         key.value = "COMPANY_API_KEY"
-        assert entry.values() == ({"env": "COMPANY_API_KEY"}, None, None)
+        assert entry.values() == CredentialValue(
+            SecretReference(env="COMPANY_API_KEY")
+        )
         source.value = MCP_TOKEN_NONE
-        assert entry.values() == (None, None, None)
+        assert entry.values() == CredentialValue()
 
 
 @pytest.mark.asyncio
