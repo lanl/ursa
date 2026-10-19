@@ -49,6 +49,7 @@ from ursa.cli.tui.widgets import (
     InformationScreen,
     ModelScreen,
     ModelSelection,
+    ModelTabs,
     PromptArea,
     ThemeScreen,
     ToolMessage,
@@ -795,6 +796,14 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ModelScreen)
+        model_tabs = app.screen.query_one(ModelTabs)
+        assert model_tabs.styles.margin.top == 1
+        assert str(model_tabs.get_tab("chat-model-tab").label) == (
+            "Chat: test-model"
+        )
+        assert str(model_tabs.get_tab("embedding-model-tab").label) == (
+            "Embedding: test-embedding"
+        )
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value
             == "openai"
@@ -886,6 +895,9 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         await app.workers.wait_for_complete()
         app.screen.query_one("#chat-model-name", Select).value = "gpt-5.4"
         await pilot.pause()
+        assert str(model_tabs.get_tab("chat-model-tab").label) == (
+            "Chat: gpt-5.4"
+        )
         app.screen.query_one(
             "#embedding-model-name", Select
         ).value = ModelScreen.CUSTOM_VALUE
@@ -895,6 +907,10 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         app.screen.query_one(
             "#embedding-model-provider", Select
         ).value = ModelScreen.NONE_VALUE
+        await pilot.pause()
+        assert str(model_tabs.get_tab("embedding-model-tab").label) == (
+            "Embedding: private-embedding"
+        )
         await pilot.press("ctrl+enter")
         await pilot.pause()
         await app.workers.wait_for_complete()

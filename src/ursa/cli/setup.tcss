@@ -80,10 +80,6 @@ SelectCurrent {
     width: 100%;
 }
 
-Checkbox {
-    margin-top: 1;
-}
-
 .setup-actions {
     width: 100%;
     height: 4;
@@ -111,77 +107,38 @@ Checkbox {
     margin-bottom: 1;
 }
 
-.provider-summary,
-.mcp-summary {
+ModelEditor {
     width: 100%;
     height: auto;
-    padding: 1 2;
 }
 
-.model-validation {
-    width: 100%;
-    height: 3;
-    padding-top: 1;
-}
-
-.model-validation-status {
-    width: 1fr;
-    height: 2;
-    color: $text-muted;
-}
-
-.model-validation-status.success {
-    color: $success;
-}
-
-.model-validation-status.error {
-    color: $error;
-}
-
-.setup-model-advanced,
-.setup-mcp-advanced {
+ModelEditor .settings-dialog {
     width: 100%;
     height: auto;
-    margin: 0;
     padding: 0;
     border: none;
     background: transparent;
 }
 
-.setup-model-advanced > CollapsibleTitle,
-.setup-mcp-advanced > CollapsibleTitle {
-    height: 1;
-    padding: 0;
-    color: $text-muted;
-    background: transparent;
+ModelEditor .settings-title {
+    display: none;
 }
 
-.setup-model-yaml-editor,
-.setup-mcp-yaml-editor {
-    height: 12;
-    margin: 0;
-    border: round $border;
-}
-
-.setup-model-yaml-editor.yaml-valid,
-.setup-mcp-yaml-editor.yaml-valid {
-    border: round $success;
-}
-
-.setup-model-yaml-editor.yaml-invalid,
-.setup-mcp-yaml-editor.yaml-invalid {
-    border: round $error;
-}
-
-.setup-model-yaml-error,
-.setup-mcp-yaml-error {
-    width: 1fr;
+ModelEditor TabbedContent,
+ModelEditor TabPane {
     height: auto;
-    max-height: 6;
-    color: $error;
-    text-wrap: wrap;
-    overflow-x: hidden;
-    overflow-y: auto;
+}
+
+ModelEditor .settings-actions {
+    width: 100%;
+    height: 4;
+    padding-top: 1;
+    align-horizontal: right;
+}
+
+ModelEditor .settings-actions Button {
+    min-width: 14;
+    margin-left: 1;
 }
 
 #mcp-remote-fields,
@@ -223,14 +180,6 @@ Checkbox {
     margin-left: 1;
 }
 
-.credential-row.selecting .credential-source {
-    width: 100%;
-}
-
-.credential-row.selecting .credential-value {
-    display: none;
-}
-
 .api-key-row {
     height: 3;
 }
@@ -254,20 +203,12 @@ Checkbox {
 }
 
 #provider-url-row.custom-url #provider-url {
-    width: 22;
+    width: 40;
 }
 
 #provider-url-row #provider-url-custom {
     width: 1fr;
     margin-left: 1;
-}
-
-#provider-url-row.selecting #provider-url {
-    width: 100%;
-}
-
-#provider-url-row.selecting #provider-url-custom {
-    display: none;
 }
 
 .form-message {
@@ -280,10 +221,6 @@ Checkbox {
 
 .form-message.error {
     color: $error;
-}
-
-.form-message.success {
-    color: $success;
 }
 
 .setup-page > * {
