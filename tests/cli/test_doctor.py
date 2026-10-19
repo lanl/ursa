@@ -318,6 +318,38 @@ def test_mcp_check_redacts_resolved_header_secret(monkeypatch, header):
     assert result.checks[0].message == "rejected header [REDACTED]"
 
 
+def test_mcp_check_redacts_stdio_environment_values(monkeypatch, capsys):
+    token = "stdio-secret-token"
+    config = UrsaConfig.model_validate({
+        "mcp_servers": {
+            "tools": {
+                "transport": "stdio",
+                "command": "mcp-tool",
+                "env": {"TOOL_TOKEN": token},
+            }
+        }
+    }).resolve()
+
+    def reject(servers):
+        leaked = servers["tools"].env["TOOL_TOKEN"]
+        raise RuntimeError(f"subprocess rejected {leaked}")
+
+    monkeypatch.setattr("ursa.util.mcp.start_mcp_client", reject)
+
+    result = check_mcp_servers(DoctorContext(config=config))
+    report = CheckResult.group("URSA Doctor", [result])
+    json_detail = json.dumps(report.as_dict())
+    monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
+
+    assert doctor_mod.run_doctor(config=config) == 1
+    human_detail = capsys.readouterr().out
+
+    assert token not in json_detail
+    assert token not in human_detail
+    assert "subprocess rejected [REDACTED]" in json_detail
+    assert "subprocess rejected [REDACTED]" in human_detail
+
+
 def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
     report = CheckResult.group(
         "URSA Doctor",
