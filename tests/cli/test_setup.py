@@ -196,6 +196,15 @@ def test_installer_defaults_add_providers_and_mcp_without_replacing(tmp_path):
                 },
             }
         },
+        "llm_model": {
+            "model": "replacement-chat",
+            "inference_provider": "company",
+        },
+        "emb_model": {
+            "model": "replacement-embedding",
+            "model_provider": "openai",
+            "inference_provider": "company",
+        },
     })
 
     assert state.providers["company"]["base_url"] == "https://models.example/v1"
@@ -209,6 +218,35 @@ def test_installer_defaults_add_providers_and_mcp_without_replacing(tmp_path):
     assert state.mcps["search"]["headers"]["Authorization"] == (
         SecretTemplate(keyring="shared", template="Bearer %s")
     )
+    assert state.models["llm"].model == "gpt-test"
+    assert state.models["embedding"].model == "embedding-test"
+
+
+def test_installer_defaults_add_models_only_for_configured_providers(tmp_path):
+    state = _State.load(tmp_path / "config.yaml")
+
+    state.defaults({
+        "inference_providers": [
+            {"name": "company", "base_url": "https://models.example/v1"}
+        ],
+        "llm_model": {
+            "model": "chat-default",
+            "model_provider": "openai",
+            "inference_provider": "company",
+        },
+        "emb_model": {
+            "model": "embedding-default",
+            "model_provider": "openai",
+            "inference_provider": "not-configured",
+        },
+    })
+
+    assert state.models["llm"] == ChatModelConfig(
+        model="chat-default",
+        model_provider="openai",
+        inference_provider="company",
+    )
+    assert "embedding" not in state.models
 
 
 def test_installer_defaults_reject_duplicate_names_and_secrets(tmp_path):
@@ -426,12 +464,26 @@ async def test_provider_is_verified_before_appearing_in_tabs(
     monkeypatch, tmp_path
 ):
     models = [ProviderModel("gpt-test", "openai")]
-    monkeypatch.setattr("ursa.cli.setup.list_provider_models", lambda _: models)
+
+    def list_models(_):
+        return models
+
+    monkeypatch.setattr("ursa.cli.setup.list_provider_models", list_models)
     app = SetupApp(tmp_path / "config.yaml")
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         await app.workers.wait_for_complete()
+
+        async def run_inline(callback, *args):
+            if callback is list_models:
+                assert (
+                    str(app.query_one("#provider-error", Static).content)
+                    == "? Validating openai"
+                )
+            return callback(*args)
+
+        monkeypatch.setattr("ursa.cli.setup.asyncio.to_thread", run_inline)
         app.query_one("#provider-key-key", Input).value = "secret"
         await pilot.click("#provider-save")
         await app.workers.wait_for_complete()

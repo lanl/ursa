@@ -75,6 +75,8 @@ DOCKERFILE
 docker run --rm --interactive --tty \
     --env "URSA_COMMIT=$repository_commit" \
     --env URSA_INSTALLER_SOURCE=/opt/ursa/source-install.sh \
+    --env URSA_LOCAL_INSTALLER=/opt/ursa/install_local.sh \
     --mount "type=bind,src=$installer,dst=/opt/ursa/install.sh,readonly" \
     --mount "type=bind,src=$repository_root/install.sh,dst=/opt/ursa/source-install.sh,readonly" \
+    --mount "type=bind,src=$repository_root/scripts/install_local.sh,dst=/opt/ursa/install_local.sh,readonly" \
     "$image" "$@"
