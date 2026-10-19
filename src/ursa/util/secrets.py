@@ -4,10 +4,12 @@ import json
 import os
 import stat
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import cache
 from os import environ
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, TextIO
 
 import keyring
 from filelock import FileLock
@@ -28,7 +30,7 @@ _ALLOWED_MODE = 0o600
 
 
 class InsecureKeyringPermissionsError(KeyringError):
-    """Raised when the fallback file grants access beyond its owner."""
+    """Raised when the fallback file's owner or mode is insecure."""
 
 
 class FileKeyring(KeyringBackend):
@@ -45,46 +47,88 @@ class FileKeyring(KeyringBackend):
         """Return the sidecar path used to coordinate fallback updates."""
         return self.path.with_name(f"{self.path.name}.lock")
 
-    @staticmethod
-    def _validate_stat(path: Path, result: os.stat_result) -> int:
-        mode = stat.S_IMODE(result.st_mode)
-        if not stat.S_ISREG(result.st_mode):
-            raise KeyringError(
-                f"Fallback keyring path is not a regular file: {path}"
-            )
-        if os.name == "posix" and mode & ~_ALLOWED_MODE:
-            raise InsecureKeyringPermissionsError(
-                f"Fallback keyring file {path} has permissions {mode:03o}; "
-                "permissions must be 600 or more restrictive"
-            )
-        return mode
-
     def _write_lock(self) -> FileLock:
         self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         return FileLock(self.lock_path, mode=_ALLOWED_MODE)
 
-    def _read(self) -> tuple[dict[str, dict[str, str]], int]:
-        path = self.path
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        try:
-            descriptor = os.open(path, flags)
-        except FileNotFoundError:
-            return {}, _ALLOWED_MODE
-        except OSError as e:
-            raise KeyringError(
-                f"Could not open fallback keyring file {path}: {e}"
-            ) from e
+    @contextmanager
+    def _open(self, path: Path, write: bool = False) -> Iterator[TextIO]:
+        temporary_path: Path | None = None
+        descriptor = -1
+        mode = _ALLOWED_MODE
 
-        with os.fdopen(descriptor, encoding="utf-8") as stream:
-            mode = self._validate_stat(path, os.fstat(stream.fileno()))
-            try:
-                data = json.load(stream)
-            except json.JSONDecodeError as e:
+        try:
+            if write:
+                try:
+                    with self._open(path) as current:
+                        mode = stat.S_IMODE(os.fstat(current.fileno()).st_mode)
+                except FileNotFoundError:
+                    pass
+
+                descriptor, temporary_name = tempfile.mkstemp(
+                    dir=path.parent,
+                    prefix=f".{path.name}.",
+                )
+                temporary_path = Path(temporary_name)
+                if hasattr(os, "fchmod"):
+                    os.fchmod(descriptor, mode)
+            else:
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                try:
+                    descriptor = os.open(path, flags)
+                except FileNotFoundError:
+                    raise
+                except OSError as e:
+                    raise KeyringError(
+                        f"Could not open fallback keyring file {path}: {e}"
+                    ) from e
+
+            result = os.fstat(descriptor)
+            mode = stat.S_IMODE(result.st_mode)
+            if not stat.S_ISREG(result.st_mode):
                 raise KeyringError(
-                    f"Fallback keyring file is not valid JSON: {path}"
-                ) from e
+                    f"Fallback keyring path is not a regular file: {path}"
+                )
+            if hasattr(os, "getuid"):
+                current_uid = os.getuid()
+                if result.st_uid != current_uid:
+                    raise InsecureKeyringPermissionsError(
+                        f"Fallback keyring file {path} is owned by uid "
+                        f"{result.st_uid}; current uid is {current_uid}"
+                    )
+            if os.name == "posix" and mode & ~_ALLOWED_MODE:
+                raise InsecureKeyringPermissionsError(
+                    f"Fallback keyring file {path} has permissions "
+                    f"{mode:03o}; permissions must be 600 or more restrictive"
+                )
+
+            file_mode = "w" if write else "r"
+            with os.fdopen(descriptor, file_mode, encoding="utf-8") as stream:
+                descriptor = -1
+                yield stream
+                if write:
+                    stream.flush()
+                    os.fsync(stream.fileno())
+
+            if temporary_path is not None:
+                os.replace(temporary_path, path)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    def _read(self) -> dict[str, dict[str, str]]:
+        try:
+            with self._open(self.path) as stream:
+                try:
+                    data = json.load(stream)
+                except json.JSONDecodeError as e:
+                    raise KeyringError(
+                        f"Fallback keyring file is not valid JSON: {self.path}"
+                    ) from e
+        except FileNotFoundError:
+            return {}
 
         if not isinstance(data, dict) or any(
             not isinstance(passwords, dict)
@@ -94,55 +138,38 @@ class FileKeyring(KeyringBackend):
             for passwords in data.values()
         ):
             raise KeyringError(
-                f"Fallback keyring file has an invalid entry: {path}"
+                f"Fallback keyring file has an invalid entry: {self.path}"
             )
-        return data, mode
+        return data
 
-    def _write(self, data: dict[str, dict[str, str]], mode: int) -> None:
-        path = self.path
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=path.parent,
-            prefix=f".{path.name}.",
-        )
-        temporary_path = Path(temporary_name)
-        try:
-            if os.name == "posix":
-                os.fchmod(descriptor, mode)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                descriptor = -1
-                json.dump(data, stream, indent=2, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary_path, path)
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-            temporary_path.unlink(missing_ok=True)
+    def _write(self, data: dict[str, dict[str, str]]) -> None:
+        with self._open(self.path, write=True) as stream:
+            json.dump(data, stream, indent=2, sort_keys=True)
+            stream.write("\n")
 
     def get_password(self, service: str, username: str) -> str | None:
         """Return an entry from the fallback keyring, if present."""
-        data, _ = self._read()
+        data = self._read()
         return data.get(service, {}).get(username)
 
     def set_password(self, service: str, username: str, password: str) -> None:
         """Set an entry in the fallback file."""
         with self._write_lock():
-            data, mode = self._read()
+            data = self._read()
             data.setdefault(service, {})[username] = password
-            self._write(data, mode)
+            self._write(data)
 
     def delete_password(self, service: str, username: str) -> None:
         """Delete an entry from the fallback keyring."""
         with self._write_lock():
-            data, mode = self._read()
+            data = self._read()
             passwords = data.get(service)
             if passwords is None or username not in passwords:
                 raise PasswordDeleteError("Password not found")
             del passwords[username]
             if not passwords:
                 del data[service]
-            self._write(data, mode)
+            self._write(data)
 
 
 class FallbackKeyring(KeyringBackend):
