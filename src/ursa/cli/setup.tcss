@@ -136,7 +136,8 @@ Checkbox {
     color: $error;
 }
 
-.setup-model-advanced {
+.setup-model-advanced,
+.setup-mcp-advanced {
     width: 100%;
     height: auto;
     margin: 0;
@@ -145,28 +146,33 @@ Checkbox {
     background: transparent;
 }
 
-.setup-model-advanced > CollapsibleTitle {
+.setup-model-advanced > CollapsibleTitle,
+.setup-mcp-advanced > CollapsibleTitle {
     height: 1;
     padding: 0;
     color: $text-muted;
     background: transparent;
 }
 
-.setup-model-yaml-editor {
+.setup-model-yaml-editor,
+.setup-mcp-yaml-editor {
     height: 12;
     margin: 0;
     border: round $border;
 }
 
-.setup-model-yaml-editor.yaml-valid {
+.setup-model-yaml-editor.yaml-valid,
+.setup-mcp-yaml-editor.yaml-valid {
     border: round $success;
 }
 
-.setup-model-yaml-editor.yaml-invalid {
+.setup-model-yaml-editor.yaml-invalid,
+.setup-mcp-yaml-editor.yaml-invalid {
     border: round $error;
 }
 
-.setup-model-yaml-error {
+.setup-model-yaml-error,
+.setup-mcp-yaml-error {
     width: 1fr;
     height: auto;
     max-height: 6;
@@ -176,15 +182,37 @@ Checkbox {
     overflow-y: auto;
 }
 
-.setup-advanced {
+#mcp-token-row {
     width: 100%;
     height: auto;
-    margin-top: 1;
+}
+
+#mcp-remote-fields,
+#mcp-local-fields {
+    height: auto;
+}
+
+#mcp-token-selector {
+    width: 100%;
+    height: auto;
+}
+
+#mcp-token-row.has-token #mcp-token-selector {
+    width: 22;
 }
 
 #mcp-auth-fields {
-    width: 100%;
+    width: 1fr;
     height: auto;
+    margin-left: 1;
+}
+
+#mcp-token-row.selecting #mcp-token-selector {
+    width: 100%;
+}
+
+#mcp-token-row.selecting #mcp-auth-fields {
+    display: none;
 }
 
 .api-key-entry {
