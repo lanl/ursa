@@ -66,6 +66,8 @@ ProviderKind = Literal["openai", "anthropic", "litellm", "ollama"]
 
 CUSTOM_MODEL = "__ursa_custom_model__"
 CUSTOM_PROVIDER_URL = "__ursa_custom_provider_url__"
+MCP_TOKEN_NEW = "__ursa_mcp_token_new__"
+MCP_TOKEN_NONE = "__ursa_mcp_token_none__"
 NO_MODEL = "__ursa_no_model__"
 NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 PROVIDER_DEFAULT_URLS: dict[ProviderKind, str] = {
@@ -348,6 +350,7 @@ class MCPDraft:
     secret_reference: dict[str, Any] | None = None
     pending_secret: str | None = field(default=None, repr=False)
     keyring_username: str | None = None
+    additional_headers: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -365,30 +368,36 @@ class MCPDraft:
         template = "Bearer %s"
         reference = None
         keyring_username = None
-        if headers:
-            header, header_value = next(iter(headers.items()))
-            if isinstance(header_value, dict):
-                template = str(header_value.get("template", template))
-                reference = _secret_mapping(header_value)
-                keyring_value = reference.get("keyring") if reference else None
-                keyring_username = (
-                    name
-                    if keyring_value is True
-                    else keyring_value
-                    if isinstance(keyring_value, str)
-                    else None
-                )
+        additional_headers = deepcopy(headers)
+        for candidate, header_value in headers.items():
+            candidate_reference = _secret_mapping(header_value)
+            if candidate_reference is None:
+                continue
+            header = candidate
+            template = str(header_value.get("template", template))
+            reference = candidate_reference
+            additional_headers.pop(candidate, None)
+            keyring_value = reference.get("keyring")
+            keyring_username = (
+                name
+                if keyring_value is True
+                else keyring_value
+                if isinstance(keyring_value, str)
+                else None
+            )
+            break
         return cls(
             name=name,
             transport=transport,
             url=raw.get("url"),
             command=raw.get("command"),
             args=[str(arg) for arg in raw.get("args", [])],
-            auth=bool(headers),
+            auth=reference is not None,
             header=header,
             template=template,
             secret_reference=reference,
             keyring_username=keyring_username,
+            additional_headers=additional_headers,
             extra={
                 key: deepcopy(value)
                 for key, value in raw.items()
@@ -418,6 +427,7 @@ class MCPDraft:
             "transport": self.transport,
             "url": self.url,
         }
+        headers = deepcopy(self.additional_headers)
         if self.auth:
             reference = deepcopy(self.secret_reference)
             if self.pending_secret is not None:
@@ -427,18 +437,18 @@ class MCPDraft:
                 }
             if reference is None:
                 raise SetupError(f"MCP server '{self.name}' has no auth token.")
-            result["headers"] = {
-                self.header: {**reference, "template": self.template}
-            }
+            headers[self.header] = {**reference, "template": self.template}
+        if headers:
+            result["headers"] = headers
         return result
 
     def validation_config(self) -> dict[str, Any]:
         """Build a runtime config that can use an unsaved auth key."""
         config = self.as_config()
         if self.auth and self.pending_secret is not None:
-            config["headers"] = {
-                self.header: self.template % self.pending_secret
-            }
+            config.setdefault("headers", {})[self.header] = (
+                self.template % self.pending_secret
+            )
         elif self.auth and self.secret_reference is not None:
             reference = SecretTemplate.model_validate({
                 **self.secret_reference,
@@ -448,7 +458,7 @@ class MCPDraft:
                 reference.get_secret_value,
                 self.keyring_username or self.name,
             )
-            config["headers"] = {self.header: value}
+            config.setdefault("headers", {})[self.header] = value
         return config
 
 
@@ -671,13 +681,26 @@ class ApiKeyEntry(Vertical):
         self.query_one(f"#{self._input_id}", Input).password = not event.value
 
 
-class ProviderUrlSelect(FuzzySelect):
-    """Provider URL selector that expands while its choices are open."""
+class ExpandingFuzzySelect(FuzzySelect):
+    """Fuzzy selector that temporarily claims its entire horizontal row."""
 
     def _watch_expanded(self, expanded: bool) -> None:
         super()._watch_expanded(expanded)
-        if self.is_mounted and isinstance(self.parent, Horizontal):
-            self.parent.set_class(expanded, "selecting")
+        if not self.is_mounted:
+            return
+        parent = self.parent
+        while parent is not None and not isinstance(parent, Horizontal):
+            parent = parent.parent
+        if isinstance(parent, Horizontal):
+            parent.set_class(expanded, "selecting")
+
+
+class ProviderUrlSelect(ExpandingFuzzySelect):
+    """Provider URL selector."""
+
+
+class MCPTokenSelect(ExpandingFuzzySelect):
+    """MCP API-token source selector."""
 
 
 class SetupApp(App[bool]):
@@ -687,6 +710,7 @@ class SetupApp(App[bool]):
     CSS_PATH = "setup.tcss"
     MODEL_SPINNER_FRAMES = ("|", "/", "-", "\\")
     MODEL_YAML_VALIDATION_DELAY = 0.8
+    MCP_YAML_VALIDATION_DELAY = 0.8
     BINDINGS = [
         Binding("escape", "back", "Back", priority=True),
         Binding("ctrl+q", "cancel", "Quit setup", priority=True),
@@ -733,6 +757,10 @@ class SetupApp(App[bool]):
         self._mcp_validation_text = ""
         self._mcp_spinner_frame = 0
         self._mcp_spinner_timer = None
+        self._mcp_yaml_values: dict[str, Any] = {}
+        self._mcp_yaml_timer: Timer | None = None
+        self._syncing_mcp_controls = False
+        self._mcp_active_token_source: str | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="setup-shell"):
@@ -786,6 +814,49 @@ class SetupApp(App[bool]):
                 for name, url in PROVIDER_DEFAULT_URLS.items()
             ),
             ("Other", CUSTOM_PROVIDER_URL),
+        ]
+
+    def _known_keyring_usernames(self) -> list[str]:
+        names: set[str] = set()
+
+        def collect(value: Any) -> None:
+            if isinstance(value, dict):
+                keyring_name = value.get("keyring")
+                if isinstance(keyring_name, str):
+                    names.add(keyring_name)
+                for nested in value.values():
+                    collect(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    collect(nested)
+
+        collect(self.state.base_config)
+        for name, provider in self.state.providers.items():
+            reference = provider.api_key_reference or {}
+            keyring_name = reference.get("keyring")
+            if provider.pending_secret is not None or keyring_name is True:
+                names.add(provider.keyring_username or name)
+            elif isinstance(keyring_name, str):
+                names.add(keyring_name)
+        for name, server in self.state.mcp_servers.items():
+            reference = server.secret_reference or {}
+            keyring_name = reference.get("keyring")
+            if server.pending_secret is not None or keyring_name is True:
+                names.add(server.keyring_username or name)
+            elif isinstance(keyring_name, str):
+                names.add(keyring_name)
+        return sorted(names)
+
+    def _mcp_token_options(
+        self, selected: str | None = None
+    ) -> list[tuple[str, str]]:
+        names = set(self._known_keyring_usernames())
+        if selected not in {None, MCP_TOKEN_NONE, MCP_TOKEN_NEW}:
+            names.add(selected)
+        return [
+            *((name, name) for name in sorted(names)),
+            ("None", MCP_TOKEN_NONE),
+            ("New entry", MCP_TOKEN_NEW),
         ]
 
     def _welcome_page(self) -> VerticalScroll:
@@ -981,6 +1052,8 @@ class SetupApp(App[bool]):
                 "server URL or a local command.",
                 classes="page-copy",
             ),
+            Label("Name"),
+            Input(placeholder="e.g. project_tools", id="mcp-name"),
             Label("Transport"),
             Select(
                 [
@@ -992,35 +1065,31 @@ class SetupApp(App[bool]):
                 allow_blank=False,
                 id="mcp-transport",
             ),
-            Label("Name"),
-            Input(placeholder="e.g. project_tools", id="mcp-name"),
             Vertical(
                 Label("Server URL"),
                 Input(placeholder="https://example.com/mcp", id="mcp-url"),
-                Checkbox(
-                    "This server requires an auth token",
-                    value=False,
-                    id="mcp-auth",
-                ),
-                Vertical(
-                    ApiKeyEntry(
-                        input_id="mcp-token",
-                        show_id="mcp-show-key",
-                        subject="MCP server",
-                        id="mcp-api-key",
+                Horizontal(
+                    Vertical(
+                        Label("API Token"),
+                        MCPTokenSelect(
+                            self._mcp_token_options(),
+                            value=MCP_TOKEN_NONE,
+                            allow_blank=False,
+                            id="mcp-token-source",
+                        ),
+                        id="mcp-token-selector",
                     ),
-                    id="mcp-auth-fields",
-                    classes="hidden",
-                ),
-                Collapsible(
-                    Label("Auth header name"),
-                    Input(value="Authorization", id="mcp-header"),
-                    Label("Header template (exactly one %s inserts the key)"),
-                    Input(value="Bearer %s", id="mcp-template"),
-                    title="Advanced",
-                    collapsed=True,
-                    id="mcp-advanced",
-                    classes="setup-advanced",
+                    Vertical(
+                        ApiKeyEntry(
+                            input_id="mcp-token",
+                            show_id="mcp-show-key",
+                            subject="MCP server",
+                            id="mcp-api-key",
+                        ),
+                        id="mcp-auth-fields",
+                        classes="hidden",
+                    ),
+                    id="mcp-token-row",
                 ),
                 id="mcp-remote-fields",
             ),
@@ -1034,6 +1103,26 @@ class SetupApp(App[bool]):
                 ),
                 id="mcp-local-fields",
                 classes="hidden",
+            ),
+            Collapsible(
+                TextArea(
+                    "",
+                    language="yaml",
+                    show_line_numbers=True,
+                    tab_behavior="indent",
+                    id="mcp-config-yaml",
+                    classes="setup-mcp-yaml-editor",
+                ),
+                Static(
+                    "",
+                    id="mcp-yaml-error",
+                    classes="setup-mcp-yaml-error hidden",
+                    markup=False,
+                ),
+                title="Advanced",
+                collapsed=True,
+                id="mcp-advanced",
+                classes="setup-mcp-advanced",
             ),
             Horizontal(
                 Static(
@@ -1160,6 +1249,9 @@ class SetupApp(App[bool]):
         for timer in self._model_yaml_timers.values():
             timer.stop()
         self._model_yaml_timers.clear()
+        if self._mcp_yaml_timer is not None:
+            self._mcp_yaml_timer.stop()
+            self._mcp_yaml_timer = None
 
     def _show(self, page: str, *, remember: bool = True) -> None:
         if page == self.current_page:
@@ -1216,9 +1308,9 @@ class SetupApp(App[bool]):
     def _update_mcp_continue_button(self) -> None:
         buttons = self.query("#mcps-next")
         if buttons:
-            buttons.first(Button).disabled = (
-                not self._mcp_servers_are_verified()
-            )
+            buttons.first(
+                Button
+            ).disabled = not self._mcp_servers_are_verified()
 
     def _update_review_save_button(self) -> None:
         buttons = self.query("#review-save")
@@ -2273,6 +2365,226 @@ class SetupApp(App[bool]):
         self._set_message(message, "Models validated.", success=True)
         self._show("mcps")
 
+    @staticmethod
+    def _mcp_yaml_text(values: dict[str, Any]) -> str:
+        return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+
+    def _mcp_token_source(self, server: MCPDraft | None) -> str:
+        if server is None or not server.auth:
+            return MCP_TOKEN_NONE
+        if server.pending_secret is not None:
+            return MCP_TOKEN_NEW
+        reference = server.secret_reference or {}
+        keyring_name = reference.get("keyring")
+        if keyring_name is True:
+            return server.keyring_username or server.name
+        if isinstance(keyring_name, str):
+            return keyring_name
+        return MCP_TOKEN_NONE
+
+    def _set_mcp_token_options(self, selected: str) -> None:
+        control = self.query_one("#mcp-token-source", FuzzySelect)
+        control.set_options(self._mcp_token_options(selected))
+        control.value = selected
+
+    def _pending_keyring_secret(self, username: str) -> str:
+        for name, provider in self.state.providers.items():
+            if (provider.keyring_username or name) == username:
+                return provider.pending_secret or ""
+        for name, server in self.state.mcp_servers.items():
+            if (server.keyring_username or name) == username:
+                return server.pending_secret or ""
+        return ""
+
+    def _activate_mcp_token_source(self, value: object, *, reset: bool) -> None:
+        visible = isinstance(value, str) and value != MCP_TOKEN_NONE
+        self.query_one("#mcp-auth-fields").set_class(not visible, "hidden")
+        self.query_one("#mcp-token-row", Horizontal).set_class(
+            visible, "has-token"
+        )
+        if not visible:
+            self._mcp_active_token_source = MCP_TOKEN_NONE
+            return
+        username = (
+            self.query_one("#mcp-name", Input).value.strip()
+            if value == MCP_TOKEN_NEW
+            else value
+        )
+        if reset:
+            self._reset_api_key("mcp", self._pending_keyring_secret(username))
+        self._mcp_active_token_source = value
+        if username and not self.query_one("#mcp-token", Input).value:
+            self._queue_api_key_load("mcp", username)
+
+    @staticmethod
+    def _mcp_auth_header(
+        values: dict[str, Any],
+    ) -> tuple[str, str]:
+        headers = values.get("headers")
+        if isinstance(headers, dict):
+            for name, value in headers.items():
+                if _secret_mapping(value) is not None:
+                    template = (
+                        str(value.get("template", "Bearer %s"))
+                        if isinstance(value, dict)
+                        else "Bearer %s"
+                    )
+                    return str(name), template
+        return "Authorization", "Bearer %s"
+
+    def _mcp_config_from_controls(self, base: dict[str, Any]) -> dict[str, Any]:
+        values = deepcopy(base)
+        transport = self.query_one("#mcp-transport", Select).value
+        assert transport in {"streamable_http", "sse", "stdio"}
+        values["transport"] = transport
+        if transport == "stdio":
+            values.pop("url", None)
+            values.pop("headers", None)
+            values["command"] = self.query_one(
+                "#mcp-command", Input
+            ).value.strip()
+            try:
+                args = shlex.split(self.query_one("#mcp-args", Input).value)
+            except ValueError:
+                args = []
+            if args:
+                values["args"] = args
+            else:
+                values.pop("args", None)
+            return values
+
+        values.pop("command", None)
+        values.pop("args", None)
+        values["url"] = self.query_one("#mcp-url", Input).value.strip()
+        header, template = self._mcp_auth_header(values)
+        headers = values.get("headers")
+        headers = deepcopy(headers) if isinstance(headers, dict) else {}
+        headers = {
+            name: value
+            for name, value in headers.items()
+            if _secret_mapping(value) is None
+        }
+        token_source = self.query_one("#mcp-token-source", FuzzySelect).value
+        if isinstance(token_source, str) and token_source != MCP_TOKEN_NONE:
+            server_name = self.query_one("#mcp-name", Input).value.strip()
+            reference: dict[str, Any]
+            if token_source == MCP_TOKEN_NEW or token_source == server_name:
+                reference = {"keyring": True}
+            else:
+                reference = {"keyring": token_source}
+            headers[header] = {**reference, "template": template}
+        if headers:
+            values["headers"] = headers
+        else:
+            values.pop("headers", None)
+        return values
+
+    def _set_mcp_yaml_state(self, state: str, error: str = "") -> None:
+        editor = self.query_one("#mcp-config-yaml", TextArea)
+        editor.remove_class("yaml-valid", "yaml-invalid")
+        if state != "neutral":
+            editor.add_class(f"yaml-{state}")
+        message = self.query_one("#mcp-yaml-error", Static)
+        message.update(error)
+        message.set_class(not error, "hidden")
+
+    def _mcp_draft_from_values(
+        self,
+        name: str,
+        values: dict[str, Any],
+        *,
+        require_new_secret: bool,
+    ) -> MCPDraft:
+        draft = MCPDraft.from_config(name, values)
+        if draft.auth and draft.keyring_username is None:
+            raise SetupError(
+                "Choose an API Token keyring entry instead of configuring an "
+                "environment secret in Advanced."
+            )
+        token_source = self.query_one("#mcp-token-source", FuzzySelect).value
+        if token_source == MCP_TOKEN_NEW:
+            secret = self.query_one("#mcp-token", Input).value.strip()
+            if require_new_secret and not secret:
+                raise SetupError("API token is required for a new entry.")
+            draft.auth = True
+            draft.pending_secret = secret or None
+            draft.keyring_username = name
+            draft.secret_reference = {"keyring": True}
+        elif isinstance(token_source, str) and token_source != MCP_TOKEN_NONE:
+            secret = self.query_one("#mcp-token", Input).value.strip()
+            if require_new_secret and not secret:
+                raise SetupError(
+                    f"No API token was found for keyring entry '{token_source}'."
+                )
+            draft.auth = True
+            draft.keyring_username = token_source
+            draft.secret_reference = {
+                "keyring": True if token_source == name else token_source
+            }
+            draft.pending_secret = (
+                secret
+                if secret and secret != self._loaded_api_keys["mcp"]
+                else None
+            )
+        try:
+            validate_server_parameters(draft.as_config())
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise SetupError(
+                f"MCP server configuration is invalid: {exc}"
+            ) from None
+        return draft
+
+    def _update_mcp_controls_from_yaml(self, draft: MCPDraft) -> None:
+        current_source = self.query_one("#mcp-token-source", FuzzySelect).value
+        source = self._mcp_token_source(draft)
+        current_name = self.query_one("#mcp-name", Input).value.strip()
+        if current_source == MCP_TOKEN_NEW and source == current_name:
+            source = MCP_TOKEN_NEW
+        self._syncing_mcp_controls = True
+        try:
+            self.query_one("#mcp-transport", Select).value = draft.transport
+            self.query_one("#mcp-url", Input).value = draft.url or ""
+            self.query_one("#mcp-command", Input).value = draft.command or ""
+            self.query_one("#mcp-args", Input).value = shlex.join(draft.args)
+            self._set_mcp_token_options(source)
+        finally:
+            self._syncing_mcp_controls = False
+        self._toggle_mcp_transport(draft.transport)
+        self._activate_mcp_token_source(source, reset=source != current_source)
+        self._set_mcp_validation_status(None, "○ Not tested")
+
+    def _validate_mcp_yaml(self, *, update_controls: bool) -> MCPDraft | None:
+        editor = self.query_one("#mcp-config-yaml", TextArea)
+        try:
+            values = yaml.safe_load(editor.text)
+            if not isinstance(values, dict):
+                raise SetupError("Configuration must be a YAML mapping.")
+            name = self.query_one("#mcp-name", Input).value.strip() or "mcp"
+            draft = self._mcp_draft_from_values(
+                name, values, require_new_secret=False
+            )
+        except (SetupError, yaml.YAMLError) as exc:
+            self._set_mcp_yaml_state("invalid", str(exc))
+            return None
+        self._mcp_yaml_values = deepcopy(values)
+        self._set_mcp_yaml_state("valid")
+        if update_controls:
+            self._update_mcp_controls_from_yaml(draft)
+        return draft
+
+    def _sync_mcp_yaml_from_controls(self) -> None:
+        if self._syncing_mcp_controls or not self.is_mounted:
+            return
+        values = self._mcp_config_from_controls(self._mcp_yaml_values)
+        self._mcp_yaml_values = values
+        editor = self.query_one("#mcp-config-yaml", TextArea)
+        text = self._mcp_yaml_text(values)
+        if editor.text != text:
+            with self.prevent(TextArea.Changed):
+                editor.text = text
+        self._validate_mcp_yaml(update_controls=False)
+        self._set_mcp_validation_status(None, "○ Not tested")
+
     def _begin_mcp(self, name: str | None = None) -> None:
         self.editing_mcp = name
         server = self.state.mcp_servers.get(name or "")
@@ -2280,31 +2592,42 @@ class SetupApp(App[bool]):
             self.state.mcp_verified[name] = None
             self.state.mcp_errors.pop(name, None)
         transport = server.transport if server else "streamable_http"
+        token_source = self._mcp_token_source(server)
         secret = server.pending_secret or "" if server else ""
-        self._reset_api_key("mcp", secret)
-        self.query_one("#mcp-transport", Select).value = transport
-        self.query_one("#mcp-name", Input).value = server.name if server else ""
-        self.query_one("#mcp-url", Input).value = (
-            server.url or "" if server else ""
+        values = (
+            server.as_config()
+            if server is not None
+            else {"transport": "streamable_http", "url": ""}
         )
-        self.query_one("#mcp-command", Input).value = (
-            server.command or "" if server else ""
-        )
-        self.query_one("#mcp-args", Input).value = (
-            shlex.join(server.args) if server else ""
-        )
-        auth = server.auth if server else False
-        self.query_one("#mcp-auth", Checkbox).value = auth
-        self.query_one("#mcp-header", Input).value = (
-            server.header if server else "Authorization"
-        )
-        self.query_one("#mcp-template", Input).value = (
-            server.template if server else "Bearer %s"
-        )
-        self._queue_api_key_load("mcp", server.name if server else "")
+        self._syncing_mcp_controls = True
+        try:
+            self._reset_api_key("mcp", secret)
+            self.query_one("#mcp-name", Input).value = (
+                server.name if server else ""
+            )
+            self.query_one("#mcp-transport", Select).value = transport
+            self.query_one("#mcp-url", Input).value = (
+                server.url or "" if server else ""
+            )
+            self.query_one("#mcp-command", Input).value = (
+                server.command or "" if server else ""
+            )
+            self.query_one("#mcp-args", Input).value = (
+                shlex.join(server.args) if server else ""
+            )
+            self._set_mcp_token_options(token_source)
+            self._mcp_yaml_values = deepcopy(values)
+            with self.prevent(TextArea.Changed):
+                self.query_one(
+                    "#mcp-config-yaml", TextArea
+                ).text = self._mcp_yaml_text(values)
+        finally:
+            self._syncing_mcp_controls = False
         self.query_one("#mcp-advanced", Collapsible).collapsed = True
         self._toggle_mcp_transport(transport)
-        self._toggle_mcp_auth(auth)
+        self._mcp_active_token_source = token_source
+        self._activate_mcp_token_source(token_source, reset=False)
+        self._set_mcp_yaml_state("valid" if server else "neutral")
         self._set_mcp_validation_status(None, "○ Not tested")
         self._set_message(self.query_one("#mcp-error", Static), "")
         self._update_progress()
@@ -2319,57 +2642,19 @@ class SetupApp(App[bool]):
                 "That name is already used by an inference provider. Choose a "
                 "unique name so keyring credentials cannot collide."
             )
-        transport_value = self.query_one("#mcp-transport", Select).value
-        assert transport_value in {"streamable_http", "sse", "stdio"}
-        original = self.state.mcp_servers.get(self.editing_mcp or "")
-        draft = MCPDraft(
-            name=name,
-            transport=transport_value,
-            extra=(
-                deepcopy(original.extra)
-                if original and original.transport == transport_value
-                else {}
-            ),
-        )
-        if transport_value == "stdio":
-            command = self.query_one("#mcp-command", Input).value.strip()
-            if not command:
-                raise SetupError("A local MCP command is required.")
-            draft.command = command
-            try:
-                draft.args = shlex.split(
-                    self.query_one("#mcp-args", Input).value
-                )
-            except ValueError as exc:
-                raise SetupError(f"MCP arguments are invalid: {exc}") from None
-        else:
-            draft.url = _validate_url(
-                self.query_one("#mcp-url", Input).value, "MCP server URL"
-            )
-            draft.auth = self.query_one("#mcp-auth", Checkbox).value
-            if draft.auth:
-                draft.header = self.query_one(
-                    "#mcp-header", Input
-                ).value.strip()
-                if not draft.header:
-                    raise SetupError("Auth header name is required.")
-                draft.template = self.query_one("#mcp-template", Input).value
-                if draft.template.count("%s") != 1:
-                    raise SetupError(
-                        "The auth template must contain exactly one '%s' placeholder."
-                    )
-                entered = self.query_one("#mcp-token", Input).value.strip()
-                if not entered:
-                    raise SetupError("Auth key is required.")
-                draft.pending_secret = entered
-                draft.keyring_username = name
-                draft.secret_reference = {"keyring": True}
+        editor = self.query_one("#mcp-config-yaml", TextArea)
         try:
-            validate_server_parameters(draft.as_config())
-        except (TypeError, ValueError, ValidationError) as exc:
-            raise SetupError(
-                f"MCP server configuration is invalid: {exc}"
-            ) from None
+            values = yaml.safe_load(editor.text)
+        except yaml.YAMLError as exc:
+            raise SetupError(f"Advanced YAML is invalid: {exc}") from None
+        if not isinstance(values, dict):
+            raise SetupError("Advanced configuration must be a YAML mapping.")
+        values = self._mcp_config_from_controls(values)
+        draft = self._mcp_draft_from_values(
+            name, values, require_new_secret=True
+        )
+        self._mcp_yaml_values = deepcopy(values)
+        self._set_mcp_yaml_state("valid")
         return draft
 
     def _set_mcp_validation_status(
@@ -2658,11 +2943,6 @@ class SetupApp(App[bool]):
             local, "hidden"
         )
 
-    def _toggle_mcp_auth(self, value: bool) -> None:
-        self.query_one("#mcp-auth-fields", Vertical).set_class(
-            not value, "hidden"
-        )
-
     @on(Input.Changed, "#provider-name")
     def provider_name_changed(self, event: Input.Changed) -> None:
         self._queue_api_key_load("provider", event.value)
@@ -2705,15 +2985,57 @@ class SetupApp(App[bool]):
 
     @on(Select.Changed, "#mcp-transport")
     def mcp_transport_changed(self, event: Select.Changed) -> None:
+        if self._syncing_mcp_controls:
+            return
         self._toggle_mcp_transport(event.value)
+        self._sync_mcp_yaml_from_controls()
 
-    @on(Checkbox.Changed, "#mcp-auth")
-    def mcp_auth_changed(self, event: Checkbox.Changed) -> None:
-        self._toggle_mcp_auth(event.value)
+    @on(Select.Changed, "#mcp-token-source")
+    def mcp_token_source_changed(self, event: Select.Changed) -> None:
+        if self._syncing_mcp_controls:
+            return
+        control = self.query_one("#mcp-token-source", FuzzySelect)
+        if event.value != control.value:
+            return
+        self._activate_mcp_token_source(
+            event.value, reset=event.value != self._mcp_active_token_source
+        )
+        self._sync_mcp_yaml_from_controls()
 
     @on(Input.Changed, "#mcp-name")
     def mcp_name_changed(self, event: Input.Changed) -> None:
-        self._queue_api_key_load("mcp", event.value)
+        if self._syncing_mcp_controls:
+            return
+        source = self.query_one("#mcp-token-source", FuzzySelect).value
+        if source == MCP_TOKEN_NEW:
+            self._queue_api_key_load("mcp", event.value)
+        self._sync_mcp_yaml_from_controls()
+
+    @on(Input.Changed, "#mcp-url, #mcp-command, #mcp-args")
+    def mcp_connection_field_changed(self, _event: Input.Changed) -> None:
+        if not self._syncing_mcp_controls:
+            self._sync_mcp_yaml_from_controls()
+
+    @on(Input.Changed, "#mcp-token")
+    def mcp_token_changed(self, _event: Input.Changed) -> None:
+        if not self._syncing_mcp_controls:
+            self._set_mcp_validation_status(None, "○ Not tested")
+
+    @on(TextArea.Changed, "#mcp-config-yaml")
+    def mcp_yaml_changed(self, event: TextArea.Changed) -> None:
+        if self._syncing_mcp_controls:
+            return
+        current = self._mcp_yaml_text(self._mcp_yaml_values)
+        if event.text_area.text == current:
+            self._set_mcp_yaml_state("valid")
+            return
+        self._set_mcp_yaml_state("neutral")
+        if self._mcp_yaml_timer is not None:
+            self._mcp_yaml_timer.stop()
+        self._mcp_yaml_timer = self.set_timer(
+            self.MCP_YAML_VALIDATION_DELAY,
+            lambda: self._validate_mcp_yaml(update_controls=True),
+        )
 
     @on(Button.Pressed)
     async def button_pressed(self, event: Button.Pressed) -> None:

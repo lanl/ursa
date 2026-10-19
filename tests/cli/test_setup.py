@@ -25,6 +25,8 @@ from ursa.cli.config import ChatModelConfig, EmbModelConfig
 from ursa.cli.setup import (
     CUSTOM_MODEL,
     CUSTOM_PROVIDER_URL,
+    MCP_TOKEN_NEW,
+    MCP_TOKEN_NONE,
     ApiKeyEntry,
     MCPDraft,
     ProviderDraft,
@@ -675,9 +677,9 @@ async def test_api_key_entries_share_layout_and_load_by_name(
         assert not app.query("#provider-key-source")
         assert not app.query("#provider-keyring-name")
         assert not app.query("#provider-load-keyring")
-        assert not app.query("#mcp-key-source")
         assert not app.query("#mcp-keyring-name")
         assert not app.query("#mcp-load-keyring")
+        assert app.query_one("#mcp-token-source", FuzzySelect)
 
         provider_key = app.query_one("#provider-key", Input)
         provider_show = app.query_one("#provider-show-key", Checkbox)
@@ -694,6 +696,7 @@ async def test_api_key_entries_share_layout_and_load_by_name(
         mcp_show = app.query_one("#mcp-show-key", Checkbox)
         assert mcp_key.parent is mcp_show.parent
         assert mcp_key.parent.has_class("api-key-row")
+        app.query_one("#mcp-token-source", FuzzySelect).value = MCP_TOKEN_NEW
         app.query_one("#mcp-name", Input).value = "tools"
         await _wait_for(lambda: mcp_key.value == "tools-secret")
 
@@ -912,37 +915,133 @@ async def test_provider_failure_summary_shows_only_first_three(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mcp_api_key_loads_by_server_name_outside_advanced(
+async def test_mcp_token_selector_reuses_keyring_or_creates_new_entry(
     monkeypatch, tmp_path
 ):
     monkeypatch.setattr(
         "ursa.cli.setup.keyring.get_password",
         lambda service, username: (
-            "mcp-secret" if (service, username) == ("ursa", "tools") else None
+            "shared-secret"
+            if (service, username) == ("ursa", "shared")
+            else None
         ),
     )
     app = SetupApp(tmp_path / "config.yaml")
+    app.state.providers["shared"] = ProviderDraft(
+        name="shared",
+        kind="openai",
+        base_url="https://models.example/v1",
+        api_key_reference={"keyring": True},
+        keyring_username="shared",
+    )
 
-    async with app.run_test(size=(120, 42)):
+    async with app.run_test(size=(120, 42)) as pilot:
         app._begin_mcp()
+        await pilot.pause()
         advanced = app.query_one("#mcp-advanced", Collapsible)
         assert advanced.collapsed is True
+        assert (
+            advanced.region.y == app.query_one("#mcp-token-row").region.bottom
+        )
         assert advanced not in app.query_one("#mcp-token", Input).ancestors
-        assert advanced in app.query_one("#mcp-header", Input).ancestors
-        app.query_one("#mcp-name", Input).value = "tools"
-        app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
-        app.query_one("#mcp-auth", Checkbox).value = True
-        await _wait_for(
-            lambda: app.query_one("#mcp-token", Input).value == "mcp-secret"
+        assert advanced in app.query_one("#mcp-config-yaml", TextArea).ancestors
+        assert not app.query("#mcp-auth")
+        assert not app.query("#mcp-header")
+        assert not app.query("#mcp-template")
+        assert (
+            app.query_one("#mcp-name", Input).region.y
+            < app.query_one("#mcp-transport", Select).region.y
         )
 
-        draft = app._mcp_values()
+        token_source = app.query_one("#mcp-token-source", FuzzySelect)
+        assert token_source.value == MCP_TOKEN_NONE
+        assert app.query_one("#mcp-auth-fields").has_class("hidden")
+        app.query_one("#mcp-name", Input).value = "tools"
+        app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
+        token_source.value = "shared"
+        await _wait_for(
+            lambda: app.query_one("#mcp-token", Input).value == "shared-secret"
+        )
+        assert not app.query_one("#mcp-auth-fields").has_class("hidden")
+        await pilot.pause()
+        auth_fields = app.query_one("#mcp-auth-fields")
+        assert token_source.region.width == 22
+        assert auth_fields.region.x == token_source.region.right + 1
 
-        assert draft.pending_secret == "mcp-secret"
+        draft = app._mcp_values()
+        assert draft.pending_secret is None
+        assert draft.keyring_username == "shared"
+        assert draft.as_config()["headers"]["Authorization"] == {
+            "keyring": "shared",
+            "template": "Bearer %s",
+        }
+
+        token_source.value = MCP_TOKEN_NEW
+        await pilot.pause()
+        assert not app.query_one("#mcp-auth-fields").has_class("hidden")
+        app.query_one("#mcp-token", Input).value = "new-secret"
+        draft = app._mcp_values()
+        assert draft.pending_secret == "new-secret"
         assert draft.keyring_username == "tools"
         assert draft.as_config()["headers"]["Authorization"] == {
             "keyring": True,
             "template": "Bearer %s",
+        }
+
+
+@pytest.mark.asyncio
+async def test_mcp_advanced_yaml_updates_config_and_token_source(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        "ursa.cli.setup.keyring.get_password",
+        lambda service, username: (
+            "shared-secret"
+            if (service, username) == ("ursa", "shared-token")
+            else None
+        ),
+    )
+    app = SetupApp(tmp_path / "config.yaml")
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp()
+        app.query_one("#mcp-name", Input).value = "tools"
+        await pilot.pause()
+        editor = app.query_one("#mcp-config-yaml", TextArea)
+        editor.text = yaml.safe_dump(
+            {
+                "transport": "streamable_http",
+                "url": "https://tools.example/mcp",
+                "headers": {
+                    "X-API-Key": {
+                        "keyring": "shared-token",
+                        "template": "Token %s",
+                    },
+                    "X-Client": "ursa",
+                },
+                "timeout": 12,
+            },
+            sort_keys=False,
+        )
+
+        await _wait_for(
+            lambda: app.query_one("#mcp-token-source", FuzzySelect).value
+            == "shared-token"
+        )
+        await _wait_for(lambda: editor.has_class("yaml-valid"))
+        await _wait_for(
+            lambda: app.query_one("#mcp-token", Input).value == "shared-secret"
+        )
+        draft = app._mcp_values()
+        config = draft.as_config()
+
+        assert config["timeout"] == 12
+        assert config["headers"] == {
+            "X-Client": "ursa",
+            "X-API-Key": {
+                "keyring": "shared-token",
+                "template": "Token %s",
+            },
         }
 
 
