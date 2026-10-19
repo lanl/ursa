@@ -18,6 +18,7 @@ from textual.widgets import (
     Tab,
     TabbedContent,
     TabPane,
+    TextArea,
 )
 
 from ursa.cli.config import ChatModelConfig, EmbModelConfig
@@ -515,6 +516,93 @@ async def test_setup_app_allows_custom_model_and_back(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_model_advanced_editors_validate_and_preserve_yaml(
+    monkeypatch, tmp_path
+):
+    models = [
+        ProviderModel("gpt-test", "openai"),
+        ProviderModel("text-embedding-test", "openai", type="embedding"),
+    ]
+    monkeypatch.setattr(
+        "ursa.cli.setup.probe_chat_model", lambda _config, _providers: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.setup.probe_embedding_model",
+        lambda _config, _providers: None,
+    )
+    app = SetupApp(tmp_path / "config.yaml")
+    app.state.providers["company"] = ProviderDraft(
+        name="company",
+        kind="openai",
+        base_url="https://models.example/v1",
+        pending_secret="secret",
+    )
+    app.state.provider_models["company"] = models
+    app.state.provider_verified["company"] = True
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        await _wait_for(lambda: bool(app._provider_tab_names))
+        await pilot.click("#providers-next")
+        await _wait_for(lambda: app.current_page == "models")
+
+        llm_advanced = app.query_one("#llm-advanced", Collapsible)
+        embedding_advanced = app.query_one("#embedding-advanced", Collapsible)
+        assert llm_advanced.collapsed is True
+        assert embedding_advanced.collapsed is True
+        assert app.query_one("#llm-choice", Select).region.bottom <= (
+            llm_advanced.region.y
+        )
+        assert (
+            llm_advanced.region.bottom
+            <= app.query_one("#llm-validation-status", Static).region.y
+        )
+
+        llm_editor = app.query_one("#llm-config-yaml", TextArea)
+        llm_values = yaml.safe_load(llm_editor.text)
+        llm_values["temperature"] = 0.2
+        llm_editor.text = yaml.safe_dump(llm_values, sort_keys=False)
+
+        embedding_editor = app.query_one("#embedding-config-yaml", TextArea)
+        embedding_values = yaml.safe_load(embedding_editor.text)
+        embedding_values["model"] = "text-embedding-test"
+        embedding_values["dimensions"] = 512
+        embedding_editor.text = yaml.safe_dump(
+            embedding_values, sort_keys=False
+        )
+
+        await _wait_for(lambda: llm_editor.has_class("yaml-valid"))
+        await _wait_for(lambda: embedding_editor.has_class("yaml-valid"))
+        await _wait_for(
+            lambda: app.query_one("#embedding-choice", Select).value
+            == "text-embedding-test"
+        )
+        await pilot.click("#models-save")
+        await _wait_for(lambda: app.current_page == "mcps")
+
+        assert app.state.llm_model is not None
+        assert app.state.llm_model.model_extra == {"temperature": 0.2}
+        assert app.state.embedding_model is not None
+        assert app.state.embedding_model.model_extra == {"dimensions": 512}
+
+
+@pytest.mark.asyncio
+async def test_setup_page_leaves_gutter_before_scrollbar(tmp_path):
+    app = SetupApp(tmp_path / "config.yaml")
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        app._show("models")
+        await pilot.pause()
+
+        page = app.query_one("#models-page")
+        scrollbar = page.vertical_scrollbar
+        assert page.show_vertical_scrollbar is True
+        for selector in ("#llm-choice", "#llm-advanced", "#models-error"):
+            content = app.query_one(selector)
+            assert scrollbar.region.x - content.region.right == 1
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_key_is_masked_and_revealable(
     monkeypatch, tmp_path, capsys
 ):
@@ -657,6 +745,7 @@ async def test_existing_providers_are_checked_on_page_entry(
         assert "✓ All providers verified" in str(
             app.query_one("#providers-validation-status", Static).content
         )
+        assert app.query_one("#providers-next").disabled is False
 
 
 @pytest.mark.asyncio
@@ -765,10 +854,15 @@ async def test_all_providers_must_verify_before_models(monkeypatch, tmp_path):
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         await _wait_for(lambda: bool(app._provider_tab_names))
-        await pilot.click("#providers-next")
+        await _wait_for(
+            lambda: app.state.provider_verified.get("broken") is False
+        )
 
         assert app.current_page == "providers"
         assert app.state.provider_verified["broken"] is False
+        assert app.query_one("#providers-next").disabled is True
+        await pilot.click("#providers-next")
+        assert app.current_page == "providers"
         assert "✗ broken" in str(
             app.query_one("#setup-progress", Static).content
         )
@@ -777,6 +871,16 @@ async def test_all_providers_must_verify_before_models(monkeypatch, tmp_path):
             "- broken: The API key was rejected. Check that it was copied "
             "completely and has permission to list models."
         )
+
+        monkeypatch.setattr(
+            "ursa.cli.setup.list_provider_models",
+            lambda _config: [ProviderModel("gpt-test", "openai")],
+        )
+        await pilot.click("#providers-retry")
+        await _wait_for(
+            lambda: app.state.provider_verified.get("broken") is True
+        )
+        assert app.query_one("#providers-next").disabled is False
 
 
 @pytest.mark.asyncio
@@ -902,6 +1006,57 @@ async def test_mcp_validation_failure_stays_on_form(monkeypatch, tmp_path):
             app.query_one("#mcp-validation-status", Static).content
         )
         assert "rejected the auth key" in notifications[-1][0]
+
+
+@pytest.mark.asyncio
+async def test_failed_mcp_server_disables_review_until_retry_succeeds(
+    monkeypatch, tmp_path
+):
+    async def fail(_server):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("ursa.cli.setup.probe_mcp_server", fail)
+    app = SetupApp(tmp_path / "config.yaml")
+    app.state.mcp_servers["tools"] = MCPDraft(
+        name="tools",
+        transport="streamable_http",
+        url="https://tools.example/mcp",
+    )
+    app.state.mcp_verified["tools"] = None
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._show("mcps")
+        await _wait_for(lambda: app.state.mcp_verified["tools"] is False)
+
+        assert app.query_one("#mcps-next").disabled is True
+        await pilot.click("#mcps-next")
+        assert app.current_page == "mcps"
+
+        async def succeed(_server):
+            return 2
+
+        monkeypatch.setattr("ursa.cli.setup.probe_mcp_server", succeed)
+        await pilot.click("#mcps-retry")
+        await _wait_for(lambda: app.state.mcp_verified["tools"] is True)
+        assert app.query_one("#mcps-next").disabled is False
+
+
+@pytest.mark.asyncio
+async def test_review_save_is_disabled_until_all_sections_are_valid(tmp_path):
+    app = SetupApp(tmp_path / "config.yaml")
+    app.state = configured_state(tmp_path / "config.yaml")
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._show("review")
+        await pilot.pause()
+        assert app.query_one("#review-save").disabled is True
+
+        app.state.provider_verified["company"] = True
+        app.model_validation = {"llm": True, "embedding": True}
+        app.state.mcp_verified["tools"] = True
+        app._refresh_review()
+
+        assert app.query_one("#review-save").disabled is False
 
 
 @pytest.mark.asyncio

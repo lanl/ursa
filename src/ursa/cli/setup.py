@@ -25,6 +25,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     Checkbox,
@@ -37,6 +38,7 @@ from textual.widgets import (
     Static,
     TabbedContent,
     TabPane,
+    TextArea,
 )
 
 from ursa.cli.auth import KEYRING_SERVICE
@@ -44,6 +46,7 @@ from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
     InferenceProviderConfig,
+    ModelConfig,
     UrsaConfig,
     load_config_file,
 )
@@ -683,6 +686,7 @@ class SetupApp(App[bool]):
     TITLE = "URSA setup"
     CSS_PATH = "setup.tcss"
     MODEL_SPINNER_FRAMES = ("|", "/", "-", "\\")
+    MODEL_YAML_VALIDATION_DELAY = 0.8
     BINDINGS = [
         Binding("escape", "back", "Back", priority=True),
         Binding("ctrl+q", "cancel", "Quit setup", priority=True),
@@ -718,6 +722,13 @@ class SetupApp(App[bool]):
         self._model_validation_text = {"llm": "", "embedding": ""}
         self._model_spinner_frame = 0
         self._model_spinner_timer = None
+        self._model_yaml_values: dict[str, dict[str, Any]] = {
+            "llm": {},
+            "embedding": {},
+        }
+        self._model_yaml_initialized: set[str] = set()
+        self._model_yaml_timers: dict[str, Timer] = {}
+        self._syncing_model_controls = False
         self._mcp_validation_loading = False
         self._mcp_validation_text = ""
         self._mcp_spinner_frame = 0
@@ -743,6 +754,29 @@ class SetupApp(App[bool]):
     @staticmethod
     def _actions(*buttons: Button) -> Horizontal:
         return Horizontal(*buttons, classes="setup-actions")
+
+    @staticmethod
+    def _model_advanced_editor(prefix: str) -> Collapsible:
+        return Collapsible(
+            TextArea(
+                "",
+                language="yaml",
+                show_line_numbers=True,
+                tab_behavior="indent",
+                id=f"{prefix}-config-yaml",
+                classes="setup-model-yaml-editor",
+            ),
+            Static(
+                "",
+                id=f"{prefix}-yaml-error",
+                classes="setup-model-yaml-error hidden",
+                markup=False,
+            ),
+            title="Advanced",
+            collapsed=True,
+            id=f"{prefix}-advanced",
+            classes="setup-model-advanced",
+        )
 
     @staticmethod
     def _provider_url_options() -> list[tuple[str, str]]:
@@ -857,6 +891,7 @@ class SetupApp(App[bool]):
                 id="llm-custom",
                 classes="hidden",
             ),
+            self._model_advanced_editor("llm"),
             Horizontal(
                 Static(
                     "○ Not tested",
@@ -878,6 +913,7 @@ class SetupApp(App[bool]):
                 id="embedding-custom",
                 classes="hidden",
             ),
+            self._model_advanced_editor("embedding"),
             Horizontal(
                 Static(
                     "○ Not tested",
@@ -930,6 +966,7 @@ class SetupApp(App[bool]):
                     "Continue to models",
                     variant="primary",
                     id="providers-next",
+                    disabled=True,
                 ),
             ),
             id="providers-page",
@@ -1049,6 +1086,7 @@ class SetupApp(App[bool]):
                     "No, review setup",
                     variant="primary",
                     id="mcps-next",
+                    disabled=True,
                 ),
             ),
             id="mcps-page",
@@ -1074,7 +1112,10 @@ class SetupApp(App[bool]):
             self._actions(
                 Button("Back", id="review-back"),
                 Button(
-                    "Save configuration", variant="success", id="review-save"
+                    "Save configuration",
+                    variant="success",
+                    id="review-save",
+                    disabled=True,
                 ),
             ),
             id="review-page",
@@ -1110,7 +1151,15 @@ class SetupApp(App[bool]):
         )
         self._mcp_spinner_timer.pause()
         self._update_progress()
+        self._update_provider_continue_button()
+        self._update_mcp_continue_button()
+        self._update_review_save_button()
         self.query_one("#welcome-next", Button).focus()
+
+    def on_unmount(self) -> None:
+        for timer in self._model_yaml_timers.values():
+            timer.stop()
+        self._model_yaml_timers.clear()
 
     def _show(self, page: str, *, remember: bool = True) -> None:
         if page == self.current_page:
@@ -1121,10 +1170,12 @@ class SetupApp(App[bool]):
         self.visited.add(page)
         self.query_one("#setup-pages", ContentSwitcher).current = f"{page}-page"
         if page == "providers":
+            self._update_provider_continue_button()
             self.call_after_refresh(self._prepare_providers_page)
         elif page == "models":
             self._refresh_model_provider_list()
         elif page == "mcps":
+            self._update_mcp_continue_button()
             self.call_after_refresh(self._prepare_mcps_page)
         elif page == "review":
             self._refresh_review()
@@ -1138,6 +1189,45 @@ class SetupApp(App[bool]):
 
     def action_cancel(self) -> None:
         self.exit(False)
+
+    def _providers_are_verified(self) -> bool:
+        return bool(self.state.providers) and all(
+            self.state.provider_verified.get(name) is True
+            for name in self.state.providers
+        )
+
+    def _models_are_verified(self) -> bool:
+        return self.model_validation["llm"] is True and (
+            self.state.embedding_model is None
+            or self.model_validation["embedding"] is True
+        )
+
+    def _mcp_servers_are_verified(self) -> bool:
+        return all(
+            self.state.mcp_verified.get(name) is True
+            for name in self.state.mcp_servers
+        )
+
+    def _update_provider_continue_button(self) -> None:
+        buttons = self.query("#providers-next")
+        if buttons:
+            buttons.first(Button).disabled = not self._providers_are_verified()
+
+    def _update_mcp_continue_button(self) -> None:
+        buttons = self.query("#mcps-next")
+        if buttons:
+            buttons.first(Button).disabled = (
+                not self._mcp_servers_are_verified()
+            )
+
+    def _update_review_save_button(self) -> None:
+        buttons = self.query("#review-save")
+        if buttons:
+            buttons.first(Button).disabled = not (
+                self._providers_are_verified()
+                and self._models_are_verified()
+                and self._mcp_servers_are_verified()
+            )
 
     def _update_progress(self) -> None:
         provider_names = list(self.state.providers)
@@ -1661,8 +1751,8 @@ class SetupApp(App[bool]):
                 "#provider-edit",
                 "#provider-remove",
                 "#providers-retry",
-                "#providers-next",
             )
+            self.query_one("#providers-next", Button).disabled = True
             if targets:
                 for button_id in button_ids:
                     self.query_one(button_id, Button).disabled = True
@@ -1692,6 +1782,8 @@ class SetupApp(App[bool]):
                 status_widget.set_class(True, "success")
                 status_widget.set_class(False, "error")
                 self._set_message(message, "")
+                self._update_provider_continue_button()
+                self._update_review_save_button()
                 return True
             status_widget.update("✗ Provider check failed" if failed else "")
             status_widget.set_class(False, "success")
@@ -1707,7 +1799,198 @@ class SetupApp(App[bool]):
                     for name in failed[:3]
                 )
                 self._set_message(message, f"{heading}\n{details}")
+            self._update_provider_continue_button()
+            self._update_review_save_button()
             return False
+
+    @staticmethod
+    def _model_yaml_error_text(error: ValidationError) -> str:
+        details = error.errors(include_url=False, include_context=False)
+        lines = [
+            f"{len(details)} validation "
+            f"{'error' if len(details) == 1 else 'errors'} for {error.title}"
+        ]
+        for detail in details:
+            location = detail.get("loc", ())
+            field = str(location[0]) if location else "configuration"
+            lines.append(f"{field}: {detail['msg']}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _configured_model_values(config: ModelConfig) -> dict[str, Any]:
+        values = config.model_dump(
+            mode="json",
+            exclude_unset=True,
+            context={"include_defaults": False},
+        )
+        values.setdefault("model", config.model)
+        return values
+
+    @staticmethod
+    def _dump_model_yaml(values: dict[str, Any]) -> str:
+        return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+
+    def _initialize_model_yaml(self, prefix: str) -> None:
+        if prefix in self._model_yaml_initialized:
+            return
+        configured = (
+            self.state.llm_model
+            if prefix == "llm"
+            else self.state.embedding_model
+        )
+        if configured is not None:
+            self._model_yaml_values[prefix] = self._configured_model_values(
+                configured
+            )
+        self._model_yaml_initialized.add(prefix)
+
+    def _model_name_for_yaml(self, prefix: str) -> str:
+        value = self.query_one(f"#{prefix}-choice", Select).value
+        if value == NO_MODEL:
+            return ""
+        if value == CUSTOM_MODEL:
+            return self.query_one(f"#{prefix}-custom", Input).value.strip()
+        return str(value)
+
+    def _derived_model_provider(
+        self, prefix: str, provider_name: str, model_name: str
+    ) -> str:
+        advertised = next(
+            (
+                model
+                for model in self.state.provider_models.get(provider_name, [])
+                if model.name == model_name
+            ),
+            None,
+        )
+        draft = self.state.providers[provider_name]
+        fallback = "openai" if draft.kind == "litellm" else draft.kind
+        return (
+            advertised.model_provider
+            if advertised is not None and advertised.model_provider is not None
+            else fallback
+        )
+
+    def _sync_model_yaml_from_controls(self, prefix: str) -> None:
+        if self._syncing_model_controls or not self.is_mounted:
+            return
+        provider = self.query_one("#model-provider", Select).value
+        if (
+            not isinstance(provider, str)
+            or provider not in self.state.providers
+        ):
+            return
+        self._initialize_model_yaml(prefix)
+        values = deepcopy(self._model_yaml_values[prefix])
+        model_name = self._model_name_for_yaml(prefix)
+        values["model"] = model_name
+        values["model_provider"] = self._derived_model_provider(
+            prefix, provider, model_name
+        )
+        values["inference_provider"] = provider
+        self._model_yaml_values[prefix] = values
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        text = self._dump_model_yaml(values)
+        if editor.text != text:
+            self._syncing_model_controls = True
+            try:
+                with self.prevent(TextArea.Changed):
+                    editor.text = text
+            finally:
+                self._syncing_model_controls = False
+        self._validate_model_yaml(prefix, update_controls=False)
+
+    def _set_model_yaml_state(
+        self, prefix: str, state: str, error: str = ""
+    ) -> None:
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        editor.remove_class("yaml-valid", "yaml-invalid")
+        if state != "neutral":
+            editor.add_class(f"yaml-{state}")
+        message = self.query_one(f"#{prefix}-yaml-error", Static)
+        message.update(error)
+        message.set_class(not error, "hidden")
+
+    def _update_model_control_from_yaml(
+        self, prefix: str, config: ModelConfig
+    ) -> None:
+        value: str
+        catalog = {
+            model.name
+            for model in self.state.provider_models.get(
+                config.inference_provider or "", []
+            )
+        }
+        if not config.model and prefix == "embedding":
+            value = NO_MODEL
+        elif config.model in catalog:
+            value = config.model
+        else:
+            value = CUSTOM_MODEL
+        choice = self.query_one(f"#{prefix}-choice", Select)
+        custom = self.query_one(f"#{prefix}-custom", Input)
+        self._syncing_model_controls = True
+        try:
+            with self.prevent(Select.Changed, Input.Changed):
+                choice.value = value
+                custom.value = config.model if value == CUSTOM_MODEL else ""
+        finally:
+            self._syncing_model_controls = False
+        self._toggle_custom_model(prefix, value)
+        self._reset_model_validation()
+        self._update_progress()
+
+    def _validate_model_yaml(
+        self, prefix: str, *, update_controls: bool
+    ) -> ModelConfig | None:
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        config_type = ChatModelConfig if prefix == "llm" else EmbModelConfig
+        try:
+            values = yaml.safe_load(editor.text)
+            if not isinstance(values, dict):
+                raise ValueError("Configuration must be a YAML mapping")
+            config = config_type.model_validate(deepcopy(values))
+            if prefix == "llm" and not config.model.strip():
+                raise ValueError("Language model must not be blank")
+            provider = self.query_one("#model-provider", Select).value
+            if config.inference_provider != provider:
+                raise ValueError(
+                    "inference_provider must match the selected inference "
+                    f"provider '{provider}'"
+                )
+            if config.ssl_verify is not True:
+                raise ValueError("ssl_verify must remain true during setup")
+        except (yaml.YAMLError, ValueError) as exc:
+            error = (
+                self._model_yaml_error_text(exc)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            )
+            self._set_model_yaml_state(prefix, "invalid", error)
+            return None
+        self._model_yaml_values[prefix] = deepcopy(values)
+        self._set_model_yaml_state(prefix, "valid")
+        if update_controls:
+            self._update_model_control_from_yaml(prefix, config)
+        return config
+
+    @on(TextArea.Changed, ".setup-model-yaml-editor")
+    def model_yaml_changed(self, event: TextArea.Changed) -> None:
+        if self._syncing_model_controls or event.text_area.id is None:
+            return
+        prefix = event.text_area.id.removesuffix("-config-yaml")
+        current = self._dump_model_yaml(self._model_yaml_values[prefix])
+        if event.text_area.text == current:
+            self._set_model_yaml_state(prefix, "valid")
+            return
+        self._set_model_yaml_state(prefix, "neutral")
+        timer = self._model_yaml_timers.pop(prefix, None)
+        if timer is not None:
+            timer.stop()
+        self._model_yaml_timers[prefix] = self.set_timer(
+            self.MODEL_YAML_VALIDATION_DELAY,
+            lambda: self._validate_model_yaml(prefix, update_controls=True),
+        )
 
     def _refresh_model_provider_list(self) -> None:
         options = [(name, name) for name in self.state.providers]
@@ -1810,6 +2093,8 @@ class SetupApp(App[bool]):
         emb_select.value = emb_value
         self._toggle_custom_model("llm", llm_value)
         self._toggle_custom_model("embedding", emb_value)
+        self._sync_model_yaml_from_controls("llm")
+        self._sync_model_yaml_from_controls("embedding")
         self._reset_model_validation()
 
     def _selected_model_name(self, prefix: str) -> str | None:
@@ -1875,6 +2160,7 @@ class SetupApp(App[bool]):
         widget.set_class(status is True, "success")
         widget.set_class(status is False, "error")
         self._update_progress()
+        self._update_review_save_button()
 
     def _reset_model_validation(self) -> None:
         if not self.is_mounted:
@@ -1928,27 +2214,26 @@ class SetupApp(App[bool]):
                 or provider not in self.state.providers
             ):
                 raise SetupError("Choose a validated inference provider.")
-            llm_name = self._selected_model_name("llm")
-            if llm_name is None:
-                raise SetupError("A language model is required.")
-            llm_provider = self._model_provider(provider, llm_name, "chat")
-            llm = ChatModelConfig(
-                model=llm_name,
-                model_provider=llm_provider,
-                inference_provider=provider,
+            for prefix in ("llm", "embedding"):
+                editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+                if editor.text == self._dump_model_yaml(
+                    self._model_yaml_values[prefix]
+                ):
+                    self._sync_model_yaml_from_controls(prefix)
+            llm_config = self._validate_model_yaml("llm", update_controls=True)
+            embedding_config = self._validate_model_yaml(
+                "embedding", update_controls=True
             )
-            embedding_name = self._selected_model_name("embedding")
-            embedding = None
-            if embedding_name is not None:
-                embedding_provider = self._model_provider(
-                    provider, embedding_name, "embedding"
+            if llm_config is None or embedding_config is None:
+                raise SetupError(
+                    "Fix the invalid Advanced model configuration before "
+                    "continuing."
                 )
-                embedding = EmbModelConfig(
-                    model=embedding_name,
-                    model_provider=embedding_provider,
-                    inference_provider=provider,
-                )
-        except (SetupError, ValidationError) as exc:
+            assert isinstance(llm_config, ChatModelConfig)
+            assert isinstance(embedding_config, EmbModelConfig)
+            llm = llm_config
+            embedding = embedding_config if embedding_config.model else None
+        except SetupError as exc:
             self._set_message(message, str(exc))
             return
         try:
@@ -2211,8 +2496,8 @@ class SetupApp(App[bool]):
                 "#mcp-edit",
                 "#mcp-remove",
                 "#mcps-retry",
-                "#mcps-next",
             )
+            self.query_one("#mcps-next", Button).disabled = True
             if targets:
                 for button_id in buttons:
                     self.query_one(button_id, Button).disabled = True
@@ -2245,6 +2530,8 @@ class SetupApp(App[bool]):
                     else "",
                     success=True,
                 )
+                self._update_mcp_continue_button()
+                self._update_review_save_button()
                 return True
             details = "; ".join(
                 f"{name}: {self.state.mcp_errors[name]}" for name in failed
@@ -2254,6 +2541,8 @@ class SetupApp(App[bool]):
                 "Fix or remove the MCP servers that failed validation. "
                 + details,
             )
+            self._update_mcp_continue_button()
+            self._update_review_save_button()
             return False
 
     async def _prepare_mcps_page(self) -> None:
@@ -2281,6 +2570,7 @@ class SetupApp(App[bool]):
             summary = "Setup is incomplete. Use the edit buttons below."
             self._set_message(self.query_one("#review-error", Static), str(exc))
         self.query_one("#review-summary", Static).update(summary)
+        self._update_review_save_button()
 
     async def _save_configuration(self) -> None:
         message = self.query_one("#review-error", Static)
@@ -2396,15 +2686,21 @@ class SetupApp(App[bool]):
     @on(Select.Changed, "#llm-choice")
     def llm_choice_changed(self, event: Select.Changed) -> None:
         self._toggle_custom_model("llm", event.value)
+        self._sync_model_yaml_from_controls("llm")
         self._reset_model_validation()
 
     @on(Select.Changed, "#embedding-choice")
     def embedding_choice_changed(self, event: Select.Changed) -> None:
         self._toggle_custom_model("embedding", event.value)
+        self._sync_model_yaml_from_controls("embedding")
         self._reset_model_validation()
 
     @on(Input.Changed, "#llm-custom, #embedding-custom")
-    def custom_model_changed(self, _event: Input.Changed) -> None:
+    def custom_model_changed(self, event: Input.Changed) -> None:
+        if event.input.id is not None:
+            self._sync_model_yaml_from_controls(
+                event.input.id.removesuffix("-custom")
+            )
         self._reset_model_validation()
 
     @on(Select.Changed, "#mcp-transport")
@@ -2473,6 +2769,8 @@ class SetupApp(App[bool]):
                     }
                     await self._refresh_provider_tabs()
                     self._update_progress()
+                    self._update_provider_continue_button()
+                    self._update_review_save_button()
         elif button_id == "providers-next":
             self._start_provider_validation(continue_to_models=True)
         elif button_id == "providers-retry":
@@ -2491,6 +2789,8 @@ class SetupApp(App[bool]):
                 self.state.mcp_errors.pop(value, None)
                 self._refresh_mcp_list()
                 self._update_progress()
+                self._update_mcp_continue_button()
+                self._update_review_save_button()
         elif button_id == "mcp-save":
             await self._save_mcp()
         elif button_id == "mcps-next":
