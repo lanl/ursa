@@ -28,6 +28,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     ContentSwitcher,
     Footer,
     Input,
@@ -80,10 +81,89 @@ PROVIDER_DEFAULT_URLS = {
     "ollama": "http://localhost:11434",
 }
 KEYRING_LOCK = Lock()
+DOCTOR_TIMEOUT_SECONDS = 90
+DOCTOR_SUMMARY = re.compile(
+    r"(?P<warnings>\d+) warn\s+\|\s+(?P<errors>\d+) errors?"
+)
 
 
 class SetupError(ValueError):
     pass
+
+
+def _doctor_counts(output: str, returncode: int) -> tuple[int, int]:
+    matches = list(DOCTOR_SUMMARY.finditer(output))
+    if matches:
+        summary = matches[-1]
+        warnings = int(summary.group("warnings"))
+        errors = int(summary.group("errors"))
+    else:
+        warnings, errors = 0, 1
+    if returncode and not errors:
+        errors = 1
+    return warnings, errors
+
+
+def _doctor_title(output: str, returncode: int) -> str:
+    warnings, errors = _doctor_counts(output, returncode)
+    icon = "❌" if errors else "⚠️" if warnings else "✅"
+    warning_label = "warning" if warnings == 1 else "warnings"
+    error_label = "error" if errors == 1 else "errors"
+    return (
+        f"{icon} URSA Doctor — {warnings} {warning_label}, "
+        f"{errors} {error_label}"
+    )
+
+
+async def _run_doctor_in_login_shell(
+    path: Path, columns: int
+) -> tuple[str, str, bool]:
+    command = 'exec ursa --config "$1" self doctor'
+    environment = {**os.environ, "COLUMNS": str(max(columns, 20))}
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "bash",
+            "--login",
+            "-c",
+            command,
+            "ursa-setup",
+            os.fspath(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=environment,
+        )
+    except Exception as exc:
+        output = f"Could not start ursa self doctor: {exc}"
+        return _doctor_title(output, 1), output, False
+
+    try:
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(), timeout=DOCTOR_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        with suppress(ProcessLookupError):
+            process.kill()
+        stdout, _ = await process.communicate()
+        output = stdout.decode(errors="replace").rstrip()
+        message = (
+            f"ursa self doctor did not finish within "
+            f"{DOCTOR_TIMEOUT_SECONDS} seconds."
+        )
+        output = f"{output}\n{message}".lstrip()
+        return _doctor_title(output, 1), output, False
+    except asyncio.CancelledError:
+        with suppress(ProcessLookupError):
+            process.terminate()
+        await process.wait()
+        raise
+
+    output = stdout.decode(errors="replace").rstrip()
+    if not output:
+        output = f"ursa self doctor exited with status {process.returncode}."
+    returncode = process.returncode or 0
+    warnings, errors = _doctor_counts(output, returncode)
+    clean = returncode == 0 and warnings == 0 and errors == 0
+    return _doctor_title(output, returncode), output, clean
 
 
 def load_setup_defaults(path: Path) -> dict[str, Any]:
@@ -657,6 +737,7 @@ class SetupApp(App[SetupAction]):
         self.checking = {"provider": set(), "mcp": set(), "model": set()}
         self.model_ok = {"llm": None, "embedding": None}
         self.locks = {"provider": asyncio.Lock(), "mcp": asyncio.Lock()}
+        self.doctor_running = False
 
     @classmethod
     def _field(cls, label: str, key: str, widget: Any) -> tuple[Any, Any]:
@@ -832,20 +913,59 @@ class SetupApp(App[SetupAction]):
             self._list_page("mcp"),
             self._page(
                 "review",
-                "Review and save",
+                "Write configuration",
                 Static("", id="review-summary", classes="review-box"),
-                Horizontal(
-                    Button("Edit providers", id="review-providers"),
-                    Button("Edit models", id="review-models"),
-                    Button("Edit MCP", id="review-mcps"),
-                    classes="manage-actions",
+                Collapsible(
+                    Static(
+                        "Read only — select text to copy",
+                        classes="review-readonly",
+                    ),
+                    TextArea(
+                        language="yaml",
+                        read_only=True,
+                        show_line_numbers=True,
+                        id="review-config-yaml",
+                    ),
+                    title="Full configuration",
+                    id="review-config",
+                    classes="review-details",
+                ),
+                Collapsible(
+                    TextArea(
+                        "Doctor has not run yet.",
+                        read_only=True,
+                        show_line_numbers=False,
+                        id="review-doctor-output",
+                    ),
+                    title="? URSA Doctor — not run",
+                    id="review-doctor",
+                    classes="review-details",
                 ),
                 Static("", id="review-error", classes="form-message"),
-                copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
-                actions=(
-                    ("Back", "review-back", "default", False),
-                    ("Save configuration", "review-save", "success", True),
+                Horizontal(
+                    Button("Providers", id="review-providers"),
+                    Button("Models", id="review-models"),
+                    Button("MCP", id="review-mcps"),
+                    Button(
+                        "Write and validate",
+                        id="review-save",
+                        variant="success",
+                        disabled=True,
+                    ),
+                    Button(
+                        "Check again",
+                        id="review-retry",
+                        classes="hidden",
+                    ),
+                    Button(
+                        "Continue",
+                        id="review-continue",
+                        variant="primary",
+                        classes="hidden",
+                    ),
+                    classes="setup-actions",
                 ),
+                copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
             ),
             self._page(
                 "done",
@@ -920,7 +1040,7 @@ class SetupApp(App[SetupAction]):
             self._review()
 
     def action_back(self) -> None:
-        if self.history:
+        if self.history and not self.doctor_running:
             self._show(self.history.pop(), False)
 
     def action_cancel(self) -> None:
@@ -1047,10 +1167,14 @@ class SetupApp(App[SetupAction]):
             else:
                 await self._probe_mcp(name, items[name])
         except Exception as exc:
+            if name not in items:
+                return True
             self.state.verified[kind][name] = False
             self.state.errors[kind][name] = _friendly(exc, kind == "mcp")
             return False
         else:
+            if name not in items:
+                return True
             self.state.verified[kind][name] = True
             self.state.errors[kind].pop(name, None)
             return True
@@ -1068,12 +1192,18 @@ class SetupApp(App[SetupAction]):
                 if force or self.state.verified[kind].get(name) is not True
             ]
             await asyncio.gather(*(self._check(kind, name) for name in names))
+        return self._update_verification_status(kind)
+
+    def _update_verification_status(self, kind: str) -> bool:
+        items = self.state.providers if kind == "provider" else self.state.mcps
         failed = [
             name
             for name in items
             if self.state.verified[kind].get(name) is False
         ]
-        complete = (bool(items) or kind == "mcp") and not failed
+        complete = (bool(items) or kind == "mcp") and all(
+            self.state.verified[kind].get(name) is True for name in items
+        )
         plural = "providers" if kind == "provider" else "mcps"
         self.query_one(f"#{plural}-next", Button).disabled = not complete
         if failed:
@@ -1395,16 +1525,90 @@ class SetupApp(App[SetupAction]):
                 value is True for value in self.state.verified["mcp"].values()
             )
         )
+        try:
+            config_yaml = yaml.safe_dump(
+                self.state.output(), sort_keys=False, allow_unicode=True
+            )
+        except Exception as exc:
+            config_yaml = f"# Configuration is not ready: {exc}\n"
+            valid = False
+        self.query_one("#review-config-yaml", TextArea).text = config_yaml
+        self.query_one(
+            "#review-doctor", Collapsible
+        ).title = "? URSA Doctor — not run"
+        self.query_one("#review-doctor", Collapsible).collapsed = True
+        self.query_one(
+            "#review-doctor-output", TextArea
+        ).text = "Doctor has not run yet."
+        self._review_mode("initial")
         self.query_one("#review-save", Button).disabled = not valid
 
+    def _review_mode(
+        self, mode: Literal["initial", "running", "failed"]
+    ) -> None:
+        initial = mode == "initial"
+        failed = mode == "failed"
+        self.query_one("#review-save", Button).set_class(not initial, "hidden")
+        for selector in ("#review-retry", "#review-continue"):
+            button = self.query_one(selector, Button)
+            button.set_class(not failed, "hidden")
+            button.disabled = not failed
+        for selector in (
+            "#review-providers",
+            "#review-models",
+            "#review-mcps",
+        ):
+            self.query_one(selector, Button).disabled = mode == "running"
+
     async def _save_config(self) -> None:
+        self._review_mode("running")
+        self._status("#review-error", "")
         try:
             path = await asyncio.to_thread(_save, self.state)
+            config_yaml = path.read_text(encoding="utf-8")
         except Exception as exc:
+            self._review()
             self._status("#review-error", f"Could not save: {exc}", True)
             return
+        self.query_one("#review-config-yaml", TextArea).text = config_yaml
         self.query_one("#done-copy", Static).update(f"Saved to {path}")
-        self._show("done")
+        self._start_doctor(path)
+
+    def _start_doctor(self, path: Path) -> None:
+        self.doctor_running = True
+        self._review_mode("running")
+        self.query_one(
+            "#review-doctor", Collapsible
+        ).title = "? URSA Doctor — running"
+        self.query_one(
+            "#review-doctor-output", TextArea
+        ).text = "Running ursa self doctor in a new bash login shell…"
+        doctor = self.query_one("#review-doctor", Collapsible)
+        output = self.query_one("#review-doctor-output", TextArea)
+        contents = doctor.query_one(Collapsible.Contents)
+        columns = max(
+            20,
+            doctor.content_size.width
+            - contents.styles.gutter.width
+            - output.styles.gutter.width,
+        )
+        self.run_worker(
+            self._load_doctor(path, columns),
+            group="setup-doctor",
+            exclusive=True,
+        )
+
+    async def _load_doctor(self, path: Path, columns: int) -> None:
+        title, output, clean = await _run_doctor_in_login_shell(path, columns)
+        self.doctor_running = False
+        doctor = self.query_one("#review-doctor", Collapsible)
+        doctor.title = title
+        self.query_one("#review-doctor-output", TextArea).text = output
+        if clean:
+            self._show("done")
+        else:
+            doctor.collapsed = False
+            self._review_mode("failed")
 
     def _toggle_url(self, value: object) -> None:
         custom = value == CUSTOM_PROVIDER_URL
@@ -1501,7 +1705,11 @@ class SetupApp(App[SetupAction]):
             if name and (kind == "mcp" or len(items) > 1):
                 items.pop(name)
                 self.state.verified[kind].pop(name, None)
+                self.state.errors[kind].pop(name, None)
+                self.checking[kind].discard(name)
                 await self._tabs(kind)
+                self._update_verification_status(kind)
+                self._progress()
         elif id in {"providers-retry", "mcps-retry"}:
             await self._verify(
                 "provider" if id.startswith("providers") else "mcp", True
@@ -1516,6 +1724,10 @@ class SetupApp(App[SetupAction]):
             self._show(id.removeprefix("review-"))
         elif id == "review-save":
             await self._save_config()
+        elif id == "review-retry":
+            self._start_doctor(self.state.path)
+        elif id == "review-continue":
+            self._show("done")
 
 
 def _probe_model(config, providers: dict[str, InferenceProviderConfig]) -> None:
