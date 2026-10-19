@@ -19,7 +19,6 @@ from threading import Lock
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-import keyring
 import yaml
 from pydantic import SecretStr, ValidationError
 from textual import on
@@ -56,6 +55,7 @@ from ursa.cli.tui.widgets import (
     ModelEditor,
     ModelSelection,
 )
+from ursa.util import get_keyring
 from ursa.util.http import inject_truststore_into_ssl
 from ursa.util.inference_providers import list_provider_models
 from ursa.util.mcp import (
@@ -70,6 +70,7 @@ PROVIDER_DEFAULT_URL = "__ursa_provider_default_url__"
 MCP_TOKEN_NONE = "__ursa_mcp_token_none__"
 API_KEY_ENV = "__ursa_api_key_env__"
 SPINNER = "|"
+VALIDATING = "?"
 NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROVIDER_DEFAULT_URLS = {
@@ -374,8 +375,9 @@ def _save(state: _State) -> Path:
     with path.with_suffix(path.suffix + ".lock").open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         config = state.output()
+        credential_store = get_keyring()
         for username, secret in state.pending.items():
-            keyring.set_password(KEYRING_SERVICE, username, secret)
+            credential_store.set_password(KEYRING_SERVICE, username, secret)
         descriptor, temporary_name = tempfile.mkstemp(dir=path.parent)
         temporary = Path(temporary_name)
         try:
@@ -499,8 +501,12 @@ class ApiKeyEntry(Vertical):
             select.value = name if source == old else source
 
     async def _load(self, username: str, generation: int) -> None:
+        credential_store = get_keyring()
         secret = await asyncio.to_thread(
-            _quiet, keyring.get_password, KEYRING_SERVICE, username
+            _quiet,
+            credential_store.get_password,
+            KEYRING_SERVICE,
+            username,
         )
         if generation != self.generation:
             return
@@ -794,7 +800,7 @@ class SetupApp(App[SetupAction]):
                     classes="manage-actions",
                 ),
                 Static("", id="review-error", classes="form-message"),
-                copy="API keys and tokens will go to your operating-system keyring. The YAML file stores only keyring references.",
+                copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
                 actions=(
                     ("Back", "review-back", "default", False),
                     ("Save configuration", "review-save", "success", True),
@@ -881,7 +887,7 @@ class SetupApp(App[SetupAction]):
 
     def _mark(self, kind: str, name: str) -> str:
         if name in self.checking[kind]:
-            return SPINNER
+            return VALIDATING
         value = self.state.verified[kind].get(name)
         return "✓" if value else "✗" if value is False else "○"
 
@@ -893,7 +899,7 @@ class SetupApp(App[SetupAction]):
 
     def _model_mark(self, prefix: str) -> str:
         if prefix in self.checking["model"]:
-            return SPINNER
+            return VALIDATING
         value = self.model_ok[prefix]
         return "✓" if value else "✗" if value is False else "○"
 
@@ -1152,7 +1158,7 @@ class SetupApp(App[SetupAction]):
                     else {}
                 ),
             }).resolve(name)
-            self._status("#provider-error", SPINNER)
+            self._status("#provider-error", VALIDATING)
             models = await asyncio.to_thread(list_provider_models, typed)
             if not models:
                 raise SetupError("The provider returned no models.")
@@ -1312,7 +1318,7 @@ class SetupApp(App[SetupAction]):
             if credential.pending and credential.username:
                 previous = self.state.pending.get(credential.username)
                 self.state.pending[credential.username] = credential.pending
-            self._status("#mcp-validation-status", SPINNER)
+            self._status("#mcp-validation-status", VALIDATING)
             await self._probe_mcp(name, config)
         except Exception as exc:
             if credential.pending and credential.username:
