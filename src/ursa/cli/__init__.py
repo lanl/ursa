@@ -23,7 +23,6 @@ from ursa.cli.config import (
     LoggingLevel,
     MCPServerConfig,
     UrsaConfig,
-    config_search_paths,
     merge_ursa_config,
 )
 from ursa.cli.groups import (
@@ -198,24 +197,6 @@ def main(args=None):
         case "self":
             self_config = cfg.self
             command_config = self_config[self_config.subcommand]
-            if self_config.subcommand == "doctor":
-                doctor_config_paths = tuple(config_search_paths(cfg))
-                try:
-                    doctor_config = merge_ursa_config(
-                        cfg,
-                        env_overrides=env_overrides,
-                        cli_overrides=cli_overrides,
-                    ).resolve()
-                    config_error = None
-                except (Exception, SystemExit) as exc:
-                    doctor_config = None
-                    config_error = exc
-                return command_config.action(
-                    command_config,
-                    config=doctor_config,
-                    config_error=config_error,
-                    config_paths=doctor_config_paths,
-                )
             command_config.action(command_config)
             return
         case "auth":

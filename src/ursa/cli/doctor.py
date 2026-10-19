@@ -13,14 +13,12 @@ import subprocess
 import sys
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
-from enum import StrEnum
-from importlib.metadata import EntryPoint, entry_points
-from inspect import isawaitable
+from dataclasses import InitVar, dataclass, field, replace
+from enum import IntEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from threading import Thread
 from time import perf_counter
 from typing import Any
 
@@ -32,24 +30,44 @@ from rich.text import Text
 from ursa.cli.config import UrsaConfig
 from ursa.util.secrets import SecretReference, SecretTemplate
 
-HEALTHCHECK_ENTRYPOINT_GROUP = "ursa-healthcheck"
 CHECK_DEADLINE_SECONDS = 60
 _CHECK_FAILURES = (Exception, SystemExit, asyncio.CancelledError)
 
 
-class CheckStatus(StrEnum):
+class CheckStatus(IntEnum):
     """Possible health-check outcomes, ordered from best to worst."""
 
-    OK = "ok"
-    WARN = "warn"
-    ERROR = "error"
+    OK = 0
+    WARN = 1
+    ERROR = 2
 
+    @property
+    def label(self) -> str:
+        return self.name.lower()
 
-_STATUS_RANK = {
-    CheckStatus.OK: 0,
-    CheckStatus.WARN: 1,
-    CheckStatus.ERROR: 2,
-}
+    @property
+    def indicator(self) -> str:
+        return ("✅", "⚠️", "❌")[self]
+
+    @property
+    def marker(self) -> str:
+        return ("[ok]", "[!!]", "[xx]")[self]
+
+    @property
+    def style(self) -> str:
+        return ("green", "yellow", "red")[self]
+
+    def result_label(self, result: CheckResult) -> Text:
+        label = Text(f"{self.indicator} ")
+        label.append(result.name, style=f"bold {self.style}")
+        if result.duration_ms is not None:
+            label.append(
+                f"  ({result.duration_ms}\N{NO-BREAK SPACE}ms)", style="dim"
+            )
+        if result.message:
+            label.append("  ")
+            label.append(result.message, style="dim")
+        return label
 
 
 @dataclass(frozen=True)
@@ -58,9 +76,22 @@ class CheckResult:
 
     name: str
     status: CheckStatus
-    message: str | None = None
+    message: str | BaseException | None = None
     checks: tuple[CheckResult, ...] = field(default_factory=tuple)
     duration_ms: int | None = None
+    secrets: InitVar[Sequence[str]] = ()
+
+    def __post_init__(self, secrets: Sequence[str]) -> None:
+        if not isinstance(self.message, BaseException):
+            return
+        try:
+            message = str(self.message).strip() or type(self.message).__name__
+        except BaseException:
+            message = type(self.message).__name__
+        for secret in secrets:
+            if secret:
+                message = message.replace(secret, "[redacted]")
+        object.__setattr__(self, "message", message)
 
     @classmethod
     def group(
@@ -71,16 +102,14 @@ class CheckResult:
     ) -> CheckResult:
         children = tuple(checks)
         status = max(
-            (child.status for child in children),
-            key=_STATUS_RANK.get,
-            default=CheckStatus.OK,
+            (child.status for child in children), default=CheckStatus.OK
         )
         return cls(name, status, message, children)
 
     def as_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "name": self.name,
-            "status": self.status.value,
+            "status": self.status.label,
         }
         if self.message is not None:
             result["message"] = self.message
@@ -89,6 +118,13 @@ class CheckResult:
         if self.duration_ms is not None:
             result["duration_ms"] = self.duration_ms
         return result
+
+    def leaf_statuses(self) -> list[CheckStatus]:
+        if not self.checks:
+            return [self.status]
+        return [
+            status for child in self.checks for status in child.leaf_statuses()
+        ]
 
 
 @dataclass(frozen=True)
@@ -104,12 +140,6 @@ class DoctorContext:
     )
 
 
-@dataclass(frozen=True)
-class _PathUrsa:
-    path_entry: str
-    executable: Path
-
-
 DoctorCheck = Callable[[DoctorContext], CheckResult]
 ProgressCallback = Callable[[int, int, CheckResult], None]
 
@@ -119,29 +149,6 @@ def _configuration_error(heading: str) -> CheckResult:
         heading,
         CheckStatus.WARN,
         "Skipped: URSA configuration is unavailable",
-    )
-
-
-def _exception_message(exc: BaseException, secrets: Sequence[str] = ()) -> str:
-    try:
-        message = str(exc).strip() or type(exc).__name__
-    except BaseException:
-        message = type(exc).__name__
-    for secret in secrets:
-        if secret:
-            message = message.replace(secret, "[redacted]")
-    return message
-
-
-def _error_result(
-    name: str,
-    exc: BaseException,
-    secrets: Sequence[str] = (),
-) -> CheckResult:
-    return CheckResult(
-        name,
-        CheckStatus.ERROR,
-        _exception_message(exc, secrets),
     )
 
 
@@ -156,7 +163,7 @@ def check_configuration(context: DoctorContext) -> CheckResult:
             try:
                 load_config_file(path)
             except _CHECK_FAILURES as exc:
-                checks.append(_error_result(str(path), exc))
+                checks.append(CheckResult(str(path), CheckStatus.ERROR, exc))
             else:
                 checks.append(
                     CheckResult(
@@ -176,8 +183,8 @@ def check_configuration(context: DoctorContext) -> CheckResult:
 
     if context.config is None:
         final_status = CheckStatus.ERROR
-        final_message = _exception_message(
-            context.config_error or RuntimeError("configuration is unavailable")
+        final_message = context.config_error or RuntimeError(
+            "configuration is unavailable"
         )
     else:
         final_status = CheckStatus.OK
@@ -266,8 +273,11 @@ def _prime_keyring_credentials(context: DoctorContext) -> DoctorContext:
                 continue
             outcome = resolve(reference, server_name)
             if isinstance(outcome, BaseException):
+                message = CheckResult(
+                    header_name, CheckStatus.ERROR, outcome
+                ).message
                 mcp_error_messages.setdefault(server_name, []).append(
-                    f"{header_name}: {_exception_message(outcome)}"
+                    f"{header_name}: {message}"
                 )
             else:
                 headers[header_name] = (
@@ -283,22 +293,6 @@ def _prime_keyring_credentials(context: DoctorContext) -> DoctorContext:
         credential_errors=credential_errors,
         mcp_credential_errors=mcp_credential_errors,
     )
-
-
-def _run_probe(
-    context: DoctorContext,
-    name: str,
-    config: Any,
-    probe: Callable[[], str],
-) -> CheckResult:
-    if credential_error := context.credential_errors.get(id(config)):
-        return _error_result(name, credential_error)
-    secret = None
-    try:
-        secret = _secret_value(config)
-        return CheckResult(name, CheckStatus.OK, probe())
-    except _CHECK_FAILURES as exc:
-        return _error_result(name, exc, (secret,) if secret else ())
 
 
 def check_self_status(_context: DoctorContext) -> CheckResult:
@@ -327,7 +321,7 @@ def _check_uv_receipt() -> CheckResult:
     try:
         requirement = _format_requirement(_read_requirement(receipt))
     except _CHECK_FAILURES as exc:
-        return _error_result("uv tool receipt", exc)
+        return CheckResult("uv tool receipt", CheckStatus.ERROR, exc)
     return CheckResult(
         "uv tool receipt",
         CheckStatus.OK,
@@ -352,7 +346,7 @@ def _check_dependencies() -> CheckResult:
             timeout=max(1, CHECK_DEADLINE_SECONDS - 5),
         )
     except _CHECK_FAILURES as exc:
-        return _error_result("Python dependencies", exc)
+        return CheckResult("Python dependencies", CheckStatus.ERROR, exc)
     detail = "\n".join(
         output.strip()
         for output in (result.stdout, result.stderr)
@@ -388,7 +382,7 @@ def _check_writable(name: str, path: Path) -> CheckResult:
         with NamedTemporaryFile(prefix=".ursa-doctor-", dir=probe_directory):
             pass
     except _CHECK_FAILURES as exc:
-        return _error_result(name, exc)
+        return CheckResult(name, CheckStatus.ERROR, exc)
     return CheckResult(name, CheckStatus.OK, f"Writable or creatable: {path}")
 
 
@@ -411,8 +405,8 @@ def check_installation_integrity(context: DoctorContext) -> CheckResult:
     return CheckResult.group("Installation integrity", checks)
 
 
-def _ursa_executables_on_path() -> list[_PathUrsa]:
-    found: list[_PathUrsa] = []
+def _ursa_executables_on_path() -> list[tuple[str, Path]]:
+    found = []
     seen: set[str] = set()
     for raw_directory in os.environ.get("PATH", "").split(os.pathsep):
         directory = raw_directory or os.curdir
@@ -423,16 +417,12 @@ def _ursa_executables_on_path() -> list[_PathUrsa]:
         key = os.path.normcase(str(path))
         if key not in seen:
             seen.add(key)
-            found.append(
-                _PathUrsa(
-                    path_entry=(
-                        raw_directory
-                        if raw_directory
-                        else "<empty> (current directory)"
-                    ),
-                    executable=path,
-                )
-            )
+            found.append((
+                raw_directory
+                if raw_directory
+                else "<empty> (current directory)",
+                path,
+            ))
     return found
 
 
@@ -442,15 +432,6 @@ def _running_ursa_path() -> Path | None:
         return None
     resolved = invoked if invoked.is_absolute() else shutil.which(str(invoked))
     return Path(resolved).absolute() if resolved else None
-
-
-def _same_executable(left: Path, right: Path) -> bool:
-    if os.path.normcase(str(left)) == os.path.normcase(str(right)):
-        return True
-    try:
-        return left.samefile(right)
-    except OSError:
-        return False
 
 
 def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
@@ -470,19 +451,19 @@ def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
         current_index = next(
             (
                 index
-                for index, entry in enumerate(executables)
-                if _same_executable(entry.executable, running)
+                for index, (_, executable) in enumerate(executables)
+                if executable.samefile(running)
             ),
             None,
         )
     if current_index is None:
         checks = tuple(
             CheckResult(
-                f"PATH {entry.path_entry} · not current",
+                f"PATH {path_entry} · not current",
                 CheckStatus.WARN,
-                str(entry.executable),
+                str(executable),
             )
-            for entry in executables
+            for path_entry, executable in executables
         )
         return CheckResult(
             "URSA on PATH",
@@ -492,7 +473,7 @@ def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
         )
 
     checks = []
-    for index, entry in enumerate(executables):
+    for index, (path_entry, executable) in enumerate(executables):
         if index < current_index:
             label = "SHADOWS CURRENT"
             status = CheckStatus.ERROR
@@ -504,9 +485,9 @@ def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
             status = CheckStatus.WARN
         checks.append(
             CheckResult(
-                f"PATH {entry.path_entry} · {label}",
+                f"PATH {path_entry} · {label}",
                 status,
-                str(entry.executable),
+                str(executable),
             )
         )
 
@@ -531,15 +512,32 @@ def check_inference_providers(context: DoctorContext) -> CheckResult:
 
     checks = []
     for name, provider in context.config.inference_providers.items():
-
-        def probe(provider=provider):
-            models = list_provider_models(provider)
-            return (
-                "Connected; authentication accepted; "
-                f"provider advertised {len(models)} model(s)"
+        if credential_error := context.credential_errors.get(id(provider)):
+            checks.append(
+                CheckResult(name, CheckStatus.ERROR, credential_error)
             )
-
-        checks.append(_run_probe(context, name, provider, probe))
+            continue
+        secret = None
+        try:
+            secret = _secret_value(provider)
+            models = list_provider_models(provider)
+            checks.append(
+                CheckResult(
+                    name,
+                    CheckStatus.OK,
+                    "Connected; authentication accepted; "
+                    f"provider advertised {len(models)} model(s)",
+                )
+            )
+        except _CHECK_FAILURES as exc:
+            checks.append(
+                CheckResult(
+                    name,
+                    CheckStatus.ERROR,
+                    exc,
+                    secrets=(secret,) if secret else (),
+                )
+            )
     if not checks:
         return CheckResult(
             "Inference providers",
@@ -569,17 +567,6 @@ class _DoctorStructuredResponse(BaseModel):
     """Typed response expected from the structured-output probe."""
 
     status: str
-
-
-ModelProbe = Callable[[Any], str]
-
-
-def _run_model_probe(
-    context: DoctorContext, config: Any, name: str, probe: ModelProbe
-) -> CheckResult:
-    return _run_probe(
-        context, name, config, lambda: probe(config.init_chat_model())
-    )
 
 
 def _probe_chat(model: Any) -> str:
@@ -631,14 +618,36 @@ def check_llm_models(context: DoctorContext) -> CheckResult:
     if context.config is None:
         return _configuration_error("LLM models")
     model = context.config.llm_model
-    probes = tuple(
-        _run_model_probe(context, model, name, probe)
-        for name, probe in (
-            ("Chat invocation", _probe_chat),
-            ("Forced tool use", _probe_forced_tool_use),
-            ("Structured output", _probe_structured_output),
-        )
-    )
+    probes = []
+    for name, probe in (
+        ("Chat invocation", _probe_chat),
+        ("Forced tool use", _probe_forced_tool_use),
+        ("Structured output", _probe_structured_output),
+    ):
+        if credential_error := context.credential_errors.get(id(model)):
+            probes.append(
+                CheckResult(name, CheckStatus.ERROR, credential_error)
+            )
+            continue
+        secret = None
+        try:
+            secret = _secret_value(model)
+            probes.append(
+                CheckResult(
+                    name,
+                    CheckStatus.OK,
+                    probe(model.init_chat_model()),
+                )
+            )
+        except _CHECK_FAILURES as exc:
+            probes.append(
+                CheckResult(
+                    name,
+                    CheckStatus.ERROR,
+                    exc,
+                    secrets=(secret,) if secret else (),
+                )
+            )
     model_result = CheckResult.group(_model_label(model), probes)
     return CheckResult.group("LLM models", [model_result])
 
@@ -661,12 +670,23 @@ def check_embedding_models(context: DoctorContext) -> CheckResult:
             "No embedding model is configured",
         )
     config = context.config.emb_model
-    result = _run_probe(
-        context,
-        _model_label(config),
-        config,
-        lambda: _probe_embedding_model(config),
-    )
+    name = _model_label(config)
+    if credential_error := context.credential_errors.get(id(config)):
+        result = CheckResult(name, CheckStatus.ERROR, credential_error)
+    else:
+        secret = None
+        try:
+            secret = _secret_value(config)
+            result = CheckResult(
+                name, CheckStatus.OK, _probe_embedding_model(config)
+            )
+        except _CHECK_FAILURES as exc:
+            result = CheckResult(
+                name,
+                CheckStatus.ERROR,
+                exc,
+                secrets=(secret,) if secret else (),
+            )
     return CheckResult.group("Embedding models", [result])
 
 
@@ -678,7 +698,7 @@ async def _probe_mcp_server(
     from ursa.util.mcp import start_mcp_client
 
     if credential_error is not None:
-        return _error_result(name, credential_error)
+        return CheckResult(name, CheckStatus.ERROR, credential_error)
     try:
         client = start_mcp_client({name: server})
         tools = await client.get_tools(server_name=name)
@@ -688,7 +708,7 @@ async def _probe_mcp_server(
             f"Connected; server advertised {len(tools)} tool(s)",
         )
     except _CHECK_FAILURES as exc:
-        return _error_result(name, exc)
+        return CheckResult(name, CheckStatus.ERROR, exc)
 
 
 async def _probe_mcp_servers(
@@ -721,40 +741,7 @@ def check_mcp_servers(context: DoctorContext) -> CheckResult:
     return CheckResult.group("MCP servers", checks)
 
 
-def _additional_entry_points() -> list[EntryPoint]:
-    return sorted(
-        entry_points(group=HEALTHCHECK_ENTRYPOINT_GROUP),
-        key=lambda item: item.name,
-    )
-
-
-def check_additional_healthchecks(context: DoctorContext) -> CheckResult:
-    """Load and run checks from the ``ursa-healthcheck`` entry-point group."""
-    checks = []
-    for entry_point in _additional_entry_points():
-        try:
-            plugin = entry_point.load()
-            if not callable(plugin):
-                raise TypeError("entry point did not load a callable")
-            value = plugin(context)
-            if isawaitable(value):
-                value = asyncio.run(value)
-            if not isinstance(value, CheckResult):
-                raise TypeError("health check must return CheckResult")
-            result = replace(value, name=entry_point.name)
-            checks.append(result)
-        except _CHECK_FAILURES as exc:
-            checks.append(_error_result(entry_point.name, exc))
-    if not checks:
-        return CheckResult(
-            "Additional health checks",
-            CheckStatus.OK,
-            f"No {HEALTHCHECK_ENTRYPOINT_GROUP} entry points are installed",
-        )
-    return CheckResult.group("Additional health checks", checks)
-
-
-BUILTIN_CHECKS: tuple[DoctorCheck, ...] = (
+BUILTIN_CHECKS: list[DoctorCheck] = [
     check_configuration,
     check_self_status,
     check_installation_integrity,
@@ -763,134 +750,44 @@ BUILTIN_CHECKS: tuple[DoctorCheck, ...] = (
     check_llm_models,
     check_embedding_models,
     check_mcp_servers,
-    check_additional_healthchecks,
-)
-
-_BUILTIN_CHECK_NAMES = {
-    check_configuration: "Configuration",
-    check_self_status: "URSA self status",
-    check_installation_integrity: "Installation integrity",
-    check_ursa_on_path: "URSA on PATH",
-    check_inference_providers: "Inference providers",
-    check_llm_models: "LLM models",
-    check_embedding_models: "Embedding models",
-    check_mcp_servers: "MCP servers",
-    check_additional_healthchecks: "Additional health checks",
-}
-
-
-def _check_name(check: DoctorCheck) -> str:
-    return _BUILTIN_CHECK_NAMES.get(
-        check, getattr(check, "__name__", type(check).__name__)
-    )
-
-
-async def _run_check(context: DoctorContext, check: DoctorCheck) -> CheckResult:
-    """Run one heading in a detachable daemon thread."""
-    started = perf_counter()
-    name = _check_name(check)
-    loop = asyncio.get_running_loop()
-    completed = loop.create_future()
-
-    def finish(outcome: tuple[bool, Any]) -> None:
-        if not completed.done():
-            completed.set_result(outcome)
-
-    def worker() -> None:
-        try:
-            outcome = True, check(context)
-        except BaseException as exc:
-            outcome = False, exc
-        with suppress(RuntimeError):
-            loop.call_soon_threadsafe(finish, outcome)
-
-    Thread(target=worker, name=f"ursa-doctor-{name}", daemon=True).start()
-
-    try:
-        try:
-            async with asyncio.timeout(CHECK_DEADLINE_SECONDS):
-                succeeded, outcome = await completed
-        except TimeoutError:
-            result = CheckResult(
-                name,
-                CheckStatus.ERROR,
-                f"Timed out after {CHECK_DEADLINE_SECONDS} seconds",
-            )
-        else:
-            if not succeeded:
-                if isinstance(outcome, (KeyboardInterrupt, GeneratorExit)):
-                    raise outcome
-                result = _error_result(name, outcome)
-            else:
-                result = outcome
-        if not isinstance(result, CheckResult):
-            raise TypeError(
-                "doctor heading functions must return CheckResult, got "
-                f"{type(result).__name__}"
-            )
-    except asyncio.CancelledError:
-        raise
-    except _CHECK_FAILURES as exc:
-        result = _error_result(name, exc)
-    duration_ms = round((perf_counter() - started) * 1000)
-    return replace(result, duration_ms=duration_ms)
-
-
-async def run_checks_async(
-    context: DoctorContext,
-    checks: Sequence[DoctorCheck] = BUILTIN_CHECKS,
-    *,
-    progress: ProgressCallback | None = None,
-) -> CheckResult:
-    """Run heading functions concurrently, preserving their display order."""
-    completed = 0
-    total = len(checks)
-
-    async def run_and_report(check: DoctorCheck) -> CheckResult:
-        nonlocal completed
-        result = await _run_check(context, check)
-        completed += 1
-        if progress is not None:
-            try:
-                progress(completed, total, result)
-            except Exception:
-                pass
-        return result
-
-    results = await asyncio.gather(*(run_and_report(check) for check in checks))
-    return CheckResult.group("URSA Doctor", results)
+]
 
 
 def run_checks(
     context: DoctorContext,
-    checks: Sequence[DoctorCheck] = BUILTIN_CHECKS,
+    checks: Sequence[DoctorCheck] | None = None,
     *,
     progress: ProgressCallback | None = None,
 ) -> CheckResult:
-    """Synchronously run the concurrent doctor check scheduler."""
-    return asyncio.run(run_checks_async(context, checks, progress=progress))
+    """Run heading functions concurrently, preserving their display order."""
+    selected = BUILTIN_CHECKS if checks is None else checks
 
-
-_STATUS_DISPLAY = {
-    CheckStatus.OK: ("✅", "[ok]", "green"),
-    CheckStatus.WARN: ("⚠️", "[!!]", "yellow"),
-    CheckStatus.ERROR: ("❌", "[xx]", "red"),
-}
-
-
-def _result_label(result: CheckResult) -> Text:
-    indicator, _, style = _STATUS_DISPLAY[result.status]
-    label = Text()
-    label.append(f"{indicator} ")
-    label.append(result.name, style=f"bold {style}")
-    if result.duration_ms is not None:
-        label.append(
-            f"  ({result.duration_ms}\N{NO-BREAK SPACE}ms)", style="dim"
+    def invoke(check: DoctorCheck) -> CheckResult:
+        started = perf_counter()
+        try:
+            result = check(context)
+            if not isinstance(result, CheckResult):
+                raise TypeError(
+                    "doctor heading functions must return CheckResult, got "
+                    f"{type(result).__name__}"
+                )
+        except _CHECK_FAILURES as exc:
+            name = getattr(check, "__name__", type(check).__name__)
+            result = CheckResult(name, CheckStatus.ERROR, exc)
+        return replace(
+            result, duration_ms=round((perf_counter() - started) * 1000)
         )
-    if result.message:
-        label.append("  ")
-        label.append(result.message, style="dim")
-    return label
+
+    results = []
+    with ThreadPoolExecutor() as executor:
+        for completed, result in enumerate(
+            executor.map(invoke, selected), start=1
+        ):
+            results.append(result)
+            if progress is not None:
+                with suppress(Exception):
+                    progress(completed, len(selected), result)
+    return CheckResult.group("URSA Doctor", results)
 
 
 def _print_children(
@@ -898,22 +795,13 @@ def _print_children(
 ) -> None:
     for child in result.checks:
         status = child.status
-        _, marker, style = _STATUS_DISPLAY[status]
         row = Text("  ")
-        row.append(marker, f"bold {style}")
+        row.append(status.marker, f"bold {status.style}")
         row.append(f"  {'  ' * depth}{child.name}", style="bold")
         if child.message:
             row.append(f"  {child.message}", style="dim")
         console.print(row)
         _print_children(console, child, depth + 1)
-
-
-def _leaf_statuses(result: CheckResult) -> list[CheckStatus]:
-    if not result.checks:
-        return [result.status]
-    return [
-        status for child in result.checks for status in _leaf_statuses(child)
-    ]
 
 
 def _count_label(count: int, noun: str) -> str:
@@ -922,22 +810,22 @@ def _count_label(count: int, noun: str) -> str:
 
 def _print_report(console: Console, report: CheckResult) -> None:
     """Print a grouped checkhealth-style report."""
-    console.print(_result_label(replace(report, message=None)))
+    console.print(report.status.result_label(replace(report, message=None)))
     console.rule(style="bright_black")
     for index, section in enumerate(report.checks):
-        console.print(_result_label(section))
+        console.print(section.status.result_label(section))
         _print_children(console, section)
         if index < len(report.checks) - 1:
             console.print()
     console.rule(style="bright_black")
 
-    counts = Counter(_leaf_statuses(report))
+    counts = Counter(report.leaf_statuses())
     summary = "  |  ".join((
         f"{counts[CheckStatus.OK]} ok",
         f"{counts[CheckStatus.WARN]} warn",
         _count_label(counts[CheckStatus.ERROR], "error"),
     ))
-    console.print(summary, style=f"bold {_STATUS_DISPLAY[report.status][2]}")
+    console.print(summary, style=f"bold {report.status.style}")
     console.print(
         "Use `ursa self doctor --json` for the machine-readable report.",
         style="dim",
@@ -968,8 +856,8 @@ def _progress_text(
         text.append("  ·  ", style="dim")
         text.append(latest.name)
         text.append(
-            f": {latest.status.value}",
-            style=_STATUS_DISPLAY[latest.status][2],
+            f": {latest.status.label}",
+            style=latest.status.style,
         )
     return text
 
@@ -1033,11 +921,7 @@ def run_doctor(
         report = CheckResult(
             "URSA Doctor",
             CheckStatus.ERROR,
-            checks=(
-                CheckResult(
-                    "Doctor runtime", CheckStatus.ERROR, _exception_message(exc)
-                ),
-            ),
+            checks=(CheckResult("Doctor runtime", CheckStatus.ERROR, exc),),
         )
 
     if json_output:
