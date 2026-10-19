@@ -413,6 +413,48 @@ class FuzzySelect(Select):
 class AdvancedYamlEditor(Collapsible):
     """Reusable collapsible YAML editor with validation presentation."""
 
+    DEFAULT_CSS = """
+    AdvancedYamlEditor {
+        width: 100%;
+        height: auto;
+        margin: 0;
+        padding: 0;
+        border: none;
+        background: transparent;
+    }
+
+    AdvancedYamlEditor > CollapsibleTitle {
+        height: 1;
+        padding: 0;
+        color: $text-muted;
+        background: transparent;
+    }
+
+    AdvancedYamlEditor .advanced-yaml-editor {
+        height: 12;
+        margin: 0;
+        border: round $border;
+    }
+
+    AdvancedYamlEditor .advanced-yaml-editor.yaml-valid {
+        border: round $success;
+    }
+
+    AdvancedYamlEditor .advanced-yaml-editor.yaml-invalid {
+        border: round $error;
+    }
+
+    AdvancedYamlEditor .advanced-yaml-error {
+        width: 1fr;
+        height: auto;
+        max-height: 6;
+        color: $error;
+        text-wrap: wrap;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+    """
+
     def __init__(
         self,
         prefix: str,
@@ -420,7 +462,6 @@ class AdvancedYamlEditor(Collapsible):
         *,
         editor_classes: str = "",
         error_classes: str = "",
-        classes: str = "",
         markup: bool = True,
     ) -> None:
         editor = TextArea(
@@ -429,12 +470,12 @@ class AdvancedYamlEditor(Collapsible):
             show_line_numbers=True,
             tab_behavior="indent",
             id=f"{prefix}-config-yaml",
-            classes=editor_classes,
+            classes=f"advanced-yaml-editor {editor_classes}",
         )
         error = Static(
             "",
             id=f"{prefix}-yaml-error",
-            classes=f"{error_classes} hidden",
+            classes=f"advanced-yaml-error {error_classes} hidden",
             markup=markup,
         )
         super().__init__(
@@ -443,7 +484,6 @@ class AdvancedYamlEditor(Collapsible):
             title="Advanced",
             collapsed=True,
             id=f"{prefix}-advanced",
-            classes=classes,
         )
         self.prefix = prefix
         self.error_markup = markup
@@ -561,8 +601,18 @@ class HelpLabel(Horizontal):
             self.query_one(".help-label-text", Static).update(label)
 
 
-class ModelScreen(ModalScreen[ModelSelection | None]):
-    """Configure chat and embedding model providers."""
+class ModelTabs(TabbedContent):
+    """Shared model tabs with breathing room below the page heading."""
+
+    DEFAULT_CSS = """
+    ModelTabs {
+        margin-top: 1;
+    }
+    """
+
+
+class _ModelEditor:
+    """Shared chat and embedding model editor behavior."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -609,8 +659,13 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         providers: Mapping[str, InferenceProviderConfig],
         chat: ChatModelConfig,
         embedding: EmbModelConfig | None,
+        *,
+        apply_label: str = "Apply",
+        cancel_label: str = "Cancel",
     ) -> None:
         super().__init__()
+        self.apply_label = apply_label
+        self.cancel_label = cancel_label
         self.providers = dict(providers)
         self.chat = chat
         self.embedding_was_configured = embedding is not None
@@ -643,6 +698,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         }
         self.model_catalogs: dict[str, dict[str, ProviderModel]] = {}
         self._model_load_generation = {"chat": 0, "embedding": 0}
+        self._tab_statuses: dict[str, str | None] = {}
         self._syncing_controls = False
 
     @classmethod
@@ -745,22 +801,55 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="settings-dialog"):
             yield Static("Models", classes="settings-title")
-            with TabbedContent():
-                with TabPane("Chat", id="chat-model-tab"):
+            with ModelTabs():
+                with TabPane(
+                    self._tab_label("chat", self.chat.model),
+                    id="chat-model-tab",
+                ):
                     yield from self._model_fields(
                         "chat",
                         self.chat,
                     )
                     yield self._advanced_editor("chat", self.chat)
-                with TabPane("Embedding", id="embedding-model-tab"):
+                with TabPane(
+                    self._tab_label("embedding", self.embedding.model),
+                    id="embedding-model-tab",
+                ):
                     yield from self._model_fields(
                         "embedding",
                         self.embedding,
                     )
                     yield self._advanced_editor("embedding", self.embedding)
             with Horizontal(classes="settings-actions"):
-                yield Button("Cancel", id="model-cancel")
-                yield Button("Apply", id="model-apply", variant="primary")
+                yield Button(self.cancel_label, id="model-cancel")
+                yield Button(
+                    self.apply_label, id="model-apply", variant="primary"
+                )
+
+    def _tab_label(self, prefix: str, model: str) -> str:
+        kind = "Chat" if prefix == "chat" else "Embedding"
+        status = self._tab_statuses.get(prefix)
+        return f"{f'{status} ' if status else ''}{kind}: {model or 'None'}"
+
+    def _update_tab_label(self, prefix: str, model: str) -> None:
+        tabs = self.query_one_optional(ModelTabs)
+        if tabs is not None:
+            tabs.get_tab(f"{prefix}-model-tab").label = self._tab_label(
+                prefix, model
+            )
+
+    def _mark_tab_unvalidated(self, prefix: str) -> None:
+        if prefix in self._tab_statuses:
+            self._tab_statuses[prefix] = "○"
+
+    def set_tab_status(
+        self, prefix: str, status: str | None, model: str | None = None
+    ) -> None:
+        """Set the validation marker shown in a model tab label."""
+        self._tab_statuses[prefix] = status
+        self._update_tab_label(
+            prefix, self.drafts[prefix].model if model is None else model
+        )
 
     def _advanced_editor(
         self, prefix: str, config: ModelConfig
@@ -770,7 +859,6 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             self._dump_yaml(config),
             editor_classes="model-yaml-editor",
             error_classes="model-yaml-error",
-            classes="model-advanced",
         )
 
     @classmethod
@@ -952,6 +1040,8 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         except ValueError:
             return
         self.drafts[prefix] = updated
+        self._mark_tab_unvalidated(prefix)
+        self._update_tab_label(prefix, updated.model)
         self._update_yaml_values(prefix, updated)
         editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
         text = self._yaml_text(prefix)
@@ -1015,6 +1105,8 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             self._set_yaml_state(prefix, "invalid", error)
             return None
         self.drafts[prefix] = config
+        self._mark_tab_unvalidated(prefix)
+        self._update_tab_label(prefix, config.model)
         self._yaml_values[prefix] = deepcopy(values)
         self._set_yaml_state(prefix, "valid")
         if update_controls:
@@ -1173,7 +1265,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         if not embedding.model:
             embedding = None
         assert embedding is None or isinstance(embedding, EmbModelConfig)
-        self.dismiss(ModelSelection(chat, embedding))
+        self._submit(ModelSelection(chat, embedding))
 
     @on(Button.Pressed, "#model-cancel")
     def cancel_button(self) -> None:
@@ -1185,7 +1277,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
             for select in expanded:
                 select.expanded = False
             return
-        self.dismiss(None)
+        self._submit(None)
 
     def on_click(self, event: events.Click) -> None:
         if event.widget is None:
@@ -1194,6 +1286,50 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         for select in self.query("FuzzySelect.-expanded"):
             if select not in ancestors:
                 select.expanded = False
+
+    def _submit(self, selection: ModelSelection | None) -> None:
+        raise NotImplementedError
+
+
+class ModelEditor(_ModelEditor, Vertical):
+    """Model editor that can be embedded in another workflow."""
+
+    BINDINGS = _ModelEditor.BINDINGS
+    show_custom_choice = _ModelEditor.show_custom_choice
+    update_models_for_inference_provider = (
+        _ModelEditor.update_models_for_inference_provider
+    )
+    model_provider_changed = _ModelEditor.model_provider_changed
+    custom_model_changed = _ModelEditor.custom_model_changed
+    yaml_changed = _ModelEditor.yaml_changed
+    apply = _ModelEditor.apply
+    cancel_button = _ModelEditor.cancel_button
+
+    class Submitted(Message):
+        def __init__(self, selection: ModelSelection | None) -> None:
+            super().__init__()
+            self.selection = selection
+
+    def _submit(self, selection: ModelSelection | None) -> None:
+        self.post_message(self.Submitted(selection))
+
+
+class ModelScreen(_ModelEditor, ModalScreen[ModelSelection | None]):
+    """Modal model editor used by the running TUI."""
+
+    BINDINGS = _ModelEditor.BINDINGS
+    show_custom_choice = _ModelEditor.show_custom_choice
+    update_models_for_inference_provider = (
+        _ModelEditor.update_models_for_inference_provider
+    )
+    model_provider_changed = _ModelEditor.model_provider_changed
+    custom_model_changed = _ModelEditor.custom_model_changed
+    yaml_changed = _ModelEditor.yaml_changed
+    apply = _ModelEditor.apply
+    cancel_button = _ModelEditor.cancel_button
+
+    def _submit(self, selection: ModelSelection | None) -> None:
+        self.dismiss(selection)
 
 
 class InformationScreen(ModalScreen[None]):
