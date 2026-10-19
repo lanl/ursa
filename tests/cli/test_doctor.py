@@ -750,6 +750,15 @@ def test_mcp_check_connects_to_each_server(monkeypatch):
     ]
 
 
+def test_mcp_check_accepts_an_empty_configuration():
+    result = check_mcp_servers(
+        DoctorContext(config=SimpleNamespace(mcp_servers={}))
+    )
+
+    assert result.status is CheckStatus.OK
+    assert result.message == "No MCP servers are configured"
+
+
 def test_additional_entry_points_are_sorted_and_isolated(monkeypatch):
     def warning_check(_context):
         return CheckResult("ignored", CheckStatus.WARN, "degraded")
