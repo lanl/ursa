@@ -41,7 +41,7 @@ def test_login_stores_secret(monkeypatch, fake_keyring, capsys):
     assert capsys.readouterr().out == "Stored credential: openai\n"
 
 
-def test_login_rejects_empty_secret(monkeypatch, fake_keyring):
+def test_login_rejects_empty_secret(monkeypatch):
     monkeypatch.setattr("ursa.cli.auth.getpass.getpass", lambda prompt: "")
 
     with pytest.raises(ValueError, match="cannot be empty"):
@@ -60,7 +60,7 @@ def test_login_reads_secret_from_environment(monkeypatch, fake_keyring):
     assert fake_keyring[(KEYRING_SERVICE, "openai")] == "from-environment"
 
 
-def test_login_rejects_missing_environment_secret(monkeypatch, fake_keyring):
+def test_login_rejects_missing_environment_secret(monkeypatch):
     monkeypatch.delenv("MISSING_PROVIDER_TOKEN", raising=False)
     with pytest.raises(ValueError, match="is not set or is empty"):
         login("openai", from_env="MISSING_PROVIDER_TOKEN")
@@ -128,7 +128,7 @@ llm_model:
     assert fake_keyring[(KEYRING_SERVICE, "hosted")] == "token"
 
 
-def test_config_login_supports_environment_configs(tmp_path, fake_keyring):
+def test_config_login_supports_environment_configs(tmp_path):
     path = tmp_path / "team.yaml"
     path.write_text(
         """
@@ -152,9 +152,7 @@ members:
     ]
 
 
-def test_from_env_rejects_config_with_multiple_secrets(
-    tmp_path, monkeypatch, fake_keyring
-):
+def test_from_env_rejects_config_with_multiple_secrets(tmp_path, monkeypatch):
     path = tmp_path / "config.yaml"
     path.write_text(
         """

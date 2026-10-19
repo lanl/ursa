@@ -2,20 +2,11 @@
 
 Avoid storing API keys and other credentials directly in configuration files.
 URSA can read secrets from environment variables or from a keyring. It prefers
-the operating system credential store through the Python
-[keyring package](https://pypi.org/project/keyring/). If a system keyring
-operation fails, URSA transparently falls back to
-`keyring.json` alongside the highest-priority user configuration file. This is
-normally `~/.config/ursa/keyring.json` on Linux and follows `XDG_CONFIG_HOME`
-when it is set.
-
-On POSIX systems, the fallback file is created with `0600` permissions. URSA
-refuses to read or modify an existing fallback file with any group,
-other-user, or executable permission bits; permissions more restrictive than
-`0600` are accepted. On Windows, where POSIX permission bits do not represent
-access control, the file inherits the per-user ACL from the user's profile.
-The fallback is a plain-text JSON file, so protect it like any other
-credential file.
+the operating system credential store through the Python [keyring
+package](https://pypi.org/project/keyring/). If a system keyring operation
+fails, URSA transparently falls back to `keyring.json` alongside the
+[highest-priority user configuration
+file](./files-and-env.md#configuration-precedence).
 
 ## Store a secret in the keyring
 
@@ -65,7 +56,7 @@ mcp_servers:
     headers:
       Authorization:
         keyring: true
-        template: "Bearer %s"
+        template: Bearer %s
 ```
 
 Here, `keyring: true` uses `remote-tools`, the MCP server name, as the keyring

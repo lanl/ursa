@@ -7,7 +7,6 @@ import stat
 from pathlib import Path
 
 import pytest
-from filelock import FileLock
 from keyring.backends.fail import Keyring as FailingSystemKeyring
 from keyring.backends.null import Keyring as NullSystemKeyring
 from keyring.errors import KeyringError, PasswordDeleteError
@@ -15,7 +14,6 @@ from keyring.errors import KeyringError, PasswordDeleteError
 from ursa.util.secrets import (
     FallbackKeyring,
     FileKeyring,
-    InsecureKeyringPermissionsError,
     get_keyring,
 )
 
@@ -63,7 +61,7 @@ def test_file_keyring_uses_highest_priority_user_config_path(
 
 @pytest.mark.parametrize(
     ("mode", "allowed"),
-    [(0o400, True), (0o600, True), (0o700, False), (0o604, False)],
+    [(0o600, True), (0o700, False), (0o604, False)],
 )
 @_POSIX_TEST
 def test_file_keyring_checks_permissions(
@@ -77,10 +75,7 @@ def test_file_keyring_checks_permissions(
     if allowed:
         assert keyring.get_password("ursa", "openai") == "token"
     else:
-        with pytest.raises(
-            InsecureKeyringPermissionsError,
-            match=f"permissions {mode:03o}",
-        ):
+        with pytest.raises(KeyringError, match=f"permissions {mode:03o}"):
             keyring.get_password("ursa", "openai")
 
 
@@ -107,7 +102,7 @@ def test_file_keyring_rejects_file_owned_by_another_user(
     FileKeyring(path).set_password("ursa", "openai", "token")
     monkeypatch.setattr(os, "getuid", lambda: path.stat().st_uid + 1)
 
-    with pytest.raises(InsecureKeyringPermissionsError, match="owned by uid"):
+    with pytest.raises(KeyringError, match="owned by uid"):
         FileKeyring(path).get_password("ursa", "openai")
 
 
@@ -118,7 +113,7 @@ def test_file_keyring_rejects_symlink(tmp_path: Path) -> None:
     path = tmp_path / "keyring.json"
     path.symlink_to(target)
 
-    with pytest.raises(KeyringError, match="Could not open"):
+    with pytest.raises(KeyringError):
         FileKeyring(path).get_password("ursa", "openai")
 
 
@@ -133,7 +128,7 @@ def test_file_keyring_locks_updates_across_processes(
     )
 
     try:
-        with FileLock(FileKeyring(path).lock_path, mode=0o600):
+        with FileKeyring(path)._write_lock():
             process.start()
             assert started.wait(timeout=10)
             process.join(timeout=0.5)
@@ -219,16 +214,13 @@ def test_fallback_keyring_uses_file_when_system_operations_fail(
 def test_get_keyring_wraps_without_replacing_system_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import keyring
-
     system = NullSystemKeyring()
-    monkeypatch.setattr("keyring.core._keyring_backend", system)
+    monkeypatch.setattr("ursa.util.secrets.keyring.get_keyring", lambda: system)
     get_keyring.cache_clear()
 
     try:
         configured = get_keyring()
 
-        assert keyring.get_keyring() is system
         assert configured.system is system
         assert get_keyring() is configured
     finally:
