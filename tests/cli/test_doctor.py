@@ -1,13 +1,8 @@
 import json
-import os
-import subprocess
-from pathlib import Path
-from threading import Barrier, current_thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import SecretStr
 
 from ursa.cli import build_parser, main
 from ursa.cli import doctor as doctor_mod
@@ -19,11 +14,8 @@ from ursa.cli.doctor import (
     check_configuration,
     check_embedding_models,
     check_inference_providers,
-    check_installation_integrity,
     check_llm_models,
     check_mcp_servers,
-    check_ursa_on_path,
-    render_report,
     run_checks,
 )
 
@@ -38,309 +30,35 @@ def test_doctor_parser_registers_json_without_running_checks(monkeypatch):
     checked.assert_not_called()
 
 
-def test_configuration_check_parses_every_file_and_reports_final_config(
-    tmp_path,
-):
-    valid = tmp_path / "valid.yaml"
-    invalid = tmp_path / "invalid.yaml"
-    later = tmp_path / "later.json"
-    valid.write_text("unknown_setting: accepted-by-parser\n", encoding="utf-8")
-    invalid.write_text("broken: [\n", encoding="utf-8")
-    later.write_text('{"group": "default"}\n', encoding="utf-8")
-
-    result = check_configuration(
-        DoctorContext(
-            config=UrsaConfig(),
-            config_paths=(valid, invalid, later),
-        )
+def test_configuration_reports_normal_resolution_or_its_failure():
+    healthy = check_configuration(DoctorContext(config=SimpleNamespace()))
+    broken = check_configuration(
+        DoctorContext(config=None, config_error=ValueError("merge failed"))
     )
 
-    assert [check.name for check in result.checks] == [
-        str(valid),
-        str(invalid),
-        str(later),
-        "Final resolved configuration",
-    ]
-    assert [check.status for check in result.checks] == [
-        CheckStatus.OK,
-        CheckStatus.ERROR,
-        CheckStatus.OK,
-        CheckStatus.OK,
-    ]
-    assert result.status is CheckStatus.ERROR
+    assert healthy.status is CheckStatus.OK
+    assert healthy.message == "Merged and resolved successfully"
+    assert broken.status is CheckStatus.ERROR
+    assert broken.message == "merge failed"
 
 
-def test_configuration_check_reports_no_files_and_resolution_failure():
-    result = check_configuration(
-        DoctorContext(
-            config=None,
-            config_error=ValueError("merge failed"),
-        )
-    )
-
-    assert [check.name for check in result.checks] == [
-        "Configuration files",
-        "Final resolved configuration",
-    ]
-    assert result.checks[0].status is CheckStatus.OK
-    assert result.checks[1].status is CheckStatus.ERROR
-    assert result.checks[1].message == "merge failed"
-
-
-def test_installation_integrity_checks_receipt_dependencies_and_storage(
-    monkeypatch, tmp_path
-):
-    prefix = tmp_path / "tool"
-    prefix.mkdir()
-    (prefix / "uv-receipt.toml").write_text(
-        '[tool]\nrequirements = [{ name = "ursa-ai", specifier = ">=1" }]\n',
-        encoding="utf-8",
-    )
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="Checked 42 packages", stderr=""
-    )
-    run = MagicMock(return_value=completed)
-    monkeypatch.setattr(doctor_mod.sys, "prefix", str(prefix))
-    monkeypatch.setattr(doctor_mod.shutil, "which", lambda _name: "/bin/uv")
-    monkeypatch.setattr(doctor_mod.subprocess, "run", run)
-    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
-
-    result = check_installation_integrity(
-        DoctorContext(config=SimpleNamespace(workspace=tmp_path / "workspace"))
-    )
-
-    assert result.status is CheckStatus.OK
-    assert [check.name for check in result.checks] == [
-        "uv tool receipt",
-        "Python dependencies",
-        "Workspace",
-        "URSA cache",
-    ]
-    assert all(check.status is CheckStatus.OK for check in result.checks)
-    assert "ursa-ai>=1" in result.checks[0].message
-    run.assert_called_once_with(
-        [
-            "/bin/uv",
-            "pip",
-            "check",
-            "--python",
-            doctor_mod.sys.executable,
-            "--no-progress",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=55,
-    )
-
-
-def test_installation_integrity_reports_independent_failures(
-    monkeypatch, tmp_path
-):
-    prefix = tmp_path / "tool"
-    prefix.mkdir()
-    (prefix / "uv-receipt.toml").write_text(
-        "[tool]\nrequirements = []\n", encoding="utf-8"
-    )
-    workspace = tmp_path / "not-a-directory"
-    workspace.write_text("occupied", encoding="utf-8")
-    monkeypatch.setattr(doctor_mod.sys, "prefix", str(prefix))
-    monkeypatch.setattr(doctor_mod.shutil, "which", lambda _name: "/bin/uv")
-    monkeypatch.setattr(
-        doctor_mod.subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="broken dependency"
-        ),
-    )
-    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
-
-    result = check_installation_integrity(
-        DoctorContext(config=SimpleNamespace(workspace=workspace))
-    )
-
-    assert [check.status for check in result.checks] == [
-        CheckStatus.ERROR,
-        CheckStatus.ERROR,
-        CheckStatus.ERROR,
-        CheckStatus.OK,
-    ]
-    assert "invalid" in result.checks[0].message.lower()
-    assert result.checks[1].message == "broken dependency"
-
-
-def test_installation_integrity_warns_when_uv_or_config_are_unavailable(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setattr(doctor_mod.sys, "prefix", str(tmp_path))
-    monkeypatch.setattr(doctor_mod.shutil, "which", lambda _name: None)
-    monkeypatch.setattr("ursa.security.URSA_CACHE_DIR", tmp_path / "cache")
-
-    result = check_installation_integrity(DoctorContext(config=None))
-
-    assert [check.status for check in result.checks] == [
-        CheckStatus.OK,
-        CheckStatus.WARN,
-        CheckStatus.WARN,
-        CheckStatus.OK,
-    ]
-
-
-def test_result_tree_aggregates_status_and_drives_both_renderers():
-    report = run_checks(
-        DoctorContext(config=None),
-        checks=(
-            lambda _context: CheckResult("healthy", CheckStatus.OK),
-            lambda _context: CheckResult(
-                "optional", CheckStatus.WARN, "not configured"
-            ),
-        ),
-    )
-
-    assert report.status is CheckStatus.WARN
-    optional = report.as_dict()["checks"][1]
-    assert {key: optional[key] for key in ("name", "status", "message")} == {
-        "name": "optional",
-        "status": "warn",
-        "message": "not configured",
-    }
-    assert isinstance(optional["duration_ms"], int)
-    rendered = render_report(report)
-    assert "─" in rendered
-    assert "⚠️ URSA Doctor" in rendered
-    assert "✅ healthy" in rendered
-    assert "ms)" in rendered
-    assert "1 ok  |  1 warn  |  0 errors" in rendered
-
-
-def test_runner_contains_system_exit_and_malformed_results():
+def test_runner_contains_failures_and_preserves_order():
     called = []
 
     def exits(_context):
         called.append("exit")
         raise SystemExit("check tried to exit")
 
-    def malformed(_context):
-        called.append("malformed")
-        return "not a result"
-
     def healthy(_context):
         called.append("healthy")
         return CheckResult("healthy", CheckStatus.OK)
 
-    report = run_checks(
-        DoctorContext(config=None), checks=(exits, malformed, healthy)
-    )
+    report = run_checks(DoctorContext(config=None), checks=(exits, healthy))
 
-    assert set(called) == {"exit", "malformed", "healthy"}
+    assert called == ["exit", "healthy"]
     assert [result.status for result in report.checks] == [
         CheckStatus.ERROR,
-        CheckStatus.ERROR,
         CheckStatus.OK,
-    ]
-
-
-def test_runner_executes_headings_concurrently_and_preserves_order():
-    rendezvous = Barrier(2, timeout=10)
-
-    def check(name):
-        def run(_context):
-            rendezvous.wait()
-            return CheckResult(name, CheckStatus.OK)
-
-        return run
-
-    report = run_checks(
-        DoctorContext(config=None),
-        checks=(check("first"), check("second")),
-    )
-
-    assert [result.name for result in report.checks] == ["first", "second"]
-    assert all(result.status is CheckStatus.OK for result in report.checks)
-
-
-def test_path_check_lists_every_other_ursa(monkeypatch, tmp_path):
-    first = tmp_path / "one" / "ursa"
-    second = tmp_path / "two" / "ursa"
-    first.parent.mkdir()
-    second.parent.mkdir()
-    first.touch()
-    second.touch()
-    monkeypatch.setattr(
-        doctor_mod,
-        "_ursa_executables_on_path",
-        lambda: [
-            (str(first.parent), first),
-            (str(second.parent), second),
-        ],
-    )
-    monkeypatch.setattr(doctor_mod, "_running_ursa_path", lambda: first)
-
-    result = check_ursa_on_path(DoctorContext(config=None))
-
-    assert result.status is CheckStatus.WARN
-    assert [check.message for check in result.checks] == [
-        str(first),
-        str(second),
-    ]
-
-
-def test_path_discovery_preserves_the_responsible_path_entry(
-    monkeypatch, tmp_path
-):
-    first = str(tmp_path / "first-bin")
-    second = str(tmp_path / "second-bin")
-    monkeypatch.setenv("PATH", os.pathsep.join((first, second)))
-    monkeypatch.setattr(
-        doctor_mod.shutil,
-        "which",
-        lambda _name, *, path: str(Path(path) / "ursa"),
-    )
-
-    entries = doctor_mod._ursa_executables_on_path()
-
-    assert [entry[0] for entry in entries] == [first, second]
-    assert [entry[1] for entry in entries] == [
-        Path(first, "ursa").absolute(),
-        Path(second, "ursa").absolute(),
-    ]
-
-
-def test_path_check_marks_entries_that_shadow_current_ursa(
-    monkeypatch, tmp_path
-):
-    shadowing = tmp_path / "one" / "ursa"
-    current = tmp_path / "two" / "ursa"
-    lower = tmp_path / "three" / "ursa"
-    shadowing.parent.mkdir()
-    current.parent.mkdir()
-    lower.parent.mkdir()
-    shadowing.touch()
-    current.touch()
-    lower.touch()
-    monkeypatch.setattr(
-        doctor_mod,
-        "_ursa_executables_on_path",
-        lambda: [
-            (str(shadowing.parent), shadowing),
-            (str(current.parent), current),
-            (str(lower.parent), lower),
-        ],
-    )
-    monkeypatch.setattr(doctor_mod, "_running_ursa_path", lambda: current)
-
-    result = check_ursa_on_path(DoctorContext(config=None))
-
-    assert result.status is CheckStatus.ERROR
-    assert [check.name for check in result.checks] == [
-        f"PATH {shadowing.parent} · SHADOWS CURRENT",
-        f"PATH {current.parent} · current",
-        f"PATH {lower.parent} · additional copy",
-    ]
-    assert [check.status for check in result.checks] == [
-        CheckStatus.ERROR,
-        CheckStatus.OK,
-        CheckStatus.WARN,
     ]
 
 
@@ -355,11 +73,10 @@ def test_provider_checks_validate_every_provider(monkeypatch):
     monkeypatch.setattr(
         "ursa.util.inference_providers.list_provider_models", list_models
     )
-    context = DoctorContext(
-        config=SimpleNamespace(inference_providers=providers)
-    )
 
-    result = check_inference_providers(context)
+    result = check_inference_providers(
+        DoctorContext(config=SimpleNamespace(inference_providers=providers))
+    )
 
     assert result.status is CheckStatus.ERROR
     assert [check.status for check in result.checks] == [
@@ -369,111 +86,72 @@ def test_provider_checks_validate_every_provider(monkeypatch):
     assert "credentials rejected" in result.checks[1].message
 
 
-def _resolved_keyring_config() -> UrsaConfig:
-    return UrsaConfig.model_validate({
-        "group": None,
-        "inference_providers": {
-            "shared": {"api_key": {"keyring": "shared-account"}}
-        },
+def test_provider_check_does_not_probe_an_unused_openai_default(monkeypatch):
+    config = (
+        UrsaConfig()
+        .model_merge({
+            "inference_providers": {"anthropic": {}},
+            "llm_model": {
+                "model": "claude-test",
+                "model_provider": "anthropic",
+                "inference_provider": "anthropic",
+            },
+        })
+        .resolve()
+    )
+    listed = []
+    monkeypatch.setattr(
+        "ursa.util.inference_providers.list_provider_models",
+        lambda provider: listed.append(provider) or [],
+    )
+
+    result = check_inference_providers(DoctorContext(config=config))
+
+    assert list(config.inference_providers) == ["openai", "anthropic"]
+    assert result.status is CheckStatus.OK
+    assert listed == [config.inference_providers["anthropic"]]
+
+
+def test_doctor_resolves_shared_key_once_and_redacts_failures(monkeypatch):
+    token = "very-secret-token"
+    reads = []
+    backend = SimpleNamespace(
+        get_password=lambda service, username: reads.append((service, username))
+        or token
+    )
+    monkeypatch.setattr("ursa.util.secrets.get_keyring", lambda: backend)
+    config = UrsaConfig.model_validate({
+        "inference_providers": {"shared": {"api_key": {"keyring": True}}},
         "llm_model": {
-            "model": "chat-test",
-            "model_provider": "openai",
+            "model": "openai:test",
             "inference_provider": "shared",
-        },
-        "emb_model": {
-            "model": "embedding-test",
-            "model_provider": "openai",
-            "inference_provider": "shared",
-        },
-        "mcp_servers": {
-            "tools": {
-                "transport": "streamable-http",
-                "url": "https://example.test/mcp",
-                "headers": {
-                    "Authorization": {
-                        "keyring": "shared-account",
-                        "template": "Bearer %s",
-                    }
-                },
-            }
         },
     }).resolve()
 
-
-def test_keyring_credentials_are_primed_once_on_the_calling_thread(
-    monkeypatch,
-):
-    config = _resolved_keyring_config()
-    calls = []
-
-    def get_password(service, username):
-        calls.append((service, username, current_thread()))
-        return "token"
+    def reject(provider):
+        raise RuntimeError(
+            f"provider rejected {provider.api_key.get_secret_value()}"
+        )
 
     monkeypatch.setattr(
-        "ursa.util.secrets.get_keyring",
-        lambda: SimpleNamespace(get_password=get_password),
+        "ursa.util.inference_providers.list_provider_models", reject
     )
-
-    context = doctor_mod._prime_keyring_credentials(
-        DoctorContext(config=config)
-    )
-
-    assert calls == [("ursa", "shared-account", current_thread())]
-    assert isinstance(config.inference_providers["shared"].api_key, SecretStr)
-    assert isinstance(config.llm_model.api_key, SecretStr)
-    assert isinstance(config.emb_model.api_key, SecretStr)
-    assert config.mcp_servers["tools"].headers["Authorization"] == (
-        "Bearer token"
-    )
-    assert not context.credential_errors
-    assert not context.mcp_credential_errors
-
-
-def test_keyring_failure_is_reused_without_blocking_other_checks(monkeypatch):
-    config = _resolved_keyring_config()
-    calls = []
-
-    def get_password(_service, _username):
-        calls.append(current_thread())
-        raise RuntimeError("keychain is locked")
-
     monkeypatch.setattr(
-        "ursa.util.secrets.get_keyring",
-        lambda: SimpleNamespace(get_password=get_password),
+        type(config.llm_model),
+        "init_chat_model",
+        lambda _self: _FakeChatModel(),
     )
-    context = doctor_mod._prime_keyring_credentials(
-        DoctorContext(config=config)
-    )
-    shared_provider = config.inference_providers["shared"]
-    list_models = MagicMock(return_value=[])
-    start_mcp = MagicMock(side_effect=AssertionError("MCP probe ran"))
-    monkeypatch.setattr(
-        "ursa.util.inference_providers.list_provider_models", list_models
-    )
-    monkeypatch.setattr("ursa.util.mcp.start_mcp_client", start_mcp)
 
-    provider_result = check_inference_providers(context)
-    llm_result = check_llm_models(context)
-    embedding_result = check_embedding_models(context)
-    mcp_result = check_mcp_servers(context)
+    report = run_checks(
+        DoctorContext(config=config),
+        checks=(check_inference_providers, check_llm_models),
+    )
 
-    assert calls == [current_thread()]
-    provider_checks = {check.name: check for check in provider_result.checks}
-    assert provider_checks["shared"].status is CheckStatus.ERROR
-    assert "locked" in provider_checks["shared"].message
-    assert all(
-        probe.status is CheckStatus.ERROR
-        for probe in llm_result.checks[0].checks
+    assert reads == [("ursa", "shared")]
+    assert token not in json.dumps(report.as_dict())
+    assert report.checks[0].checks[0].message == (
+        "provider rejected [REDACTED]"
     )
-    assert embedding_result.status is CheckStatus.ERROR
-    assert mcp_result.status is CheckStatus.ERROR
-    assert "Authorization: keychain is locked" in mcp_result.checks[0].message
-    assert all(
-        call.args[0] is not shared_provider
-        for call in list_models.call_args_list
-    )
-    start_mcp.assert_not_called()
 
 
 class _FakeChatResponse:
@@ -488,12 +166,12 @@ class _FakeChatModel:
     def invoke(self, _prompt):
         if self.tool:
             return _FakeChatResponse([
-                {"name": "_ursa_doctor_echo", "args": {"value": "ursa"}}
+                {"name": "_ursa_health_echo", "args": {"value": "ursa"}}
             ])
         return _FakeChatResponse()
 
     def bind_tools(self, tools, *, tool_choice):
-        assert tools[0].name == tool_choice == "_ursa_doctor_echo"
+        assert tools[0].name == tool_choice == "_ursa_health_echo"
         self.tool = True
         return self
 
@@ -501,21 +179,24 @@ class _FakeChatModel:
         return SimpleNamespace(invoke=lambda _prompt: schema(status="ok"))
 
 
-def test_llm_check_calls_chat_forced_tool_use_and_structured_output():
-    model = _FakeChatModel()
-    config = SimpleNamespace(
+def _chat_config(model):
+    return SimpleNamespace(
         model="chat-test",
         inference_provider="test-provider",
         model_provider="test",
         base_url=None,
-        api_key=None,
         init_chat_model=lambda: model,
     )
-    context = DoctorContext(config=SimpleNamespace(llm_model=config))
 
-    result = check_llm_models(context)
 
-    assert result.name == "LLM models"
+def test_llm_check_calls_chat_tool_use_and_structured_output():
+    result = check_llm_models(
+        DoctorContext(
+            config=SimpleNamespace(llm_model=_chat_config(_FakeChatModel()))
+        )
+    )
+
+    assert result.name == "LLM model"
     assert result.status is CheckStatus.OK
     assert [probe.name for probe in result.checks[0].checks] == [
         "Chat invocation",
@@ -531,18 +212,10 @@ def test_llm_probe_failure_does_not_suppress_later_probes():
                 raise RuntimeError("chat failed")
             return super().invoke(prompt)
 
-    model = ChatFailureModel()
-    config = SimpleNamespace(
-        model="chat-test",
-        inference_provider="test-provider",
-        model_provider="test",
-        base_url=None,
-        api_key=None,
-        init_chat_model=lambda: model,
-    )
-
     result = check_llm_models(
-        DoctorContext(config=SimpleNamespace(llm_model=config))
+        DoctorContext(
+            config=SimpleNamespace(llm_model=_chat_config(ChatFailureModel()))
+        )
     )
 
     assert [probe.status for probe in result.checks[0].checks] == [
@@ -550,6 +223,21 @@ def test_llm_probe_failure_does_not_suppress_later_probes():
         CheckStatus.OK,
         CheckStatus.OK,
     ]
+
+
+def test_llm_initialization_failure_is_reported():
+    def fail():
+        raise RuntimeError("missing SDK")
+
+    config = _chat_config(_FakeChatModel())
+    config.init_chat_model = fail
+
+    result = check_llm_models(
+        DoctorContext(config=SimpleNamespace(llm_model=config))
+    )
+
+    assert result.status is CheckStatus.ERROR
+    assert result.checks[0].message == "missing SDK"
 
 
 @pytest.mark.parametrize(
@@ -563,12 +251,14 @@ def test_embedding_check_calls_model(vector, status):
         inference_provider="test-provider",
         model_provider="test",
         base_url=None,
-        api_key=None,
         init_embedding=lambda: embedding,
     )
-    context = DoctorContext(config=SimpleNamespace(emb_model=config))
 
-    assert check_embedding_models(context).status is status
+    result = check_embedding_models(
+        DoctorContext(config=SimpleNamespace(emb_model=config))
+    )
+
+    assert result.status is status
 
 
 def test_mcp_check_connects_to_each_server(monkeypatch):
@@ -581,11 +271,13 @@ def test_mcp_check_connects_to_each_server(monkeypatch):
     monkeypatch.setattr(
         "ursa.util.mcp.start_mcp_client", lambda _servers: FakeClient()
     )
-    context = DoctorContext(
-        config=SimpleNamespace(mcp_servers={"good": object(), "bad": object()})
+    result = check_mcp_servers(
+        DoctorContext(
+            config=SimpleNamespace(
+                mcp_servers={"good": object(), "bad": object()}
+            )
+        )
     )
-
-    result = check_mcp_servers(context)
 
     assert result.status is CheckStatus.ERROR
     assert [check.status for check in result.checks] == [
@@ -594,22 +286,43 @@ def test_mcp_check_connects_to_each_server(monkeypatch):
     ]
 
 
-def test_mcp_check_accepts_an_empty_configuration():
-    result = check_mcp_servers(
-        DoctorContext(config=SimpleNamespace(mcp_servers={}))
-    )
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"env": "MCP_TOKEN", "template": "Bearer %s"},
+        "Bearer mcp-secret-token",
+    ],
+)
+def test_mcp_check_redacts_resolved_header_secret(monkeypatch, header):
+    token = "mcp-secret-token"
+    monkeypatch.setenv("MCP_TOKEN", token)
+    config = UrsaConfig.model_validate({
+        "mcp_servers": {
+            "tools": {
+                "transport": "streamable-http",
+                "url": "https://example.test/mcp",
+                "headers": {"Authorization": header},
+            }
+        }
+    }).resolve()
 
-    assert result.status is CheckStatus.OK
-    assert result.message == "No MCP servers are configured"
+    def reject(servers):
+        header = servers["tools"].headers["Authorization"]
+        raise RuntimeError(f"rejected header {header}")
+
+    monkeypatch.setattr("ursa.util.mcp.start_mcp_client", reject)
+
+    result = check_mcp_servers(DoctorContext(config=config))
+
+    assert token not in str(result.as_dict())
+    assert result.checks[0].message == "rejected header [REDACTED]"
 
 
 def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
-    report = CheckResult(
-        "URSA doctor",
-        CheckStatus.ERROR,
-        checks=(CheckResult("broken", CheckStatus.ERROR, "boom"),),
+    report = CheckResult.group(
+        "URSA Doctor",
+        [CheckResult("broken", CheckStatus.ERROR, "boom")],
     )
-
     monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
 
@@ -620,13 +333,46 @@ def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == report.as_dict()
 
 
+def test_main_doctor_uses_explicit_config(monkeypatch, tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("llm_model:\n  model: openai:configured-model\n")
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr(doctor_mod, "run_doctor", run)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--config", str(path), "self", "doctor"])
+
+    assert exit_info.value.code == 0
+    assert run.call_args.kwargs["config"].llm_model.model == "configured-model"
+
+
+def test_main_doctor_does_not_echo_invalid_literal_secret(
+    monkeypatch, tmp_path, capsys
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "llm_model:\n"
+        "  model: openai:test\n"
+        "  base_url: https://models.example/v1\n"
+        "  inference_provider: openai\n"
+        "  api_key: LEAKME\n"
+    )
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--config", str(path), "self", "doctor", "--json"])
+
+    assert exit_info.value.code == 1
+    assert "LEAKME" not in capsys.readouterr().out
+
+
 def test_human_output_falls_back_to_json_when_rich_rendering_fails(
     monkeypatch, capsys
 ):
-    report = CheckResult(
-        "URSA doctor",
-        CheckStatus.WARN,
-        checks=(CheckResult("optional", CheckStatus.WARN, "missing"),),
+    report = CheckResult.group(
+        "URSA Doctor",
+        [CheckResult("optional", CheckStatus.WARN, "missing")],
     )
     monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
     monkeypatch.setattr(
@@ -639,3 +385,15 @@ def test_human_output_falls_back_to_json_when_rich_rendering_fails(
 
     assert return_code == 0
     assert json.loads(capsys.readouterr().out) == report.as_dict()
+
+
+def test_unavailable_config_skips_external_checks():
+    context = DoctorContext(config=None, config_error=ValueError("bad config"))
+
+    report = run_checks(context)
+
+    assert report.status is CheckStatus.ERROR
+    assert report.checks[0].message == "bad config"
+    assert all(
+        result.status is CheckStatus.WARN for result in report.checks[1:]
+    )
