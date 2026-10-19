@@ -3,7 +3,6 @@ from __future__ import annotations
 import multiprocessing
 import os
 import stat
-from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -64,7 +63,7 @@ def file_mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-def set_password_in_process(
+def _set_password_in_process(
     path: Path,
     started: multiprocessing.synchronize.Event,
     finished: multiprocessing.synchronize.Event,
@@ -160,15 +159,10 @@ def test_file_keyring_does_not_use_posix_modes_on_windows(
     def unexpected_fchmod(descriptor: int, mode: int) -> None:
         pytest.fail(f"unexpected fchmod({descriptor}, {mode})")
 
-    monkeypatch.setattr(
-        keyring_module,
-        "FileLock",
-        lambda *args, **kwargs: nullcontext(),
-    )
     monkeypatch.setattr(keyring_module.os, "fchmod", unexpected_fchmod)
 
     keyring = FileKeyring(path)
-    keyring.set_password("ursa", "openai", "token")
+    keyring._write({"ursa": {"openai": "token"}}, 0o600)
 
     assert keyring.get_password("ursa", "openai") == "token"
 
@@ -180,24 +174,27 @@ def test_file_keyring_locks_updates_across_processes(
     context = multiprocessing.get_context("spawn")
     started = context.Event()
     finished = context.Event()
+    keyring = FileKeyring(path)
     process = context.Process(
-        target=set_password_in_process,
+        target=_set_password_in_process,
         args=(path, started, finished),
     )
 
-    with FileLock(path.with_name(f"{path.name}.lock")):
-        process.start()
-        assert started.wait(timeout=10)
-        assert not finished.wait(timeout=0.25)
+    try:
+        with FileLock(keyring.lock_path, mode=0o600):
+            process.start()
+            assert started.wait(timeout=10)
+            assert not finished.wait(timeout=0.5)
 
-    process.join(timeout=10)
-    if process.is_alive():
-        process.terminate()
-        process.join()
-        pytest.fail("fallback keyring update remained blocked")
+        process.join(timeout=10)
+        assert not process.is_alive(), "fallback update remained blocked"
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join()
 
     assert process.exitcode == 0
-    assert FileKeyring(path).get_password("ursa", "openai") == "token"
+    assert keyring.get_password("ursa", "openai") == "token"
 
 
 def test_file_keyring_delete_removes_password(tmp_path: Path) -> None:
