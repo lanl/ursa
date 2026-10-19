@@ -36,6 +36,8 @@ def add_self_subcommands(subparsers) -> None:
     """Register commands without inspecting the installation."""
     from jsonargparse import ArgumentParser
 
+    from ursa.cli.doctor import run_doctor
+
     parser = ArgumentParser(
         description="Inspect and manage this URSA installation.",
         epilog=(
@@ -48,6 +50,17 @@ def add_self_subcommands(subparsers) -> None:
     ).default_env = False
     commands = parser.add_subcommands(required=True)
     _command(commands, "status", "Show installation details", show_status)
+    doctor = _command(
+        commands,
+        "doctor",
+        "Check the health of this URSA installation and its services",
+        run_doctor,
+    )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Write the complete check result as JSON",
+    )
     _command(
         commands,
         "update",
@@ -163,32 +176,41 @@ def _format_requirement(requirement: dict) -> str:
     return name + _source(requirement)
 
 
-def show_status(_args=None) -> None:
+def status_details() -> dict[str, str]:
+    """Return all details displayed by ``ursa self status``."""
     try:
         installed = package_version(TOOL_PACKAGE)
     except PackageNotFoundError:
         installed = "unknown"
-    print(f"Version: {installed}")  # noqa: T201
-    print(f"Python: {sys.version.split()[0]} ({sys.implementation.name})")  # noqa: T201
-    print(f"Python path: {Path(sys.executable).resolve()}")  # noqa: T201
-    print(f"Platform: {sys.platform}")  # noqa: T201
+    details = {
+        "Version": installed,
+        "Python": f"{sys.version.split()[0]} ({sys.implementation.name})",
+        "Python path": str(Path(sys.executable).resolve()),
+        "Platform": sys.platform,
+    }
     receipt = _running_uv_receipt()
     if receipt is None:
         unavailable = "unavailable (not a uv tool installation)"
-        print(f"Extras: {unavailable}")  # noqa: T201
-        print(f"Additional packages: {unavailable}")  # noqa: T201
-        return
-    requirements = _read_requirements(receipt)
-    extras = _read_requirement(receipt).get("extras", [])
-    additional = [
-        _format_requirement(item)
-        for item in requirements
-        if item.get("name") != TOOL_PACKAGE
-    ]
-    print(f"Extras: {', '.join(extras) if extras else 'none'}")  # noqa: T201
-    print(  # noqa: T201
-        f"Additional packages: {', '.join(additional) if additional else 'none'}"
-    )
+        details["Extras"] = unavailable
+        details["Additional packages"] = unavailable
+    else:
+        requirements = _read_requirements(receipt)
+        extras = _read_requirement(receipt).get("extras", [])
+        additional = [
+            _format_requirement(item)
+            for item in requirements
+            if item.get("name") != TOOL_PACKAGE
+        ]
+        details["Extras"] = ", ".join(extras) if extras else "none"
+        details["Additional packages"] = (
+            ", ".join(additional) if additional else "none"
+        )
+    return details
+
+
+def show_status(_args=None) -> None:
+    for name, value in status_details().items():
+        print(f"{name}: {value}")  # noqa: T201
 
 
 def _merge(

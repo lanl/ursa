@@ -54,6 +54,42 @@ It reports the URSA version and the running Python version and executable.
 For uv tool installations, it also reports the selected URSA extras and any
 additional packages installed in the tool environment.
 
+Run the complete health check with:
+
+```bash
+ursa self doctor
+ursa self doctor --json
+```
+
+Doctor reports installation status, every URSA executable on `PATH`, inference
+provider authentication/connectivity, chat model invocation, forced tool use,
+structured output, embedding invocation, and MCP server connectivity. These
+are live probes and can make billable model requests. The configuration heading
+parses every discovered system, user, and explicit configuration file
+independently in precedence order, then reports the final merged and resolved
+configuration separately. Individual file checks are parse-only. A failed
+check produces exit status 1; warnings do not. Checks are isolated, so a broken
+provider, plugin, configuration, or rendering path does not prevent later
+checks from running. Independent headings run concurrently and report their
+wall-clock duration while retaining a stable display order. Interactive
+terminals show a live spinner with completed-check progress; JSON and redirected
+output remain non-interactive. Every heading has a 60-second deadline. The PATH
+report preserves PATH order, warns about additional URSA copies, and reports
+copies above the running URSA as shadowing errors.
+
+Packages can add checks through the `ursa-healthcheck` entry-point group:
+
+```toml
+[project.entry-points."ursa-healthcheck"]
+database = "my_package.health:check_database"
+```
+
+The callable receives a `DoctorContext` and returns a `CheckResult`. Sync and
+async callables are supported. Import both public types from `ursa.cli.doctor`.
+Health-check plugins must not write to stdout, which is reserved for the doctor
+report and JSON document; return diagnostic text in the result message instead.
+This is a plugin contract rather than an enforced sandbox restriction.
+
 When URSA was installed with `uv tool install`, it can update itself while
 preserving the installation recipe:
 
