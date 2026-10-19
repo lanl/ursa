@@ -9,23 +9,24 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import redirect_stdout, suppress
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from importlib.metadata import EntryPoint, entry_points
 from inspect import isawaitable
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from threading import Thread
 from time import perf_counter
 from typing import Any
 
 from langchain_core.tools import tool
 from pydantic import BaseModel
-from rich.console import Console, Group
-from rich.rule import Rule
+from rich.console import Console
 from rich.text import Text
 
 from ursa.cli.config import UrsaConfig
@@ -171,24 +172,16 @@ def check_configuration(context: DoctorContext) -> CheckResult:
         )
 
     if context.config is None:
-        checks.append(
-            CheckResult(
-                "Final resolved configuration",
-                CheckStatus.ERROR,
-                _exception_message(
-                    context.config_error
-                    or RuntimeError("configuration is unavailable")
-                ),
-            )
+        final_status = CheckStatus.ERROR
+        final_message = _exception_message(
+            context.config_error or RuntimeError("configuration is unavailable")
         )
     else:
-        checks.append(
-            CheckResult(
-                "Final resolved configuration",
-                CheckStatus.OK,
-                "Merged and resolved successfully",
-            )
-        )
+        final_status = CheckStatus.OK
+        final_message = "Merged and resolved successfully"
+    checks.append(
+        CheckResult("Final resolved configuration", final_status, final_message)
+    )
     return CheckResult.group("Configuration", checks)
 
 
@@ -197,6 +190,19 @@ def _secret_value(config: Any) -> str | None:
     if reference is None:
         return None
     return reference.get_secret_value()
+
+
+def _run_probe(
+    name: str,
+    config: Any,
+    probe: Callable[[], str],
+) -> CheckResult:
+    secret = None
+    try:
+        secret = _secret_value(config)
+        return CheckResult(name, CheckStatus.OK, probe())
+    except _CHECK_FAILURES as exc:
+        return _error_result(name, exc, (secret,) if secret else ())
 
 
 def check_self_status(_context: DoctorContext) -> CheckResult:
@@ -210,6 +216,103 @@ def check_self_status(_context: DoctorContext) -> CheckResult:
             status = CheckStatus.WARN
         checks.append(CheckResult(name, status, value))
     return CheckResult.group("URSA self status", checks)
+
+
+def _check_uv_receipt() -> CheckResult:
+    from ursa.cli.self import _format_requirement, _read_requirement
+
+    receipt = Path(sys.prefix) / "uv-receipt.toml"
+    if not receipt.exists():
+        return CheckResult(
+            "uv tool receipt",
+            CheckStatus.OK,
+            "Not a uv tool installation",
+        )
+    try:
+        requirement = _format_requirement(_read_requirement(receipt))
+    except _CHECK_FAILURES as exc:
+        return _error_result("uv tool receipt", exc)
+    return CheckResult(
+        "uv tool receipt",
+        CheckStatus.OK,
+        f"Valid receipt for {requirement}",
+    )
+
+
+def _check_dependencies() -> CheckResult:
+    uv = shutil.which("uv")
+    if uv is None:
+        return CheckResult(
+            "Python dependencies",
+            CheckStatus.WARN,
+            "Skipped: uv was not found on PATH",
+        )
+    try:
+        result = subprocess.run(
+            [uv, "pip", "check", "--python", sys.executable, "--no-progress"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=max(1, CHECK_DEADLINE_SECONDS - 5),
+        )
+    except _CHECK_FAILURES as exc:
+        return _error_result("Python dependencies", exc)
+    detail = "\n".join(
+        output.strip()
+        for output in (result.stdout, result.stderr)
+        if output.strip()
+    )
+    if result.returncode:
+        return CheckResult(
+            "Python dependencies",
+            CheckStatus.ERROR,
+            detail or f"uv pip check exited with status {result.returncode}",
+        )
+    return CheckResult(
+        "Python dependencies",
+        CheckStatus.OK,
+        "Installed dependencies are compatible",
+    )
+
+
+def _check_writable(name: str, path: Path) -> CheckResult:
+    probe_directory = path.expanduser()
+    while (
+        not probe_directory.exists()
+        and probe_directory != probe_directory.parent
+    ):
+        probe_directory = probe_directory.parent
+    if not probe_directory.is_dir():
+        return CheckResult(
+            name,
+            CheckStatus.ERROR,
+            f"No writable parent directory for {path}",
+        )
+    try:
+        with NamedTemporaryFile(prefix=".ursa-doctor-", dir=probe_directory):
+            pass
+    except _CHECK_FAILURES as exc:
+        return _error_result(name, exc)
+    return CheckResult(name, CheckStatus.OK, f"Writable or creatable: {path}")
+
+
+def check_installation_integrity(context: DoctorContext) -> CheckResult:
+    """Validate installation metadata, dependencies, and runtime storage."""
+    from ursa.security import URSA_CACHE_DIR
+
+    checks = [_check_uv_receipt(), _check_dependencies()]
+    if context.config is None:
+        checks.append(
+            CheckResult(
+                "Workspace",
+                CheckStatus.WARN,
+                "Skipped: URSA configuration is unavailable",
+            )
+        )
+    else:
+        checks.append(_check_writable("Workspace", context.config.workspace))
+    checks.append(_check_writable("URSA cache", URSA_CACHE_DIR))
+    return CheckResult.group("Installation integrity", checks)
 
 
 def _ursa_executables_on_path() -> list[_PathUrsa]:
@@ -241,12 +344,8 @@ def _running_ursa_path() -> Path | None:
     invoked = Path(sys.argv[0])
     if invoked.stem.casefold() != "ursa":
         return None
-    if not invoked.is_absolute():
-        resolved = shutil.which(str(invoked))
-        if resolved is None:
-            return None
-        invoked = Path(resolved)
-    return invoked.absolute()
+    resolved = invoked if invoked.is_absolute() else shutil.which(str(invoked))
+    return Path(resolved).absolute() if resolved else None
 
 
 def _same_executable(left: Path, right: Path) -> bool:
@@ -256,30 +355,6 @@ def _same_executable(left: Path, right: Path) -> bool:
         return left.samefile(right)
     except OSError:
         return False
-
-
-def _current_path_index(
-    executables: Sequence[_PathUrsa], running: Path
-) -> int | None:
-    normalized = os.path.normcase(str(running))
-    exact = next(
-        (
-            index
-            for index, entry in enumerate(executables)
-            if os.path.normcase(str(entry.executable)) == normalized
-        ),
-        None,
-    )
-    if exact is not None:
-        return exact
-    return next(
-        (
-            index
-            for index, entry in enumerate(executables)
-            if _same_executable(entry.executable, running)
-        ),
-        None,
-    )
 
 
 def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
@@ -296,7 +371,14 @@ def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
     if running is None:
         current_index = 0
     else:
-        current_index = _current_path_index(executables, running)
+        current_index = next(
+            (
+                index
+                for index, entry in enumerate(executables)
+                if _same_executable(entry.executable, running)
+            ),
+            None,
+        )
     if current_index is None:
         checks = tuple(
             CheckResult(
@@ -332,19 +414,15 @@ def check_ursa_on_path(_context: DoctorContext) -> CheckResult:
             )
         )
 
-    shadowing = current_index
     additional = len(executables) - 1
     message = None
     if additional:
         message = f"Found {len(executables)} URSA executables"
-        if shadowing:
-            noun = "entry" if shadowing == 1 else "entries"
-            message += (
-                f"; {shadowing} {noun} before and shadow the running URSA"
-            )
-        else:
-            noun = "copy" if additional == 1 else "copies"
-            message += f"; {additional} additional {noun}"
+        message += (
+            f"; {current_index} before current"
+            if current_index
+            else f"; {additional} additional"
+        )
     return CheckResult.group("URSA on PATH", checks, message)
 
 
@@ -357,20 +435,15 @@ def check_inference_providers(context: DoctorContext) -> CheckResult:
 
     checks = []
     for name, provider in context.config.inference_providers.items():
-        secret = None
-        try:
-            secret = _secret_value(provider)
+
+        def probe(provider=provider):
             models = list_provider_models(provider)
-            checks.append(
-                CheckResult(
-                    name,
-                    CheckStatus.OK,
-                    "Connected; authentication accepted; "
-                    f"provider advertised {len(models)} model(s)",
-                )
+            return (
+                "Connected; authentication accepted; "
+                f"provider advertised {len(models)} model(s)"
             )
-        except _CHECK_FAILURES as exc:
-            checks.append(_error_result(name, exc, (secret,) if secret else ()))
+
+        checks.append(_run_probe(name, provider, probe))
     if not checks:
         return CheckResult(
             "Inference providers",
@@ -406,14 +479,7 @@ ModelProbe = Callable[[Any], str]
 
 
 def _run_model_probe(config: Any, name: str, probe: ModelProbe) -> CheckResult:
-    secret = None
-    try:
-        secret = _secret_value(config)
-        model = config.init_chat_model()
-        message = probe(model)
-        return CheckResult(name, CheckStatus.OK, message)
-    except _CHECK_FAILURES as exc:
-        return _error_result(name, exc, (secret,) if secret else ())
+    return _run_probe(name, config, lambda: probe(config.init_chat_model()))
 
 
 def _probe_chat(model: Any) -> str:
@@ -477,23 +543,11 @@ def check_llm_models(context: DoctorContext) -> CheckResult:
     return CheckResult.group("LLM models", [model_result])
 
 
-def _probe_embedding_model(config: Any) -> CheckResult:
-    secret = None
-    try:
-        secret = _secret_value(config)
-        model = config.init_embedding()
-        embedding = model.embed_query("URSA health check")
-        if not isinstance(embedding, Sequence) or not embedding:
-            raise ValueError("embedding invocation returned no vector")
-        return CheckResult(
-            _model_label(config),
-            CheckStatus.OK,
-            f"Embedding invocation returned {len(embedding)} dimensions",
-        )
-    except _CHECK_FAILURES as exc:
-        return _error_result(
-            _model_label(config), exc, (secret,) if secret else ()
-        )
+def _probe_embedding_model(config: Any) -> str:
+    embedding = config.init_embedding().embed_query("URSA health check")
+    if not isinstance(embedding, Sequence) or not embedding:
+        raise ValueError("embedding invocation returned no vector")
+    return f"Embedding invocation returned {len(embedding)} dimensions"
 
 
 def check_embedding_models(context: DoctorContext) -> CheckResult:
@@ -506,9 +560,11 @@ def check_embedding_models(context: DoctorContext) -> CheckResult:
             CheckStatus.WARN,
             "No embedding model is configured",
         )
-    return CheckResult.group(
-        "Embedding models", [_probe_embedding_model(context.config.emb_model)]
+    config = context.config.emb_model
+    result = _run_probe(
+        _model_label(config), config, lambda: _probe_embedding_model(config)
     )
+    return CheckResult.group("Embedding models", [result])
 
 
 async def _probe_mcp_server(name: str, server: Any) -> CheckResult:
@@ -556,22 +612,6 @@ def _additional_entry_points() -> list[EntryPoint]:
     )
 
 
-def _normalize_result(result: CheckResult) -> CheckResult:
-    """Defensively normalize a result before aggregation or serialization."""
-    if not isinstance(result, CheckResult):
-        raise TypeError(f"expected CheckResult, got {type(result).__name__}")
-    name = str(result.name)
-    message = None if result.message is None else str(result.message)
-    checks = tuple(_normalize_result(check) for check in result.checks)
-    return CheckResult(
-        name=name,
-        status=CheckStatus(result.status),
-        message=message,
-        checks=checks,
-        duration_ms=result.duration_ms,
-    )
-
-
 def check_additional_healthchecks(context: DoctorContext) -> CheckResult:
     """Load and run checks from the ``ursa-healthcheck`` entry-point group."""
     checks = []
@@ -583,7 +623,9 @@ def check_additional_healthchecks(context: DoctorContext) -> CheckResult:
             value = plugin(context)
             if isawaitable(value):
                 value = asyncio.run(value)
-            result = replace(_normalize_result(value), name=entry_point.name)
+            if not isinstance(value, CheckResult):
+                raise TypeError("health check must return CheckResult")
+            result = replace(value, name=entry_point.name)
             checks.append(result)
         except _CHECK_FAILURES as exc:
             checks.append(_error_result(entry_point.name, exc))
@@ -599,6 +641,7 @@ def check_additional_healthchecks(context: DoctorContext) -> CheckResult:
 BUILTIN_CHECKS: tuple[DoctorCheck, ...] = (
     check_configuration,
     check_self_status,
+    check_installation_integrity,
     check_ursa_on_path,
     check_inference_providers,
     check_llm_models,
@@ -610,6 +653,7 @@ BUILTIN_CHECKS: tuple[DoctorCheck, ...] = (
 _BUILTIN_CHECK_NAMES = {
     check_configuration: "Configuration",
     check_self_status: "URSA self status",
+    check_installation_integrity: "Installation integrity",
     check_ursa_on_path: "URSA on PATH",
     check_inference_providers: "Inference providers",
     check_llm_models: "LLM models",
@@ -620,11 +664,9 @@ _BUILTIN_CHECK_NAMES = {
 
 
 def _check_name(check: DoctorCheck) -> str:
-    fallback = getattr(check, "__name__", type(check).__name__)
-    try:
-        return _BUILTIN_CHECK_NAMES.get(check, fallback)
-    except TypeError:
-        return fallback
+    return _BUILTIN_CHECK_NAMES.get(
+        check, getattr(check, "__name__", type(check).__name__)
+    )
 
 
 async def _run_check(context: DoctorContext, check: DoctorCheck) -> CheckResult:
@@ -670,7 +712,6 @@ async def _run_check(context: DoctorContext, check: DoctorCheck) -> CheckResult:
                 "doctor heading functions must return CheckResult, got "
                 f"{type(result).__name__}"
             )
-        result = _normalize_result(result)
     except asyncio.CancelledError:
         raise
     except _CHECK_FAILURES as exc:
@@ -714,30 +755,17 @@ def run_checks(
     return asyncio.run(run_checks_async(context, checks, progress=progress))
 
 
-_INDICATORS = {
-    CheckStatus.OK: "✅",
-    CheckStatus.WARN: "⚠️",
-    CheckStatus.ERROR: "❌",
-}
-
-
-_STATUS_STYLES = {
-    CheckStatus.OK: "green",
-    CheckStatus.WARN: "yellow",
-    CheckStatus.ERROR: "red",
-}
-
-_STATUS_LABELS = {
-    CheckStatus.OK: "[ok]",
-    CheckStatus.WARN: "[!!]",
-    CheckStatus.ERROR: "[xx]",
+_STATUS_DISPLAY = {
+    CheckStatus.OK: ("✅", "[ok]", "green"),
+    CheckStatus.WARN: ("⚠️", "[!!]", "yellow"),
+    CheckStatus.ERROR: ("❌", "[xx]", "red"),
 }
 
 
 def _result_label(result: CheckResult) -> Text:
-    style = _STATUS_STYLES[result.status]
+    indicator, _, style = _STATUS_DISPLAY[result.status]
     label = Text()
-    label.append(f"{_INDICATORS[result.status]} ")
+    label.append(f"{indicator} ")
     label.append(result.name, style=f"bold {style}")
     if result.duration_ms is not None:
         label.append(
@@ -749,28 +777,19 @@ def _result_label(result: CheckResult) -> Text:
     return label
 
 
-def _add_result_rows(output: Text, result: CheckResult, depth: int = 0) -> None:
+def _print_children(
+    console: Console, result: CheckResult, depth: int = 0
+) -> None:
     for child in result.checks:
         status = child.status
-        output.append("  ")
-        output.append(
-            _STATUS_LABELS[status],
-            style=f"bold {_STATUS_STYLES[status]}",
-        )
-        output.append(f"  {'  ' * depth}{child.name}", style="bold")
+        _, marker, style = _STATUS_DISPLAY[status]
+        row = Text("  ")
+        row.append(marker, f"bold {style}")
+        row.append(f"  {'  ' * depth}{child.name}", style="bold")
         if child.message:
-            output.append(f"  {child.message}", style="dim")
-        output.append("\n")
-        _add_result_rows(output, child, depth + 1)
-
-
-def _section_renderable(result: CheckResult) -> Text:
-    content = _result_label(result)
-    if result.checks:
-        content.append("\n")
-        _add_result_rows(content, result)
-        content.rstrip()
-    return content
+            row.append(f"  {child.message}", style="dim")
+        console.print(row)
+        _print_children(console, child, depth + 1)
 
 
 def _leaf_statuses(result: CheckResult) -> list[CheckStatus]:
@@ -785,43 +804,40 @@ def _count_label(count: int, noun: str) -> str:
     return f"{count} {noun if count == 1 else noun + 's'}"
 
 
-def report_renderable(report: CheckResult) -> Group:
-    """Build grouped checkhealth-style human output."""
-    sections: list[Any] = []
-    for section in report.checks:
-        if sections:
-            sections.append(Text())
-        sections.append(_section_renderable(section))
+def _print_report(console: Console, report: CheckResult) -> None:
+    """Print a grouped checkhealth-style report."""
+    console.print(_result_label(replace(report, message=None)))
+    console.rule(style="bright_black")
+    for index, section in enumerate(report.checks):
+        console.print(_result_label(section))
+        _print_children(console, section)
+        if index < len(report.checks) - 1:
+            console.print()
+    console.rule(style="bright_black")
+
     counts = Counter(_leaf_statuses(report))
     summary = "  |  ".join((
         f"{counts[CheckStatus.OK]} ok",
         f"{counts[CheckStatus.WARN]} warn",
         _count_label(counts[CheckStatus.ERROR], "error"),
     ))
-    summary_text = Text(summary, style=f"bold {_STATUS_STYLES[report.status]}")
-    hint = Text(
+    console.print(summary, style=f"bold {_STATUS_DISPLAY[report.status][2]}")
+    console.print(
         "Use `ursa self doctor --json` for the machine-readable report.",
         style="dim",
-    )
-    return Group(
-        _result_label(replace(report, message=None)),
-        Rule(style="bright_black"),
-        *sections,
-        Rule(style="bright_black"),
-        summary_text,
-        hint,
     )
 
 
 def render_report(report: CheckResult) -> str:
     """Render a plain terminal snapshot, primarily for tests and logs."""
     output = io.StringIO()
-    Console(
+    console = Console(
         file=output,
         force_terminal=False,
         color_system=None,
         width=100,
-    ).print(report_renderable(report))
+    )
+    _print_report(console, report)
     return output.getvalue().rstrip()
 
 
@@ -836,7 +852,8 @@ def _progress_text(
         text.append("  ·  ", style="dim")
         text.append(latest.name)
         text.append(
-            f": {latest.status.value}", style=_STATUS_STYLES[latest.status]
+            f": {latest.status.value}",
+            style=_STATUS_DISPLAY[latest.status][2],
         )
     return text
 
@@ -888,9 +905,7 @@ def run_doctor(
     console = None
     try:
         if json_output:
-            # Third-party checks are not allowed to corrupt the JSON document.
-            with redirect_stdout(io.StringIO()):
-                report = run_checks(context)
+            report = run_checks(context)
         else:
             console = Console()
             report = _run_human_checks(context, console)
@@ -911,7 +926,7 @@ def run_doctor(
         )
     else:
         try:
-            (console or Console()).print(report_renderable(report))
+            _print_report(console or Console(), report)
         except Exception:
             print(json.dumps(report.as_dict(), indent=2))  # noqa: T201
     return 1 if report.status is CheckStatus.ERROR else 0

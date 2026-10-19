@@ -62,9 +62,10 @@ ursa self doctor --json
 ```
 
 Doctor reports installation status, every URSA executable on `PATH`, inference
-provider authentication/connectivity, chat model invocation, forced tool use,
-structured output, embedding invocation, and MCP server connectivity. These
-are live probes and can make billable model requests. The configuration heading
+and dependency integrity, workspace/cache writeability, provider
+authentication/connectivity, chat model invocation, forced tool use, structured
+output, embedding invocation, and MCP server connectivity. These are live
+probes and can make billable model requests. The configuration heading
 parses every discovered system, user, and explicit configuration file
 independently in precedence order, then reports the final merged and resolved
 configuration separately. Individual file checks are parse-only. A failed
