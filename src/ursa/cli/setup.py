@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from threading import Lock
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 
 import yaml
@@ -31,8 +31,6 @@ from textual.widgets import (
     Input,
     Select,
     Static,
-    TabbedContent,
-    TabPane,
 )
 
 from ursa.cli.config import (
@@ -386,37 +384,6 @@ class ApiKeyEntry(Vertical):
             ).password = not event.value
 
 
-class ConfiguredTabs(TabbedContent):
-    def __init__(self, prefix: str, *, id: str) -> None:
-        super().__init__("", id=id)
-        self.prefix, self.names = prefix, {}
-        self.compose_add_child(TabPane("", Static(""), id=f"{prefix}-pane-0"))
-
-    async def sync(self, items: Mapping[str, Any], render: Callable) -> None:
-        values, panes = (
-            list(items.items()) or [("", {})],
-            list(self.query(TabPane)),
-        )
-        while len(panes) < len(values):
-            await self.add_pane(
-                TabPane("", Static(""), id=f"{self.prefix}-pane-{len(panes)}")
-            )
-            panes = list(self.query(TabPane))
-        while len(panes) > len(values):
-            await self.remove_pane(panes.pop().id)
-        self.names = {}
-        for index, (name, value) in enumerate(values):
-            title, summary = render(name, value)
-            pane_id = f"{self.prefix}-pane-{index}"
-            self.get_tab(pane_id).label = title
-            self.get_pane(pane_id).query_one(Static).update(summary)
-            if name:
-                self.names[pane_id] = name
-
-    def selected(self) -> str | None:
-        return self.names.get(self.active)
-
-
 SetupAction = Enum(
     "SetupAction",
     {"EXIT": "exit", "TERMINAL": "terminal", "DASHBOARD": "dashboard"},
@@ -485,42 +452,23 @@ class SetupApp(App[SetupAction]):
             *children, id=f"{name}-page", classes="setup-page"
         )
 
-    def _list_page(self, kind: Literal["provider", "mcp"]):
-        provider = kind == "provider"
-        plural = "providers" if provider else "mcps"
-        return self._page(
-            plural,
-            "Inference providers" if provider else "Add an MCP server?",
-            ConfiguredTabs(kind, id=f"{plural}-tabs"),
-            Horizontal(
-                Button("Edit", id=f"{kind}-edit"),
-                Button("Remove", id=f"{kind}-remove", variant="error"),
-                classes="manage-actions",
+    def _entry_row(self, kind: str) -> Horizontal:
+        noun = "provider" if kind == "provider" else "MCP server"
+        return Horizontal(
+            Select(
+                [],
+                allow_blank=True,
+                prompt=f"No {noun} configured",
+                id=f"{kind}-configured",
             ),
-            copy=(
-                "URSA checks providers when you add or edit them. Select a tab to review an existing provider or add another."
-                if provider
-                else "MCP is optional. You can finish setup without one or configure as many servers as you need."
-            ),
-            actions=(
-                ("Back", f"{plural}-back", "default", False),
-                (
-                    "Add provider" if provider else "Yes, add one",
-                    f"{kind}-add",
-                    "default",
-                    False,
-                ),
-                (
-                    "Continue to models" if provider else "No, review setup",
-                    f"{plural}-next",
-                    "primary",
-                    False,
-                ),
-            ),
+            Button("Add", id=f"{kind}-add"),
+            Button("Remove", id=f"{kind}-remove", variant="error"),
+            classes="manage-actions",
         )
 
     def compose(self) -> ComposeResult:
         provider_fields = (
+            self._entry_row("provider"),
             *self._field(
                 "Name",
                 "provider-name",
@@ -544,6 +492,7 @@ class SetupApp(App[SetupAction]):
             Static("", id="provider-error", classes="form-message"),
         )
         mcp_fields = (
+            self._entry_row("mcp"),
             *self._field(
                 "Name", "mcp-name", Input(max_length=15, id="mcp-name")
             ),
@@ -593,15 +542,15 @@ class SetupApp(App[SetupAction]):
                 copy="URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
                 actions=(
                     ("Back", "provider-back", "default", False),
+                    ("Continue to models", "provider-next", "default", True),
                     (
-                        "Validate and continue",
+                        "Validate and save",
                         "provider-save",
                         "primary",
                         False,
                     ),
                 ),
             ),
-            self._list_page("provider"),
             self._page(
                 "models",
                 "Choose default models",
@@ -615,26 +564,18 @@ class SetupApp(App[SetupAction]):
                 copy="MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
                 actions=(
                     ("Back", "mcp-back", "default", False),
+                    ("No MCP, review setup", "mcp-next", "default", False),
                     ("Validate and save", "mcp-save", "primary", False),
                 ),
             ),
-            self._list_page("mcp"),
             self._page(
                 "review",
                 "Write configuration",
                 Static("", id="review-summary", classes="review-box"),
                 Static("", id="review-error", classes="form-message"),
-                Horizontal(
-                    Button("Providers", id="review-providers"),
-                    Button("Models", id="review-models"),
-                    Button("MCP", id="review-mcps"),
-                    Button(
-                        "Write configuration",
-                        id="review-save",
-                        variant="success",
-                        disabled=True,
-                    ),
-                    classes="setup-actions",
+                actions=(
+                    ("Back", "review-back", "default", False),
+                    ("Write configuration", "review-save", "success", True),
                 ),
                 copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
             ),
@@ -683,12 +624,7 @@ class SetupApp(App[SetupAction]):
             self.history.append(self.page)
         self.page = page
         self.query_one("#setup-pages", ContentSwitcher).current = f"{page}-page"
-        if page in {"providers", "mcps"} and page != previous:
-            kind = "provider" if page == "providers" else "mcp"
-            self.run_worker(
-                self._tabs(kind), group=f"{kind}-list", exclusive=True
-            )
-        elif page == "models" and page != previous:
+        if page == "models" and page != previous:
             self.run_worker(
                 self._prepare_models(), group="model-editor", exclusive=True
             )
@@ -718,6 +654,28 @@ class SetupApp(App[SetupAction]):
         active = set(self._keys())
         for username in set(usernames) - active:
             self.pending.pop(username, None)
+
+    def _items(self, kind: str) -> dict[str, Any]:
+        return (
+            self.config.inference_providers
+            if kind == "provider"
+            else self.config.mcp_servers
+        )
+
+    def _sync_entries(self, kind: str, selected: str | None) -> None:
+        items = self._items(kind)
+        selector = self.query_one(f"#{kind}-configured", Select)
+        with self.prevent(Select.Changed):
+            selector.set_options((name, name) for name in items)
+            if selected in items:
+                selector.value = selected
+            else:
+                selector.clear()
+        self.query_one(f"#{kind}-remove", Button).disabled = (
+            selected is None or kind == "provider" and len(items) == 1
+        )
+        if kind == "provider":
+            self.query_one("#provider-next", Button).disabled = not items
 
     def _provider(self, name: str) -> InferenceProviderConfig:
         config = self.config.inference_providers[name].resolve(name)
@@ -764,33 +722,11 @@ class SetupApp(App[SetupAction]):
             timeout=15,
         )
 
-    def _render_tab(self, kind: str, name: str, value: Any):
-        if not name:
-            return "None configured", ""
-        title = name
-        if kind == "provider":
-            summary = f"Base URL: {value.base_url or 'default'}"
-        else:
-            summary = yaml.safe_dump(
-                _server_values(value), sort_keys=False
-            ).strip()
-        return title, summary
-
-    async def _tabs(self, kind: str) -> None:
-        plural = "providers" if kind == "provider" else "mcps"
-        items = (
-            self.config.inference_providers
-            if kind == "provider"
-            else self.config.mcp_servers
-        )
-        await self.query_one(f"#{plural}-tabs", ConfiguredTabs).sync(
-            items, lambda name, value: self._render_tab(kind, name, value)
-        )
-
     def _begin_provider(self, name: str | None = None) -> None:
         self.editing["provider"] = name
         values = self.config.inference_providers.get(name or "")
         self._show("provider")
+        self._sync_entries("provider", name)
         self.query_one("#provider-name", Input).value = name or "openai"
         base = values.base_url if values else None
         select = self.query_one("#provider-url", Select)
@@ -889,7 +825,9 @@ class SetupApp(App[SetupAction]):
         self._discard_unused_pending(old_users - {credential.username})
         if credential.pending and credential.username:
             self.pending[credential.username] = credential.pending
-        self._show("providers")
+        self.editing["provider"] = name
+        self._sync_entries("provider", name)
+        self._status("#provider-error", "✓ Connected")
 
     async def _prepare_models(self) -> None:
         providers = {
@@ -963,7 +901,7 @@ class SetupApp(App[SetupAction]):
 
         valid = all(await asyncio.gather(check("llm"), check("embedding")))
         if valid:
-            self._show("mcps")
+            self._begin_mcp(next(iter(self.config.mcp_servers), None))
 
     def _begin_mcp(self, name: str | None = None) -> None:
         self.editing["mcp"] = name
@@ -974,6 +912,7 @@ class SetupApp(App[SetupAction]):
             else {"transport": "streamable_http", "url": ""}
         )
         self._show("mcp")
+        self._sync_entries("mcp", name)
         self.query_one("#mcp-name", Input).value = name or ""
         transport_name = values.get("transport", "streamable_http")
         self.query_one("#mcp-transport", Select).value = transport_name
@@ -1061,7 +1000,9 @@ class SetupApp(App[SetupAction]):
         self.config.mcp_servers[name] = config
         self.config.__pydantic_fields_set__.add("mcp_servers")
         self._discard_unused_pending(old_users - {credential.username})
-        self._show("mcps")
+        self.editing["mcp"] = name
+        self._sync_entries("mcp", name)
+        self._status("#mcp-validation-status", "✓ Connected")
 
     def _review(self) -> None:
         llm = self.config.llm_model
@@ -1076,22 +1017,10 @@ class SetupApp(App[SetupAction]):
             bool(self.config.inference_providers)
             and self.model_ok["llm"] is True
         )
-        for selector in (
-            "#review-providers",
-            "#review-models",
-            "#review-mcps",
-        ):
-            self.query_one(selector, Button).disabled = False
         self.query_one("#review-save", Button).disabled = not valid
 
     async def _save_config(self) -> None:
-        for selector in (
-            "#review-providers",
-            "#review-models",
-            "#review-mcps",
-            "#review-save",
-        ):
-            self.query_one(selector, Button).disabled = True
+        self.query_one("#review-save", Button).disabled = True
         self._status("#review-error", "")
         try:
             path = await asyncio.to_thread(
@@ -1116,7 +1045,14 @@ class SetupApp(App[SetupAction]):
 
     @on(Select.Changed)
     def select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "provider-url":
+        if event.select.id in {"provider-configured", "mcp-configured"}:
+            kind = event.select.id.removesuffix("-configured")
+            if isinstance(event.value, str):
+                if kind == "provider":
+                    self._begin_provider(event.value)
+                else:
+                    self._begin_mcp(event.value)
+        elif event.select.id == "provider-url":
             self._toggle_url(event.value)
             host = urlparse(str(event.value)).hostname
             if not self.editing["provider"] and host in {
@@ -1145,9 +1081,9 @@ class SetupApp(App[SetupAction]):
         if id in self.DONE:
             self.exit(self.DONE[id])
         elif id == "welcome-next":
-            self._show(
-                "providers"
-            ) if self.config.inference_providers else self._begin_provider()
+            self._begin_provider(
+                next(iter(self.config.inference_providers), None)
+            )
         elif id and id.endswith("-back"):
             self.action_back()
         elif id == "provider-save":
@@ -1156,22 +1092,10 @@ class SetupApp(App[SetupAction]):
             self._begin_provider() if id.startswith(
                 "provider"
             ) else self._begin_mcp()
-        elif id in {"provider-edit", "mcp-edit"}:
-            kind = id.removesuffix("-edit")
-            plural = "providers" if kind == "provider" else "mcps"
-            name = self.query_one(f"#{plural}-tabs", ConfiguredTabs).selected()
-            self._begin_provider(
-                name
-            ) if kind == "provider" else self._begin_mcp(name)
         elif id in {"provider-remove", "mcp-remove"}:
             kind = id.removesuffix("-remove")
-            items = (
-                self.config.inference_providers
-                if kind == "provider"
-                else self.config.mcp_servers
-            )
-            plural = "providers" if kind == "provider" else "mcps"
-            name = self.query_one(f"#{plural}-tabs", ConfiguredTabs).selected()
+            items = self._items(kind)
+            name = self.editing[kind]
             if name and (kind == "mcp" or len(items) > 1):
                 section = (
                     "inference_providers"
@@ -1183,15 +1107,17 @@ class SetupApp(App[SetupAction]):
                 })
                 items.pop(name)
                 self._discard_unused_pending(removed_users)
-                await self._tabs(kind)
-        elif id == "providers-next":
+                selected = next(iter(items), None)
+                if kind == "provider":
+                    self._begin_provider(selected)
+                else:
+                    self._begin_mcp(selected)
+        elif id == "provider-next":
             self._show("models")
         elif id == "mcp-save":
             await self._save_mcp()
-        elif id == "mcps-next":
+        elif id == "mcp-next":
             self._show("review")
-        elif id in {"review-providers", "review-models", "review-mcps"}:
-            self._show(id.removeprefix("review-"))
         elif id == "review-save":
             await self._save_config()
 

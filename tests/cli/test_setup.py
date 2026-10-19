@@ -4,12 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from keyring.backends.fail import Keyring as FailingSystemKeyring
 from keyring.errors import KeyringError
-from textual.widgets import (
-    Input,
-    Select,
-    Static,
-    TabbedContent,
-)
+from textual.widgets import Button, Input, Select, Static
 
 from ursa.cli.config import (
     ChatModelConfig,
@@ -21,7 +16,6 @@ from ursa.cli.setup import (
     API_KEY_ENV,
     MCP_TOKEN_NONE,
     ApiKeyEntry,
-    ConfiguredTabs,
     CredentialValue,
     SetupApp,
     SetupError,
@@ -245,6 +239,7 @@ async def test_shared_key_widget_supports_environment_and_none(tmp_path):
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         await app.workers.wait_for_complete()
+        assert app.query_one("#provider-next", Button).disabled
         entry = app.query_one("#provider-key-api-key", ApiKeyEntry)
         source = entry.query_one("#provider-key-source", Select)
         key = entry.query_one("#provider-key-key", Input)
@@ -262,7 +257,7 @@ async def test_shared_key_widget_supports_environment_and_none(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_provider_is_checked_before_appearing_in_tabs(
+async def test_provider_is_checked_before_becoming_configured(
     monkeypatch, tmp_path
 ):
     models = [ProviderModel("gpt-test", "openai")]
@@ -290,9 +285,9 @@ async def test_provider_is_checked_before_appearing_in_tabs(
         await pilot.click("#provider-save")
         await app.workers.wait_for_complete()
 
-        tabs = app.query_one("#providers-tabs", ConfiguredTabs)
-        assert app.page == "providers"
-        assert tabs.names == {"provider-pane-0": "openai"}
+        assert app.page == "provider"
+        assert app.query_one("#provider-configured", Select).value == "openai"
+        assert not app.query_one("#provider-next", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -340,7 +335,7 @@ async def test_models_use_existing_editor_and_validate_both_providers(
             ("embedding-model", "vectors"),
         ]
         assert app.model_ok == {"llm": True, "embedding": True}
-        assert app.page == "mcps"
+        assert app.page == "mcp"
 
 
 @pytest.mark.asyncio
@@ -379,7 +374,9 @@ async def test_model_failure_stays_on_models_and_raises_error_toast(
 
 
 @pytest.mark.asyncio
-async def test_mcp_form_uses_tabs_and_shared_token(monkeypatch, tmp_path):
+async def test_mcp_form_uses_configured_selector_and_shared_token(
+    monkeypatch, tmp_path
+):
     app = SetupApp(tmp_path / "config.yaml")
     monkeypatch.setattr(app, "_probe_mcp", AsyncMock())
 
@@ -395,7 +392,7 @@ async def test_mcp_form_uses_tabs_and_shared_token(monkeypatch, tmp_path):
         await app.workers.wait_for_complete()
 
         assert app.pending["tools"] == "secret"
-        assert isinstance(app.query_one("#mcps-tabs"), TabbedContent)
+        assert app.query_one("#mcp-configured", Select).value == "tools"
 
 
 @pytest.mark.asyncio
