@@ -1,8 +1,6 @@
 import json
 import logging
-import os
 import re
-import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from os import environ
@@ -31,6 +29,7 @@ from pydantic import (
 
 from ursa.security import enforce_group_base_url_policy
 from ursa.util.crossplatform import system_config_path, user_config_paths
+from ursa.util.fileio import atomic_write_text
 from ursa.util.http import (
     build_httpx_async_client,
     build_httpx_client,
@@ -690,8 +689,8 @@ class UrsaConfig(BaseModel):
         }
 
 
-def load_config_file(path: Path) -> dict[str, Any]:
-    """Load raw config-file data for merging before validation."""
+def load_config_file(path: Path, *, interpolate: bool = True) -> dict[str, Any]:
+    """Load config-file data, optionally expanding environment placeholders."""
     loader = (
         yaml.safe_load
         if path.suffix.lower() in {".yaml", ".yml"}
@@ -706,7 +705,7 @@ def load_config_file(path: Path) -> dict[str, Any]:
         raise ValueError(
             f"Configuration file '{path}' must contain a mapping at its root"
         )
-    return deep_interp_env(data)
+    return deep_interp_env(data) if interpolate else data
 
 
 def _reject_literal_secrets(value: Any) -> None:
@@ -733,32 +732,13 @@ def save_config_file(path: Path, config: UrsaConfig) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(f"{path.suffix}.lock")
     with FileLock(lock_path, mode=0o600):
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=path.parent,
-            prefix=f".{path.name}.",
+        values = config.editable_values()
+        text = (
+            yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+            if path.suffix.lower() in {".yaml", ".yml"}
+            else f"{json.dumps(values, indent=2)}\n"
         )
-        temporary = Path(temporary_name)
-        try:
-            if hasattr(os, "fchmod"):
-                os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                values = config.editable_values()
-                if path.suffix.lower() in {".yaml", ".yml"}:
-                    yaml.safe_dump(
-                        values,
-                        stream,
-                        sort_keys=False,
-                        allow_unicode=True,
-                    )
-                else:
-                    json.dump(values, stream, indent=2)
-                    stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
+        atomic_write_text(path, text)
     return path
 
 

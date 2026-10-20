@@ -19,6 +19,16 @@ def _receipt(path: Path, requirement: str) -> Path:
     return path
 
 
+def _tool_argv(uv: str, command: str, *tail: str) -> list[str]:
+    argv = [uv, "tool", command]
+    if command == "install":
+        argv.append("--force")
+    argv.extend(["--reinstall", "--compile-bytecode"])
+    if command == "install":
+        argv.extend(["--python", str(Path(sys.executable).resolve())])
+    return [*argv, *tail]
+
+
 @pytest.fixture
 def isolated_uv_tool(monkeypatch, tmp_path):
     """Provide a complete fake uv tool environment without invoking uv."""
@@ -27,18 +37,18 @@ def isolated_uv_tool(monkeypatch, tmp_path):
     environment.mkdir(parents=True)
     source = tmp_path / "source"
     source.mkdir()
-    (environment / "uv-receipt.toml").write_text(
-        "[tool]\n"
-        f'requirements = [{{ name = "ursa-ai", extras = ["dashboard"], '
+    receipt = _receipt(
+        environment / "uv-receipt.toml",
+        f'{{ name = "ursa-ai", extras = ["dashboard"], '
         f'directory = "{source.as_posix()}" }}, '
-        '{ name = "pytest", specifier = ">=8" }]\n'
+        '{ name = "pytest", specifier = ">=8" }',
     )
     uv = tmp_path / "bin" / "uv"
     execv = MagicMock(side_effect=SystemExit(0))
     monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
     monkeypatch.setattr(
         "ursa.cli.self._uv_install",
-        lambda: (uv, environment / "uv-receipt.toml"),
+        lambda: (uv, receipt),
     )
     monkeypatch.setattr("ursa.cli.self.sys.prefix", str(environment))
     monkeypatch.setattr("ursa.cli.self.package_version", lambda _name: "1.2.3")
@@ -59,7 +69,7 @@ def isolated_uv_tool(monkeypatch, tmp_path):
         lambda: "https://example.test/ursa.git",
     )
     monkeypatch.setattr("ursa.cli.self.os.execv", execv)
-    return {"execv": execv, "source": source, "uv": uv}
+    return {"execv": execv, "receipt": receipt, "source": source, "uv": uv}
 
 
 def test_self_status_command_uses_isolated_receipt(isolated_uv_tool, capsys):
@@ -178,6 +188,10 @@ def test_self_setup_reports_invalid_existing_configuration(
             ["modify", "--clean", "--extra", "fm", "--with", "tox"],
             ["--with", "tox", "ursa-ai[fm] @ {source}"],
         ),
+        (
+            ["modify", "--clean"],
+            ["ursa-ai @ {source}"],
+        ),
     ],
 )
 def test_self_modify_commands_are_isolated(
@@ -189,19 +203,9 @@ def test_self_modify_commands_are_isolated(
     with pytest.raises(SystemExit, match="0"):
         main(["self", *arguments])
 
+    uv = str(isolated_uv_tool["uv"])
     isolated_uv_tool["execv"].assert_called_once_with(
-        str(isolated_uv_tool["uv"]),
-        [
-            str(isolated_uv_tool["uv"]),
-            "tool",
-            "install",
-            "--force",
-            "--reinstall",
-            "--compile-bytecode",
-            "--python",
-            str(Path(sys.executable).resolve()),
-            *expected_tail,
-        ],
+        uv, _tool_argv(uv, "install", *expected_tail)
     )
 
 
@@ -209,16 +213,9 @@ def test_self_update_command_is_isolated(isolated_uv_tool):
     with pytest.raises(SystemExit, match="0"):
         main(["self", "update"])
 
+    uv = str(isolated_uv_tool["uv"])
     isolated_uv_tool["execv"].assert_called_once_with(
-        str(isolated_uv_tool["uv"]),
-        [
-            str(isolated_uv_tool["uv"]),
-            "tool",
-            "upgrade",
-            "--reinstall",
-            "--compile-bytecode",
-            TOOL_PACKAGE,
-        ],
+        uv, _tool_argv(uv, "upgrade", TOOL_PACKAGE)
     )
 
 
@@ -320,46 +317,27 @@ def test_version_and_ref_requirements(monkeypatch, tmp_path):
     )
 
 
-def test_local_install_can_switch_to_git_ref(monkeypatch, tmp_path):
-    environment = tmp_path / TOOL_PACKAGE
-    environment.mkdir()
-    source = tmp_path / "source"
-    source.mkdir()
-    (environment / "uv-receipt.toml").write_text(
-        "[tool]\n"
-        f'requirements = [{{ name = "ursa-ai", directory = "{source.as_posix()}" }}, '
-        '{ name = "pytest", specifier = ">=8" }]\n'
+def test_local_install_can_switch_to_git_ref(isolated_uv_tool):
+    source = isolated_uv_tool["source"]
+    _receipt(
+        isolated_uv_tool["receipt"],
+        f'{{ name = "ursa-ai", directory = "{source.as_posix()}" }}, '
+        '{ name = "pytest", specifier = ">=8" }',
     )
-    monkeypatch.setattr(
-        "ursa.cli.self._uv_install",
-        lambda: (Path("/bin/uv"), environment / "uv-receipt.toml"),
-    )
-    monkeypatch.setattr(
-        "ursa.cli.self.get_package_repository",
-        lambda: "https://example.test/ursa.git",
-    )
-    execv = MagicMock(side_effect=SystemExit(0))
-    monkeypatch.setattr("ursa.cli.self.os.execv", execv)
 
     with pytest.raises(SystemExit, match="0"):
         upgrade(ref="main")
 
-    uv = str(Path("/bin/uv"))
-    execv.assert_called_once_with(
+    uv = str(isolated_uv_tool["uv"])
+    isolated_uv_tool["execv"].assert_called_once_with(
         uv,
-        [
+        _tool_argv(
             uv,
-            "tool",
             "install",
-            "--force",
-            "--reinstall",
-            "--compile-bytecode",
-            "--python",
-            str(Path(sys.executable).resolve()),
             "--with",
             "pytest>=8",
             "ursa-ai @ git+https://example.test/ursa.git@main",
-        ],
+        ),
     )
 
 
@@ -386,34 +364,6 @@ def test_package_repository_has_lanl_fallback(monkeypatch):
     assert get_package_repository() == "https://github.com/lanl/ursa"
 
 
-def test_parser_supports_recipe_flags():
-    cfg = build_parser().parse_args([
-        "self",
-        "modify",
-        "--extra",
-        "dashboard",
-        "--extra",
-        "fm",
-        "--with",
-        "pytest",
-        "--with",
-        "tox",
-        "--ref",
-        "main",
-    ])
-    assert cfg.self.modify.extra == ["dashboard", "fm"]
-    assert cfg.self.modify.ref == "main"
-    assert cfg.self.modify.with_packages == ["pytest", "tox"]
-    assert callable(cfg.self.modify.action)
-
-
-def test_parser_accepts_clean():
-    cfg = build_parser().parse_args(["self", "modify", "--clean"])
-
-    assert cfg.self.modify.clean is True
-    assert cfg.self.modify.with_packages is None
-
-
 def test_parser_ignores_self_management_environment_flags(monkeypatch):
     monkeypatch.setenv("URSA_SELF__MODIFY__EXTRA", "dashboard")
     monkeypatch.setenv("URSA_SELF__MODIFY__VERSION", "1.2.3")
@@ -427,82 +377,6 @@ def test_parser_ignores_self_management_environment_flags(monkeypatch):
     assert cfg.self.modify.ref is None
     assert cfg.self.modify.with_packages is None
     assert cfg.self.modify.clean is False
-
-
-def test_main_routes_upgrade_before_config(monkeypatch):
-    called = MagicMock(side_effect=SystemExit(0))
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    parser = build_parser()
-    monkeypatch.setattr("ursa.cli.build_parser", lambda: parser)
-    monkeypatch.setattr("ursa.cli.self.upgrade", called)
-    with pytest.raises(SystemExit, match="0"):
-        main(["self", "modify", "--extra", "dashboard", "--version", "1.2.3"])
-    called.assert_called_once_with(
-        extras=["dashboard"],
-        with_packages=None,
-        version="1.2.3",
-        ref=None,
-        clean=False,
-    )
-
-
-def test_main_self_update_preserves_recipe(monkeypatch):
-    called = MagicMock(side_effect=SystemExit(0))
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    parser = build_parser()
-    monkeypatch.setattr("ursa.cli.build_parser", lambda: parser)
-    monkeypatch.setattr("ursa.cli.self.upgrade", called)
-
-    with pytest.raises(SystemExit, match="0"):
-        main(["self", "update"])
-
-    called.assert_called_once_with()
-
-
-def test_main_clean_clears_extras_and_additional_packages(monkeypatch):
-    called = MagicMock(side_effect=SystemExit(0))
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    parser = build_parser()
-    monkeypatch.setattr("ursa.cli.build_parser", lambda: parser)
-    monkeypatch.setattr("ursa.cli.self.upgrade", called)
-
-    with pytest.raises(SystemExit, match="0"):
-        main(["self", "modify", "--clean"])
-
-    called.assert_called_once_with(
-        extras=None,
-        with_packages=None,
-        version=None,
-        ref=None,
-        clean=True,
-    )
-
-
-def test_main_clean_applies_requested_extras_and_packages(monkeypatch):
-    called = MagicMock(side_effect=SystemExit(0))
-    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
-    parser = build_parser()
-    monkeypatch.setattr("ursa.cli.build_parser", lambda: parser)
-    monkeypatch.setattr("ursa.cli.self.upgrade", called)
-
-    with pytest.raises(SystemExit, match="0"):
-        main([
-            "self",
-            "modify",
-            "--clean",
-            "--extra",
-            "fm",
-            "--with",
-            "pytest",
-        ])
-
-    called.assert_called_once_with(
-        extras=["fm"],
-        with_packages=["pytest"],
-        version=None,
-        ref=None,
-        clean=True,
-    )
 
 
 def test_status_works_without_uv_tool_install(monkeypatch, tmp_path, capsys):
@@ -530,13 +404,3 @@ def test_self_registration_does_not_inspect_installation(monkeypatch, capsys):
         parser.parse_args(["self", "--help"])
     assert help_exit.value.code == 0
     assert "uv tool install" in capsys.readouterr().out
-
-
-def test_self_registers_update_and_modify():
-    parser = build_parser()
-
-    update = parser.parse_args(["self", "update"])
-    modify = parser.parse_args(["self", "modify", "--ref", "main"])
-
-    assert callable(update.self["update"].action)
-    assert modify.self.modify.ref == "main"

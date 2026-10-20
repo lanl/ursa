@@ -19,7 +19,8 @@ The development installer at
 `https://lanl.github.io/ursa/main/install.sh` installs URSA from GitHub main.
 
 Credentials are validated before setup continues and are stored in the
-operating-system keyring. The resulting configuration is written to
+native keyring, or its private file-backed fallback when none is available.
+The resulting configuration is written to
 `~/.config/ursa/config.yaml`. Re-run the wizard with `ursa self setup`.
 
 For manual installation, the `uv` tool installation is recommended:
