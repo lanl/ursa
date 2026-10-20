@@ -24,7 +24,12 @@ from ursa.integrations.harbor_singularity import (  # noqa: E402
 
 
 def _environment(
-    tmp_path: Path, *, compose: bool = False
+    tmp_path: Path,
+    *,
+    compose: bool = False,
+    network_mode: NetworkMode = NetworkMode.PUBLIC,
+    phase_network_modes: tuple[NetworkMode, ...] = (),
+    overlay: bool = False,
 ) -> DockerfileSingularityEnvironment:
     environment_dir = tmp_path / "environment"
     environment_dir.mkdir()
@@ -57,10 +62,13 @@ def _environment(
                 "read_only": False,
             }
         ],
-        network_policy=NetworkPolicy(network_mode=NetworkMode.PUBLIC),
+        network_policy=NetworkPolicy(network_mode=network_mode),
+        phase_network_policies=[
+            NetworkPolicy(network_mode=mode) for mode in phase_network_modes
+        ],
         persistent_env={},
         singularity_fakeroot=False,
-        singularity_overlay=False,
+        singularity_overlay=overlay,
     )
     environment._runtime_path = str(tmp_path / "fake-singularity")
     return environment
@@ -68,6 +76,157 @@ def _environment(
 
 def _option_value(command: list[str], option: str) -> str:
     return command[command.index(option) + 1]
+
+
+def _prepare_started_environment(
+    environment: DockerfileSingularityEnvironment, tmp_path: Path
+) -> Path:
+    environment._prepare_runtime_workdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    environment._scratch_dir = scratch
+    staging = scratch / "staging"
+    staging.mkdir()
+    environment._staging_dir = staging
+    overlay = scratch / "overlay.img"
+    overlay.touch()
+    environment._overlay_path = overlay
+    environment._sif_path = tmp_path / "image.sif"
+    environment._instance_started = True
+    environment._instance_start_attempted = True
+    return overlay
+
+
+def test_phase_network_change_requires_overlay(tmp_path: Path):
+    with pytest.raises(ValueError, match="require a writable overlay"):
+        _environment(
+            tmp_path,
+            phase_network_modes=(NetworkMode.NO_NETWORK,),
+        )
+
+
+def test_overlay_enables_dynamic_network_policy(tmp_path: Path):
+    environment = _environment(
+        tmp_path,
+        phase_network_modes=(NetworkMode.NO_NETWORK,),
+        overlay=True,
+    )
+
+    assert environment.capabilities.dynamic_network_policy
+
+
+def test_compose_sidecars_reject_no_network_phase(tmp_path: Path):
+    with pytest.raises(ValueError, match="sidecar networking"):
+        _environment(
+            tmp_path,
+            compose=True,
+            phase_network_modes=(NetworkMode.NO_NETWORK,),
+            overlay=True,
+        )
+
+
+def test_compose_network_policy_is_rewritten(tmp_path: Path):
+    environment = _environment(tmp_path)
+    compose_file = tmp_path / "singularity-compose.yml"
+    compose_file.write_text(
+        "instances:\n"
+        "  main:\n"
+        "    network:\n"
+        "      allocate_ip: true\n"
+        "      enable: true\n"
+    )
+    environment._compose_file = compose_file
+
+    environment._set_compose_network_policy(
+        NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+    )
+    isolated = yaml.safe_load(compose_file.read_text())["instances"]["main"]
+    assert isolated["network"] == {
+        "allocate_ip": False,
+        "enable": True,
+        "type": "none",
+    }
+
+    environment._set_compose_network_policy(
+        NetworkPolicy(network_mode=NetworkMode.PUBLIC)
+    )
+    public = yaml.safe_load(compose_file.read_text())["instances"]["main"]
+    assert public["network"] == {
+        "allocate_ip": True,
+        "enable": True,
+    }
+
+
+async def test_network_policy_change_restarts_with_existing_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    environment = _environment(
+        tmp_path,
+        phase_network_modes=(NetworkMode.NO_NETWORK,),
+        overlay=True,
+    )
+    overlay = _prepare_started_environment(environment, tmp_path)
+    commands: list[tuple[str, ...]] = []
+
+    async def stop(*, warn: bool) -> bool:
+        assert not warn
+        environment._instance_started = False
+        environment._instance_start_attempted = False
+        return True
+
+    async def run(*command: str, **_kwargs: object) -> None:
+        commands.append(command)
+
+    monkeypatch.setattr(environment, "_stop_instance", stop)
+    monkeypatch.setattr(environment, "_run", run)
+
+    await environment.set_network_policy(
+        NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+    )
+
+    start = next(command for command in commands if "start" in command)
+    assert start[start.index("--overlay") + 1] == str(overlay)
+    assert start[start.index("--network") + 1] == "none"
+    assert environment.network_policy.network_mode == NetworkMode.NO_NETWORK
+    assert environment._instance_started
+
+
+async def test_failed_network_policy_change_restores_previous_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    environment = _environment(
+        tmp_path,
+        phase_network_modes=(NetworkMode.NO_NETWORK,),
+        overlay=True,
+    )
+    _prepare_started_environment(environment, tmp_path)
+    starts: list[tuple[str, ...]] = []
+
+    async def stop(*, warn: bool) -> bool:
+        environment._instance_started = False
+        environment._instance_start_attempted = False
+        return True
+
+    async def run(*command: str, **_kwargs: object) -> None:
+        if "start" not in command:
+            return
+        starts.append(command)
+        if "--network" in command:
+            raise RuntimeError("isolated start failed")
+
+    monkeypatch.setattr(environment, "_stop_instance", stop)
+    monkeypatch.setattr(environment, "_run", run)
+
+    with pytest.raises(RuntimeError, match="isolated start failed"):
+        await environment.set_network_policy(
+            NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+        )
+
+    assert len(starts) == 2
+    assert "--network" in starts[0]
+    assert "--network" not in starts[1]
+    assert environment.network_policy.network_mode == NetworkMode.PUBLIC
+    assert environment._instance_started
 
 
 async def test_run_streams_and_records_complete_failed_build_output(
