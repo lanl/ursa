@@ -30,7 +30,7 @@ def test_probe_deadline_terminates_blocked_work(probe):
     assert time.monotonic() - started < 3
 
 
-def test_embedding_probe_distinguishes_model_capability_from_authentication():
+def test_embedding_probe_normalizes_capability_and_authentication_errors():
     def config_with_error(error):
         def embed_query(_text):
             raise error
@@ -49,10 +49,23 @@ def test_embedding_probe_distinguishes_model_capability_from_authentication():
         health.probe_embedding_model(config_with_error(mixed_provider_error))
     assert capability.value.__context__ is None
 
-    authentication_error = RuntimeError("401 Unauthorized")
-    with pytest.raises(RuntimeError, match="401 Unauthorized") as captured:
-        health.probe_embedding_model(config_with_error(authentication_error))
-    assert captured.value is authentication_error
+    for detail in ("401", "403 Forbidden", "Unauthorized"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "The selected model may not support embeddings, or the API "
+                "key may not have access to it"
+            ),
+        ) as ambiguous:
+            health.probe_embedding_model(
+                config_with_error(RuntimeError(detail))
+            )
+        assert ambiguous.value.__context__ is None
+
+    unrelated_error = RuntimeError("rate limited")
+    with pytest.raises(RuntimeError, match="rate limited") as captured:
+        health.probe_embedding_model(config_with_error(unrelated_error))
+    assert captured.value is unrelated_error
 
 
 def test_config_health_runs_every_probe_and_collects_failures(monkeypatch):
