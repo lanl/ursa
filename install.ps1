@@ -2,7 +2,11 @@
     [CmdletBinding()]
     param(
         [Alias("h")]
-        [switch]$Help
+        [switch]$Help,
+
+        [string]$Config,
+
+        [string]$ConfigJson
     )
 
     Set-StrictMode -Version Latest
@@ -79,12 +83,41 @@
         @"
 Install URSA with uv and start the guided setup.
 
-Usage: install.ps1
+Usage: install.ps1 [-Config FILE | -ConfigJson JSON]
+
+  -Config FILE       Read a setup defaults JSON payload from FILE.
+  -ConfigJson JSON   Read the payload directly from the argument.
 "@ | Write-Output
         return
     }
 
+    $configSourceCount = @(
+        $PSBoundParameters.ContainsKey("Config")
+        $PSBoundParameters.ContainsKey("ConfigJson")
+    ).Where({ $_ }).Count
+    if ($configSourceCount -gt 1) {
+        Stop-Installer "setup defaults may only be specified once"
+    }
+
+    $payloadFile = $null
     try {
+        if ($configSourceCount -eq 1) {
+            $payloadFile = [IO.Path]::GetTempFileName()
+            if ($PSBoundParameters.ContainsKey("Config")) {
+                if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
+                    Stop-Installer "setup defaults not found: $Config"
+                }
+                Copy-Item -LiteralPath $Config -Destination $payloadFile -Force
+            }
+            else {
+                $utf8 = New-Object Text.UTF8Encoding($false)
+                [IO.File]::WriteAllText($payloadFile, $ConfigJson, $utf8)
+            }
+            if (-not (Test-InteractiveTerminal)) {
+                Stop-Installer "setup defaults require an interactive terminal"
+            }
+        }
+
         $uvExecutable = Find-UvExecutable
         if (-not $uvExecutable) {
             Write-InstallerMessage "Installing uv..."
@@ -181,8 +214,12 @@ Usage: install.ps1
         }
 
         Write-InstallerMessage "Starting guided setup..."
+        $setupArguments = @("self", "setup")
+        if ($payloadFile) {
+            $setupArguments += @("--defaults-json", $payloadFile)
+        }
         if (Test-InteractiveTerminal) {
-            & $ursaExecutable self setup
+            & $ursaExecutable @setupArguments
             $setupExitCode = $LASTEXITCODE
             if ($setupExitCode -ne 0) {
                 Stop-Installer "guided setup failed (exit code $setupExitCode)"
@@ -207,5 +244,10 @@ Usage: install.ps1
             throw
         }
         throw "URSA installer: $($_.Exception.Message)"
+    }
+    finally {
+        if ($payloadFile) {
+            Remove-Item -LiteralPath $payloadFile -Force -ErrorAction SilentlyContinue
+        }
     }
 } @args

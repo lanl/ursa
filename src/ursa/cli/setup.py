@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shlex
@@ -36,6 +37,7 @@ from textual.widgets import (
 
 from ursa.cli.config import (
     ChatModelConfig,
+    EmbModelConfig,
     InferenceProviderConfig,
     UrsaConfig,
     deep_interp_env,
@@ -87,6 +89,8 @@ PROVIDER_DEFAULT_URLS = {
 }
 KEYRING_LOCK = Lock()
 SERVER_PARAMETERS = TypeAdapter(ServerParameters)
+SENSITIVE_NAME = re.compile(r"auth|token|secret|password|api.key", re.I)
+ENV_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 
 class SetupError(ValueError):
@@ -204,6 +208,190 @@ def _load_config(path: Path) -> tuple[UrsaConfig, bool]:
     if overlap := sorted(set(explicit) & set(config.mcp_servers)):
         raise SetupError(f"Names used by both provider and MCP: {overlap}")
     return config, "llm_model" in raw
+
+
+def load_setup_defaults(path: Path) -> dict[str, Any]:
+    """Load a non-secret installer payload used to seed guided setup."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SetupError(f"Could not read setup defaults: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise SetupError(
+            f"Setup defaults are not valid JSON: {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno})."
+        ) from None
+    if not isinstance(value, dict):
+        raise SetupError("Setup defaults must be a JSON object.")
+    allowed = {
+        "python_version",
+        "extras",
+        "extra_packages",
+        "inference_providers",
+        "llm_model",
+        "emb_model",
+        "mcp_servers",
+    }
+    if unknown := sorted(set(value) - allowed):
+        raise SetupError(f"Unknown setup defaults: {unknown}")
+    return value
+
+
+def _reject_literal_secrets(value: Any, name: str = "") -> None:
+    """Allow secret references in defaults, never literal secret values."""
+    if name and SENSITIVE_NAME.search(name):
+        reference = SecretTemplate.maybe_validate(value)
+        if isinstance(reference, SecretReference):
+            return
+        if isinstance(value, str) and ENV_REFERENCE.fullmatch(value):
+            return
+        if isinstance(value, Mapping) and set(value) == {"template"}:
+            try:
+                SecretTemplate.model_validate({**value, "keyring": True})
+            except ValidationError:
+                pass
+            else:
+                return
+        raise SetupError("Installer defaults must not contain API keys.")
+    if isinstance(value, Mapping):
+        for child_name, child in value.items():
+            _reject_literal_secrets(child, str(child_name))
+    elif isinstance(value, list):
+        for child in value:
+            _reject_literal_secrets(child)
+
+
+def apply_setup_defaults(
+    config: UrsaConfig,
+    defaults: Mapping[str, Any],
+    *,
+    llm_configured: bool = False,
+) -> bool:
+    """Add site defaults without replacing entries in the user's config."""
+    _reject_literal_secrets(defaults)
+    providers = defaults.get("inference_providers", [])
+    if not isinstance(providers, list):
+        raise SetupError("inference_providers must be a JSON array.")
+    seen = set()
+    for item in providers:
+        if not isinstance(item, dict):
+            raise SetupError(
+                "Inference provider defaults must be JSON objects."
+            )
+        value = deepcopy(item)
+        try:
+            name = _name(value.pop("name"), "Inference provider")
+            value["base_url"] = _url(
+                value["base_url"], "Inference provider base URL"
+            )
+        except KeyError as exc:
+            raise SetupError(
+                f"Inference provider default is missing '{exc.args[0]}'."
+            ) from None
+        if name in seen:
+            raise SetupError(
+                f"Inference provider default '{name}' is duplicated."
+            )
+        seen.add(name)
+        try:
+            provider = InferenceProviderConfig.model_validate(value)
+        except ValidationError as exc:
+            raise SetupError(
+                f"Inference provider default '{name}' is invalid: {exc}"
+            ) from None
+        if isinstance(provider.api_key, SecretStr):
+            raise SetupError("Installer defaults must not contain API keys.")
+        if name in config.inference_providers:
+            continue
+        if name in config.mcp_servers:
+            raise SetupError(
+                f"The name '{name}' is used by both provider and MCP."
+            )
+        if provider.api_key is None and urlparse(
+            provider.base_url
+        ).hostname not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }:
+            provider.api_key = SecretReference(keyring=True)
+        config.inference_providers[name] = provider
+        config.__pydantic_fields_set__.add("inference_providers")
+
+    for field, model_type in (
+        ("llm_model", ChatModelConfig),
+        ("emb_model", EmbModelConfig),
+    ):
+        if (
+            field == "llm_model"
+            and llm_configured
+            or field == "emb_model"
+            and config.emb_model is not None
+        ):
+            continue
+        value = defaults.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, Mapping):
+            raise SetupError(
+                f"Installer default {field} must be a JSON object."
+            )
+        provider_name = value.get("inference_provider")
+        if (
+            not isinstance(provider_name, str)
+            or provider_name not in config.inference_providers
+        ):
+            continue
+        try:
+            model = model_type.model_validate(value)
+        except ValidationError as exc:
+            raise SetupError(
+                f"Installer default {field} is invalid: {exc}"
+            ) from None
+        if isinstance(model.api_key, SecretStr):
+            raise SetupError("Installer defaults must not contain API keys.")
+        setattr(config, field, model)
+        config.__pydantic_fields_set__.add(field)
+        if field == "llm_model":
+            llm_configured = True
+
+    servers = defaults.get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        raise SetupError("mcp_servers must be a JSON object.")
+    for raw_name, raw_server in servers.items():
+        name = _name(str(raw_name), "MCP server")
+        if name in config.mcp_servers:
+            continue
+        if name in config.inference_providers:
+            raise SetupError(
+                f"The name '{name}' is used by both provider and MCP."
+            )
+        if not isinstance(raw_server, dict):
+            raise SetupError(f"MCP server '{name}' must be a JSON object.")
+        server = deepcopy(raw_server)
+        headers = server.get("headers")
+        if isinstance(headers, dict):
+            for header, raw_value in headers.items():
+                if not isinstance(raw_value, dict):
+                    continue
+                if "template" in raw_value:
+                    headers[header] = {
+                        **raw_value,
+                        **(
+                            {}
+                            if raw_value.get("env") is not None
+                            or raw_value.get("keyring") not in (None, False)
+                            else {"keyring": True}
+                        ),
+                    }
+        try:
+            config.mcp_servers[name] = _server(name, server)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise SetupError(
+                f"MCP server default '{name}' is invalid: {exc}"
+            ) from None
+        config.__pydantic_fields_set__.add("mcp_servers")
+    return llm_configured
 
 
 def _save(path: Path, config: UrsaConfig, pending: Mapping[str, str]) -> Path:
@@ -436,10 +624,20 @@ class SetupApp(App[SetupAction]):
         "setup-exit": SetupAction.EXIT,
     }
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        defaults_json: Path | None = None,
+    ) -> None:
         super().__init__()
         self.path = (path or default_user_config_path()).expanduser()
         self.config, self.llm_configured = _load_config(self.path)
+        if defaults_json is not None:
+            self.llm_configured = apply_setup_defaults(
+                self.config,
+                load_setup_defaults(defaults_json),
+                llm_configured=self.llm_configured,
+            )
         self.page, self.history = "welcome", []
         self.editing = {"provider": None, "mcp": None}
         self.model_ok = {"llm": None, "embedding": None}
@@ -1220,7 +1418,10 @@ def _probe_model(config, providers: dict[str, InferenceProviderConfig]) -> None:
         run_probe_with_deadline(probe_embedding_model, resolved)
 
 
-def run_setup(path: Path | None = None) -> SetupAction:
+def run_setup(
+    path: Path | None = None,
+    defaults_json: Path | None = None,
+) -> SetupAction:
     inject_truststore_into_ssl()
-    app = SetupApp(path)
+    app = SetupApp(path, defaults_json)
     return app.run() or SetupAction.EXIT

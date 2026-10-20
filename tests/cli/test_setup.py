@@ -22,6 +22,8 @@ from ursa.cli.setup import (
     SetupError,
     _load_config,
     _save,
+    apply_setup_defaults,
+    load_setup_defaults,
 )
 from ursa.cli.tui.widgets import ModelEditor, ModelSelection
 from ursa.util.inference_providers import ProviderModel
@@ -144,6 +146,151 @@ mcp_servers:
 
     with pytest.raises(SetupError, match="both provider and MCP"):
         _load_config(path)
+
+
+def test_setup_applies_non_secret_installer_defaults(tmp_path):
+    defaults_path = tmp_path / "defaults.json"
+    defaults_path.write_text(
+        """
+{
+  "inference_providers": [
+    {
+      "name": "anthropic",
+      "base_url": "https://api.anthropic.test",
+      "reasoning_effort": "high",
+      "api_key": {"keyring": "shared"}
+    }
+  ],
+  "llm_model": {
+    "model": "claude-test",
+    "model_provider": "anthropic",
+    "inference_provider": "anthropic"
+  },
+  "emb_model": {
+    "model": "embedding-test",
+    "model_provider": "openai",
+    "inference_provider": "anthropic"
+  },
+  "mcp_servers": {
+    "tools": {
+      "transport": "streamable_http",
+      "url": "https://tools.example/mcp",
+      "headers": {"Authorization": {"template": "Bearer %s"}},
+      "timeout": 30
+    }
+  }
+}
+"""
+    )
+
+    app = SetupApp(tmp_path / "config.yaml", defaults_path)
+
+    assert app.config.inference_providers["anthropic"] == (
+        InferenceProviderConfig(
+            base_url="https://api.anthropic.test",
+            api_key=SecretReference(keyring="shared"),
+            reasoning_effort="high",
+        )
+    )
+    assert app.config.llm_model.model == "claude-test"
+    assert app.config.emb_model.model == "embedding-test"
+    assert app.llm_configured
+    server = app.config.mcp_servers["tools"]
+    assert server.url == "https://tools.example/mcp"
+    assert server.headers == {
+        "Authorization": SecretTemplate(keyring=True, template="Bearer %s")
+    }
+    assert server.timeout.total_seconds() == 30
+
+
+def test_setup_defaults_do_not_replace_existing_entries(tmp_path):
+    config = configured_config()
+
+    apply_setup_defaults(
+        config,
+        {
+            "inference_providers": [
+                {
+                    "name": "company",
+                    "base_url": "https://replacement.test/v1",
+                }
+            ],
+            "mcp_servers": {
+                "tools": {
+                    "transport": "streamable_http",
+                    "url": "https://replacement.test/mcp",
+                }
+            },
+        },
+    )
+
+    assert config.inference_providers["company"].base_url is None
+    assert config.mcp_servers["tools"].url == "https://tools.example/mcp"
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        {
+            "inference_providers": [
+                {
+                    "name": "company",
+                    "base_url": "https://models.example/v1",
+                    "access_token": "secret",
+                }
+            ]
+        },
+        {
+            "llm_model": {
+                "model": "test",
+                "inference_provider": "company",
+                "password": "secret",
+            }
+        },
+        {
+            "mcp_servers": {
+                "tools": {
+                    "transport": "stdio",
+                    "command": "tool",
+                    "env": {"API_KEY": "secret"},
+                }
+            }
+        },
+    ],
+)
+def test_setup_defaults_reject_literal_secrets(defaults):
+    config = UrsaConfig.model_validate({"inference_providers": {}})
+
+    with pytest.raises(SetupError, match="must not contain API keys"):
+        apply_setup_defaults(config, defaults)
+
+
+def test_setup_defaults_allow_environment_placeholders():
+    config = UrsaConfig.model_validate({"inference_providers": {}})
+
+    apply_setup_defaults(
+        config,
+        {
+            "mcp_servers": {
+                "tools": {
+                    "transport": "stdio",
+                    "command": "tool",
+                    "env": {"API_KEY": "${TOOLS_API_KEY}"},
+                }
+            }
+        },
+    )
+
+    assert config.mcp_servers["tools"].env == {"API_KEY": "${TOOLS_API_KEY}"}
+
+
+@pytest.mark.parametrize("contents", ["[]", "not json"])
+def test_setup_defaults_require_a_json_object(tmp_path, contents):
+    path = tmp_path / "defaults.json"
+    path.write_text(contents)
+
+    with pytest.raises(SetupError, match="JSON object|not valid JSON"):
+        load_setup_defaults(path)
 
 
 def test_load_preserves_mcp_environment_placeholders(

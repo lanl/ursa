@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -61,6 +62,11 @@ def _run_installer(environment, *, script=None, check=True):
 def test_install_script_is_posix_shell():
     subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
 
+    script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert "--config-json" in script
+    assert "--config-stdin" in script
+    assert 'set -- "$@" --defaults-json "$payload_file"' in script
+
 
 def test_powershell_installer_installs_only_published_ursa_package():
     script = POWERSHELL_INSTALL_SCRIPT.read_text(encoding="utf-8")
@@ -77,6 +83,65 @@ def test_powershell_installer_installs_only_published_ursa_package():
         "installed URSA ($ursaVersion) does not support guided setup. See "
         "https://lanl.github.io/ursa/latest/getting-started." in script
     )
+    assert "[string]$ConfigJson" in script
+    assert '$setupArguments += @("--defaults-json", $payloadFile)' in script
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="pseudo-terminal setup invocation uses POSIX file descriptors",
+)
+def test_install_script_passes_json_defaults_to_guided_setup(tmp_path):
+    environment, log, _ursa = _fake_installation(tmp_path)
+    payload = json.dumps({
+        "inference_providers": [
+            {"name": "company", "base_url": "https://models.example/v1"}
+        ]
+    })
+    master, slave = os.openpty()
+    try:
+        subprocess.run(
+            ["sh", INSTALL_SCRIPT, "--config-json", payload],
+            env=environment,
+            stdin=slave,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    finally:
+        os.close(master)
+        os.close(slave)
+
+    setup = next(
+        command
+        for command in log.read_text().splitlines()
+        if command.startswith("ursa self setup --defaults-json ")
+    )
+    defaults_path = Path(setup.removeprefix("ursa self setup --defaults-json "))
+    assert not defaults_path.exists()
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="detaching the controlling terminal uses POSIX sessions",
+)
+def test_install_script_does_not_silently_drop_defaults_without_tty(tmp_path):
+    environment, log, _ursa = _fake_installation(tmp_path)
+
+    result = subprocess.run(
+        ["sh", INSTALL_SCRIPT, "--config-json", "{}"],
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        start_new_session=True,
+    )
+
+    assert result.returncode != 0
+    assert "setup defaults require an interactive terminal" in result.stderr
+    assert not log.exists()
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell is not installed")

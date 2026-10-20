@@ -82,6 +82,12 @@ def add_self_subcommands(subparsers) -> None:
         default=None,
         help="Configuration path (default: platform user config path)",
     )
+    setup.add_argument(
+        "--defaults-json",
+        type=Path,
+        default=None,
+        help="Non-secret provider and MCP defaults from an installer payload",
+    )
     _command(commands, "status", "Show installation details", show_status)
     doctor = _command(
         commands,
@@ -118,7 +124,7 @@ def _setup(args) -> None:
     from ursa.cli.setup import SetupAction, SetupError, run_setup
 
     try:
-        action = run_setup(args.config)
+        action = run_setup(args.config, args.defaults_json)
     except SetupError as exc:
         raise SystemExit(f"Could not start guided setup: {exc}") from None
 
