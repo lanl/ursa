@@ -229,7 +229,7 @@ async def test_failed_network_policy_change_restores_previous_policy(
     assert environment._instance_started
 
 
-async def test_run_streams_and_records_complete_failed_build_output(
+async def test_run_only_records_failed_build_output(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
     environment = _environment(tmp_path)
@@ -241,16 +241,13 @@ async def test_run_streams_and_records_complete_failed_build_output(
             "-c",
             "import sys; print('builder stdout'); "
             "print('builder stderr', file=sys.stderr); raise SystemExit(7)",
-            stream_output=True,
             failure_log_path=build_log,
         )
 
     captured = capsys.readouterr()
-    assert "builder stdout" in captured.out
-    assert "builder stderr" in captured.err
+    assert not captured.out
+    assert not captured.err
     message = str(raised.value)
-    assert "builder stdout" in message
-    assert "builder stderr" in message
     assert f"Build log: {build_log}" in message
     log = build_log.read_text()
     assert "exit code: 7" in log
@@ -259,7 +256,122 @@ async def test_run_streams_and_records_complete_failed_build_output(
     assert build_log.stat().st_mode & 0o777 == 0o600
 
 
-async def test_build_with_streams_builder_and_apptainer_builds(
+async def test_run_discards_successful_build_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    environment = _environment(tmp_path)
+    build_log = tmp_path / "cached-image.build.log"
+
+    await environment._run(
+        sys.executable,
+        "-c",
+        "import sys; print('builder stdout'); "
+        "print('builder stderr', file=sys.stderr)",
+        failure_log_path=build_log,
+    )
+
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert not captured.err
+    assert not build_log.exists()
+
+
+async def test_build_surfaces_log_after_all_builders_fail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    environment = _environment(tmp_path)
+    output = tmp_path / "cached-image.sif"
+
+    async def cache_path(*_args: object, **_kwargs: object) -> Path:
+        return output
+
+    async def invalid(_path: Path) -> bool:
+        return False
+
+    async def fail_build(
+        _builder: str,
+        _output: Path,
+        _temporary: Path,
+        _force_build: bool,
+        _dockerfile_path: Path,
+        _context_dir: Path,
+        _build_args: tuple[str, ...],
+        _target: str | None,
+        build_log_path: Path,
+    ) -> None:
+        build_log_path.write_text("builder failed\n")
+        raise RuntimeError("failed")
+
+    monkeypatch.setattr(environment, "_dockerfile_cache_path", cache_path)
+    monkeypatch.setattr(environment, "_is_valid_sif", invalid)
+    monkeypatch.setattr(environment, "_build_with", fail_build)
+    monkeypatch.setattr(
+        harbor_singularity.shutil,
+        "which",
+        lambda name: "/usr/bin/docker" if name == "docker" else None,
+    )
+
+    with pytest.raises(RuntimeError, match="No container builder succeeded"):
+        await environment._build_dockerfile_sif(False)
+
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "builder failed" in captured.err
+
+
+async def test_build_discards_failed_attempt_log_after_fallback_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    environment = _environment(tmp_path)
+    output = tmp_path / "cached-image.sif"
+    attempts = 0
+
+    async def cache_path(*_args: object, **_kwargs: object) -> Path:
+        return output
+
+    async def invalid(_path: Path) -> bool:
+        return False
+
+    async def build(
+        _builder: str,
+        output: Path,
+        _temporary: Path,
+        _force_build: bool,
+        _dockerfile_path: Path,
+        _context_dir: Path,
+        _build_args: tuple[str, ...],
+        _target: str | None,
+        build_log_path: Path,
+    ) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            build_log_path.write_text("first builder failed\n")
+            raise RuntimeError("failed")
+        output.write_bytes(b"sif")
+
+    monkeypatch.setattr(environment, "_dockerfile_cache_path", cache_path)
+    monkeypatch.setattr(environment, "_is_valid_sif", invalid)
+    monkeypatch.setattr(environment, "_build_with", build)
+    monkeypatch.setattr(
+        harbor_singularity.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name != "podman" else None,
+    )
+
+    assert await environment._build_dockerfile_sif(False) == output
+
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert not captured.err
+    assert not output.with_suffix(".build.log").exists()
+
+
+async def test_build_with_records_builder_and_apptainer_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     environment = _environment(tmp_path)
@@ -289,19 +401,13 @@ async def test_build_with_streams_builder_and_apptainer_builds(
 
     builder_build = observed[0]
     assert builder_build[0][:2] == ("docker", "build")
-    assert builder_build[1] == {
-        "stream_output": True,
-        "failure_log_path": build_log,
-    }
+    assert builder_build[1] == {"failure_log_path": build_log}
     apptainer_build = next(
         item
         for item in observed
         if item[0][:2] == (environment._runtime_path, "build")
     )
-    assert apptainer_build[1] == {
-        "stream_output": True,
-        "failure_log_path": build_log,
-    }
+    assert apptainer_build[1] == {"failure_log_path": build_log}
     save = next(item for item in observed if item[0][:2] == ("docker", "save"))
     assert save[1] == {"failure_log_path": build_log}
     assert output.read_bytes() == b"sif"
