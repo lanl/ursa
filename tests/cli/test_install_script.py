@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -76,6 +77,10 @@ def test_install_script_uses_existing_uv_and_tool_bin(tmp_path, commit):
     assert "URSA is installed" in result.stdout
 
 
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="uv's shell installer targets macOS and Linux",
+)
 def test_install_script_bootstraps_uv_when_missing(tmp_path):
     environment, log, _ursa = _fake_installation(tmp_path)
     fake_uv = tmp_path / "bin" / "uv"
@@ -142,6 +147,10 @@ def test_install_script_repairs_uv_tool_bin_missing_from_path(
     assert "URSA is installed" in result.stdout
 
 
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="PATH shadowing follows macOS and Linux shell semantics",
+)
 def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
     environment, _log, ursa = _fake_installation(tmp_path)
     old_ursa = Path(environment["PATH"].split(":", 1)[0]) / "ursa"
