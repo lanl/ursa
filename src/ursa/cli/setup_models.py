@@ -291,6 +291,8 @@ class SetupModelEditor(Vertical):
         custom = self.query_one_optional(f"#setup-{prefix}-model", Input)
         if select is None or custom is None:
             return
+        if select.query_one_optional("FuzzySelectOverlay") is None:
+            return
         ordered = sort_provider_models(models, self._model_type(prefix))
         catalog = {model.name: model for model in ordered}
         self.model_catalogs[prefix] = catalog

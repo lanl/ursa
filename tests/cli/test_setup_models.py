@@ -166,7 +166,7 @@ async def test_model_discovery_ignores_editor_teardown(monkeypatch):
             app.editor._load_models("chat", provider)
         )
         await entered.wait()
-        await app.editor.remove()
+        await app.editor.query_one("FuzzySelectOverlay").remove()
         release.set()
         await discovery
 
