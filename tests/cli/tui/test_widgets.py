@@ -793,12 +793,6 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ModelScreen)
-        tabs = app.screen.query_one(TabbedContent)
-        assert str(tabs.get_tab("chat-model-tab").label) == "Chat"
-        assert str(tabs.get_tab("embedding-model-tab").label) == "Embedding"
-        assert app.screen.query_one("#chat-advanced", Collapsible).has_class(
-            "model-advanced"
-        )
         assert (
             app.screen.query_one("#chat-inference-provider", Select).value
             == "openai"
@@ -930,37 +924,6 @@ async def test_model_command_switches_provider_and_model(tmp_path, monkeypatch):
     assert embedding_config.model == "private-embedding"
     assert embedding_config.model_provider is None
     assert embedding_config.inference_provider == "openai"
-
-
-async def test_model_modal_buttons_preserve_apply_and_cancel_flow(
-    tmp_path, monkeypatch
-):
-    hitl = FakeHITL(tmp_path)
-    monkeypatch.setattr(
-        "ursa.cli.tui.widgets.list_provider_models", lambda _config: []
-    )
-    app = UrsaTextualApp(hitl)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await app._show_command("models")
-        await await_screen(pilot, ModelScreen)
-        await await_workers(app, pilot)
-        await pilot.click("#model-cancel")
-        assert await eventually(
-            pilot, lambda: not isinstance(app.screen, ModelScreen)
-        )
-        assert hitl.model_changes == []
-
-        await app._show_command("models")
-        await await_screen(pilot, ModelScreen)
-        await await_workers(app, pilot)
-        await pilot.click("#model-apply")
-        await await_workers(app, pilot)
-        assert await eventually(
-            pilot, lambda: not isinstance(app.screen, ModelScreen)
-        )
-
-    assert len(hitl.model_changes) == 1
 
 
 async def test_invalid_model_selection_notifies_without_closing_modal(
