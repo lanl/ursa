@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from textual.widgets import Button, Collapsible, Static
 
+from tests.tui.utils import eventually
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -193,12 +194,21 @@ async def test_recheck_stays_on_review_then_continue_finishes(monkeypatch, app):
         await app._run_doctor()
 
         app.query_one("#review-recheck", Button).press()
-        await pilot.pause()
+        await eventually(
+            pilot,
+            lambda: app.query_one("#review-validation", Collapsible).title
+            == "URSA Doctor — 0 warning(s), 0 error(s)",
+            description="doctor recheck",
+        )
         assert app.page == "review"
         assert app.query_one("#review-validation", Collapsible).title == (
             "URSA Doctor — 0 warning(s), 0 error(s)"
         )
 
         app.query_one("#review-continue", Button).press()
-        await pilot.pause()
+        await eventually(
+            pilot,
+            lambda: app.page == "done",
+            description="review continuation",
+        )
         assert app.page == "done"
