@@ -55,8 +55,8 @@ async def test_entry_validation_only_shows_page_level_progress(
             )
         }
         begin, validate, tabs_name = (
-            lambda: app._begin_provider("company"),
-            app._validate_provider_page,
+            lambda: app._begin_entry("provider", "company"),
+            lambda: app._validate_entry_page("provider"),
             "provider_tabs",
         )
     else:
@@ -69,8 +69,8 @@ async def test_entry_validation_only_shows_page_level_progress(
             }
         })
         begin, validate, tabs_name = (
-            lambda: app._begin_mcp("tools"),
-            app._validate_mcp_page,
+            lambda: app._begin_entry("mcp", "tools"),
+            lambda: app._validate_entry_page("mcp"),
             "mcp_tabs",
         )
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", MagicMock())

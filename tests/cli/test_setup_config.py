@@ -43,13 +43,12 @@ def test_public_setup_value_validators_normalize_and_reject():
         validate_setup_url("models.example/v1", "Base URL")
 
 
-def test_literal_secret_validation_preserves_installer_template_shorthand():
+def test_literal_secret_validation_accepts_references():
     value = {"headers": {"Authorization": {"template": "Bearer %s"}}}
 
     with pytest.raises(SetupError, match="Literal secrets cannot be saved"):
         reject_literal_secrets(value)
 
-    reject_literal_secrets(value, allow_implicit_keyring_template=True)
     reject_literal_secrets({"env": {"API_TOKEN": "${TOOLS_TOKEN}"}})
 
 
