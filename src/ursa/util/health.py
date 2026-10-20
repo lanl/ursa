@@ -203,19 +203,28 @@ def _is_embedding_capability_error(exc: Exception) -> bool:
     )
 
 
+def _is_embedding_auth_error(exc: Exception) -> bool:
+    detail = str(exc).lower()
+    return any(marker in detail for marker in ("401", "403", "unauthorized"))
+
+
 def probe_embedding_model(config: Any) -> str:
     """Raise unless an embedding configuration returns a non-empty vector."""
-    capability_error = False
+    normalized_error = None
     try:
         vector = config.init_embedding().embed_query("URSA health check")
     except Exception as exc:
-        if not _is_embedding_capability_error(exc):
+        if _is_embedding_capability_error(exc):
+            normalized_error = "The selected model does not support embeddings."
+        elif _is_embedding_auth_error(exc):
+            normalized_error = (
+                "The selected model may not support embeddings, or the API "
+                "key may not have access to it."
+            )
+        else:
             raise
-        capability_error = True
-    if capability_error:
-        raise ValueError(
-            "The selected model does not support embeddings."
-        ) from None
+    if normalized_error is not None:
+        raise ValueError(normalized_error) from None
     if not isinstance(vector, Sequence) or not vector:
         raise ValueError("embedding invocation returned no vector")
     return f"Embedding invocation returned {len(vector)} dimensions"
