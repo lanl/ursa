@@ -20,10 +20,11 @@ from yaml import YAMLError
 
 from ursa.cli.config import UrsaConfig
 from ursa.util.health import (
-    probe_chat_model,
-    probe_chat_structured_output,
-    probe_chat_tool_use,
+    PROBE_TIMEOUT_SECONDS,
+    probe_chat_config,
     probe_embedding_model,
+    probe_inference_provider,
+    run_probe_with_deadline,
 )
 from ursa.util.health import probe_mcp_server as _probe_mcp_server
 from ursa.util.secrets import SecretReference, SecretTemplate
@@ -128,9 +129,6 @@ class DoctorContext:
     )
 
 
-DoctorCheck = Callable[[DoctorContext], CheckResult]
-
-
 def _unavailable(name: str) -> CheckResult:
     return CheckResult(
         name,
@@ -141,12 +139,15 @@ def _unavailable(name: str) -> CheckResult:
 
 def _attempt(
     name: str,
-    action: Callable[[], str],
-    *,
+    probe: Callable[..., str],
+    *args: Any,
     secrets: Sequence[str] = (),
 ) -> CheckResult:
     try:
-        return CheckResult(name, CheckStatus.OK, action(), secrets=secrets)
+        message = run_probe_with_deadline(
+            probe, *args, timeout=PROBE_TIMEOUT_SECONDS
+        )
+        return CheckResult(name, CheckStatus.OK, message, secrets=secrets)
     except _FAILURES as exc:
         return CheckResult(name, CheckStatus.ERROR, exc, secrets=secrets)
 
@@ -246,8 +247,6 @@ def check_inference_providers(context: DoctorContext) -> CheckResult:
     if context.config is None:
         return _unavailable("Inference providers")
 
-    from ursa.util.inference_providers import list_provider_models
-
     referenced = {
         model.inference_provider
         for field_name in ("llm_model", "emb_model")
@@ -266,10 +265,8 @@ def check_inference_providers(context: DoctorContext) -> CheckResult:
         checks.append(
             _attempt(
                 name,
-                lambda provider=provider: (
-                    "Connected; authentication accepted; provider advertised "
-                    f"{len(list_provider_models(provider))} model(s)"
-                ),
+                probe_inference_provider,
+                provider,
                 secrets=secrets,
             )
         )
@@ -294,45 +291,49 @@ def _model_label(config: Any) -> str:
     return f"{config.model} ({endpoint})"
 
 
-def check_llm_models(context: DoctorContext) -> CheckResult:
-    """Exercise chat, tool calling, and structured output."""
-    if context.config is None:
-        return _unavailable("LLM model")
-    config = context.config.llm_model
-    secrets: tuple[str, ...] = ()
+def _check_model(
+    context: DoctorContext,
+    section: str,
+    config: Any,
+    probes: Sequence[tuple[str | None, Callable[..., str], tuple[Any, ...]]],
+) -> CheckResult:
+    """Resolve one model config and run its configured capability probes."""
+    label = _model_label(config)
     try:
         config, secrets = _resolve_api_key(
             context,
             config,
             config.inference_provider or config.model_provider,
         )
-        model = config.init_chat_model()
     except _FAILURES as exc:
-        result = CheckResult(
-            _model_label(config), CheckStatus.ERROR, exc, secrets=secrets
-        )
+        model = CheckResult(label, CheckStatus.ERROR, exc)
     else:
-        result = CheckResult.group(
-            _model_label(config),
-            [
-                _attempt(
-                    "Chat invocation",
-                    lambda: probe_chat_model(model),
-                    secrets=secrets,
-                ),
-                _attempt(
-                    "Forced tool use",
-                    lambda: probe_chat_tool_use(model),
-                    secrets=secrets,
-                ),
-                _attempt(
-                    "Structured output",
-                    lambda: probe_chat_structured_output(model),
-                    secrets=secrets,
-                ),
-            ],
+        checks = [
+            _attempt(name or label, probe, config, *args, secrets=secrets)
+            for name, probe, args in probes
+        ]
+        model = (
+            CheckResult.group(label, checks)
+            if any(name is not None for name, _, _ in probes)
+            else checks[0]
         )
-    return CheckResult.group("LLM model", [result])
+    return CheckResult.group(section, [model])
+
+
+def check_llm_models(context: DoctorContext) -> CheckResult:
+    """Exercise chat, tool calling, and structured output."""
+    if context.config is None:
+        return _unavailable("LLM model")
+    return _check_model(
+        context,
+        "LLM model",
+        context.config.llm_model,
+        (
+            ("Chat invocation", probe_chat_config, ("chat",)),
+            ("Forced tool use", probe_chat_config, ("tool",)),
+            ("Structured output", probe_chat_config, ("structured",)),
+        ),
+    )
 
 
 def check_embedding_models(context: DoctorContext) -> CheckResult:
@@ -346,21 +347,12 @@ def check_embedding_models(context: DoctorContext) -> CheckResult:
             CheckStatus.OK,
             "No embedding model is configured",
         )
-    try:
-        config, secrets = _resolve_api_key(
-            context,
-            config,
-            config.inference_provider or config.model_provider,
-        )
-    except _FAILURES as exc:
-        result = CheckResult(_model_label(config), CheckStatus.ERROR, exc)
-    else:
-        result = _attempt(
-            _model_label(config),
-            lambda: probe_embedding_model(config),
-            secrets=secrets,
-        )
-    return CheckResult.group("Embedding model", [result])
+    return _check_model(
+        context,
+        "Embedding model",
+        config,
+        ((None, probe_embedding_model, ()),),
+    )
 
 
 def check_mcp_servers(context: DoctorContext) -> CheckResult:
@@ -375,48 +367,35 @@ def check_mcp_servers(context: DoctorContext) -> CheckResult:
             "No MCP servers are configured",
         )
 
-    async def probe_all() -> list[CheckResult]:
-        async def probe(name: str, server: Any) -> CheckResult:
-            secrets: tuple[str, ...] = ()
-            try:
-                server, secrets = _resolve_mcp_server(context, name, server)
-                message = await _probe_mcp_server(name, server)
-                return CheckResult(
-                    name, CheckStatus.OK, message, secrets=secrets
-                )
-            except _FAILURES as exc:
-                return CheckResult(
-                    name,
-                    CheckStatus.ERROR,
-                    exc,
-                    secrets=secrets,
-                )
-
-        return list(
-            await asyncio.gather(
-                *(probe(name, server) for name, server in servers.items())
+    checks = []
+    for name, server in servers.items():
+        try:
+            server, secrets = _resolve_mcp_server(context, name, server)
+        except _FAILURES as exc:
+            checks.append(CheckResult(name, CheckStatus.ERROR, exc))
+            continue
+        checks.append(
+            _attempt(
+                name,
+                _probe_mcp_server,
+                name,
+                server,
+                secrets=secrets,
             )
         )
-
-    return CheckResult.group("MCP servers", asyncio.run(probe_all()))
-
-
-BUILTIN_CHECKS: tuple[DoctorCheck, ...] = (
-    check_configuration,
-    check_inference_providers,
-    check_llm_models,
-    check_embedding_models,
-    check_mcp_servers,
-)
+    return CheckResult.group("MCP servers", checks)
 
 
-def run_checks(
-    context: DoctorContext,
-    checks: Sequence[DoctorCheck] | None = None,
-) -> CheckResult:
+def run_checks(context: DoctorContext) -> CheckResult:
     """Run checks in display order, containing failures per section."""
     results = []
-    for check in BUILTIN_CHECKS if checks is None else checks:
+    for check in (
+        check_configuration,
+        check_inference_providers,
+        check_llm_models,
+        check_embedding_models,
+        check_mcp_servers,
+    ):
         try:
             result = check(context)
         except _FAILURES as exc:
