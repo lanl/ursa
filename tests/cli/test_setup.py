@@ -10,6 +10,7 @@ from keyring.errors import KeyringError
 from pydantic import SecretStr
 from textual.widgets import Button, Input, Static, TextArea
 
+from tests.tui.utils import eventually
 from ursa.cli.config import (
     ChatModelConfig,
     EmbModelConfig,
@@ -372,7 +373,19 @@ async def test_entry_continue_checks_all_and_is_transactional(
             broken.query_one(".entry-name", Input).value = "renamed"
 
         await pilot.click(f"#{kind}-save")
-        await app.workers.wait_for_complete()
+        expected_page = {"provider": "models", "mcp": "review"}[kind]
+        if failing:
+            await eventually(
+                pilot,
+                lambda: tabs.active_editor() is broken,
+                description=f"failed {kind} draft to become active",
+            )
+        else:
+            await eventually(
+                pilot,
+                lambda: app.page == expected_page,
+                description=f"{kind} validation to continue",
+            )
 
         expected = (
             {"first", "renamed", "last"}
@@ -380,9 +393,7 @@ async def test_entry_continue_checks_all_and_is_transactional(
             else set(names)
         )
         assert set(checked) == expected
-        assert app.page == (
-            kind if failing else {"provider": "models", "mcp": "review"}[kind]
-        )
+        assert app.page == (kind if failing else expected_page)
         if failing:
             entries = (
                 app.config.inference_providers
@@ -414,7 +425,14 @@ async def test_provider_remove_retargets_models_only_after_commit(
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         await pilot.click("#provider-remove")
-        await pilot.pause()
+        await eventually(
+            pilot,
+            lambda: len(app.provider_tabs.editors()) == 1
+            and app.provider_tabs.active_editor()
+            is app.provider_tabs.editors()[0]
+            and app.query_one("#provider-remove", Button).disabled,
+            description="provider removal",
+        )
 
         assert app.config.llm_model.inference_provider == "old"
         assert app.config.emb_model.inference_provider == "old"
@@ -588,12 +606,22 @@ async def test_mcp_tabs_add_empty_draft_and_advanced_is_complete(app):
         assert "timeout" in values
 
         await pilot.click("#mcp-add")
-        await pilot.pause()
+        await eventually(
+            pilot,
+            lambda: len(app.mcp_tabs.editors()) == 2
+            and app.mcp_tabs.active_editor() is app.mcp_tabs.editors()[-1],
+            description="MCP draft addition",
+        )
         added = app.mcp_tabs.active_editor()
         assert added is not None
         assert added.raw_name() == ""
         assert yaml.safe_load(added.query_one(TextArea).text) == {}
         await pilot.click("#mcp-remove")
+        await eventually(
+            pilot,
+            lambda: app.mcp_tabs.active_editor() is existing,
+            description="MCP draft removal",
+        )
         assert app.mcp_tabs.active_editor() is existing
 
 
