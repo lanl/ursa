@@ -21,36 +21,25 @@ from textual.widgets import (
     TextArea,
 )
 
-from ursa.cli.config import (
-    ChatModelConfig,
-    InferenceProviderConfig,
-)
+from ursa.cli.config import ChatModelConfig, InferenceProviderConfig
 from ursa.cli.doctor import (
     CheckResult,
     CheckStatus,
+    build_report_from_path,
     render_report,
     report_counts,
 )
-from ursa.cli.doctor import (
-    build_report_from_path as _doctor,
-)
 from ursa.cli.setup_config import (
-    SetupError as SetupError,
-)
-from ursa.cli.setup_config import (
+    SetupError,
     apply_setup_defaults,
     format_setup_config_yaml,
+    load_setup_config,
     load_setup_defaults,
     prepare_provider_probe,
     replace_inference_providers,
     replace_mcp_servers,
     replace_models,
-)
-from ursa.cli.setup_config import (
-    load_setup_config as _load_config,
-)
-from ursa.cli.setup_config import (
-    save_setup_config as _save,
+    save_setup_config,
 )
 from ursa.cli.setup_entries import (
     DynamicEntryTabs,
@@ -68,9 +57,13 @@ from ursa.util.health import (
 )
 from ursa.util.http import inject_truststore_into_ssl
 from ursa.util.mcp import ServerParameters
-from ursa.util.secrets import (
-    SecretReference,
-    keyring_usernames,
+from ursa.util.secrets import SecretReference, keyring_usernames
+
+__all__ = ["SetupError"]
+_doctor, _load_config, _save = (
+    build_report_from_path,
+    load_setup_config,
+    save_setup_config,
 )
 
 
@@ -118,9 +111,9 @@ SetupAction = Enum(
     {"EXIT": "exit", "TERMINAL": "terminal", "DASHBOARD": "dashboard"},
 )
 _DONE_ACTIONS = (
-    ("Launch URSA - Terminal", "setup-launch-terminal", "success"),
-    ("Launch URSA - Dashboard", "setup-launch-dashboard", "success"),
-    ("Exit", "setup-exit", "default"),
+    ("Launch URSA - Terminal", SetupAction.TERMINAL.value, "success"),
+    ("Launch URSA - Dashboard", SetupAction.DASHBOARD.value, "success"),
+    ("Exit", SetupAction.EXIT.value, "default"),
 )
 
 
@@ -130,11 +123,7 @@ class SetupApp(App[SetupAction]):
         Binding("escape", "back", "Back", priority=True),
         Binding("ctrl+q", "cancel", "Quit", priority=True),
     ]
-    DONE = {
-        "setup-launch-terminal": SetupAction.TERMINAL,
-        "setup-launch-dashboard": SetupAction.DASHBOARD,
-        "setup-exit": SetupAction.EXIT,
-    }
+    DONE = {action.value: action for action in SetupAction}
 
     def __init__(
         self,
@@ -321,7 +310,7 @@ class SetupApp(App[SetupAction]):
         })
 
     def _discard_unused_pending(self, usernames) -> None:
-        for username in set(usernames) - set(self._keys()):
+        for username in set(usernames).difference(self._keys()):
             self.pending.pop(username, None)
 
     def _providers(self) -> dict[str, InferenceProviderConfig]:
@@ -369,9 +358,7 @@ class SetupApp(App[SetupAction]):
 
     def _models_selected(self, selection: SetupModelSelection) -> None:
         self.config = replace_models(
-            self.config,
-            selection.chat,
-            selection.embedding,
+            self.config, selection.chat, selection.embedding
         )
         self.llm_configured = True
         self.run_worker(
@@ -380,7 +367,6 @@ class SetupApp(App[SetupAction]):
 
     async def _validate_models(self) -> None:
         providers = self._providers()
-        labels = {"llm": "language model", "embedding": "embedding model"}
         statuses: dict[str, str] = {}
 
         def show_status(prefix: str, status: str) -> None:
@@ -388,39 +374,35 @@ class SetupApp(App[SetupAction]):
             self._status(
                 "#model-validation-status",
                 "\n".join(
-                    statuses[prefix]
-                    for prefix in ("llm", "embedding")
-                    if prefix in statuses
+                    filter(None, map(statuses.get, ("llm", "embedding")))
                 ),
-                any(status.startswith("✗") for status in statuses.values()),
+                any(value.startswith("✗") for value in statuses.values()),
             )
 
-        async def check(prefix: str) -> bool:
-            model = (
-                self.config.llm_model
-                if prefix == "llm"
-                else self.config.emb_model
-            )
+        async def check(prefix: str, label: str, model: Any) -> bool:
             if model is None:
                 self.model_ok[prefix] = True
                 return True
-            show_status(prefix, f"Validating {labels[prefix]}...")
+            show_status(prefix, f"Validating {label}...")
             try:
                 await asyncio.to_thread(_probe_model, model, providers)
             except Exception as exc:
-                self.model_ok[prefix] = False
+                valid = False
                 message = _friendly(exc)
-                show_status(
-                    prefix,
-                    f"✗ {labels[prefix].capitalize()}: {message}",
-                )
+                status = f"✗ {label.capitalize()}: {message}"
                 self.notify(message, severity="error", markup=False)
-                return False
-            self.model_ok[prefix] = True
-            show_status(prefix, f"✓ {labels[prefix].capitalize()} connected")
-            return True
+            else:
+                valid, status = True, f"✓ {label.capitalize()} connected"
+            self.model_ok[prefix] = valid
+            show_status(prefix, status)
+            return valid
 
-        valid = all(await asyncio.gather(check("llm"), check("embedding")))
+        valid = all(
+            await asyncio.gather(
+                check("llm", "language model", self.config.llm_model),
+                check("embedding", "embedding model", self.config.emb_model),
+            )
+        )
         if valid:
             self._begin_entry("mcp", next(iter(self.config.mcp_servers), None))
         else:
@@ -436,14 +418,12 @@ class SetupApp(App[SetupAction]):
         if candidates is None:
             return False
         old_users = set(self._keys())
+        if not candidates and provider:
+            self._status(
+                selector, "At least one inference provider is required.", True
+            )
+            return False
         if not candidates:
-            if provider:
-                self._status(
-                    selector,
-                    "At least one inference provider is required.",
-                    True,
-                )
-                return False
             self.config = replace_mcp_servers(self.config, {})
             self._discard_unused_pending(old_users)
             self._status(selector, "✓ No MCP servers configured")
@@ -455,15 +435,14 @@ class SetupApp(App[SetupAction]):
         results = await asyncio.gather(*map(_probe_entry, candidates))
         failures: list[ProviderCandidate | McpCandidate] = []
         for candidate, result in zip(candidates, results, strict=True):
+            failed = result is not None
             tabs.set_draft_status(
                 candidate.draft_id,
-                "✓ Connected"
-                if result is None
-                else _friendly(result, not provider),
-                marker="✓ " if result is None else "✗ ",
-                failed=result is not None,
+                _friendly(result, not provider) if failed else "✓ Connected",
+                marker="✗ " if failed else "✓ ",
+                failed=failed,
             )
-            if result is not None:
+            if failed:
                 failures.append(candidate)
         if failures:
             tabs.focus_error(failures[0].draft_id)

@@ -2,8 +2,7 @@
 
 set -eu
 
-script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
-repository_root=$(CDPATH= cd -P "$script_dir/.." && pwd)
+repository_root=$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)
 
 case ${1:-} in
 -h|--help)
@@ -25,17 +24,12 @@ if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then
     shift
 fi
 
-case $installer in
-/*) ;;
-*)
-    installer=$(CDPATH= cd -P "$(dirname "$installer")" && pwd)/$(basename "$installer")
-    ;;
-esac
+case $installer in /*) ;; *) installer=$PWD/$installer ;; esac
 
-if [ ! -f "$installer" ]; then
+[ -f "$installer" ] || {
     printf 'Installer not found: %s\n' "$installer" >&2
     exit 1
-fi
+}
 
 image=ursa-installer-test:ubuntu-24.04
 

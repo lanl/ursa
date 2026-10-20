@@ -30,26 +30,38 @@ from ursa.cli.setup_config import (
 from ursa.util.mcp import parse_server_parameters
 from ursa.util.secrets import SecretReference, SecretTemplate
 
+MODEL_URL = "https://models.example/v1"
+
+
+def configured_model(model_type, model: str, provider: str):
+    return model_type(
+        model=model, model_provider="openai", inference_provider=provider
+    )
+
 
 def configured_config(*providers: str) -> UrsaConfig:
-    config = {
-        "inference_providers": {
-            name: {"base_url": "https://models.example/v1"}
+    return UrsaConfig(
+        inference_providers={
+            name: InferenceProviderConfig(base_url=MODEL_URL)
             for name in providers
         },
-        "llm_model": {
-            "model": "old-chat",
-            "model_provider": "openai",
-            "inference_provider": providers[0],
-        },
-    }
-    if len(providers) > 1:
-        config["emb_model"] = {
-            "model": "old-embedding",
-            "model_provider": "openai",
-            "inference_provider": providers[1],
-        }
-    return UrsaConfig.model_validate(config)
+        llm_model=configured_model(ChatModelConfig, "old-chat", providers[0]),
+        emb_model=configured_model(
+            EmbModelConfig, "old-embedding", providers[1]
+        )
+        if len(providers) > 1
+        else None,
+    )
+
+
+def parse_model_yaml(text: str, original):
+    args = (
+        type(original),
+        original,
+        original.model_dump(mode="json"),
+        {"company"},
+    )
+    return parse_setup_model_yaml(text, *args)
 
 
 def test_public_setup_value_validators_normalize_and_reject():
@@ -82,17 +94,10 @@ def test_load_setup_config_preserves_placeholders_and_explicit_providers(
     path.write_text(
         """
 inference_providers:
-  company:
-    base_url: "${MODEL_URL}"
-    ssl_verify: false
-llm_model:
-  model: gpt-test
-  inference_provider: company
+  company: {base_url: "${MODEL_URL}", ssl_verify: false}
+llm_model: {model: gpt-test, inference_provider: company}
 mcp_servers:
-  tools:
-    transport: stdio
-    command: tool
-    env: {API_KEY: "${MCP_SECRET}"}
+  tools: {transport: stdio, command: tool, env: {API_KEY: "${MCP_SECRET}"}}
 """
     )
 
@@ -112,39 +117,23 @@ mcp_servers:
     assert "${MCP_SECRET}" in saved
 
 
-def test_apply_setup_defaults_uses_canonical_mcp_parser(tmp_path):
+def test_apply_setup_defaults_handles_complete_partial_and_invalid_data(
+    tmp_path,
+):
     config, llm_configured = load_setup_config(tmp_path / "missing.yaml")
+    defaults = yaml.safe_load(
+        """
+inference_providers:
+- {name: company, base_url: https://models.example/v1, reasoning_effort: high}
+llm_model: {model: gpt-test, model_provider: anthropic, inference_provider: company}
+emb_model: {model: embedding-test, model_provider: openai, inference_provider: company}
+mcp_servers:
+  tools: {transport: streamable_http, url: https://tools.example/mcp, headers: {Authorization: {template: "Bearer %s"}}, timeout: 30}
+"""
+    )
 
     llm_configured = apply_setup_defaults(
-        config,
-        {
-            "inference_providers": [
-                {
-                    "name": "company",
-                    "base_url": "https://models.example/v1",
-                    "reasoning_effort": "high",
-                }
-            ],
-            "llm_model": {
-                "model": "gpt-test",
-                "model_provider": "anthropic",
-                "inference_provider": "company",
-            },
-            "emb_model": {
-                "model": "embedding-test",
-                "model_provider": "openai",
-                "inference_provider": "company",
-            },
-            "mcp_servers": {
-                "tools": {
-                    "transport": "streamable_http",
-                    "url": "https://tools.example/mcp",
-                    "headers": {"Authorization": {"template": "Bearer %s"}},
-                    "timeout": 30,
-                }
-            },
-        },
-        llm_configured=llm_configured,
+        config, defaults, llm_configured=llm_configured
     )
 
     assert llm_configured
@@ -164,50 +153,34 @@ def test_apply_setup_defaults_uses_canonical_mcp_parser(tmp_path):
 
     apply_setup_defaults(
         config,
-        {
-            "inference_providers": [
-                {"name": "company", "base_url": "https://ignored.test/v1"}
-            ],
-            "mcp_servers": {
-                "tools": {"transport": "stdio", "command": "replacement"}
-            },
-        },
+        yaml.safe_load(
+            """
+inference_providers: [{name: company, base_url: https://ignored.test/v1}]
+mcp_servers: {tools: {transport: stdio, command: replacement}}
+"""
+        ),
     )
-    assert config.inference_providers["company"].base_url == (
-        "https://models.example/v1"
-    )
+    assert config.inference_providers["company"].base_url == MODEL_URL
     assert config.mcp_servers["tools"] is server
 
+    metadata_config, _ = load_setup_config(tmp_path / "metadata.yaml")
+    apply_setup_defaults(metadata_config, {"python_version": "3.13"})
+    assert metadata_config.editable_values() == {"inference_providers": {}}
 
-def test_apply_metadata_only_defaults_does_not_add_empty_sections(tmp_path):
-    config, _ = load_setup_config(tmp_path / "missing.yaml")
-
-    apply_setup_defaults(config, {"python_version": "3.13"})
-
-    assert config.editable_values() == {"inference_providers": {}}
-
-
-def test_apply_setup_defaults_validates_shadowed_provider():
-    config = UrsaConfig.model_validate({
-        "inference_providers": {
-            "company": {"base_url": "https://models.example/v1"}
-        }
+    shadowed = UrsaConfig.model_validate({
+        "inference_providers": {"company": {"base_url": MODEL_URL}}
     })
-
     with pytest.raises(
         SetupError, match="provider default 'company' is invalid"
     ):
         apply_setup_defaults(
-            config,
-            {
-                "inference_providers": [
-                    {
-                        "name": "company",
-                        "base_url": "https://ignored.example/v1",
-                        "ssl_verify": {"invalid": True},
-                    }
-                ]
-            },
+            shadowed,
+            yaml.safe_load(
+                """
+inference_providers:
+- {name: company, base_url: https://ignored.example/v1, ssl_verify: {invalid: true}}
+"""
+            ),
         )
 
 
@@ -216,10 +189,7 @@ def test_save_setup_config_rolls_back_keyring_when_file_save_fails(
 ):
     config = UrsaConfig.model_validate({
         "inference_providers": {"company": {"api_key": {"keyring": True}}},
-        "llm_model": {
-            "model": "gpt-test",
-            "inference_provider": "company",
-        },
+        "llm_model": {"model": "gpt-test", "inference_provider": "company"},
     })
     store = MagicMock()
     store.get_password.side_effect = lambda _service, username: {
@@ -270,16 +240,8 @@ def test_replace_providers_retargets_renamed_and_removed_references():
 
 def test_replace_models_is_atomic_and_validates_provider_references():
     config = configured_config("company")
-    chat = ChatModelConfig(
-        model="new-chat",
-        model_provider="openai",
-        inference_provider="company",
-    )
-    embedding = EmbModelConfig(
-        model="new-embedding",
-        model_provider="openai",
-        inference_provider="company",
-    )
+    chat = configured_model(ChatModelConfig, "new-chat", "company")
+    embedding = configured_model(EmbModelConfig, "new-embedding", "company")
 
     updated = replace_models(config, chat, embedding)
 
@@ -300,7 +262,7 @@ def test_replace_models_revalidates_copies_and_strips_resolved_provider_state():
     selected = ChatModelConfig(
         model="new-chat", inference_provider="company"
     ).resolve_inference_provider(config.inference_providers)
-    assert selected.base_url == "https://models.example/v1"
+    assert selected.base_url == MODEL_URL
 
     updated = replace_models(config, selected, None)
 
@@ -326,12 +288,8 @@ def test_parse_setup_model_yaml_replaces_complete_block_and_deletes_fields():
         old_extra="remove-me",
     )
 
-    parsed = parse_setup_model_yaml(
-        "model: new-chat\ninference_provider: company\n",
-        ChatModelConfig,
-        original,
-        original.model_dump(mode="json"),
-        {"company"},
+    parsed = parse_model_yaml(
+        "model: new-chat\ninference_provider: company\n", original
     )
 
     assert isinstance(parsed, ChatModelConfig)
@@ -343,22 +301,10 @@ def test_parse_setup_model_yaml_replaces_complete_block_and_deletes_fields():
     assert original.max_completion_tokens == 2048
     assert original.model_extra == {"old_extra": "remove-me"}
 
-
-def test_parse_setup_model_yaml_accepts_null_embedding():
-    original = EmbModelConfig(
+    embedding = EmbModelConfig(
         model="old-embedding", inference_provider="company"
     )
-
-    assert (
-        parse_setup_model_yaml(
-            "null\n",
-            EmbModelConfig,
-            original,
-            original.model_dump(mode="json"),
-            {"company"},
-        )
-        is None
-    )
+    assert parse_model_yaml("null\n", embedding) is None
 
 
 def test_replace_mcp_servers_is_atomic_and_formats_review_yaml():
@@ -390,13 +336,8 @@ def test_prepare_provider_probe_interpolates_and_uses_staged_secret(
     path.write_text(
         """
 inference_providers:
-  company:
-    base_url: "${MODEL_URL}"
-    api_key: {keyring: true}
-llm_model:
-  model: chat-test
-  model_provider: anthropic
-  inference_provider: company
+  company: {base_url: "${MODEL_URL}", api_key: {keyring: true}}
+llm_model: {model: chat-test, model_provider: anthropic, inference_provider: company}
 """
     )
     config, _ = load_setup_config(path)
@@ -404,7 +345,7 @@ llm_model:
 
     runtime = prepare_provider_probe(config, "company", staged)
 
-    assert runtime.base_url == "https://models.example/v1"
+    assert runtime.base_url == MODEL_URL
     assert isinstance(runtime.api_key, SecretStr)
     assert runtime.api_key.get_secret_value() == "pending-secret"
     assert getattr(runtime, "model_provider", None) == "anthropic"

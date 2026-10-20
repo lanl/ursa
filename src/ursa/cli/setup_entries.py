@@ -43,23 +43,21 @@ from ursa.util import get_keyring
 from ursa.util.mcp import (
     ServerParameters,
     parse_server_parameters,
-    serialize_server_parameters,
     transport,
 )
-from ursa.util.secrets import (
-    KEYRING_SERVICE,
-    SecretReference,
-    SecretTemplate,
+from ursa.util.mcp import (
+    serialize_server_parameters as dump_mcp,
 )
+from ursa.util.secrets import KEYRING_SERVICE, SecretReference, SecretTemplate
 
 CUSTOM_PROVIDER_URL = "__ursa_custom_provider_url__"
 PROVIDER_DEFAULT_URL = "__ursa_provider_default_url__"
 MCP_TOKEN_NONE = "__ursa_mcp_token_none__"
 API_KEY_ENV = "__ursa_api_key_env__"
-SPINNER = "|"
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _KEYRING_LOCK = Lock()
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 PROVIDER_DEFAULT_URLS = {
     "openai": "https://api.openai.com/v1",
@@ -77,6 +75,7 @@ ENTRY_HELP = {
     "mcp-command": "The executable that starts a local MCP server.",
     "mcp-args": "Arguments passed to the local MCP executable.",
 }
+_NAME_LABEL = {"provider": "Provider name", "mcp": "MCP server name"}
 
 
 def _quiet(callback: Callable[..., Any], *args: Any) -> Any:
@@ -109,15 +108,24 @@ def _yaml_mapping(text: str) -> dict[str, Any]:
     return values
 
 
-def _url_options() -> list[tuple[str, str]]:
-    return [
-        ("Provider default", PROVIDER_DEFAULT_URL),
-        *(
-            (f"{name} ({url})", url)
-            for name, url in PROVIDER_DEFAULT_URLS.items()
-        ),
-        ("Other", CUSTOM_PROVIDER_URL),
-    ]
+PROVIDER_URL_OPTIONS = [
+    ("Provider default", PROVIDER_DEFAULT_URL),
+    *((f"{name} ({url})", url) for name, url in PROVIDER_DEFAULT_URLS.items()),
+    ("Other", CUSTOM_PROVIDER_URL),
+]
+
+
+def _provider_url_choice(base: str | None, *, new: bool = False) -> str:
+    if base and base in PROVIDER_DEFAULT_URLS.values():
+        return base
+    return CUSTOM_PROVIDER_URL if base or new else PROVIDER_DEFAULT_URL
+
+
+def _set_optional(values: dict[str, Any], key: str, value: Any) -> None:
+    if value is None:
+        values.pop(key, None)
+    else:
+        values[key] = value
 
 
 class CredentialValue(NamedTuple):
@@ -126,6 +134,9 @@ class CredentialValue(NamedTuple):
     reference: SecretReference | None = None
     pending: str | None = None
     username: str | None = None
+
+
+EntryValues = tuple[dict[str, Any], CredentialValue]
 
 
 class ApiKeyEntry(Vertical):
@@ -191,28 +202,26 @@ class ApiKeyEntry(Vertical):
             source = MCP_TOKEN_NONE
         else:
             source = name if keyring_name in (None, True) else keyring_name
-        select = self.query_one(f"#{self.prefix}-source", Select)
+        select = self.query_one(".credential-source", Select)
         with self.prevent(Select.Changed):
             select.set_options(self._options(name))
             select.value = source
         initial = (
-            reference.env or ""
-            if source == API_KEY_ENV and reference is not None
-            else ""
+            reference.env or "" if reference and source == API_KEY_ENV else ""
         )
         self._source(source, initial)
 
     def _source(self, source: object, initial: str = "") -> None:
         none, env = source == MCP_TOKEN_NONE, source == API_KEY_ENV
-        key = self.query_one(f"#{self.prefix}-key", Input)
+        key = self.query_one(Input)
         self.generation += 1
         self.loaded = None
         key.value = initial
-        self.query_one(f"#{self.prefix}-fields").set_class(none, "hidden")
-        show = self.query_one(f"#{self.prefix}-show", Checkbox)
+        self.query_one(".credential-value").set_class(none, "hidden")
+        show = self.query_one(Checkbox)
         show.set_class(none or env, "hidden")
         key.password = not env and not show.value
-        label = self.query_one(f"#{self.prefix}-value-label", HelpLabel)
+        label = self.query_one(".credential-value-label", HelpLabel)
         label.set_label(
             "Environmental Variable with API Key" if env else "API Key"
         )
@@ -222,7 +231,7 @@ class ApiKeyEntry(Vertical):
             else f"Enter the API Key for the {self.subject}"
         )
         if not none and not env:
-            key.placeholder = SPINNER
+            key.placeholder = "|"
             self.run_worker(
                 self._load(str(source), self.generation),
                 group=f"{self.prefix}-secret",
@@ -232,7 +241,7 @@ class ApiKeyEntry(Vertical):
     def rename(self, name: str) -> None:
         if not name:
             return
-        select = self.query_one(f"#{self.prefix}-source", Select)
+        select = self.query_one(".credential-source", Select)
         source, old = select.value, self.entry_name
         self.entry_name = name
         with self.prevent(Select.Changed):
@@ -252,13 +261,13 @@ class ApiKeyEntry(Vertical):
         if generation != self.generation:
             return
         self.loaded = secret
-        key = self.query_one(f"#{self.prefix}-key", Input)
+        key = self.query_one(Input)
         key.value = secret or ""
         key.placeholder = f"Enter the API Key for the {self.subject}"
 
     def values(self) -> CredentialValue:
-        source = self.query_one(f"#{self.prefix}-source", Select).value
-        value = self.query_one(f"#{self.prefix}-key", Input).value.strip()
+        source = self.query_one(".credential-source", Select).value
+        value = self.query_one(Input).value.strip()
         if source == MCP_TOKEN_NONE:
             return CredentialValue()
         if source == API_KEY_ENV:
@@ -278,31 +287,30 @@ class ApiKeyEntry(Vertical):
 
     @on(Checkbox.Changed)
     def show_changed(self, event: Checkbox.Changed) -> None:
-        self.query_one(f"#{self.prefix}-key", Input).password = not event.value
+        self.query_one(Input).password = not event.value
 
 
-class ProviderCandidate(NamedTuple):
+class EntryCandidate(NamedTuple):
     draft_id: str
     original_name: str | None
     name: str
-    stored: InferenceProviderConfig
-    runtime: InferenceProviderConfig
+    stored: InferenceProviderConfig | ServerParameters
+    runtime: InferenceProviderConfig | ServerParameters
     credential: CredentialValue
 
 
-class McpCandidate(NamedTuple):
-    draft_id: str
-    original_name: str | None
-    name: str
-    stored: ServerParameters
-    runtime: ServerParameters
-    credential: CredentialValue
+class ProviderCandidate(EntryCandidate):
+    pass
+
+
+class McpCandidate(EntryCandidate):
+    pass
 
 
 class EntryDraftEditor(Vertical):
     """A named draft whose form and complete YAML stay in sync."""
 
-    YAML_VALIDATION_DELAY = 0.5
+    YAML_DELAY = 0.5
 
     class Changed(Message):
         def __init__(self, editor: EntryDraftEditor) -> None:
@@ -326,19 +334,14 @@ class EntryDraftEditor(Vertical):
         self._syncing = False
         self._yaml_timer: Timer | None = None
         self.header, self.template = "Authorization", "Bearer %s"
-        if config is None:
-            self._values: dict[str, Any] = {}
-        elif self.kind == "provider":
+        self._values: dict[str, Any] = {}
+        if config is not None and self.kind == "provider":
             self._values = config.model_dump(mode="json", exclude_none=True)
             self._values.pop("ssl_verify", None)
-        else:
-            self._values = serialize_server_parameters(
-                cast(ServerParameters, config),
-                exclude_defaults=False,
-                exclude_none=True,
-                exclude_unset=False,
-            )
-            self.header, reference = _auth(cast(ServerParameters, config))
+        elif config is not None:
+            server = cast(ServerParameters, config)
+            self._values = dump_mcp(server, exclude_defaults=False)
+            self.header, reference = _auth(server)
             if reference is not None:
                 self.template = reference.template
 
@@ -346,11 +349,8 @@ class EntryDraftEditor(Vertical):
         return self.query_one(f"#{self.prefix}-{field}", Input)
 
     def _help(self, field: str, label: str) -> HelpLabel:
-        return HelpLabel(
-            label,
-            ENTRY_HELP[f"{self.kind}-{field}"],
-            id=f"{self.prefix}-{field}-label",
-        )
+        help_text = ENTRY_HELP[f"{self.kind}-{field}"]
+        return HelpLabel(label, help_text, id=f"{self.prefix}-{field}-label")
 
     def compose(self) -> ComposeResult:
         yield self._help("name", "Name")
@@ -373,31 +373,23 @@ class EntryDraftEditor(Vertical):
 
     def _provider_fields(self) -> ComposeResult:
         base = self._values.get("base_url")
-        if self._initial is None:
-            selected = CUSTOM_PROVIDER_URL
-        elif not base:
-            selected = PROVIDER_DEFAULT_URL
-        elif base in PROVIDER_DEFAULT_URLS.values():
-            selected = base
-        else:
-            selected = CUSTOM_PROVIDER_URL
+        selected = _provider_url_choice(base, new=self._initial is None)
+        custom = selected == CUSTOM_PROVIDER_URL
         yield self._help("url", "Base URL")
         yield Horizontal(
             FuzzySelect(
-                _url_options(),
+                PROVIDER_URL_OPTIONS,
                 value=selected,
                 allow_blank=False,
                 id=f"{self.prefix}-url",
                 classes="provider-url",
             ),
             Input(
-                value=(base or "") if selected == CUSTOM_PROVIDER_URL else "",
+                value=(base or "") if custom else "",
                 id=f"{self.prefix}-url-custom",
-                classes="provider-url-custom"
-                + ("" if selected == CUSTOM_PROVIDER_URL else " hidden"),
+                classes="provider-url-custom" + ("" if custom else " hidden"),
             ),
-            classes="provider-url-row"
-            + (" custom-url" if selected == CUSTOM_PROVIDER_URL else ""),
+            classes="provider-url-row" + (" custom-url" if custom else ""),
         )
         yield ApiKeyEntry(f"{self.prefix}-key", "provider")
 
@@ -438,11 +430,7 @@ class EntryDraftEditor(Vertical):
             if self.kind == "provider":
                 reference = getattr(self._initial, "api_key", None)
                 base = getattr(self._initial, "base_url", None)
-                no_key = bool(base) and urlparse(base).hostname in {
-                    "localhost",
-                    "127.0.0.1",
-                    "::1",
-                }
+                no_key = bool(base) and urlparse(base).hostname in _LOCAL_HOSTS
             else:
                 reference = _auth(cast(ServerParameters, self._initial))[1]
                 no_key = reference is None
@@ -477,22 +465,15 @@ class EntryDraftEditor(Vertical):
         widget.update(text)
         widget.set_class(failed, "error")
 
-    def _form_values(
-        self,
-    ) -> tuple[dict[str, Any], CredentialValue, Any]:
-        values = _yaml_mapping(
-            self.query_one(f"#{self.prefix}-config-yaml", TextArea).text
-        )
+    def _form_values(self) -> tuple[dict[str, Any], CredentialValue, Any]:
+        values = self._yaml_values()
         if self.kind == "provider":
             values, credential = self._provider_form_values(values)
         else:
             values, credential = self._mcp_form_values(values)
         return values, credential, self._parse(values)
 
-    def _provider_form_values(
-        self, values: dict[str, Any]
-    ) -> tuple[dict[str, Any], CredentialValue]:
-        values.pop("ssl_verify", None)
+    def _provider_form_values(self, values: dict[str, Any]) -> EntryValues:
         selected = self.query_one(f"#{self.prefix}-url", Select).value
         raw = self._input("url-custom").value
         base = (
@@ -503,22 +484,18 @@ class EntryDraftEditor(Vertical):
                 "Base URL",
             )
         )
-        if base is None:
-            values.pop("base_url", None)
-        else:
-            values["base_url"] = base
+        _set_optional(values, "base_url", base)
         credential = self.credential.values()
-        if credential.reference is None:
-            values.pop("api_key", None)
-        else:
-            values["api_key"] = credential.reference.model_dump(
-                mode="json", exclude_none=True
-            )
+        reference = credential.reference
+        api_key = (
+            reference.model_dump(mode="json", exclude_none=True)
+            if reference
+            else None
+        )
+        _set_optional(values, "api_key", api_key)
         return values, credential
 
-    def _mcp_form_values(
-        self, values: dict[str, Any]
-    ) -> tuple[dict[str, Any], CredentialValue]:
+    def _mcp_form_values(self, values: dict[str, Any]) -> EntryValues:
         kind = str(self.query_one(f"#{self.prefix}-transport", Select).value)
         values["transport"] = kind
         if kind == "stdio":
@@ -526,12 +503,12 @@ class EntryDraftEditor(Vertical):
                 command=self._input("command").value.strip(),
                 args=shlex.split(self._input("args").value),
             )
-            values.pop("url", None)
-            values.pop("headers", None)
+            for field in ("url", "headers"):
+                values.pop(field, None)
             return values, CredentialValue()
         values["url"] = validate_setup_url(self._input("url").value, "MCP URL")
-        values.pop("command", None)
-        values.pop("args", None)
+        for field in ("command", "args"):
+            values.pop(field, None)
         credential = self.credential.values()
         headers = dict(values.get("headers") or {})
         if credential.reference is None:
@@ -541,16 +518,14 @@ class EntryDraftEditor(Vertical):
                 **credential.reference.model_dump(exclude_none=True),
                 "template": self.template,
             }
-        if headers:
-            values["headers"] = headers
-        else:
-            values.pop("headers", None)
+        _set_optional(values, "headers", headers or None)
         return values, credential
 
     def _parse(self, values: dict[str, Any]) -> Any:
         if self.kind == "mcp":
             reject_literal_secrets(values)
             return parse_server_parameters(values)
+        values.pop("ssl_verify", None)
         parsed = InferenceProviderConfig.model_validate(values)
         if isinstance(parsed.api_key, SecretStr):
             raise SetupError("API keys must use an ENV or keyring reference.")
@@ -565,12 +540,8 @@ class EntryDraftEditor(Vertical):
         self.yaml_editor.set_validation("valid")
         return result
 
-    def _parse_yaml(self) -> Any:
-        values = _yaml_mapping(
-            self.query_one(f"#{self.prefix}-config-yaml", TextArea).text
-        )
-        values.pop("ssl_verify", None)
-        return self._parse(values)
+    def _yaml_values(self) -> dict[str, Any]:
+        return _yaml_mapping(self.query_one(TextArea).text)
 
     def _write_yaml_from_form(self) -> None:
         result = self._validated(self._form_values)
@@ -582,7 +553,7 @@ class EntryDraftEditor(Vertical):
         )
 
     def _validate_yaml(self, *, update_controls: bool = True) -> None:
-        parsed = self._validated(self._parse_yaml)
+        parsed = self._validated(lambda: self._parse(self._yaml_values()))
         if parsed is None:
             return
         if update_controls:
@@ -596,13 +567,7 @@ class EntryDraftEditor(Vertical):
         if self.kind == "provider":
             base = parsed.base_url
             select = self.query_one(f"#{self.prefix}-url", Select)
-            select.value = (
-                PROVIDER_DEFAULT_URL
-                if not base
-                else base
-                if base in PROVIDER_DEFAULT_URLS.values()
-                else CUSTOM_PROVIDER_URL
-            )
+            select.value = _provider_url_choice(base)
             if select.value == CUSTOM_PROVIDER_URL:
                 self._input("url-custom").value = base
             self._toggle_fields(select.value)
@@ -633,9 +598,7 @@ class EntryDraftEditor(Vertical):
     def _toggle_fields(self, value: object) -> None:
         if self.kind == "provider":
             custom = value == CUSTOM_PROVIDER_URL
-            self.query_one(f"#{self.prefix}-url-custom").set_class(
-                not custom, "hidden"
-            )
+            self._input("url-custom").set_class(not custom, "hidden")
             self.query_one(".provider-url-row").set_class(custom, "custom-url")
             return
         local = value == "stdio"
@@ -643,21 +606,16 @@ class EntryDraftEditor(Vertical):
         self.query_one(".mcp-remote-fields").set_class(local, "hidden")
 
     def candidate(self) -> ProviderCandidate | McpCandidate:
-        label = (
-            "Provider name" if self.kind == "provider" else "MCP server name"
-        )
-        name = validate_setup_name(self.raw_name(), label)
+        name = validate_setup_name(self.raw_name(), _NAME_LABEL[self.kind])
         _, credential, stored = self._form_values()
         identity = (self.draft_id, self.original_name, name)
         if self.kind == "provider":
-            runtime_values = stored.model_dump(mode="python")
+            key = stored.api_key
             if credential.pending:
-                runtime_values["api_key"] = SecretStr(credential.pending)
-            elif isinstance(stored.api_key, SecretReference):
-                runtime_values["api_key"] = _quiet(stored.api_key.resolve, name)
-            runtime = InferenceProviderConfig.model_validate(
-                runtime_values
-            ).resolve(name)
+                key = SecretStr(credential.pending)
+            elif isinstance(key, SecretReference):
+                key = _quiet(key.resolve, name)
+            runtime = stored.model_copy(update={"api_key": key}).resolve(name)
             return ProviderCandidate(*identity, stored, runtime, credential)
         runtime = interpolate_mcp_server(stored)
         headers = dict(getattr(runtime, "headers", None) or {})
@@ -668,23 +626,20 @@ class EntryDraftEditor(Vertical):
         return McpCandidate(*identity, stored, runtime, credential)
 
     @on(Input.Changed)
-    def input_changed(self, event: Input.Changed) -> None:
-        if self._syncing:
-            return
-        if event.input.id == f"{self.prefix}-name":
-            self.credential.rename(event.value.strip())
-        else:
-            self._write_yaml_from_form()
-        self.post_message(self.Changed(self))
-
     @on(Select.Changed)
-    def select_changed(self, event: Select.Changed) -> None:
+    def control_changed(self, event: Input.Changed | Select.Changed) -> None:
         if self._syncing:
             return
-        expected = "url" if self.kind == "provider" else "transport"
-        if event.select.id == f"{self.prefix}-{expected}":
-            self._toggle_fields(event.value)
-        self._write_yaml_from_form()
+        if isinstance(event, Input.Changed):
+            if event.input.id == f"{self.prefix}-name":
+                self.credential.rename(event.value.strip())
+            else:
+                self._write_yaml_from_form()
+        else:
+            expected = "url" if self.kind == "provider" else "transport"
+            if event.select.id == f"{self.prefix}-{expected}":
+                self._toggle_fields(event.value)
+            self._write_yaml_from_form()
         self.post_message(self.Changed(self))
 
     @on(TextArea.Changed, ".advanced-yaml-editor")
@@ -694,9 +649,7 @@ class EntryDraftEditor(Vertical):
         self.yaml_editor.set_validation("neutral")
         if self._yaml_timer is not None:
             self._yaml_timer.stop()
-        self._yaml_timer = self.set_timer(
-            self.YAML_VALIDATION_DELAY, self._validate_yaml
-        )
+        self._yaml_timer = self.set_timer(self.YAML_DELAY, self._validate_yaml)
         self.post_message(self.Changed(self))
 
 
@@ -755,11 +708,9 @@ class DynamicEntryTabs(Vertical):
         yield ContentSwitcher(
             empty,
             *self._editors.values(),
-            initial=(
-                f"{next(iter(self._editors))}-editor"
-                if self._editors
-                else empty_id
-            ),
+            initial=f"{next(iter(self._editors))}-editor"
+            if self._editors
+            else empty_id,
             id=f"{self.kind}-drafts",
             classes="entry-drafts",
         )
@@ -774,31 +725,32 @@ class DynamicEntryTabs(Vertical):
     def editors(self) -> list[EntryDraftEditor]:
         return list(self._editors.values())
 
+    def _tabs(self) -> Tabs:
+        return self.query_one(f"#{self.kind}-tabs", Tabs)
+
+    def _drafts(self) -> ContentSwitcher:
+        return self.query_one(f"#{self.kind}-drafts", ContentSwitcher)
+
     def raw_names(self) -> set[str]:
-        return {
-            name for editor in self.editors() if (name := editor.raw_name())
-        }
+        return {name for e in self._editors.values() if (name := e.raw_name())}
 
     def active_editor(self) -> EntryDraftEditor | None:
-        active = self.query_one(f"#{self.kind}-tabs", Tabs).active
-        return (
-            self._editors.get(active.removesuffix("-tab")) if active else None
-        )
+        active = self._tabs().active
+        draft_id = active.removesuffix("-tab") if active else ""
+        return self._editors.get(draft_id)
 
     def select(self, draft_id: str) -> None:
         if draft_id not in self._editors:
             return
-        self.query_one(f"#{self.kind}-tabs", Tabs).active = f"{draft_id}-tab"
-        switcher = self.query_one(f"#{self.kind}-drafts", ContentSwitcher)
-        switcher.current = f"{draft_id}-editor"
+        self._tabs().active = f"{draft_id}-tab"
+        self._drafts().current = f"{draft_id}-editor"
 
     def select_name(self, name: str | None) -> None:
         target = next(
             (e.draft_id for e in self.editors() if e.original_name == name),
-            next(iter(self._editors), None),
+            next(iter(self._editors), ""),
         )
-        if target:
-            self.select(target)
+        self.select(target)
 
     def set_draft_status(
         self,
@@ -811,9 +763,8 @@ class DynamicEntryTabs(Vertical):
         """Update a draft's inline message and tab marker together."""
         editor = self._editors[draft_id]
         editor.set_status(message, failed)
-        self.query_one(f"#{draft_id}-tab", Tab).label = self._label(
-            editor, marker
-        )
+        tab = self.query_one(f"#{draft_id}-tab", Tab)
+        tab.label = self._label(editor, marker)
 
     def focus_error(self, draft_id: str) -> None:
         self.select(draft_id)
@@ -821,43 +772,34 @@ class DynamicEntryTabs(Vertical):
         self.call_after_refresh(name.focus)
 
     def _sync_remove(self) -> None:
-        self.query_one(f"#{self.kind}-remove", Button).disabled = (
-            not self._editors
-            or self.kind == "provider"
-            and len(self._editors) == 1
-        )
+        minimum = int(self.kind == "provider")
+        remove = self.query_one(f"#{self.kind}-remove", Button)
+        remove.disabled = len(self._editors) <= minimum
 
     async def _add(self) -> None:
         editor = self._make_editor(None, None)
-        drafts = self.query_one(f"#{self.kind}-drafts", ContentSwitcher)
-        await drafts.mount(editor)
-        await self.query_one(f"#{self.kind}-tabs", Tabs).add_tab(
-            Tab(self._label(editor), id=f"{editor.draft_id}-tab")
-        )
+        await self._drafts().mount(editor)
+        tab = Tab(self._label(editor), id=f"{editor.draft_id}-tab")
+        await self._tabs().add_tab(tab)
         self.select(editor.draft_id)
         self._sync_remove()
         editor.query_one(".entry-name", Input).focus()
 
     async def _remove(self) -> None:
         editor = self.active_editor()
-        if editor is None or (
-            self.kind == "provider" and len(self._editors) == 1
-        ):
+        last_provider = self.kind == "provider" and len(self._editors) == 1
+        if editor is None or last_provider:
             return
         draft_id = editor.draft_id
         index = list(self._editors).index(draft_id)
         del self._editors[draft_id]
-        await self.query_one(f"#{self.kind}-tabs", Tabs).remove_tab(
-            f"{draft_id}-tab"
-        )
+        await self._tabs().remove_tab(f"{draft_id}-tab")
         await editor.remove()
         if self._editors:
             remaining = list(self._editors)
             self.select(remaining[min(index, len(remaining) - 1)])
         else:
-            self.query_one(
-                f"#{self.kind}-drafts", ContentSwitcher
-            ).current = f"{self.kind}-empty"
+            self._drafts().current = f"{self.kind}-empty"
         self._sync_remove()
 
     def candidates(
@@ -892,12 +834,8 @@ class DynamicEntryTabs(Vertical):
 
     @on(Tabs.TabActivated)
     def tab_activated(self, event: Tabs.TabActivated) -> None:
-        if event.tabs.id != f"{self.kind}-tabs":
-            return
-        draft_id = (event.tab.id or "").removesuffix("-tab")
-        if draft_id in self._editors:
-            drafts = self.query_one(f"#{self.kind}-drafts", ContentSwitcher)
-            drafts.current = f"{draft_id}-editor"
+        if event.tabs.id == f"{self.kind}-tabs":
+            self.select((event.tab.id or "").removesuffix("-tab"))
 
     @on(EntryDraftEditor.Changed)
     def editor_changed(self, event: EntryDraftEditor.Changed) -> None:

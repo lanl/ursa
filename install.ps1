@@ -16,15 +16,8 @@
     Set-StrictMode -Version Latest
     $ErrorActionPreference = "Stop"
 
-    function Write-InstallerMessage {
-        param([Parameter(Mandatory = $true)][string]$Message)
-
-        Write-Output $Message
-    }
-
     function Stop-Installer {
-        param([Parameter(Mandatory = $true)][string]$Message)
-
+        param([string]$Message)
         throw "URSA installer: $Message"
     }
 
@@ -35,35 +28,21 @@
             return $uvCommand.Path
         }
 
-        $candidates = @(
-            $(if ($env:UV_UNMANAGED_INSTALL) { Join-Path $env:UV_UNMANAGED_INSTALL "uv.exe" })
-            $(if ($env:UV_INSTALL_DIR) { Join-Path $env:UV_INSTALL_DIR "uv.exe" })
-        )
-        if ($HOME) {
-            $candidates += Join-Path $HOME ".local\bin\uv.exe"
-            $candidates += Join-Path $HOME ".cargo\bin\uv.exe"
-        }
-
-        foreach ($candidate in $candidates) {
+        foreach ($directory in @(
+            $env:UV_UNMANAGED_INSTALL, $env:UV_INSTALL_DIR,
+            "$HOME\.local\bin", "$HOME\.cargo\bin"
+        )) {
+            if (-not $directory) { continue }
+            $candidate = Join-Path $directory "uv.exe"
             if (Test-Path -LiteralPath $candidate -PathType Leaf) {
                 return (Get-Item -LiteralPath $candidate -Force).FullName
             }
         }
-
-        return $null
     }
 
     function Test-InteractiveTerminal {
-        if (-not [Environment]::UserInteractive) {
-            return $false
-        }
-
-        try {
-            return -not [Console]::IsInputRedirected
-        }
-        catch {
-            return $Host.Name -eq "ConsoleHost"
-        }
+        try { return [Environment]::UserInteractive -and -not [Console]::IsInputRedirected }
+        catch { return $Host.Name -eq "ConsoleHost" }
     }
 
     if ($PSVersionTable.PSVersion -lt [Version]"5.1") {
@@ -91,7 +70,6 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
     if ($PSBoundParameters.ContainsKey("Branch")) {
         $ursaRequirement = "ursa-ai @ git+https://github.com/lanl/ursa.git@$Branch"
     }
-    $payloadFile = $null
     try {
         if ($PSBoundParameters.ContainsKey("Config")) {
             if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
@@ -100,12 +78,11 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
             if (-not (Test-InteractiveTerminal)) {
                 Stop-Installer "setup defaults require an interactive terminal"
             }
-            $payloadFile = $Config
         }
 
         $uvExecutable = Find-UvExecutable
         if (-not $uvExecutable) {
-            Write-InstallerMessage "Installing uv..."
+            Write-Output "Installing uv..."
 
             [Net.ServicePointManager]::SecurityProtocol =
                 [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -117,14 +94,13 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
             }
         }
         else {
-            Write-InstallerMessage "Using uv at $uvExecutable"
+            Write-Output "Using uv at $uvExecutable"
         }
 
-        Write-InstallerMessage "Installing URSA with Python $Python..."
+        Write-Output "Installing URSA with Python $Python..."
         & $uvExecutable tool install --python $Python --force --upgrade --compile-bytecode $ursaRequirement
-        $uvInstallExitCode = $LASTEXITCODE
-        if ($uvInstallExitCode -ne 0) {
-            Stop-Installer "uv failed to install URSA (exit code $uvInstallExitCode)"
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Installer "uv failed to install URSA (exit code $LASTEXITCODE)"
         }
 
         $toolBin = (& $uvExecutable tool dir --bin | Select-Object -Last 1)
@@ -138,54 +114,50 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
             Stop-Installer "URSA installed, but its executable was not found at $ursaExecutable"
         }
         $ursaExecutable = (Get-Item -LiteralPath $ursaExecutable -Force).FullName
-        $uvExecutable = (Get-Item -LiteralPath $uvExecutable -Force).FullName
-        $uvDirectory = Split-Path -Parent $uvExecutable
 
         $currentUrsaCommand = Get-Command ursa -CommandType Application -ErrorAction SilentlyContinue |
             Select-Object -First 1
-        $currentUrsa = if ($null -ne $currentUrsaCommand) { $currentUrsaCommand.Path } else { $null }
+        $currentUrsa = if ($currentUrsaCommand) { $currentUrsaCommand.Path }
         $ursaCommand = "ursa"
-        if ($currentUrsa -and -not $currentUrsa.Equals($ursaExecutable, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-InstallerMessage "Warning: $currentUrsa currently takes precedence over $ursaExecutable."
+        $ursaIsCurrent = $currentUrsa -and $currentUrsa.Equals(
+            $ursaExecutable, [StringComparison]::OrdinalIgnoreCase
+        )
+        if ($currentUrsa -and -not $ursaIsCurrent) {
+            Write-Output "Warning: $currentUrsa currently takes precedence over $ursaExecutable."
             $ursaCommand = $ursaExecutable
         }
 
-        if (-not $currentUrsa -or -not $currentUrsa.Equals($ursaExecutable, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-InstallerMessage "Adding uv's tool directory to PATH..."
+        if (-not $ursaIsCurrent) {
+            Write-Output "Adding uv's tool directory to PATH..."
             & $uvExecutable tool update-shell
-            $updateShellExitCode = $LASTEXITCODE
-            if ($updateShellExitCode -ne 0) {
-                Write-InstallerMessage "Could not update this shell automatically; add $toolBin to PATH."
+            if ($LASTEXITCODE -ne 0) {
+                Write-Output "Could not update this shell automatically; add $toolBin to PATH."
             }
-            Write-InstallerMessage "Follow uv's instructions above to update this shell. Or restart your shell."
+            Write-Output "Follow uv's instructions above to update this shell. Or restart your shell."
         }
 
         $pathSeparator = [IO.Path]::PathSeparator
+        $uvDirectory = Split-Path -Parent $uvExecutable
         $env:Path = "$toolBin$pathSeparator$uvDirectory$pathSeparator$($env:Path)"
 
         & $ursaExecutable self setup --help *> $null
-        $setupHelpExitCode = $LASTEXITCODE
-        if ($setupHelpExitCode -ne 0) {
-            $ursaVersionOutput = @(& $ursaExecutable --version 2> $null)
-            $ursaVersionExitCode = $LASTEXITCODE
-            $ursaVersion = ($ursaVersionOutput | ForEach-Object { "$($_)".Trim() } | Where-Object { $_ } |
-                Select-Object -First 1)
-            if ($ursaVersionExitCode -ne 0 -or -not $ursaVersion) {
+        if ($LASTEXITCODE -ne 0) {
+            $ursaVersion = (& $ursaExecutable --version 2> $null | Select-Object -First 1)
+            if ($LASTEXITCODE -ne 0 -or -not $ursaVersion) {
                 $ursaVersion = "version unavailable"
             }
             Stop-Installer "installed URSA ($ursaVersion) does not support guided setup. See https://lanl.github.io/ursa/latest/getting-started."
         }
 
-        Write-InstallerMessage "Starting guided setup..."
+        Write-Output "Starting guided setup..."
         $setupArguments = @("self", "setup")
-        if ($payloadFile) {
-            $setupArguments += @("--defaults-json", $payloadFile)
+        if ($Config) {
+            $setupArguments += @("--defaults-json", $Config)
         }
         if (Test-InteractiveTerminal) {
             & $ursaExecutable @setupArguments
-            $setupExitCode = $LASTEXITCODE
-            if ($setupExitCode -ne 0) {
-                Stop-Installer "guided setup failed (exit code $setupExitCode)"
+            if ($LASTEXITCODE -ne 0) {
+                Stop-Installer "guided setup failed (exit code $LASTEXITCODE)"
             }
         }
         else {
@@ -195,17 +167,14 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
             else {
                 "& `"$ursaCommand`" self setup"
             }
-            Write-InstallerMessage "No interactive terminal was found. Finish setup by running:"
-            Write-InstallerMessage "  $setupCommand"
+            Write-Output "No interactive terminal was found. Finish setup by running:"
+            Write-Output "  $setupCommand"
         }
 
         $commandDisplay = if ($ursaCommand -eq "ursa") { "ursa" } else { "& `"$ursaCommand`"" }
-        Write-InstallerMessage "URSA is installed. Run '$commandDisplay' to get started."
+        Write-Output "URSA is installed. Run '$commandDisplay' to get started."
     }
     catch {
-        if ($_.Exception.Message.StartsWith("URSA installer: ", [StringComparison]::Ordinal)) {
-            throw
-        }
-        throw "URSA installer: $($_.Exception.Message)"
+        throw "URSA installer: $($_.Exception.Message -replace '^URSA installer: ', '')"
     }
 } @args
