@@ -92,7 +92,18 @@ def test_self_setup_command_routes_without_loading_runtime(
 
     main(["self", "setup", "--config", str(path)])
 
-    called.assert_called_once_with(path)
+    called.assert_called_once_with(path, None)
+
+
+def test_self_setup_passes_installer_defaults(monkeypatch, tmp_path):
+    called = MagicMock(return_value=True)
+    monkeypatch.setattr("ursa.cli.inject_truststore_into_ssl", lambda: None)
+    monkeypatch.setattr("ursa.cli.setup.run_setup", called)
+    defaults = tmp_path / "defaults.json"
+
+    main(["self", "setup", "--defaults-json", str(defaults)])
+
+    called.assert_called_once_with(None, defaults)
 
 
 @pytest.mark.parametrize(

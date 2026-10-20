@@ -23,6 +23,9 @@ and optional MCP configuration:
     powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
     ```
 
+Administrators can [preload non-secret setup defaults][managed-setup-defaults]
+for providers, models, and MCP servers.
+
 For manual installation, the `uv` tool installation is recommended:
 
 === "uv tool (recommended)"
