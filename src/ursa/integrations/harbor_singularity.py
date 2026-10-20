@@ -32,7 +32,7 @@ from harbor.environments.capabilities import (
     EnvironmentResourceCapabilities,
 )
 from harbor.models.environment_type import EnvironmentType
-from harbor.models.task.config import NetworkMode
+from harbor.models.task.config import NetworkMode, NetworkPolicy
 from harbor.models.trial.paths import EnvironmentPaths
 from harbor.utils.env import resolve_env_vars
 from pathspec import GitIgnoreSpec
@@ -689,11 +689,6 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._overlay_enabled = singularity_overlay
         self._runtime_path: str | None = None
         super().__init__(*args, **kwargs)
-        for policy in self._phase_network_policies:
-            if policy != self._network_policy:
-                raise ValueError(
-                    "Singularity 3.6 cannot change network policy after start"
-                )
         self._startup_timeout_sec = singularity_startup_timeout_sec
         self._lifecycle_lock = asyncio.Lock()
         self._scratch_dir: Path | None = None
@@ -733,9 +728,12 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
     def capabilities(self) -> EnvironmentCapabilities:
         # Singularity 3.6 can create an isolated network namespace, but cannot
         # securely enforce allowlists or switch a running instance's network.
+        # With a persistent overlay, policy changes are implemented by
+        # restarting the instance with the requested namespace configuration.
         return EnvironmentCapabilities(
             mounted=True,
             disable_internet=True,
+            dynamic_network_policy=self._overlay_enabled,
             docker_compose=True,
         )
 
@@ -826,14 +824,24 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         if self._uses_compose:
             config = self._load_compose_config()
             sidecars = set(config["services"]) - {"main"}
-            if (
-                sidecars
-                and self._network_policy.network_mode == NetworkMode.NO_NETWORK
+            if sidecars and any(
+                policy.network_mode == NetworkMode.NO_NETWORK
+                for policy in (
+                    self._network_policy,
+                    *self._phase_network_policies,
+                )
             ):
                 raise ValueError(
                     "singularity-compose cannot provide sidecar networking "
-                    "while Harbor network_mode is 'no-network'"
+                    "during a Harbor 'no-network' phase"
                 )
+        if not self._overlay_enabled and any(
+            policy != self._network_policy
+            for policy in self._phase_network_policies
+        ):
+            raise ValueError(
+                "Singularity network policy changes require a writable overlay"
+            )
         main = config["services"]["main"] if config is not None else {}
         if (
             not ({"build", "image"} & set(main))
@@ -1522,6 +1530,27 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         )
         self._instance_name = self._compose_instances["main"][0]
 
+    def _set_compose_network_policy(
+        self, network_policy: NetworkPolicy
+    ) -> None:
+        if self._compose_file is None:
+            raise RuntimeError("Singularity Compose project is not prepared")
+        compose = yaml.safe_load(self._compose_file.read_text())
+        if not isinstance(compose, dict) or not isinstance(
+            compose.get("instances"), dict
+        ):
+            raise RuntimeError("Invalid generated singularity-compose file")
+        isolated = network_policy.network_mode == NetworkMode.NO_NETWORK
+        for instance in compose["instances"].values():
+            network = instance.setdefault("network", {})
+            network["allocate_ip"] = not isolated
+            network["enable"] = True
+            if isolated:
+                network["type"] = "none"
+            else:
+                network.pop("type", None)
+        self._compose_file.write_text(yaml.safe_dump(compose, sort_keys=False))
+
     async def _run_compose(self, *arguments: str) -> None:
         if self._compose_file is None or self._compose_project_dir is None:
             raise RuntimeError("Singularity Compose project is not prepared")
@@ -1604,9 +1633,12 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             f"instance://{instance_name or self._instance_name}",
         ]
 
-    def _instance_start_command(self) -> list[str]:
+    def _instance_start_command(
+        self, network_policy: NetworkPolicy | None = None
+    ) -> list[str]:
         if self._staging_dir is None or self._sif_path is None:
             raise RuntimeError("Singularity instance is not prepared")
+        network_policy = network_policy or self._network_policy
         command = [
             self._instance_runtime(),
             "instance",
@@ -1622,7 +1654,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             command.extend(["--overlay", str(self._overlay_path)])
         for source, target in self._harbor_writable_binds():
             command.extend(["-B", f"{source}:{target}"])
-        if self._network_policy.network_mode == NetworkMode.NO_NETWORK:
+        if network_policy.network_mode == NetworkMode.NO_NETWORK:
             command.extend(["--net", "--network", "none"])
         command.extend(["-B", f"{self._staging_dir}:/staging"])
         for mount in self._mounts:
@@ -1932,6 +1964,80 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         self._instance_start_attempted = False
         return True
 
+    async def _stop_prepared_runtime(self, *, warn: bool) -> bool:
+        if self._uses_compose:
+            return await self._stop_compose(warn=warn)
+        return await self._stop_instance(warn=warn)
+
+    async def _start_prepared_runtime(
+        self, network_policy: NetworkPolicy
+    ) -> None:
+        if self._uses_compose:
+            self._set_compose_network_policy(network_policy)
+            lock_path = self._compose_start_lock_path()
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            async with AsyncFileLock(lock_path):
+                compose_arguments = ["up"]
+                if self._overlay_path is not None:
+                    compose_arguments.append("--read_only")
+                self._instance_start_attempted = True
+                await self._run_compose(*compose_arguments)
+            if network_policy.network_mode != NetworkMode.NO_NETWORK:
+                self._add_compose_service_aliases()
+        else:
+            self._instance_start_attempted = True
+            await self._run(*self._instance_start_command(network_policy))
+        self._instance_started = True
+        await self._run(*self._instance_exec_prefix(), "true")
+
+    async def _restore_prepared_runtime(
+        self, network_policy: NetworkPolicy
+    ) -> None:
+        if self._instance_started or self._instance_start_attempted:
+            stopped = await self._stop_prepared_runtime(warn=True)
+            if not stopped:
+                return
+        try:
+            async with asyncio.timeout(self._startup_timeout_sec):
+                await self._start_prepared_runtime(network_policy)
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to restore Singularity network policy %s: %s",
+                network_policy.network_mode.value,
+                exc,
+            )
+
+    @override
+    async def _apply_network_policy(
+        self, network_policy: NetworkPolicy
+    ) -> None:
+        if self._overlay_path is None:
+            raise RuntimeError(
+                "Singularity network policy changes require a writable overlay"
+            )
+        if (
+            network_policy.network_mode == NetworkMode.NO_NETWORK
+            and self._uses_compose
+            and set(self._load_compose_config()["services"]) - {"main"}
+        ):
+            raise ValueError(
+                "singularity-compose cannot provide sidecar networking "
+                "during a Harbor 'no-network' phase"
+            )
+        async with self._lifecycle_lock:
+            if not self._instance_started:
+                raise RuntimeError("Singularity environment is not running")
+            previous_policy = self._network_policy
+            try:
+                await self._stop_prepared_runtime(warn=False)
+                async with asyncio.timeout(self._startup_timeout_sec):
+                    await self._start_prepared_runtime(network_policy)
+            except BaseException:
+                await self._await_cleanup(
+                    self._restore_prepared_runtime(previous_policy)
+                )
+                raise
+
     async def _cleanup_failed_start(self) -> None:
         """Best-effort runtime cleanup without masking the startup error."""
         if not self._instance_start_attempted:
@@ -1996,20 +2102,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
                     await self._prepare_compose_project(
                         force_build or self._force_pull
                     )
-                    lock_path = self._compose_start_lock_path()
-                    lock_path.parent.mkdir(parents=True, exist_ok=True)
-                    async with AsyncFileLock(lock_path):
-                        compose_arguments = ["up"]
-                        if self._overlay_path is not None:
-                            compose_arguments.append("--read_only")
-                        self._instance_start_attempted = True
-                        await self._run_compose(*compose_arguments)
-                    self._add_compose_service_aliases()
-                else:
-                    self._instance_start_attempted = True
-                    await self._run(*self._instance_start_command())
-                self._instance_started = True
-                await self._run(*self._instance_exec_prefix(), "true")
+                await self._start_prepared_runtime(self._network_policy)
             await self.ensure_dirs(self._mount_targets(writable_only=True))
             await self._upload_environment_dir_after_start()
         except TimeoutError as exc:

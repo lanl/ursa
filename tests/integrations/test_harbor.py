@@ -131,8 +131,10 @@ async def _start_environment(
     *,
     fakeroot: bool = False,
     network_mode: NetworkMode = NetworkMode.PUBLIC,
+    phase_network_modes: tuple[NetworkMode, ...] = (),
     overlay: bool = False,
     compose: bool = False,
+    compose_sidecar: bool = True,
     image_cache_dir: Path | None = None,
 ) -> DockerfileSingularityEnvironment:
     environment_dir = root / "environment"
@@ -141,16 +143,13 @@ async def _start_environment(
         "FROM ubuntu:24.04\nWORKDIR /workspace\n"
     )
     if compose:
-        sidecar = environment_dir / "sidecar"
-        sidecar.mkdir()
-        (sidecar / "Dockerfile").write_text("FROM ubuntu:24.04\n")
-        (environment_dir / "docker-compose.yaml").write_text(
-            "services:\n"
-            "  main:\n"
-            "    build: .\n"
-            "  helper:\n"
-            "    build: ./sidecar\n"
-        )
+        compose_text = "services:\n  main:\n    build: .\n"
+        if compose_sidecar:
+            sidecar = environment_dir / "sidecar"
+            sidecar.mkdir()
+            (sidecar / "Dockerfile").write_text("FROM ubuntu:24.04\n")
+            compose_text += "  helper:\n    build: ./sidecar\n"
+        (environment_dir / "docker-compose.yaml").write_text(compose_text)
     workspace = root / "workspace"
     workspace.mkdir(mode=0o777)
     trial_paths = TrialPaths(root / "trial")
@@ -174,6 +173,9 @@ async def _start_environment(
             }
         ],
         network_policy=NetworkPolicy(network_mode=network_mode),
+        phase_network_policies=[
+            NetworkPolicy(network_mode=mode) for mode in phase_network_modes
+        ],
         persistent_env={"PERSISTED_VALUE": "from-environment"},
         singularity_fakeroot=fakeroot,
         singularity_overlay=overlay,
@@ -464,6 +466,95 @@ async def test_fakeroot_overlay_provides_a_writable_container_root(
 
         assert result.return_code == 0
         assert read_back.stdout == "overlay"
+    finally:
+        await _cleanup_environment(environment)
+
+
+async def test_overlay_persists_agent_setup_across_network_policy_change(
+    tmp_path: Path,
+    ubuntu_sif: Path,
+):
+    _require_fakeroot(ubuntu_sif)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _LoopbackHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    environment = None
+    try:
+        environment = await _start_environment(
+            tmp_path,
+            ubuntu_sif,
+            fakeroot=True,
+            phase_network_modes=(NetworkMode.NO_NETWORK,),
+            overlay=True,
+        )
+        installed = await environment.exec(
+            "mkdir /installed-during-agent-setup && "
+            "printf persisted > /installed-during-agent-setup/value"
+        )
+        assert installed.return_code == 0
+
+        request = (
+            f'bash -c "exec 3<>/dev/tcp/127.0.0.1/{port}; '
+            "printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3; cat <&3\""
+        )
+        reachable = await environment.exec(request, timeout_sec=5)
+        assert reachable.return_code == 0
+
+        await environment.set_network_policy(
+            NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+        )
+
+        persisted = await environment.exec(
+            "cat /installed-during-agent-setup/value"
+        )
+        blocked = await environment.exec(request, timeout_sec=5)
+        assert persisted.stdout == "persisted"
+        assert blocked.return_code != 0
+
+        await environment.set_network_policy(
+            NetworkPolicy(network_mode=NetworkMode.PUBLIC)
+        )
+        restored = await environment.exec(request, timeout_sec=5)
+        assert restored.return_code == 0
+        assert "local-only" in restored.stdout
+    finally:
+        if environment is not None:
+            await _cleanup_environment(environment)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+async def test_main_only_compose_restarts_with_overlay_and_no_network(
+    tmp_path: Path,
+    ubuntu_sif: Path,
+):
+    _require_fakeroot(ubuntu_sif)
+    environment = await _start_environment(
+        tmp_path,
+        ubuntu_sif,
+        fakeroot=True,
+        phase_network_modes=(NetworkMode.NO_NETWORK,),
+        overlay=True,
+        compose=True,
+        compose_sidecar=False,
+    )
+    try:
+        written = await environment.exec(
+            "mkdir /installed-during-agent-setup && "
+            "printf persisted > /installed-during-agent-setup/value"
+        )
+        assert written.return_code == 0
+
+        await environment.set_network_policy(
+            NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
+        )
+
+        persisted = await environment.exec(
+            "cat /installed-during-agent-setup/value"
+        )
+        assert persisted.stdout == "persisted"
     finally:
         await _cleanup_environment(environment)
 
