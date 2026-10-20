@@ -88,6 +88,7 @@ def test_installer_scripts_are_posix_shell(script):
     subprocess.run(["sh", "-n", script], check=True)
 
 
+@_requires_posix("installer harness bind mounts use POSIX host paths")
 def test_installer_harness_forwards_options_to_default_installer(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
