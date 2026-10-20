@@ -175,12 +175,10 @@ class SetupModelEditor(Vertical):
                 self._request_model_load(prefix, source)
 
     def _choice_value(self, prefix: str) -> str:
-        select = self._model_select(prefix)
-        if select.value == NONE:
-            return ""
-        if select.value != CUSTOM:
-            return str(select.value)
-        return self.query_one(f"#setup-{prefix}-model", Input).value.strip()
+        value = self._model_select(prefix).value
+        if value == CUSTOM:
+            return self.query_one(f"#setup-{prefix}-model", Input).value.strip()
+        return "" if value == NONE else str(value)
 
     def _model_select(self, prefix: str) -> FuzzySelect:
         return self.query_one(f"#setup-{prefix}-model-select", FuzzySelect)

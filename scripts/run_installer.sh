@@ -19,37 +19,21 @@ EOF
     ;;
 esac
 
-case ${1:-} in
-''|-*)
-    installer=$repository_root/install.sh
-    ;;
-*)
+installer=$repository_root/install.sh
+if [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then
     installer=$1
     shift
-    ;;
-esac
+fi
 
 case $installer in
 /*) ;;
 *)
-    installer=$(CDPATH= cd -P "$(dirname "$installer")" 2>/dev/null && pwd)/$(basename "$installer") \
-        || {
-            printf 'Invalid installer path: %s\n' "$installer" >&2
-            exit 1
-        }
+    installer=$(CDPATH= cd -P "$(dirname "$installer")" && pwd)/$(basename "$installer")
     ;;
 esac
 
 if [ ! -f "$installer" ]; then
     printf 'Installer not found: %s\n' "$installer" >&2
-    exit 1
-fi
-if [ ! -r "$installer" ]; then
-    printf 'Installer is not readable: %s\n' "$installer" >&2
-    exit 1
-fi
-if ! command -v docker >/dev/null 2>&1; then
-    printf 'Docker is required to run the installer harness.\n' >&2
     exit 1
 fi
 

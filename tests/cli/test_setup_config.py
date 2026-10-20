@@ -31,6 +31,27 @@ from ursa.util.mcp import parse_server_parameters
 from ursa.util.secrets import SecretReference, SecretTemplate
 
 
+def configured_config(*providers: str) -> UrsaConfig:
+    config = {
+        "inference_providers": {
+            name: {"base_url": "https://models.example/v1"}
+            for name in providers
+        },
+        "llm_model": {
+            "model": "old-chat",
+            "model_provider": "openai",
+            "inference_provider": providers[0],
+        },
+    }
+    if len(providers) > 1:
+        config["emb_model"] = {
+            "model": "old-embedding",
+            "model_provider": "openai",
+            "inference_provider": providers[1],
+        }
+    return UrsaConfig.model_validate(config)
+
+
 def test_public_setup_value_validators_normalize_and_reject():
     assert validate_setup_name(" company-one ", "Provider") == "company-one"
     assert (
@@ -222,24 +243,8 @@ def test_save_setup_config_rolls_back_keyring_when_file_save_fails(
     store.delete_password.assert_called_once_with("ursa", "tools")
 
 
-def test_replace_providers_retargets_renamed_and_removed_references(tmp_path):
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        """
-inference_providers:
-  old: {base_url: https://old.example/v1}
-  removed: {base_url: https://removed.example/v1}
-llm_model:
-  model: chat-test
-  model_provider: openai
-  inference_provider: old
-emb_model:
-  model: emb-test
-  model_provider: openai
-  inference_provider: removed
-"""
-    )
-    config, _ = load_setup_config(path)
+def test_replace_providers_retargets_renamed_and_removed_references():
+    config = configured_config("old", "removed")
 
     updated = replace_inference_providers(
         config,
@@ -263,19 +268,8 @@ emb_model:
     assert config.emb_model.inference_provider == "removed"
 
 
-def test_replace_models_is_atomic_and_validates_provider_references(tmp_path):
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        """
-inference_providers:
-  company: {base_url: https://models.example/v1}
-llm_model:
-  model: old-chat
-  model_provider: openai
-  inference_provider: company
-"""
-    )
-    config, _ = load_setup_config(path)
+def test_replace_models_is_atomic_and_validates_provider_references():
+    config = configured_config("company")
     chat = ChatModelConfig(
         model="new-chat",
         model_provider="openai",
@@ -302,12 +296,7 @@ llm_model:
 
 
 def test_replace_models_revalidates_copies_and_strips_resolved_provider_state():
-    config = UrsaConfig.model_validate({
-        "inference_providers": {
-            "company": {"base_url": "https://models.example/v1"}
-        },
-        "llm_model": {"model": "old-chat", "inference_provider": "company"},
-    })
+    config = configured_config("company")
     selected = ChatModelConfig(
         model="new-chat", inference_provider="company"
     ).resolve_inference_provider(config.inference_providers)
@@ -372,19 +361,8 @@ def test_parse_setup_model_yaml_accepts_null_embedding():
     )
 
 
-def test_replace_mcp_servers_is_atomic_and_formats_review_yaml(tmp_path):
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        """
-inference_providers:
-  company: {base_url: https://models.example/v1}
-llm_model:
-  model: chat-test
-  model_provider: openai
-  inference_provider: company
-"""
-    )
-    config, _ = load_setup_config(path)
+def test_replace_mcp_servers_is_atomic_and_formats_review_yaml():
+    config = configured_config("company")
     server = parse_server_parameters({
         "transport": "streamable_http",
         "url": "https://tools.example/mcp",
