@@ -21,7 +21,6 @@ from ursa.cli.doctor import (
     check_mcp_servers,
     render_report,
     report_counts,
-    run_checks,
 )
 
 
@@ -40,25 +39,10 @@ def test_runner_contains_section_failures(monkeypatch):
         raise SystemExit("check tried to exit")
 
     monkeypatch.setattr(doctor_mod, "check_configuration", exits)
-    report = run_checks(DoctorContext(config=None))
+    report = build_report()
 
     assert report.checks[0].status is CheckStatus.ERROR
     assert all(r.status is CheckStatus.WARN for r in report.checks[1:])
-
-
-def test_build_report_contains_runner_failure(monkeypatch):
-    monkeypatch.setattr(
-        doctor_mod,
-        "run_checks",
-        MagicMock(side_effect=SystemExit("runner exited")),
-    )
-
-    report = build_report(UrsaConfig())
-
-    assert report.status is CheckStatus.ERROR
-    assert report.checks == (
-        CheckResult("Doctor runtime", CheckStatus.ERROR, "runner exited"),
-    )
 
 
 def test_build_report_from_path_loads_resolves_and_delegates(
@@ -222,6 +206,7 @@ def _model_config(model, **values):
     return SimpleNamespace(
         model=model,
         inference_provider="test-provider",
+        pretty_repr=lambda short=False: f"{model} (test-provider)",
         **values,
     )
 
@@ -341,7 +326,7 @@ def test_mcp_redacts_human_and_json_output(monkeypatch, capsys, server):
     monkeypatch.setattr("ursa.util.mcp.start_mcp_client", reject)
     result = check_mcp_servers(DoctorContext(config=config))
     report = CheckResult.group("URSA Doctor", [result])
-    monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
+    monkeypatch.setattr(doctor_mod, "build_report", lambda *_args: report)
 
     assert doctor_mod.run_doctor(SimpleNamespace(json=True), config=config) == 1
     json_detail = capsys.readouterr().out
@@ -358,7 +343,7 @@ def test_main_doctor_json_writes_one_document(monkeypatch, capsys):
         "URSA Doctor",
         [CheckResult("broken", CheckStatus.ERROR, "boom")],
     )
-    monkeypatch.setattr(doctor_mod, "run_checks", lambda _context: report)
+    monkeypatch.setattr(doctor_mod, "build_report", lambda *_args: report)
 
     with pytest.raises(SystemExit) as exit_info:
         main(["self", "doctor", "--json"])
@@ -402,7 +387,7 @@ def test_main_doctor_does_not_echo_invalid_literal_secret(
 def test_unavailable_config_skips_external_checks():
     context = DoctorContext(config=None, config_error=ValueError("bad config"))
 
-    report = run_checks(context)
+    report = build_report(config_error=context.config_error)
 
     assert report.status is CheckStatus.ERROR
     assert [result.name for result in report.checks] == [
