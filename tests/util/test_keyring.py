@@ -61,23 +61,38 @@ def test_file_keyring_uses_highest_priority_user_config_path(
 
 
 @pytest.mark.parametrize(
-    ("mode", "allowed"),
-    [(0o600, True), (0o700, False), (0o604, False)],
+    ("hazard", "error"),
+    [
+        pytest.param("mode-600", None, id="private-mode-allowed"),
+        pytest.param("mode-700", "permissions 700", id="owner-executable"),
+        pytest.param("mode-604", "permissions 604", id="world-readable"),
+        pytest.param("wrong-owner", "owned by uid", id="foreign-owner"),
+        pytest.param("symlink", "could not be opened", id="symlink"),
+    ],
 )
 @_POSIX_TEST
-def test_file_keyring_checks_permissions(
-    tmp_path: Path, mode: int, allowed: bool
+def test_file_keyring_checks_security_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hazard: str,
+    error: str | None,
 ) -> None:
-    path = tmp_path / "keyring.json"
-    path.write_text('{"ursa":{"openai":"token"}}\n', encoding="utf-8")
-    path.chmod(mode)
-    keyring = FileKeyring(path)
+    target = tmp_path / "target.json"
+    FileKeyring(target).set_password("ursa", "openai", "token")
+    path = target
+    if hazard.startswith("mode-"):
+        path.chmod(int(hazard.removeprefix("mode-"), 8))
+    elif hazard == "wrong-owner":
+        monkeypatch.setattr(os, "getuid", lambda: path.stat().st_uid + 1)
+    elif hazard == "symlink":
+        path = tmp_path / "keyring.json"
+        path.symlink_to(target)
 
-    if allowed:
-        assert keyring.get_password("ursa", "openai") == "token"
+    if error is None:
+        assert FileKeyring(path).get_password("ursa", "openai") == "token"
     else:
-        with pytest.raises(KeyringError, match=f"permissions {mode:03o}"):
-            keyring.get_password("ursa", "openai")
+        with pytest.raises(KeyringError, match=error):
+            FileKeyring(path).get_password("ursa", "openai")
 
 
 @_POSIX_TEST
@@ -93,29 +108,6 @@ def test_file_keyring_preserves_restrictive_mode_when_updating(
 
     assert keyring.get_password("ursa", "openai") == "new"
     assert stat.S_IMODE(path.stat().st_mode) == 0o400
-
-
-@_POSIX_TEST
-def test_file_keyring_rejects_file_owned_by_another_user(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "keyring.json"
-    FileKeyring(path).set_password("ursa", "openai", "token")
-    monkeypatch.setattr(os, "getuid", lambda: path.stat().st_uid + 1)
-
-    with pytest.raises(KeyringError, match="owned by uid"):
-        FileKeyring(path).get_password("ursa", "openai")
-
-
-@_POSIX_TEST
-def test_file_keyring_rejects_symlink(tmp_path: Path) -> None:
-    target = tmp_path / "target.json"
-    FileKeyring(target).set_password("ursa", "openai", "token")
-    path = tmp_path / "keyring.json"
-    path.symlink_to(target)
-
-    with pytest.raises(KeyringError):
-        FileKeyring(path).get_password("ursa", "openai")
 
 
 def test_file_keyring_locks_updates_across_processes(
@@ -189,22 +181,18 @@ def test_fallback_keyring_prefers_working_system_keyring(
     assert not fallback_path.exists()
 
 
-def test_fallback_keyring_uses_file_for_null_system_backend(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "system",
+    [
+        pytest.param(NullSystemKeyring(), id="null-backend"),
+        pytest.param(FailingSystemKeyring(), id="failing-backend"),
+    ],
+)
+def test_fallback_keyring_uses_file_for_unusable_system_backend(
+    tmp_path: Path, system: KeyringBackend
 ) -> None:
     fallback = FileKeyring(tmp_path / "keyring.json")
-    keyring = FallbackKeyring(NullSystemKeyring(), fallback)
-
-    keyring.set_password("ursa", "openai", "file-token")
-
-    assert keyring.get_password("ursa", "openai") == "file-token"
-
-
-def test_fallback_keyring_uses_file_when_system_operations_fail(
-    tmp_path: Path,
-) -> None:
-    fallback = FileKeyring(tmp_path / "keyring.json")
-    keyring = FallbackKeyring(FailingSystemKeyring(), fallback)
+    keyring = FallbackKeyring(system, fallback)
 
     keyring.set_password("ursa", "openai", "file-token")
 
