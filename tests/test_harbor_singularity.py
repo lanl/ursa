@@ -97,6 +97,80 @@ def _prepare_started_environment(
     return overlay
 
 
+def test_host_ca_certificates_pem_uses_ssl(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class Context:
+        @staticmethod
+        def get_ca_certs(*, binary_form: bool) -> list[bytes]:
+            assert binary_form
+            return [b"first", b"second"]
+
+    monkeypatch.setattr(
+        harbor_singularity.ssl,
+        "create_default_context",
+        lambda: Context(),
+    )
+    monkeypatch.setattr(
+        harbor_singularity.ssl,
+        "get_default_verify_paths",
+        lambda: type("VerifyPaths", (), {"cafile": None, "capath": None})(),
+    )
+    monkeypatch.setattr(
+        harbor_singularity.ssl,
+        "DER_cert_to_PEM_cert",
+        lambda certificate: f"PEM:{certificate.decode()}\n",
+    )
+
+    assert harbor_singularity._host_ca_certificates_pem() == (
+        "PEM:first\nPEM:second\n"
+    )
+
+
+def test_host_ca_certificates_pem_loads_hashed_capath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    capath = tmp_path / "certs"
+    capath.mkdir()
+    certificate = capath / "1234abcd.0"
+    certificate.write_bytes(b"certificate")
+    (capath / "ignored.pem").write_bytes(b"ignored")
+
+    class Context:
+        loaded: list[bytes] = []
+
+        def load_verify_locations(self, *, cafile: str) -> None:
+            self.loaded.append(Path(cafile).read_bytes())
+
+        def get_ca_certs(self, *, binary_form: bool) -> list[bytes]:
+            assert binary_form
+            return self.loaded
+
+    monkeypatch.setattr(
+        harbor_singularity.ssl,
+        "create_default_context",
+        lambda: Context(),
+    )
+    monkeypatch.setattr(
+        harbor_singularity.ssl,
+        "get_default_verify_paths",
+        lambda: type(
+            "VerifyPaths",
+            (),
+            {"cafile": None, "capath": str(capath)},
+        )(),
+    )
+    monkeypatch.setattr(
+        harbor_singularity.ssl,
+        "DER_cert_to_PEM_cert",
+        lambda value: f"PEM:{value.decode()}\n",
+    )
+
+    assert harbor_singularity._host_ca_certificates_pem() == (
+        "PEM:certificate\n"
+    )
+
+
 def test_phase_network_change_requires_overlay(tmp_path: Path):
     with pytest.raises(ValueError, match="require a writable overlay"):
         _environment(
@@ -155,6 +229,35 @@ def test_compose_network_policy_is_rewritten(tmp_path: Path):
         "allocate_ip": True,
         "enable": True,
     }
+
+
+def test_host_ca_certificates_are_staged_and_exported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    environment = _environment(tmp_path)
+    _prepare_started_environment(environment, tmp_path)
+    monkeypatch.setattr(
+        harbor_singularity,
+        "_host_ca_certificates_pem",
+        lambda: "test host CA bundle\n",
+    )
+    staged = environment._prepare_host_ca_certificates()
+    environment._persistent_env["SSL_CERT_FILE"] = "/task/ca-bundle.pem"
+
+    runtime_env = environment._runtime_environment(None)
+
+    assert staged is not None
+    assert staged.read_text() == "test host CA bundle\n"
+    assert staged.stat().st_mode & 0o222 == 0
+    assert runtime_env["SINGULARITYENV_SSL_CERT_FILE"] == (
+        "/task/ca-bundle.pem"
+    )
+    assert runtime_env["SINGULARITYENV_REQUESTS_CA_BUNDLE"] == (
+        "/staging/host-ca-certificates.crt"
+    )
+    assert runtime_env["SINGULARITYENV_CURL_CA_BUNDLE"] == (
+        "/staging/host-ca-certificates.crt"
+    )
 
 
 async def test_network_policy_change_restarts_with_existing_overlay(
@@ -589,6 +692,12 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
     environment._prepare_runtime_workdir()
     environment._staging_dir = tmp_path / "staging"
     environment._staging_dir.mkdir()
+    monkeypatch.setattr(
+        harbor_singularity,
+        "_host_ca_certificates_pem",
+        lambda: "test host CA bundle\n",
+    )
+    staged_ca_certificates = environment._prepare_host_ca_certificates()
     observed: dict[str, object] = {}
 
     async def convert(*_args: object, **kwargs: object) -> dict[str, list[str]]:
@@ -616,6 +725,14 @@ async def test_prepare_compose_project_wires_runtime_workdirs(
         for service_workdirs in workdirs.values()
         for path in service_workdirs
     )
+    assert staged_ca_certificates is not None
+    assert staged_ca_certificates.read_text() == "test host CA bundle\n"
+    assert staged_ca_certificates.stat().st_mode & 0o222 == 0
+    assert observed["main_environment"] == {
+        "CURL_CA_BUNDLE": "/staging/host-ca-certificates.crt",
+        "REQUESTS_CA_BUNDLE": "/staging/host-ca-certificates.crt",
+        "SSL_CERT_FILE": "/staging/host-ca-certificates.crt",
+    }
     environment._cleanup_compose_project()
     environment._cleanup_staging()
 

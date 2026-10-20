@@ -13,6 +13,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,32 @@ _COMPOSE_SERVICE_FIELDS = frozenset({
     "volumes",
 })
 _COMPOSE_BUILD_FIELDS = frozenset({"args", "context", "dockerfile", "target"})
+_HOST_CA_CERTIFICATES_FILENAME = "host-ca-certificates.crt"
+
+
+def _host_ca_certificates_pem() -> str:
+    """Serialize the host OpenSSL trust anchors as one PEM bundle."""
+    context = ssl.create_default_context()
+    paths = ssl.get_default_verify_paths()
+    if paths.cafile is not None:
+        context.load_verify_locations(cafile=paths.cafile)
+    if paths.capath is not None:
+        loaded: set[Path] = set()
+        for entry in sorted(Path(paths.capath).iterdir()):
+            if re.fullmatch(r"[0-9a-fA-F]{8}\.\d+", entry.name) is None:
+                continue
+            try:
+                resolved = entry.resolve(strict=True)
+                if resolved in loaded or not resolved.is_file():
+                    continue
+                context.load_verify_locations(cafile=str(resolved))
+            except (OSError, ssl.SSLError):
+                continue
+            loaded.add(resolved)
+    return "".join(
+        ssl.DER_cert_to_PEM_cert(certificate)
+        for certificate in context.get_ca_certs(binary_form=True)
+    )
 
 
 def _merge_compose(base: dict[str, Any], overlay: dict[str, Any]) -> None:
@@ -797,6 +824,13 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             runtime = self._runtime()
             self._runtime_path = runtime
         return runtime
+
+    @override
+    def _startup_env(self) -> dict[str, str]:
+        return {
+            **self._host_ca_certificates_env(),
+            **super()._startup_env(),
+        }
 
     @classmethod
     @override
@@ -1672,6 +1706,34 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
         command.extend([str(self._sif_path), self._instance_name])
         return command
 
+    def _prepare_host_ca_certificates(self) -> Path | None:
+        """Materialize the host OpenSSL trust store in the staging mount."""
+        if self._staging_dir is None:
+            raise RuntimeError("Singularity staging directory is not prepared")
+        source = self._staging_dir / _HOST_CA_CERTIFICATES_FILENAME
+        if not source.is_file():
+            certificates = _host_ca_certificates_pem()
+            if not certificates:
+                return None
+            source.write_text(certificates, encoding="ascii")
+            source.chmod(0o444)
+        return source
+
+    def _host_ca_certificates_env(self) -> dict[str, str]:
+        if self._staging_dir is None:
+            return {}
+        source = self._staging_dir / _HOST_CA_CERTIFICATES_FILENAME
+        if not source.is_file():
+            return {}
+        container_path = str(
+            PurePosixPath("/staging") / source.relative_to(self._staging_dir)
+        )
+        return {
+            "CURL_CA_BUNDLE": container_path,
+            "REQUESTS_CA_BUNDLE": container_path,
+            "SSL_CERT_FILE": container_path,
+        }
+
     def _harbor_writable_binds(
         self,
     ) -> tuple[tuple[Path, PurePosixPath], ...]:
@@ -2093,6 +2155,7 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             self._scratch_dir.chmod(0o700)
             self._staging_dir = self._scratch_dir / "staging"
             self._staging_dir.mkdir(mode=0o755)
+            self._prepare_host_ca_certificates()
             self._instance_start_attempted = False
             async with asyncio.timeout(self._startup_timeout_sec):
                 if self._overlay_enabled:
@@ -2262,6 +2325,10 @@ class DockerfileSingularityEnvironment(BaseEnvironment):
             else "SINGULARITYENV_"
         )
         merged = self._merge_env(env) if merge_persistent else env
+        merged = {
+            **self._host_ca_certificates_env(),
+            **(merged or {}),
+        }
         for key, value in (merged or {}).items():
             if not key or "=" in key or "\0" in key or "\0" in value:
                 raise ValueError(f"Invalid environment variable: {key!r}")
