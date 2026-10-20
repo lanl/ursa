@@ -3,13 +3,12 @@
 """Reusable widgets and modal screens for the Textual CLI."""
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from itertools import islice
 from math import ceil
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import SecretStr, ValidationError
@@ -410,38 +409,7 @@ class FuzzySelect(Select):
                 overlay.reset_search()
 
 
-class CompactCollapsible(Collapsible):
-    """Borderless collapsible used for compact inline configuration."""
-
-    DEFAULT_CSS = """
-    CompactCollapsible {
-        width: 100%;
-        height: auto;
-        margin: 0;
-        padding: 0;
-        border: none;
-        background: transparent;
-    }
-
-    CompactCollapsible > CollapsibleTitle {
-        height: 1;
-        padding: 0;
-        color: $text-muted;
-        background: transparent;
-    }
-    """
-
-
-class YamlTextArea(TextArea):
-    """Text area configured with YAML highlighting and line numbers."""
-
-    def __init__(self, text: str = "", **kwargs: Any) -> None:
-        kwargs.setdefault("language", "yaml")
-        kwargs.setdefault("show_line_numbers", True)
-        super().__init__(text, **kwargs)
-
-
-class AdvancedYamlEditor(CompactCollapsible):
+class AdvancedYamlEditor(Collapsible):
     """Reusable collapsible YAML editor with validation presentation."""
 
     DEFAULT_CSS = """
@@ -476,11 +444,11 @@ class AdvancedYamlEditor(CompactCollapsible):
         text: str = "",
         *,
         editor_classes: str = "",
-        error_classes: str = "",
-        markup: bool = True,
     ) -> None:
-        editor = YamlTextArea(
+        editor = TextArea(
             text,
+            language="yaml",
+            show_line_numbers=True,
             tab_behavior="indent",
             id=f"{prefix}-config-yaml",
             classes=f"advanced-yaml-editor {editor_classes}",
@@ -488,8 +456,8 @@ class AdvancedYamlEditor(CompactCollapsible):
         error = Static(
             "",
             id=f"{prefix}-yaml-error",
-            classes=f"advanced-yaml-error {error_classes} hidden",
-            markup=markup,
+            classes="advanced-yaml-error hidden",
+            markup=False,
         )
         super().__init__(
             editor,
@@ -497,18 +465,16 @@ class AdvancedYamlEditor(CompactCollapsible):
             title="Advanced",
             collapsed=True,
             id=f"{prefix}-advanced",
+            classes="compact-collapsible",
         )
         self.prefix = prefix
-        self.error_markup = markup
-        self._validation_timer: Timer | None = None
 
     def set_text(self, text: str) -> None:
         """Replace editor text without emitting a change event."""
         editor = self.query_one(TextArea)
-        if editor.text == text:
-            return
-        with self.prevent(TextArea.Changed):
-            editor.text = text
+        if editor.text != text:
+            with self.prevent(TextArea.Changed):
+                editor.text = text
 
     def set_validation(self, state: str, error: str = "") -> None:
         """Display neutral, valid, or invalid validation state."""
@@ -517,24 +483,8 @@ class AdvancedYamlEditor(CompactCollapsible):
         if state != "neutral":
             editor.add_class(f"yaml-{state}")
         message = self.query_one(f"#{self.prefix}-yaml-error", Static)
-        message.update(Text(error) if self.error_markup else error)
+        message.update(error)
         message.set_class(not error, "hidden")
-
-    def schedule_validation(
-        self, delay: float, callback: Callable[[], None]
-    ) -> None:
-        """Debounce a validation callback owned by this editor."""
-        self.cancel_validation()
-        self._validation_timer = self.set_timer(delay, callback)
-
-    def cancel_validation(self) -> None:
-        """Cancel a pending validation callback, if any."""
-        if self._validation_timer is not None:
-            self._validation_timer.stop()
-            self._validation_timer = None
-
-    def on_unmount(self) -> None:
-        self.cancel_validation()
 
 
 class HelpLabel(Horizontal):

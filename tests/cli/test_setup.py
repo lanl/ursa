@@ -24,7 +24,8 @@ from ursa.cli.setup import (
     apply_setup_defaults,
     load_setup_defaults,
 )
-from ursa.cli.setup_models import SetupModelEditor, SetupModelSelection
+from ursa.cli.setup_models import CUSTOM, SetupModelEditor, SetupModelSelection
+from ursa.cli.tui.widgets import FuzzySelect
 from ursa.util.secrets import (
     FallbackKeyring,
     FileKeyring,
@@ -228,6 +229,56 @@ async def test_provider_tabs_add_empty_persistent_draft(app):
         )
 
 
+async def test_provider_yaml_validation_debounces_and_stops_on_remove(
+    monkeypatch, app
+):
+    class ControlledTimer:
+        def __init__(self, callback):
+            self.callback = callback
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+        def fire(self):
+            assert not self.stopped
+            self.callback()
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        await pilot.click("#provider-add")
+        await pilot.pause()
+        editor = app.provider_tabs.active_editor()
+        assert editor is not None
+        validate = MagicMock()
+        monkeypatch.setattr(editor, "_validate_yaml", validate)
+        scheduled = []
+
+        def set_timer(_delay, callback, *args, **kwargs):
+            timer = ControlledTimer(callback)
+            scheduled.append(timer)
+            return timer
+
+        monkeypatch.setattr(editor, "set_timer", set_timer)
+        yaml_editor = editor.query_one(TextArea)
+        yaml_editor.text = "base_url: https://first.example/v1\n"
+        await pilot.pause()
+        first = scheduled[-1]
+        yaml_editor.text = "base_url: https://second.example/v1\n"
+        await pilot.pause()
+
+        assert first.stopped
+        validate.assert_not_called()
+        scheduled[-1].fire()
+        validate.assert_called_once_with()
+
+        yaml_editor.text = "base_url: https://third.example/v1\n"
+        await pilot.pause()
+        pending = scheduled[-1]
+        await pilot.click("#provider-remove")
+        assert pending.stopped
+
+
 async def test_provider_validation_failure_does_not_continue(monkeypatch, app):
     monkeypatch.setattr(
         "ursa.cli.setup.run_probe_with_deadline",
@@ -323,7 +374,7 @@ async def test_provider_remove_retargets_models_only_after_commit(
 
         assert app.config.llm_model.inference_provider == "old"
         assert app.config.emb_model.inference_provider == "old"
-        assert await app._validate_provider_page()
+        assert await app._validate_entry_page("provider")
         assert app.config.llm_model.inference_provider == "remaining"
         assert app.config.emb_model.inference_provider == "remaining"
         assert app.query_one("#provider-remove", Button).disabled
@@ -405,6 +456,8 @@ async def test_setup_model_editor_submits_absent_embedding_as_none(
         await app.workers.wait_for_complete()
         editor = app.query_one(SetupModelEditor)
 
+        editor.query_one("#setup-chat-model-select", FuzzySelect).value = CUSTOM
+        await pilot.pause()
         editor.query_one("#setup-chat-model", Input).value = "chat-model"
         await pilot.pause()
         await pilot.click("#models-save")
@@ -441,6 +494,8 @@ async def test_setup_model_named_provider_inherits_credentials(
         app._show("models")
         await app.workers.wait_for_complete()
         editor = app.query_one(SetupModelEditor)
+        editor.query_one("#setup-chat-model-select", FuzzySelect).value = CUSTOM
+        await pilot.pause()
         editor.query_one("#setup-chat-model", Input).value = "claude-test"
         await pilot.pause()
         await pilot.click("#models-save")
@@ -491,7 +546,7 @@ async def test_mcp_tabs_add_empty_draft_and_advanced_is_complete(app):
     app.config = configured_config()
 
     async with app.run_test(size=(120, 42)) as pilot:
-        app._begin_mcp("tools")
+        app._begin_entry("mcp", "tools")
         await pilot.pause()
         existing = app.mcp_tabs.active_editor()
         assert existing is not None
@@ -518,7 +573,7 @@ async def test_mcp_local_schema_validation_precedes_every_probe(
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
 
     async with app.run_test(size=(120, 42)) as pilot:
-        app._begin_mcp()
+        app._begin_entry("mcp")
         await pilot.pause()
         await pilot.click("#mcp-add")
         await pilot.pause()
@@ -526,7 +581,7 @@ async def test_mcp_local_schema_validation_precedes_every_probe(
         assert editor is not None
         editor.query_one(".entry-name", Input).value = "broken"
 
-        assert not await app._validate_mcp_page()
+        assert not await app._validate_entry_page("mcp")
         probe.assert_not_called()
         assert not app.config.mcp_servers
         assert app.mcp_tabs.active_editor() is editor
@@ -556,7 +611,7 @@ async def test_mcp_continue_checks_all_servers_transactionally(
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
 
     async with app.run_test(size=(120, 42)) as pilot:
-        app._begin_mcp(names[0])
+        app._begin_entry("mcp", names[0])
         await pilot.pause()
         assert str(app.query_one("#mcp-save", Button).label) == (
             "Validate and continue"
@@ -620,10 +675,10 @@ async def test_mcp_validation_uses_canonical_full_server_config(
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", run_inline)
 
     async with app.run_test(size=(120, 42)) as pilot:
-        app._begin_mcp("tools")
+        app._begin_entry("mcp", "tools")
         await pilot.pause()
 
-        assert await app._validate_mcp_page()
+        assert await app._validate_entry_page("mcp")
 
     connection = captured["tools"]
     assert connection["headers"] == {
@@ -643,7 +698,7 @@ async def test_mcp_continue_allows_no_servers(monkeypatch, app):
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
 
     async with app.run_test(size=(120, 42)) as pilot:
-        app._begin_mcp()
+        app._begin_entry("mcp")
         await pilot.pause()
         assert not app.mcp_tabs.editors()
         await pilot.click("#mcp-save")

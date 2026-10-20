@@ -35,6 +35,7 @@ from ursa.util.secrets import (
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _SENSITIVE_NAME = re.compile(r"auth|token|secret|password|api.key", re.I)
 _ENV_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _SETUP_DEFAULT_FIELDS = frozenset(
     "python_version extras extra_packages inference_providers "
     "llm_model emb_model mcp_servers".split()
@@ -69,13 +70,21 @@ def validate_setup_url(value: Any, noun: str) -> str:
     return value
 
 
-def load_setup_config(path: Path) -> tuple[UrsaConfig, bool]:
-    """Load setup's editable config without interpolating placeholders.
+def _setup_view(
+    config: UrsaConfig, provider_names: Collection[str]
+) -> UrsaConfig:
+    providers = {
+        name: config.inference_providers[name]
+        for name in map(str, provider_names)
+    }
+    config = config.model_copy(update={"inference_providers": providers})
+    if overlap := sorted(set(providers) & set(config.mcp_servers)):
+        raise SetupError(f"Names used by both provider and MCP: {overlap}")
+    return config
 
-    The regular CLI supplies a default OpenAI provider.  Guided setup instead
-    exposes only providers that were explicitly present in the editable file.
-    The returned boolean records whether the language model was also explicit.
-    """
+
+def load_setup_config(path: Path) -> tuple[UrsaConfig, bool]:
+    """Load editable config and report whether its LLM was explicit."""
     try:
         raw = (
             load_config_file(path, interpolate=False) if path.is_file() else {}
@@ -91,13 +100,7 @@ def load_setup_config(path: Path) -> tuple[UrsaConfig, bool]:
     except (OSError, ValueError, yaml.YAMLError) as exc:
         raise SetupError(f"Could not load configuration: {exc}") from None
 
-    explicit = {
-        str(name): config.inference_providers[str(name)] for name in providers
-    }
-    config = config.model_copy(update={"inference_providers": explicit})
-    if overlap := sorted(set(explicit) & set(config.mcp_servers)):
-        raise SetupError(f"Names used by both provider and MCP: {overlap}")
-    return config, "llm_model" in raw
+    return _setup_view(config, providers), "llm_model" in raw
 
 
 def load_setup_defaults(path: Path) -> dict[str, Any]:
@@ -107,10 +110,7 @@ def load_setup_defaults(path: Path) -> dict[str, Any]:
     except OSError as exc:
         raise SetupError(f"Could not read setup defaults: {exc}") from None
     except json.JSONDecodeError as exc:
-        raise SetupError(
-            f"Setup defaults are not valid JSON: {exc.msg} "
-            f"(line {exc.lineno}, column {exc.colno})."
-        ) from None
+        raise SetupError(f"Setup defaults are not valid JSON: {exc}") from None
     if not isinstance(value, dict):
         raise SetupError("Setup defaults must be a JSON object.")
     if unknown := sorted(set(value) - _SETUP_DEFAULT_FIELDS):
@@ -121,7 +121,6 @@ def load_setup_defaults(path: Path) -> dict[str, Any]:
 def reject_literal_secrets(
     value: Any,
     *,
-    allow_implicit_keyring_template: bool = False,
     error_message: str = (
         "Literal secrets cannot be saved; use an environment or keyring "
         "secret reference."
@@ -132,12 +131,6 @@ def reject_literal_secrets(
     while stack:
         name, item = stack.pop()
         if name and _SENSITIVE_NAME.search(name):
-            if (
-                allow_implicit_keyring_template
-                and isinstance(item, Mapping)
-                and set(item) == {"template"}
-            ):
-                item = {**item, "keyring": True}
             if not (
                 isinstance(SecretTemplate.maybe_validate(item), SecretReference)
                 or isinstance(item, str)
@@ -153,36 +146,20 @@ def reject_literal_secrets(
 
 def _replace_config(config: UrsaConfig, **updates: Any) -> UrsaConfig:
     try:
-        values = config.model_dump(
-            mode="python",
-            exclude_unset=True,
-            context={"include_defaults": False},
-        )
-        values.update(updates)
-        candidate = UrsaConfig.model_validate(values)
-
-        # Retain setup's providers rather than UrsaConfig's injected OpenAI.
-        provider_names = updates.get(
-            "inference_providers", values.get("inference_providers", {})
-        )
-        if isinstance(provider_names, Mapping):
-            candidate = candidate.model_copy(
-                update={
-                    "inference_providers": {
-                        name: candidate.inference_providers[name]
-                        for name in provider_names
-                    }
-                }
+        candidate = UrsaConfig.model_validate(
+            config.model_dump(
+                mode="python",
+                exclude_unset=True,
+                context={"include_defaults": False},
             )
-        if overlap := sorted(
-            set(candidate.inference_providers) & set(candidate.mcp_servers)
-        ):
-            raise SetupError(f"Names used by both provider and MCP: {overlap}")
-    except SetupError:
-        raise
+            | updates
+        )
+        provider_names = updates.get(
+            "inference_providers", config.inference_providers
+        )
     except (TypeError, ValueError) as exc:
         raise SetupError(f"Setup configuration is invalid: {exc}") from None
-    return candidate
+    return _setup_view(candidate, provider_names)
 
 
 def apply_setup_defaults(
@@ -192,34 +169,44 @@ def apply_setup_defaults(
     llm_configured: bool = False,
 ) -> bool:
     """Add site defaults without replacing entries in the user's config."""
+    defaults = deepcopy(defaults)
+    servers = defaults.get("mcp_servers", {})
+    if isinstance(servers, dict):
+        for server in servers.values():
+            headers = (
+                server.get("headers") if isinstance(server, dict) else None
+            )
+            if isinstance(headers, dict):
+                for value in headers.values():
+                    if (
+                        isinstance(value, dict)
+                        and "template" in value
+                        and value.get("env") is None
+                        and value.get("keyring") in (None, False)
+                    ):
+                        value["keyring"] = True
     reject_literal_secrets(
         defaults,
-        allow_implicit_keyring_template=True,
         error_message="Installer defaults must not contain API keys.",
     )
     providers = defaults.get("inference_providers", [])
     if not isinstance(providers, list):
         raise SetupError("inference_providers must be a JSON array.")
-    provider_values: dict[str, Any] = {}
+    provider_values = dict(config.inference_providers)
+    seen_providers: set[str] = set()
     for item in providers:
         if not isinstance(item, dict):
-            raise SetupError(
-                "Inference provider defaults must be JSON objects."
-            )
-        value = deepcopy(item)
-        try:
-            name = validate_setup_name(value.pop("name"), "Inference provider")
-            value["base_url"] = validate_setup_url(
-                value["base_url"], "Inference provider base URL"
-            )
-        except KeyError as exc:
-            raise SetupError(
-                f"Inference provider default is missing '{exc.args[0]}'."
-            ) from None
-        if name in provider_values:
-            raise SetupError(
-                f"Inference provider default '{name}' is duplicated."
-            )
+            raise SetupError("Provider defaults must be JSON objects.")
+        value = dict(item)
+        name = validate_setup_name(
+            value.pop("name", None), "Inference provider"
+        )
+        value["base_url"] = validate_setup_url(
+            value.get("base_url"), "Inference provider base URL"
+        )
+        if name in seen_providers:
+            raise SetupError(f"Provider default '{name}' is duplicated.")
+        seen_providers.add(name)
         try:
             provider = InferenceProviderConfig.model_validate(value)
         except ValueError as exc:
@@ -227,47 +214,33 @@ def apply_setup_defaults(
                 f"Inference provider default '{name}' is invalid: {exc}"
             ) from None
         if name in config.inference_providers:
-            provider_values[name] = config.inference_providers[name]
             continue
         if name in config.mcp_servers:
-            raise SetupError(
-                f"The name '{name}' is used by both provider and MCP."
-            )
-        if provider.api_key is None and urlparse(
-            provider.base_url
-        ).hostname not in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        }:
+            raise SetupError(f"'{name}' is used by both provider and MCP.")
+        if (
+            provider.api_key is None
+            and urlparse(provider.base_url).hostname not in _LOCAL_HOSTS
+        ):
             provider = provider.model_copy(
                 update={"api_key": SecretReference(keyring=True)}
             )
         provider_values[name] = provider
 
-    provider_values = {
-        **config.inference_providers,
-        **provider_values,
-    }
     updates: dict[str, Any] = {}
-    if set(provider_values) - set(config.inference_providers):
+    if len(provider_values) != len(config.inference_providers):
         updates["inference_providers"] = provider_values
 
-    for field in ("llm_model", "emb_model"):
-        if (
-            field == "llm_model"
-            and llm_configured
-            or field == "emb_model"
-            and config.emb_model is not None
-        ):
+    for field, configured in (
+        ("llm_model", llm_configured),
+        ("emb_model", config.emb_model is not None),
+    ):
+        if configured:
             continue
         value = defaults.get(field)
         if value is None:
             continue
         if not isinstance(value, Mapping):
-            raise SetupError(
-                f"Installer default {field} must be a JSON object."
-            )
+            raise SetupError(f"Installer default {field} must be an object.")
         provider_name = value.get("inference_provider")
         if (
             not isinstance(provider_name, str)
@@ -278,32 +251,18 @@ def apply_setup_defaults(
         if field == "llm_model":
             llm_configured = True
 
-    servers = defaults.get("mcp_servers", {})
     if not isinstance(servers, dict):
         raise SetupError("mcp_servers must be a JSON object.")
-    server_values: dict[str, Any] = dict(config.mcp_servers)
+    server_values = dict(config.mcp_servers)
     for raw_name, raw_server in servers.items():
         name = validate_setup_name(str(raw_name), "MCP server")
         if name in config.mcp_servers:
             continue
         if name in config.inference_providers:
-            raise SetupError(
-                f"The name '{name}' is used by both provider and MCP."
-            )
+            raise SetupError(f"'{name}' is used by both provider and MCP.")
         if not isinstance(raw_server, dict):
             raise SetupError(f"MCP server '{name}' must be a JSON object.")
-        server = deepcopy(raw_server)
-        headers = server.get("headers")
-        if isinstance(headers, dict):
-            for raw_value in headers.values():
-                if (
-                    isinstance(raw_value, dict)
-                    and "template" in raw_value
-                    and raw_value.get("env") is None
-                    and raw_value.get("keyring") in (None, False)
-                ):
-                    raw_value["keyring"] = True
-        server_values[name] = server
+        server_values[name] = raw_server
 
     if set(server_values) - set(config.mcp_servers):
         updates["mcp_servers"] = server_values
@@ -326,12 +285,7 @@ def replace_inference_providers(
     *,
     renamed: Mapping[str, str] | None = None,
 ) -> UrsaConfig:
-    """Atomically replace providers and retarget model references.
-
-    A model follows an explicitly renamed provider.  References to removed
-    providers fall back to the first replacement provider, matching setup's
-    ordered provider editor.
-    """
+    """Replace providers, retargeting renamed or removed references."""
     if not providers:
         raise SetupError("At least one inference provider is required.")
     replacements = {
@@ -355,9 +309,7 @@ def replace_inference_providers(
 
     fallback = next(iter(replacements))
 
-    def retarget(
-        model: ChatModelConfig | EmbModelConfig | None,
-    ) -> ChatModelConfig | EmbModelConfig | None:
+    def retarget(model):
         if model is None:
             return None
         current = model.inference_provider
@@ -386,12 +338,8 @@ def replace_models(
     """Atomically replace setup's language and embedding models."""
     return _replace_config(
         config,
-        llm_model=deepcopy(llm_model.editable_values()),
-        emb_model=(
-            deepcopy(emb_model.editable_values())
-            if emb_model is not None
-            else None
-        ),
+        llm_model=llm_model.editable_values(),
+        emb_model=emb_model.editable_values() if emb_model else None,
     )
 
 
@@ -406,9 +354,7 @@ def parse_setup_model_yaml(
     try:
         values = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise SetupError(
-            f"Model configuration is invalid YAML: {exc}"
-        ) from None
+        raise SetupError(f"Invalid model YAML: {exc}") from None
 
     if values is None and model_type is EmbModelConfig:
         return None
@@ -472,12 +418,7 @@ def prepare_provider_probe(
     name: str,
     staged_secret: SecretStr | None = None,
 ) -> InferenceProviderConfig:
-    """Build one runtime provider for a connectivity probe.
-
-    Environment placeholders are interpolated, secret references are resolved
-    unless a staged value is supplied, and a model provider is borrowed from a
-    configured model that uses this named inference provider.
-    """
+    """Resolve one provider and staged secret for a connectivity probe."""
     if name not in config.inference_providers:
         raise SetupError(f"Unknown inference provider '{name}'.")
     if staged_secret is not None and not isinstance(staged_secret, SecretStr):
@@ -490,7 +431,7 @@ def prepare_provider_probe(
         ).resolve(name)
     except (TypeError, ValueError) as exc:
         raise SetupError(
-            f"Inference provider '{name}' is invalid: {exc}"
+            f"Invalid inference provider '{name}': {exc}"
         ) from None
 
     resolved = staged_secret
@@ -502,12 +443,11 @@ def prepare_provider_probe(
         else:
             resolved = reference
 
-    model_provider = getattr(runtime, "model_provider", None)
-    if not model_provider:
-        for model in (config.llm_model, config.emb_model):
-            if model is not None and model.inference_provider == name:
-                model_provider = model.model_provider
-                break
+    models = (config.llm_model, config.emb_model)
+    matching = (m for m in models if m and m.inference_provider == name)
+    model_provider = getattr(runtime, "model_provider", None) or getattr(
+        next(matching, None), "model_provider", None
+    )
     return runtime.model_copy(
         update={"api_key": resolved, "model_provider": model_provider}
     )

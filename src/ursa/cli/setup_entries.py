@@ -8,9 +8,8 @@ import re
 import shlex
 from collections.abc import Callable, Mapping
 from contextlib import redirect_stderr, suppress
-from dataclasses import dataclass
 from threading import Lock
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from urllib.parse import urlparse
 
 import yaml
@@ -19,6 +18,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     Checkbox,
@@ -120,8 +120,7 @@ def _url_options() -> list[tuple[str, str]]:
     ]
 
 
-@dataclass(frozen=True)
-class CredentialValue:
+class CredentialValue(NamedTuple):
     """A credential reference plus an optional unsaved keyring value."""
 
     reference: SecretReference | None = None
@@ -275,18 +274,14 @@ class ApiKeyEntry(Vertical):
 
     @on(Select.Changed)
     def source_changed(self, event: Select.Changed) -> None:
-        if event.select.id == f"{self.prefix}-source":
-            self._source(event.value)
+        self._source(event.value)
 
     @on(Checkbox.Changed)
     def show_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id == f"{self.prefix}-show":
-            key = self.query_one(f"#{self.prefix}-key", Input)
-            key.password = not event.value
+        self.query_one(f"#{self.prefix}-key", Input).password = not event.value
 
 
-@dataclass(frozen=True)
-class ProviderCandidate:
+class ProviderCandidate(NamedTuple):
     draft_id: str
     original_name: str | None
     name: str
@@ -295,8 +290,7 @@ class ProviderCandidate:
     credential: CredentialValue
 
 
-@dataclass(frozen=True)
-class McpCandidate:
+class McpCandidate(NamedTuple):
     draft_id: str
     original_name: str | None
     name: str
@@ -308,7 +302,7 @@ class McpCandidate:
 class EntryDraftEditor(Vertical):
     """A named draft whose form and complete YAML stay in sync."""
 
-    kind = ""
+    YAML_VALIDATION_DELAY = 0.5
 
     class Changed(Message):
         def __init__(self, editor: EntryDraftEditor) -> None:
@@ -317,17 +311,20 @@ class EntryDraftEditor(Vertical):
 
     def __init__(
         self,
+        kind: str,
         draft_id: str,
         original_name: str | None,
         config: InferenceProviderConfig | ServerParameters | None,
         known_keys: list[str],
     ) -> None:
         super().__init__(id=f"{draft_id}-editor", classes="entry-draft-editor")
+        self.kind = kind
         self.draft_id = self.prefix = draft_id
         self.original_name = original_name
-        self.initial_name = self.draft_name = original_name or ""
+        self.initial_name = original_name or ""
         self.known_keys, self._initial = known_keys, config
         self._syncing = False
+        self._yaml_timer: Timer | None = None
         self.header, self.template = "Authorization", "Bearer %s"
         if config is None:
             self._values: dict[str, Any] = {}
@@ -371,7 +368,6 @@ class EntryDraftEditor(Vertical):
             self.prefix,
             yaml.safe_dump(self._values, sort_keys=False, allow_unicode=True),
             editor_classes=f"{self.kind}-draft-yaml",
-            markup=False,
         )
         yield Static("", classes="draft-message form-message", markup=False)
 
@@ -458,6 +454,11 @@ class EntryDraftEditor(Vertical):
         )
         self._validate_yaml(update_controls=False)
 
+    def on_unmount(self) -> None:
+        if self._yaml_timer is not None:
+            self._yaml_timer.stop()
+            self._yaml_timer = None
+
     @property
     def credential(self) -> ApiKeyEntry:
         suffix = "key" if self.kind == "provider" else "token"
@@ -469,20 +470,24 @@ class EntryDraftEditor(Vertical):
 
     def raw_name(self) -> str:
         field = self.query_one_optional(f"#{self.prefix}-name", Input)
-        return (field.value if field is not None else self.draft_name).strip()
+        return (field.value if field is not None else self.initial_name).strip()
 
     def set_status(self, text: str, failed: bool = False) -> None:
         widget = self.query_one(".draft-message", Static)
         widget.update(text)
         widget.set_class(failed, "error")
 
-    def _form_values(self) -> tuple[dict[str, Any], CredentialValue]:
+    def _form_values(
+        self,
+    ) -> tuple[dict[str, Any], CredentialValue, Any]:
         values = _yaml_mapping(
             self.query_one(f"#{self.prefix}-config-yaml", TextArea).text
         )
         if self.kind == "provider":
-            return self._provider_form_values(values)
-        return self._mcp_form_values(values)
+            values, credential = self._provider_form_values(values)
+        else:
+            values, credential = self._mcp_form_values(values)
+        return values, credential, self._parse(values)
 
     def _provider_form_values(
         self, values: dict[str, Any]
@@ -551,29 +556,35 @@ class EntryDraftEditor(Vertical):
             raise SetupError("API keys must use an ENV or keyring reference.")
         return parsed
 
-    def _write_yaml_from_form(self) -> None:
+    def _validated(self, callback: Callable[[], Any]) -> Any:
         try:
-            values, _ = self._form_values()
-            self._parse(values)
+            result = callback()
         except (SetupError, ValidationError, ValueError) as exc:
             self.yaml_editor.set_validation("invalid", str(exc))
+            return None
+        self.yaml_editor.set_validation("valid")
+        return result
+
+    def _parse_yaml(self) -> Any:
+        values = _yaml_mapping(
+            self.query_one(f"#{self.prefix}-config-yaml", TextArea).text
+        )
+        values.pop("ssl_verify", None)
+        return self._parse(values)
+
+    def _write_yaml_from_form(self) -> None:
+        result = self._validated(self._form_values)
+        if result is None:
             return
+        values, _, _ = result
         self.yaml_editor.set_text(
             yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
         )
-        self.yaml_editor.set_validation("valid")
 
     def _validate_yaml(self, *, update_controls: bool = True) -> None:
-        try:
-            values = _yaml_mapping(
-                self.query_one(f"#{self.prefix}-config-yaml", TextArea).text
-            )
-            values.pop("ssl_verify", None)
-            parsed = self._parse(values)
-        except (SetupError, ValidationError, ValueError) as exc:
-            self.yaml_editor.set_validation("invalid", str(exc))
+        parsed = self._validated(self._parse_yaml)
+        if parsed is None:
             return
-        self.yaml_editor.set_validation("valid")
         if update_controls:
             self._syncing = True
             try:
@@ -636,8 +647,7 @@ class EntryDraftEditor(Vertical):
             "Provider name" if self.kind == "provider" else "MCP server name"
         )
         name = validate_setup_name(self.raw_name(), label)
-        values, credential = self._form_values()
-        stored = self._parse(values)
+        _, credential, stored = self._form_values()
         identity = (self.draft_id, self.original_name, name)
         if self.kind == "provider":
             runtime_values = stored.model_dump(mode="python")
@@ -662,8 +672,7 @@ class EntryDraftEditor(Vertical):
         if self._syncing:
             return
         if event.input.id == f"{self.prefix}-name":
-            self.draft_name = event.value.strip()
-            self.credential.rename(self.draft_name)
+            self.credential.rename(event.value.strip())
         else:
             self._write_yaml_from_form()
         self.post_message(self.Changed(self))
@@ -683,20 +692,12 @@ class EntryDraftEditor(Vertical):
         if self._syncing:
             return
         self.yaml_editor.set_validation("neutral")
-        self.yaml_editor.schedule_validation(0.5, self._validate_yaml)
+        if self._yaml_timer is not None:
+            self._yaml_timer.stop()
+        self._yaml_timer = self.set_timer(
+            self.YAML_VALIDATION_DELAY, self._validate_yaml
+        )
         self.post_message(self.Changed(self))
-
-
-class ProviderDraftEditor(EntryDraftEditor):
-    """A provider configuration draft."""
-
-    kind = "provider"
-
-
-class McpDraftEditor(EntryDraftEditor):
-    """An MCP server configuration draft."""
-
-    kind = "mcp"
 
 
 class DynamicEntryTabs(Vertical):
@@ -721,10 +722,9 @@ class DynamicEntryTabs(Vertical):
     def _make_editor(self, name: str | None, config: Any) -> EntryDraftEditor:
         self._counter += 1
         draft_id = f"{self.kind}-draft-{self._counter}"
-        editor_type = (
-            ProviderDraftEditor if self.kind == "provider" else McpDraftEditor
+        editor = EntryDraftEditor(
+            self.kind, draft_id, name, config, self.known_keys
         )
-        editor = editor_type(draft_id, name, config, self.known_keys)
         self._editors[draft_id] = editor
         return editor
 
@@ -800,11 +800,6 @@ class DynamicEntryTabs(Vertical):
         if target:
             self.select(target)
 
-    def set_tab_status(self, draft_id: str, status: str) -> None:
-        editor = self._editors[draft_id]
-        tab = self.query_one(f"#{draft_id}-tab", Tab)
-        tab.label = self._label(editor, status)
-
     def set_draft_status(
         self,
         draft_id: str,
@@ -816,7 +811,9 @@ class DynamicEntryTabs(Vertical):
         """Update a draft's inline message and tab marker together."""
         editor = self._editors[draft_id]
         editor.set_status(message, failed)
-        self.set_tab_status(draft_id, marker)
+        self.query_one(f"#{draft_id}-tab", Tab).label = self._label(
+            editor, marker
+        )
 
     def focus_error(self, draft_id: str) -> None:
         self.select(draft_id)
@@ -870,8 +867,7 @@ class DynamicEntryTabs(Vertical):
         failures: list[str] = []
         names: set[str] = set()
         for editor in self.editors():
-            self.set_tab_status(editor.draft_id, "")
-            editor.set_status("")
+            self.set_draft_status(editor.draft_id, "")
             try:
                 candidate = editor.candidate()
                 if candidate.name in reserved_names:
@@ -885,9 +881,9 @@ class DynamicEntryTabs(Vertical):
                 names.add(candidate.name)
                 results.append(candidate)
             except Exception as exc:
-                message = str(exc)
-                editor.set_status(message, True)
-                self.set_tab_status(editor.draft_id, "✗ ")
+                self.set_draft_status(
+                    editor.draft_id, str(exc), marker="✗ ", failed=True
+                )
                 failures.append(editor.draft_id)
         if failures:
             self.focus_error(failures[0])
@@ -906,8 +902,7 @@ class DynamicEntryTabs(Vertical):
     @on(EntryDraftEditor.Changed)
     def editor_changed(self, event: EntryDraftEditor.Changed) -> None:
         event.stop()
-        self.set_tab_status(event.editor.draft_id, "")
-        event.editor.set_status("")
+        self.set_draft_status(event.editor.draft_id, "")
 
     @on(Button.Pressed)
     async def button_pressed(self, event: Button.Pressed) -> None:

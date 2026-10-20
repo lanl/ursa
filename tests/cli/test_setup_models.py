@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import yaml
 from textual import on
 from textual.app import App, ComposeResult
@@ -139,6 +141,34 @@ async def test_setup_model_other_choice_preserves_custom_model(monkeypatch):
         await pilot.pause()
         assert app.submissions[0].chat.model == "private-model"
         assert app.submissions[0].embedding is None
+
+
+async def test_model_discovery_ignores_editor_teardown(monkeypatch):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_listing(*_args):
+        entered.set()
+        await release.wait()
+        return []
+
+    monkeypatch.setattr(
+        SetupModelEditor, "_request_model_load", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        "ursa.cli.setup_models.asyncio.to_thread", delayed_listing
+    )
+    provider = InferenceProviderConfig()
+    app = SetupModelHarness({"provider": provider})
+
+    async with app.run_test(size=(100, 36)):
+        discovery = asyncio.create_task(
+            app.editor._load_models("chat", provider)
+        )
+        await entered.wait()
+        await app.editor.remove()
+        release.set()
+        await discovery
 
 
 async def test_setup_advanced_yaml_deletions_replace_old_model_fields(
