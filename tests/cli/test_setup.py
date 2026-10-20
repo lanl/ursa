@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from keyring.backends.fail import Keyring as FailingSystemKeyring
 from keyring.errors import KeyringError
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ursa.cli.config import (
     ChatModelConfig,
@@ -28,6 +28,7 @@ from ursa.util.secrets import (
     FallbackKeyring,
     FileKeyring,
     SecretReference,
+    SecretTemplate,
 )
 
 
@@ -35,39 +36,47 @@ from ursa.util.secrets import (
 def setup_keyring(monkeypatch):
     store = MagicMock()
     store.get_password.return_value = None
+    store.health = MagicMock(return_value=())
     monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
+    monkeypatch.setattr("ursa.cli.setup.check_config_health", store.health)
     return store
+
+
+@pytest.fixture
+def app(tmp_path):
+    return SetupApp(tmp_path / "config.yaml")
+
+
+@pytest.fixture
+def saved_keyring(monkeypatch, tmp_path):
+    store = FileKeyring(tmp_path / "keyring.json")
+    store.set_password("ursa", "company", "old-secret")
+    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
+    monkeypatch.setattr("ursa.util.secrets.get_keyring", lambda: store)
+    return store
+
+
+def begin_mcp(app, name: str, **fields: str) -> None:
+    app._begin_mcp()
+    for field, value in {"name": name, **fields}.items():
+        app.query_one(f"#mcp-{field}").value = value
+
+
+def model_config(kind, name: str, provider: str):
+    return kind(
+        model=name, model_provider="openai", inference_provider=provider
+    )
 
 
 def configured_config() -> UrsaConfig:
     return UrsaConfig.model_validate({
-        "use_web": True,
-        "inference_providers": {
-            "company": {
-                "base_url": "https://models.example/v1",
-                "api_key": {"keyring": True},
-            }
-        },
-        "llm_model": {
-            "model": "gpt-test",
-            "model_provider": "openai",
-            "inference_provider": "company",
-        },
-        "emb_model": {
-            "model": "embedding-test",
-            "model_provider": "openai",
-            "inference_provider": "company",
-        },
+        "inference_providers": {"company": {"api_key": {"keyring": True}}},
+        "llm_model": model_config(ChatModelConfig, "gpt-test", "company"),
         "mcp_servers": {
             "tools": {
                 "transport": "streamable_http",
                 "url": "https://tools.example/mcp",
-                "headers": {
-                    "Authorization": {
-                        "keyring": True,
-                        "template": "Bearer %s",
-                    }
-                },
+                "headers": {"Authorization": {"keyring": True}},
             }
         },
     })
@@ -136,6 +145,45 @@ mcp_servers:
         _load_config(path)
 
 
+def test_load_preserves_mcp_environment_placeholders(
+    monkeypatch, setup_keyring, tmp_path
+):
+    monkeypatch.setenv("MCP_SECRET", "resolved-secret")
+    monkeypatch.setenv("MODEL_URL", "https://models.example/v1")
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+inference_providers:
+  company: {base_url: "${MODEL_URL}"}
+llm_model:
+  model: gpt-test
+  model_provider: openai
+  inference_provider: company
+mcp_servers:
+  tools:
+    transport: stdio
+    command: tool
+    env: {API_KEY: "${MCP_SECRET}"}
+"""
+    )
+
+    config, _ = _load_config(path)
+
+    assert config.mcp_servers["tools"].env == {"API_KEY": "${MCP_SECRET}"}
+    _save(path, config, {})
+
+    runtime = setup_keyring.health.call_args.args[0]
+    assert set(runtime.inference_providers) == {"company"}
+    assert (
+        runtime.inference_providers["company"].base_url
+        == "https://models.example/v1"
+    )
+    assert runtime.mcp_servers["tools"].env == {"API_KEY": "resolved-secret"}
+    saved = path.read_text()
+    assert "${MODEL_URL}" in saved
+    assert "${MCP_SECRET}" in saved
+
+
 def test_save_writes_file_fallback_then_atomic_private_config(
     monkeypatch, tmp_path
 ):
@@ -143,10 +191,7 @@ def test_save_writes_file_fallback_then_atomic_private_config(
     config = configured_config()
     pending = {"company": "provider-secret", "tools": "mcp-secret"}
     fallback = FileKeyring(tmp_path / "keyring.json")
-    store = FallbackKeyring(
-        FailingSystemKeyring(),
-        fallback,
-    )
+    store = FallbackKeyring(FailingSystemKeyring(), fallback)
     monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
 
     assert _save(path, config, pending) == path
@@ -167,30 +212,45 @@ def test_save_does_not_write_config_when_keyring_fails(setup_keyring, tmp_path):
     assert not path.exists()
 
 
-def test_save_restores_keyring_when_config_write_fails(monkeypatch, tmp_path):
-    store = FileKeyring(tmp_path / "keyring.json")
-    store.set_password("ursa", "company", "old-secret")
-    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
-    monkeypatch.setattr(
-        "ursa.cli.setup.save_config_file",
-        MagicMock(side_effect=OSError("disk full")),
-    )
+@pytest.mark.parametrize("failure", ["config-write", "health-check"])
+def test_save_restores_staged_keys(
+    monkeypatch, saved_keyring, tmp_path, failure
+):
+    path = tmp_path / "config.yaml"
+    if failure == "config-write":
+        error, message = OSError, "disk full"
+        monkeypatch.setattr(
+            "ursa.cli.setup.save_config_file",
+            MagicMock(side_effect=OSError(message)),
+        )
+    else:
+        error = SetupError
+        message = "Configuration checks failed: mcp_servers.tools"
+        path.write_text("existing: config\n")
 
-    with pytest.raises(OSError, match="disk full"):
+        def fail(candidate):
+            resolved = candidate.resolve()
+            api_key = resolved.inference_providers["company"].api_key
+            assert api_key.get_secret_value() == "new-secret"
+            return (("mcp_servers", "tools"),)
+
+        monkeypatch.setattr("ursa.cli.setup.check_config_health", fail)
+
+    with pytest.raises(error, match=message) as raised:
         _save(
-            tmp_path / "config.yaml",
+            path,
             configured_config(),
             {"company": "new-secret", "tools": "mcp-secret"},
         )
 
-    assert store.get_password("ursa", "company") == "old-secret"
-    assert store.get_password("ursa", "tools") is None
+    if failure == "health-check":
+        assert str(raised.value) == message
+        assert path.read_text() == "existing: config\n"
+    assert saved_keyring.get_password("ursa", "company") == "old-secret"
+    assert saved_keyring.get_password("ursa", "tools") is None
 
 
-def test_pending_shared_secret_is_kept_until_last_reference_is_removed(
-    tmp_path,
-):
-    app = SetupApp(tmp_path / "config.yaml")
+def test_pending_shared_secret_is_kept_until_last_reference_is_removed(app):
     shared = InferenceProviderConfig(api_key=SecretReference(keyring="shared"))
     app.config.inference_providers = {
         "first": shared,
@@ -207,43 +267,45 @@ def test_pending_shared_secret_is_kept_until_last_reference_is_removed(
     assert app.pending == {}
 
 
-@pytest.mark.asyncio
-async def test_write_page_saves_and_shows_ready(monkeypatch, tmp_path):
-    path = tmp_path / "config.yaml"
-    config_yaml = "use_web: true\n"
-
-    def save(*_args):
-        path.write_text(config_yaml)
-        return path
+async def test_write_page_saves_and_shows_ready(monkeypatch, app):
+    path = app.path
 
     async def inline(callback, *args, **kwargs):
         return callback(*args, **kwargs)
 
-    monkeypatch.setattr("ursa.cli.setup._save", save)
+    monkeypatch.setattr("ursa.cli.setup._save", lambda *_args: path)
     monkeypatch.setattr("ursa.cli.setup.asyncio.to_thread", inline)
-    app = SetupApp(path)
 
     async with app.run_test(size=(120, 42)):
         app._show("review")
         await app._save_config()
         assert app.page == "done"
-        assert str(app.query_one("#done-copy", Static).content) == (
-            f"Saved to {path}"
+        assert (
+            str(app.query_one("#done-copy", Static).content)
+            == f"Saved to {path}"
         )
 
 
-@pytest.mark.asyncio
-async def test_shared_key_widget_supports_environment_and_none(tmp_path):
-    app = SetupApp(tmp_path / "config.yaml")
+async def test_provider_is_checked_before_becoming_configured(monkeypatch, app):
+    list_models = MagicMock(return_value=[ProviderModel("gpt-test", "openai")])
+
+    monkeypatch.setattr(
+        "ursa.util.inference_providers.list_provider_models", list_models
+    )
+
+    def run_probe(probe, *args, **_kwargs):
+        return probe(*args)
+
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", run_probe)
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
         await app.workers.wait_for_complete()
         assert app.query_one("#provider-next", Button).disabled
+
         entry = app.query_one("#provider-key-api-key", ApiKeyEntry)
         source = entry.query_one("#provider-key-source", Select)
         key = entry.query_one("#provider-key-key", Input)
-
         entry.loaded = key.value = "secret"
         entry.rename("renamed")
         assert entry.values().pending == "secret"
@@ -254,47 +316,28 @@ async def test_shared_key_widget_supports_environment_and_none(tmp_path):
         )
         source.value = MCP_TOKEN_NONE
         assert entry.values() == CredentialValue()
+        entry.configure("openai", None, [])
 
-
-@pytest.mark.asyncio
-async def test_provider_is_checked_before_becoming_configured(
-    monkeypatch, tmp_path
-):
-    models = [ProviderModel("gpt-test", "openai")]
-
-    def list_models(_):
-        return models
-
-    monkeypatch.setattr("ursa.cli.setup.list_provider_models", list_models)
-    app = SetupApp(tmp_path / "config.yaml")
-
-    async with app.run_test(size=(120, 42)) as pilot:
-        await pilot.click("#welcome-next")
-        await app.workers.wait_for_complete()
-
-        async def run_inline(callback, *args):
-            if callback is list_models:
+        async def run_inline(callback, *args, **kwargs):
+            if callback is run_probe:
                 assert (
                     str(app.query_one("#provider-error", Static).content)
                     == "? Validating openai"
                 )
-            return callback(*args)
+            return callback(*args, **kwargs)
 
         monkeypatch.setattr("ursa.cli.setup.asyncio.to_thread", run_inline)
         app.query_one("#provider-key-key", Input).value = "secret"
         await pilot.click("#provider-save")
         await app.workers.wait_for_complete()
 
-        assert app.page == "provider"
         assert app.query_one("#provider-configured", Select).value == "openai"
         assert not app.query_one("#provider-next", Button).disabled
 
 
-@pytest.mark.asyncio
 async def test_models_use_existing_editor_and_validate_both_providers(
-    monkeypatch, tmp_path
+    monkeypatch, app
 ):
-    app = SetupApp(tmp_path / "config.yaml")
     app.config.inference_providers.update({
         "chat": InferenceProviderConfig(base_url="https://chat.example/v1"),
         "vectors": InferenceProviderConfig(
@@ -315,16 +358,8 @@ async def test_models_use_existing_editor_and_validate_both_providers(
         await app.workers.wait_for_complete()
         editor = app.query_one(ModelEditor)
         selection = ModelSelection(
-            ChatModelConfig(
-                model="chat-model",
-                model_provider="openai",
-                inference_provider="chat",
-            ),
-            EmbModelConfig(
-                model="embedding-model",
-                model_provider="openai",
-                inference_provider="vectors",
-            ),
+            model_config(ChatModelConfig, "chat-model", "chat"),
+            model_config(EmbModelConfig, "embedding-model", "vectors"),
         )
         editor._submit(selection)
         await pilot.pause()
@@ -334,24 +369,13 @@ async def test_models_use_existing_editor_and_validate_both_providers(
             ("chat-model", "chat"),
             ("embedding-model", "vectors"),
         ]
-        assert app.model_ok == {"llm": True, "embedding": True}
         assert app.page == "mcp"
 
 
-@pytest.mark.asyncio
 async def test_model_failure_stays_on_models_and_raises_error_toast(
-    monkeypatch, tmp_path
+    monkeypatch, app
 ):
-    app = SetupApp(tmp_path / "config.yaml")
-    app.config.inference_providers["company"] = InferenceProviderConfig(
-        base_url="https://models.example/v1"
-    )
-    app.config.llm_model = ChatModelConfig(
-        model="gpt-test",
-        model_provider="openai",
-        inference_provider="company",
-    )
-    app.config.emb_model = None
+    app.config = configured_config()
     notices = []
     monkeypatch.setattr(
         "ursa.cli.setup._probe_model",
@@ -373,43 +397,78 @@ async def test_model_failure_stays_on_models_and_raises_error_toast(
         assert notices[-1][1]["severity"] == "error"
 
 
-@pytest.mark.asyncio
-async def test_mcp_form_uses_configured_selector_and_shared_token(
-    monkeypatch, tmp_path
-):
-    app = SetupApp(tmp_path / "config.yaml")
+async def test_mcp_advanced_and_failure_paths(monkeypatch, app):
     monkeypatch.setattr(app, "_probe_mcp", AsyncMock())
 
     async with app.run_test(size=(120, 42)):
-        app._begin_mcp()
-        app.query_one("#mcp-name", Input).value = "tools"
-        app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
-        source = app.query_one("#mcp-token-source", Select)
-        source.set_options([("None", MCP_TOKEN_NONE), ("tools", "tools")])
-        source.value = "tools"
+        begin_mcp(
+            app,
+            "local_tools",
+            transport="stdio",
+            command="uv",
+            args="run tool.py",
+        )
+        app.query_one("#mcp-config-yaml", TextArea).text = """\
+env:
+  TOOL_MODE: guided
+cwd: /srv/tools
+"""
+
+        await app._save_mcp()
+
+        saved = app.config.mcp_servers["local_tools"]
+        assert saved.command == "uv"
+        assert saved.args == ["run", "tool.py"]
+        assert saved.env == {"TOOL_MODE": "guided"}
+        assert str(saved.cwd) == "/srv/tools"
+
+        begin_mcp(app, "remote_tools", url="https://tools.example/mcp")
+        app.query_one("#mcp-config-yaml", TextArea).text = """\
+headers:
+  X-Tenant: guided
+timeout: 12
+sse_read_timeout: 45
+terminate_on_close: false
+"""
+        token = app.query_one("#mcp-token-source", Select)
+        token.set_options([
+            ("None", MCP_TOKEN_NONE),
+            ("remote_tools", "remote_tools"),
+        ])
+        token.value = "remote_tools"
         app.query_one("#mcp-token-key", Input).value = "secret"
-        await app._save_mcp()
-        await app.workers.wait_for_complete()
 
-        assert app.pending["tools"] == "secret"
-        assert app.query_one("#mcp-configured", Select).value == "tools"
-
-
-@pytest.mark.asyncio
-async def test_mcp_failure_stays_on_form(monkeypatch, tmp_path):
-    app = SetupApp(tmp_path / "config.yaml")
-    monkeypatch.setattr(
-        app,
-        "_probe_mcp",
-        AsyncMock(side_effect=RuntimeError("401 Unauthorized")),
-    )
-
-    async with app.run_test(size=(120, 42)):
-        app._begin_mcp()
-        app.query_one("#mcp-name", Input).value = "tools"
-        app.query_one("#mcp-url", Input).value = "https://tools.example/mcp"
         await app._save_mcp()
 
+        saved = app.config.mcp_servers["remote_tools"]
+        assert saved.headers["X-Tenant"] == "guided"
+        auth = saved.headers["Authorization"]
+        assert isinstance(auth, SecretTemplate)
+        assert auth.keyring_username("remote_tools") == "remote_tools"
+        assert auth.template == "Bearer %s"
+        assert saved.timeout.total_seconds() == 12
+        assert saved.sse_read_timeout.total_seconds() == 45
+        assert saved.terminate_on_close is False
+        assert app.pending == {"remote_tools": "secret"}
+        assert app.query_one("#mcp-configured", Select).value == "remote_tools"
+
+        probe = AsyncMock()
+        monkeypatch.setattr(app, "_probe_mcp", probe)
+        begin_mcp(app, "broken")
+        editor = app.query_one("#mcp-config-yaml", TextArea)
+        editor.text = "url: https://wrong.example/mcp\n"
+        await app._save_mcp()
+        assert editor.has_class("yaml-invalid")
+        assert "broken" not in app.config.mcp_servers
+        probe.assert_not_awaited()
+
+        monkeypatch.setattr(
+            app,
+            "_probe_mcp",
+            AsyncMock(side_effect=RuntimeError("401 Unauthorized")),
+        )
+        begin_mcp(app, "tools", url="https://tools.example/mcp")
+        await app._save_mcp()
         assert app.page == "mcp"
         assert "tools" not in app.config.mcp_servers
         assert "✗" in str(

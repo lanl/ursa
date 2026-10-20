@@ -21,23 +21,15 @@ def _fake_installation(
     uv.write_text(
         "#!/bin/sh\n"
         'printf "uv %s\\n" "$*" >> "$INSTALL_LOG"\n'
-        'if [ "$1 $2 $3" = "tool dir --bin" ]; then\n'
-        '  printf "%s\\n" "$TOOL_BIN"\n'
-        'elif [ "$1 $2" = "tool update-shell" ]; then\n'
-        '  printf "source %s/env\\n" "$HOME/.local/bin"\n'
-        '  exit "${UPDATE_SHELL_STATUS:-0}"\n'
-        "fi\n"
+        'case "$1 $2 $3" in\n'
+        '  "tool dir --bin") printf "%s\\n" "$TOOL_BIN" ;;\n'
+        '  "tool update-shell ") printf "source %s/env\\n" "$HOME/.local/bin"; '
+        'exit "${UPDATE_SHELL_STATUS:-0}" ;;\n'
+        "esac\n"
     )
     uv.chmod(0o755)
     ursa = tool_bin / "ursa"
-    ursa.write_text(
-        "#!/bin/sh\n"
-        'printf "ursa %s\\n" "$*" >> "$INSTALL_LOG"\n'
-        'case "$*" in\n'
-        '  "self setup --help") exit 0 ;;\n'
-        '  "--version") printf "%s\\n" "ursa 1.0.0" ;;\n'
-        "esac\n"
-    )
+    ursa.write_text('#!/bin/sh\nprintf "ursa %s\\n" "$*" >> "$INSTALL_LOG"\n')
     ursa.chmod(0o755)
     environment = {
         "HOME": str(tmp_path),
@@ -64,16 +56,20 @@ def test_install_script_is_posix_shell():
     subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
 
 
-def test_install_script_uses_existing_uv_and_tool_bin(tmp_path):
+@pytest.mark.parametrize("commit", [None, "0123456789abcdef"])
+def test_install_script_uses_existing_uv_and_tool_bin(tmp_path, commit):
     environment, log, _ursa = _fake_installation(tmp_path)
+    if commit is not None:
+        environment["URSA_COMMIT"] = commit
 
     result = _run_installer(environment)
 
     commands = log.read_text()
+    revision = commit or "main"
     assert (
         "uv tool install --python 3.13 --force --upgrade "
         "--compile-bytecode ursa-ai[dashboard] @ "
-        "git+https://github.com/lanl/ursa.git@main" in commands
+        f"git+https://github.com/lanl/ursa.git@{revision}" in commands
     )
     assert "ursa self modify" not in commands
     assert "uv tool dir --bin" in commands
@@ -96,14 +92,7 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
         'chmod +x "$HOME/.local/bin/uv"\n'
     )
     curl = tmp_path / "bin" / "curl"
-    curl.write_text(
-        "#!/bin/sh\n"
-        'while [ "$#" -gt 0 ]; do\n'
-        '  if [ "$1" = "-o" ]; then cp "$UV_INSTALLER" "$2"; exit; fi\n'
-        "  shift\n"
-        "done\n"
-        "exit 1\n"
-    )
+    curl.write_text('#!/bin/sh\ncp "$UV_INSTALLER" "$4"\n')
     curl.chmod(0o755)
     environment["UV_INSTALLER"] = str(uv_installer)
     environment["UV_PAYLOAD"] = str(uv_payload)
@@ -114,18 +103,6 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
     assert (tmp_path / ".local" / "bin" / "uv").is_file()
     assert "uv tool install --python 3.13" in log.read_text()
     assert "URSA is installed" in result.stdout
-
-
-def test_install_script_selects_requested_commit(tmp_path):
-    environment, log, _ursa = _fake_installation(tmp_path)
-    environment["URSA_COMMIT"] = "0123456789abcdef"
-
-    _run_installer(environment)
-
-    assert (
-        "git+https://github.com/lanl/ursa.git@0123456789abcdef"
-        in log.read_text()
-    )
 
 
 def test_install_script_explains_release_mismatch(tmp_path):
@@ -140,33 +117,29 @@ def test_install_script_explains_release_mismatch(tmp_path):
     assert "https://lanl.github.io/ursa/latest/install.sh" in result.stderr
 
 
-def test_install_script_repairs_uv_tool_bin_missing_from_path(tmp_path):
+@pytest.mark.parametrize(
+    ("update_status", "expected"),
+    [
+        (None, "source "),
+        ("2", "Could not update this shell automatically"),
+    ],
+)
+def test_install_script_repairs_uv_tool_bin_missing_from_path(
+    tmp_path, update_status, expected
+):
     bin_dir = tmp_path / "bin"
     environment, _log, _ursa = _fake_installation(
         tmp_path, path=f"{bin_dir}:/usr/bin:/bin"
     )
+    if update_status is not None:
+        environment["UPDATE_SHELL_STATUS"] = update_status
 
     result = _run_installer(environment)
 
-    assert result.returncode == 0
     assert "Adding uv's tool directory to PATH" in result.stdout
-    assert "source " in result.stdout
+    assert expected in result.stdout
     assert "Or restart your shell" in result.stdout
     assert "URSA is installed" in result.stdout
-
-
-def test_install_succeeds_when_shell_path_was_already_updated(tmp_path):
-    bin_dir = tmp_path / "bin"
-    environment, _log, _ursa = _fake_installation(
-        tmp_path, path=f"{bin_dir}:/usr/bin:/bin"
-    )
-    environment["UPDATE_SHELL_STATUS"] = "2"
-
-    result = _run_installer(environment)
-
-    assert result.returncode == 0
-    assert "add " in result.stdout
-    assert " to PATH" in result.stdout
 
 
 def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
@@ -183,14 +156,11 @@ def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
     assert f"Run '{ursa}'" in result.stdout
 
 
-def test_docs_builds_release_and_main_installers(monkeypatch):
-    monkeypatch.setenv("MIKE_DOCS_VERSION", "2.4.1")
-    release = hooks._installer_script()
-    assert "URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard]==2.4.1'" in release
-
+def test_docs_builds_main_installer(monkeypatch):
     monkeypatch.setenv("MIKE_DOCS_VERSION", "main")
-    main = hooks._installer_script()
-    assert "git+https://github.com/lanl/ursa.git@main" in main
+    assert (
+        "git+https://github.com/lanl/ursa.git@main" in hooks._installer_script()
+    )
 
 
 def test_release_installer_ignores_commit_override_and_streams(

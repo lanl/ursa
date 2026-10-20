@@ -31,17 +31,19 @@ from textual.widgets import (
     Input,
     Select,
     Static,
+    TextArea,
 )
 
 from ursa.cli.config import (
     ChatModelConfig,
     InferenceProviderConfig,
     UrsaConfig,
-    config_file_value,
+    deep_interp_env,
     load_config_file,
     save_config_file,
 )
 from ursa.cli.tui.widgets import (
+    AdvancedYamlEditor,
     FuzzySelect,
     HelpLabel,
     ModelEditor,
@@ -50,12 +52,14 @@ from ursa.cli.tui.widgets import (
 from ursa.util import get_keyring
 from ursa.util.crossplatform import default_user_config_path
 from ursa.util.health import (
-    probe_chat_model,
+    check_config_health,
+    probe_chat_config,
     probe_embedding_model,
+    probe_inference_provider,
     probe_mcp_server,
+    run_probe_with_deadline,
 )
 from ursa.util.http import inject_truststore_into_ssl
-from ursa.util.inference_providers import list_provider_models
 from ursa.util.mcp import (
     ServerParameters,
     transport,
@@ -149,7 +153,10 @@ def _server(name: str, value: Any) -> ServerParameters:
 
 
 def _server_values(config: ServerParameters) -> dict[str, Any]:
-    return {"transport": transport(config), **config_file_value(config)}
+    return {
+        "transport": transport(config),
+        **config.model_dump(mode="json", exclude_unset=True),
+    }
 
 
 def _auth(config: ServerParameters) -> tuple[str, SecretTemplate | None]:
@@ -173,7 +180,11 @@ class CredentialValue:
 def _load_config(path: Path) -> tuple[UrsaConfig, bool]:
     """Load setup data once into the application's canonical config model."""
     try:
-        raw = deepcopy(load_config_file(path)) if path.is_file() else {}
+        raw = (
+            deepcopy(load_config_file(path, interpolate=False))
+            if path.is_file()
+            else {}
+        )
         providers = raw.get("inference_providers", {})
         if not isinstance(providers, dict):
             raise ValueError("Existing inference_providers must be a mapping.")
@@ -209,6 +220,19 @@ def _save(path: Path, config: UrsaConfig, pending: Mapping[str, str]) -> Path:
         for username, secret in pending.items():
             credential_store.set_password(KEYRING_SERVICE, username, secret)
             written.append(username)
+        runtime = UrsaConfig.model_validate(
+            deep_interp_env(config.editable_values())
+        )
+        implicit = (
+            runtime.inference_providers.keys()
+            - config.inference_providers.keys()
+        )
+        for name in implicit:
+            runtime.inference_providers.pop(name)
+        failures = check_config_health(runtime)
+        if failures:
+            failed = ", ".join(".".join(path) for path in failures)
+            raise SetupError(f"Configuration checks failed: {failed}")
         return save_config_file(path, config)
     except BaseException as exc:
         for username in reversed(written):
@@ -392,6 +416,7 @@ SetupAction = Enum(
 
 class SetupApp(App[SetupAction]):
     CSS_PATH = "setup.tcss"
+    MCP_STRUCTURED = ("transport", "url", "command", "args")
     BINDINGS = [
         Binding("escape", "back", "Back", priority=True),
         Binding("ctrl+q", "cancel", "Quit", priority=True),
@@ -419,6 +444,7 @@ class SetupApp(App[SetupAction]):
         self.editing = {"provider": None, "mcp": None}
         self.model_ok = {"llm": None, "embedding": None}
         self.pending: dict[str, str] = {}
+        self.mcp_auth = ("Authorization", "Bearer %s")
 
     @classmethod
     def _field(cls, label: str, key: str, widget: Any) -> tuple[Any, Any]:
@@ -520,6 +546,9 @@ class SetupApp(App[SetupAction]):
                 *self._field("Arguments", "mcp-args", Input(id="mcp-args")),
                 id="mcp-local-fields",
                 classes="hidden",
+            ),
+            AdvancedYamlEditor(
+                "mcp", "{}\n", editor_classes="mcp-yaml-editor", markup=False
             ),
             Static("○ Not tested", id="mcp-validation-status", markup=False),
         )
@@ -678,7 +707,10 @@ class SetupApp(App[SetupAction]):
             self.query_one("#provider-next", Button).disabled = not items
 
     def _provider(self, name: str) -> InferenceProviderConfig:
-        config = self.config.inference_providers[name].resolve(name)
+        values = self.config.inference_providers[name].model_dump(mode="python")
+        config = InferenceProviderConfig.model_validate(
+            deep_interp_env(values)
+        ).resolve(name)
         reference = config.api_key
         if isinstance(reference, SecretReference):
             username = reference.keyring_username(name)
@@ -705,7 +737,7 @@ class SetupApp(App[SetupAction]):
     def _runtime_mcp(
         self, name: str, config: ServerParameters
     ) -> ServerParameters:
-        result = config.model_copy(deep=True)
+        result = _server(name, deep_interp_env(_server_values(config)))
         header, reference = _auth(result)
         if reference:
             username = reference.keyring_username(name)
@@ -717,8 +749,11 @@ class SetupApp(App[SetupAction]):
         return result
 
     async def _probe_mcp(self, name: str, config: ServerParameters) -> None:
-        await asyncio.wait_for(
-            probe_mcp_server(name, self._runtime_mcp(name, config)),
+        await asyncio.to_thread(
+            run_probe_with_deadline,
+            probe_mcp_server,
+            name,
+            self._runtime_mcp(name, config),
             timeout=15,
         )
 
@@ -804,9 +839,12 @@ class SetupApp(App[SetupAction]):
                 ),
             }).resolve(name)
             self._status("#provider-error", f"{VALIDATING} Validating {name}")
-            models = await asyncio.to_thread(list_provider_models, typed)
-            if not models:
-                raise SetupError("The provider returned no models.")
+            await asyncio.to_thread(
+                run_probe_with_deadline,
+                probe_inference_provider,
+                typed,
+                True,
+            )
         except Exception as exc:
             self._status("#provider-error", _friendly(exc), True)
             return
@@ -921,19 +959,60 @@ class SetupApp(App[SetupAction]):
         self.query_one("#mcp-args", Input).value = shlex.join(
             values.get("args", [])
         )
-        _, reference = (
-            _auth(configured) if configured is not None else ("", None)
+        header, reference = (
+            _auth(configured) if configured else ("Authorization", None)
         )
+        self.mcp_auth = (header, getattr(reference, "template", "Bearer %s"))
+        if reference and isinstance(headers := values.get("headers"), dict):
+            headers.pop(header, None)
+        if not values.get("headers"):
+            values.pop("headers", None)
+        for field in self.MCP_STRUCTURED:
+            values.pop(field, None)
+        advanced = self.query_one("#mcp-advanced", AdvancedYamlEditor)
+        advanced.set_text(
+            yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+        )
+        advanced.set_validation("neutral")
         self.query_one("#mcp-token-api-key", ApiKeyEntry).configure(
             name or "", reference, self._keys(), reference is None
         )
         self._toggle_transport(transport_name)
         self._status("#mcp-validation-status", "○ Not tested")
 
+    def _mcp_advanced_values(self) -> dict[str, Any] | None:
+        editor = self.query_one("#mcp-advanced", AdvancedYamlEditor)
+        try:
+            text = self.query_one("#mcp-config-yaml", TextArea).text
+            values = yaml.safe_load(text)
+            values = {} if values is None else values
+            if not isinstance(values, dict):
+                raise SetupError("Advanced YAML must be a mapping.")
+            if structured := set(values).intersection(self.MCP_STRUCTURED):
+                raise SetupError(f"Use the form for: {sorted(structured)}")
+            kind = str(self.query_one("#mcp-transport", Select).value)
+            required = (
+                {"command": "setup"}
+                if kind == "stdio"
+                else {"url": "https://localhost"}
+            )
+            parsed = _server(
+                "server", {"transport": kind, **required, **values}
+            )
+            unknown = set(values) - set(type(parsed).model_fields)
+            if unknown:
+                raise SetupError(f"Unsupported settings: {sorted(unknown)}")
+        except (SetupError, yaml.YAMLError) as exc:
+            editor.set_validation("invalid", str(exc))
+            return None
+        editor.set_validation("valid")
+        return values
+
     def _mcp_values(self):
         name = _name(self.query_one("#mcp-name", Input).value, "Name")
-        existing = self.config.mcp_servers.get(self.editing["mcp"] or "")
-        config = _server_values(existing) if existing is not None else {}
+        config = self._mcp_advanced_values()
+        if config is None:
+            raise SetupError("Fix the advanced MCP configuration.")
         transport = str(self.query_one("#mcp-transport", Select).value)
         config["transport"] = transport
         if transport == "stdio":
@@ -948,16 +1027,20 @@ class SetupApp(App[SetupAction]):
         config.pop("command", None)
         config.pop("args", None)
         credential = self.query_one("#mcp-token-api-key", ApiKeyEntry).values()
-        parsed = _server(name, config)
-        header, old = _auth(parsed)
-        headers = config.setdefault("headers", {})
-        if old:
-            headers.pop(header, None)
+        header, template = self.mcp_auth
+        headers = config.get("headers")
+        if not isinstance(headers, dict):
+            headers = {}
+            config["headers"] = headers
         if credential.reference:
-            headers[header] = SecretTemplate.model_validate({
+            managed = SecretTemplate.model_validate({
                 **credential.reference.model_dump(exclude_none=True),
-                "template": old.template if old else "Bearer %s",
+                "template": template,
             })
+            # The credential control owns its selected header; advanced YAML
+            # may add other headers but must not silently override it.
+            headers = {**headers, header: managed}
+            config["headers"] = headers
         if not headers:
             config.pop("headers")
         return name, _server(name, config), credential
@@ -1065,6 +1148,13 @@ class SetupApp(App[SetupAction]):
                 ).value = MCP_TOKEN_NONE
         elif event.select.id == "mcp-transport":
             self._toggle_transport(event.value)
+            self._mcp_advanced_values()
+
+    @on(TextArea.Changed, ".mcp-yaml-editor")
+    def mcp_yaml_changed(self) -> None:
+        editor = self.query_one("#mcp-advanced", AdvancedYamlEditor)
+        editor.set_validation("neutral")
+        editor.schedule_validation(0.5, self._mcp_advanced_values)
 
     @on(Input.Changed, "#provider-name, #mcp-name")
     def name_changed(self, event: Input.Changed) -> None:
@@ -1124,13 +1214,10 @@ class SetupApp(App[SetupAction]):
 
 def _probe_model(config, providers: dict[str, InferenceProviderConfig]) -> None:
     resolved = config.resolve_inference_provider(providers)
-    message = (
-        probe_chat_model(resolved.init_chat_model())
-        if isinstance(config, ChatModelConfig)
-        else probe_embedding_model(resolved)
-    )
-    if not message:
-        raise SetupError("The model returned no response.")
+    if isinstance(config, ChatModelConfig):
+        run_probe_with_deadline(probe_chat_config, resolved, "chat")
+    else:
+        run_probe_with_deadline(probe_embedding_model, resolved)
 
 
 def run_setup(path: Path | None = None) -> SetupAction:
