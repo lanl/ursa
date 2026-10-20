@@ -408,30 +408,56 @@ def run_checks(context: DoctorContext) -> CheckResult:
     return CheckResult.group("URSA Doctor", results)
 
 
-def _print_result(
-    console: Console, result: CheckResult, depth: int = 0
-) -> None:
-    line = Text("  " * depth)
-    line.append(
-        f"{result.status.indicator} {result.name}",
-        f"bold {result.status.style}",
-    )
-    if result.message:
-        line.append(f"  {result.message}", "dim")
-    console.print(line)
-    for child in result.checks:
-        _print_result(console, child, depth + 1)
+def build_report(
+    config: UrsaConfig | None = None,
+    config_error: BaseException | None = None,
+) -> CheckResult:
+    """Build a contained doctor report suitable for any presentation layer."""
+    try:
+        return run_checks(DoctorContext(config, config_error))
+    except _FAILURES as exc:
+        return CheckResult.group(
+            "URSA Doctor",
+            [CheckResult("Doctor runtime", CheckStatus.ERROR, exc)],
+        )
 
 
-def _print_report(console: Console, report: CheckResult) -> None:
-    _print_result(console, report)
-    counts = Counter(leaf.status for leaf in report.leaves())
-    console.print(
+def report_counts(report: CheckResult) -> Counter[CheckStatus]:
+    """Count final health outcomes without counting their parent groups."""
+    return Counter(leaf.status for leaf in report.leaves())
+
+
+def render_report(report: CheckResult) -> Text:
+    """Render a doctor report for Rich consoles or Textual widgets."""
+    rendered = Text()
+
+    def append_result(result: CheckResult, depth: int = 0) -> None:
+        if rendered:
+            rendered.append("\n")
+        rendered.append("  " * depth)
+        rendered.append(
+            f"{result.status.indicator} {result.name}",
+            f"bold {result.status.style}",
+        )
+        if result.message:
+            rendered.append(f"  {result.message}", "dim")
+        for child in result.checks:
+            append_result(child, depth + 1)
+
+    append_result(report)
+    counts = report_counts(report)
+    rendered.append("\n")
+    rendered.append(
         f"{counts[CheckStatus.OK]} ok  |  "
         f"{counts[CheckStatus.WARN]} warn  |  "
         f"{counts[CheckStatus.ERROR]} error(s)",
-        style=f"bold {report.status.style}",
+        f"bold {report.status.style}",
     )
+    return rendered
+
+
+def _print_report(console: Console, report: CheckResult) -> None:
+    console.print(render_report(report))
 
 
 def run_doctor(
@@ -441,13 +467,7 @@ def run_doctor(
     config_error: BaseException | None = None,
 ) -> int:
     """Run health checks, print the selected format, and return a status."""
-    try:
-        report = run_checks(DoctorContext(config, config_error))
-    except _FAILURES as exc:
-        report = CheckResult.group(
-            "URSA Doctor",
-            [CheckResult("Doctor runtime", CheckStatus.ERROR, exc)],
-        )
+    report = build_report(config, config_error)
 
     if bool(getattr(args, "json", False)):
         print(json.dumps(report.as_dict(), indent=2, default=str))  # noqa: T201

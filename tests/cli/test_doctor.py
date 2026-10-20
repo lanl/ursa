@@ -13,10 +13,13 @@ from ursa.cli.doctor import (
     CheckResult,
     CheckStatus,
     DoctorContext,
+    build_report,
     check_embedding_models,
     check_inference_providers,
     check_llm_models,
     check_mcp_servers,
+    render_report,
+    report_counts,
     run_checks,
 )
 
@@ -40,6 +43,52 @@ def test_runner_contains_section_failures(monkeypatch):
 
     assert report.checks[0].status is CheckStatus.ERROR
     assert all(r.status is CheckStatus.WARN for r in report.checks[1:])
+
+
+def test_build_report_contains_runner_failure(monkeypatch):
+    monkeypatch.setattr(
+        doctor_mod,
+        "run_checks",
+        MagicMock(side_effect=SystemExit("runner exited")),
+    )
+
+    report = build_report(UrsaConfig())
+
+    assert report.status is CheckStatus.ERROR
+    assert report.checks == (
+        CheckResult("Doctor runtime", CheckStatus.ERROR, "runner exited"),
+    )
+
+
+def test_report_counts_and_rendering_use_leaf_results():
+    report = CheckResult.group(
+        "URSA Doctor",
+        [
+            CheckResult.group(
+                "Providers",
+                [
+                    CheckResult("working", CheckStatus.OK, "Connected"),
+                    CheckResult("unused", CheckStatus.WARN, "Not selected"),
+                ],
+            ),
+            CheckResult("model", CheckStatus.ERROR, "Rejected"),
+        ],
+    )
+
+    assert report_counts(report) == {
+        CheckStatus.OK: 1,
+        CheckStatus.WARN: 1,
+        CheckStatus.ERROR: 1,
+    }
+    rendered = render_report(report)
+    assert rendered.plain == (
+        "❌ URSA Doctor\n"
+        "  ⚠️ Providers\n"
+        "    ✅ working  Connected\n"
+        "    ⚠️ unused  Not selected\n"
+        "  ❌ model  Rejected\n"
+        "1 ok  |  1 warn  |  1 error(s)"
+    )
 
 
 def test_provider_check_does_not_probe_an_unused_openai_default(monkeypatch):

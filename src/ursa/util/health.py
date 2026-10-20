@@ -8,14 +8,14 @@ import multiprocessing
 import os
 import signal
 import subprocess
+import sys
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import redirect_stderr, suppress
+from threading import Lock
 from typing import Any
 
 from langchain_core.tools import tool
 from pydantic import BaseModel
-
-from ursa.util.secrets import SecretReference
 
 
 @tool
@@ -30,6 +30,7 @@ class _HealthResponse(BaseModel):
 
 PROBE_TIMEOUT_SECONDS = 30.0
 _PROBE_FAILURES = (Exception, SystemExit, asyncio.CancelledError)
+_PROBE_START_LOCK = Lock()
 
 
 def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
@@ -85,6 +86,23 @@ def _terminate_probe(process: multiprocessing.Process) -> None:
         process.join(timeout=1)
 
 
+def _start_probe(process: multiprocessing.Process) -> None:
+    """Start a probe even when a TUI exposes an invalid stderr descriptor."""
+    with _PROBE_START_LOCK:
+        try:
+            stderr_fd = sys.stderr.fileno()
+        except Exception:
+            stderr_fd = -1
+        if isinstance(stderr_fd, int) and stderr_fd >= 0:
+            process.start()
+            return
+        # POSIX's multiprocessing resource tracker otherwise passes Textual's
+        # sentinel descriptor (-1) to fork_exec as an fd to preserve.
+        with open(os.devnull, "w", encoding="utf-8") as stderr:
+            with redirect_stderr(stderr):
+                process.start()
+
+
 def run_probe_with_deadline(
     probe: Any,
     *args: Any,
@@ -99,7 +117,7 @@ def run_probe_with_deadline(
     receive, send = context.Pipe(duplex=False)
     process = context.Process(target=_probe_worker, args=(send, probe, args))
     process.daemon = True
-    process.start()
+    _start_probe(process)
     send.close()
     try:
         if not receive.poll(timeout):
@@ -236,71 +254,3 @@ async def probe_mcp_server(name: str, server: Any) -> str:
 
     tools = await start_mcp_client({name: server}).get_tools(server_name=name)
     return f"Connected; server advertised {len(tools)} tool(s)"
-
-
-def _with_keyring_default(config: Any, username: str | None) -> Any:
-    """Make a relative keyring reference concrete before worker isolation."""
-    reference = getattr(config, "api_key", None)
-    if (
-        isinstance(reference, SecretReference)
-        and reference.keyring is True
-        and username is not None
-    ):
-        return config.model_copy(
-            update={
-                "api_key": reference.model_copy(update={"keyring": username})
-            }
-        )
-    return config
-
-
-def check_config_health(
-    config: Any, *, timeout: float = PROBE_TIMEOUT_SECONDS
-) -> tuple[tuple[str, ...], ...]:
-    """Run every external check for a candidate config and collect failures."""
-    try:
-        config = config.resolve()
-    except _PROBE_FAILURES:
-        return (("configuration",),)
-
-    probes: list[tuple[tuple[str, ...], Any, tuple[Any, ...]]] = [
-        (
-            ("inference_providers", name),
-            probe_inference_provider,
-            (_with_keyring_default(provider, name),),
-        )
-        for name, provider in config.inference_providers.items()
-    ]
-    if config.llm_model is not None:
-        llm = _with_keyring_default(
-            config.llm_model,
-            config.llm_model.inference_provider
-            or config.llm_model.model_provider,
-        )
-        probes.extend(
-            (
-                ("llm_model", capability),
-                probe_chat_config,
-                (llm, capability),
-            )
-            for capability in ("chat", "tool", "structured")
-        )
-    if config.emb_model is not None:
-        embedding = _with_keyring_default(
-            config.emb_model,
-            config.emb_model.inference_provider
-            or config.emb_model.model_provider,
-        )
-        probes.append((("emb_model",), probe_embedding_model, (embedding,)))
-    probes.extend(
-        (("mcp_servers", name), probe_mcp_server, (name, server))
-        for name, server in config.mcp_servers.items()
-    )
-
-    failures = []
-    for path, probe, args in probes:
-        try:
-            run_probe_with_deadline(probe, *args, timeout=timeout)
-        except _PROBE_FAILURES:
-            failures.append(path)
-    return tuple(failures)

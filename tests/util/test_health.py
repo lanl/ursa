@@ -1,17 +1,14 @@
 import asyncio
+import os
+import subprocess
+import sys
+import textwrap
 import time
 from types import SimpleNamespace
 
 import pytest
 
-from ursa.util import health
-from ursa.util.health import run_probe_with_deadline
-from ursa.util.secrets import SecretReference
-
-
-class _ConfigValue(SimpleNamespace):
-    def model_copy(self, *, update):
-        return type(self)(**{**vars(self), **update})
+from ursa.util.health import probe_embedding_model, run_probe_with_deadline
 
 
 def _block() -> None:
@@ -46,7 +43,7 @@ def test_embedding_probe_normalizes_capability_and_authentication_errors():
         ValueError,
         match=r"^The selected model does not support embeddings\.$",
     ) as capability:
-        health.probe_embedding_model(config_with_error(mixed_provider_error))
+        probe_embedding_model(config_with_error(mixed_provider_error))
     assert capability.value.__context__ is None
 
     for detail in ("401", "403 Forbidden", "Unauthorized"):
@@ -57,63 +54,39 @@ def test_embedding_probe_normalizes_capability_and_authentication_errors():
                 "key may not have access to it"
             ),
         ) as ambiguous:
-            health.probe_embedding_model(
-                config_with_error(RuntimeError(detail))
-            )
+            probe_embedding_model(config_with_error(RuntimeError(detail)))
         assert ambiguous.value.__context__ is None
 
     unrelated_error = RuntimeError("rate limited")
     with pytest.raises(RuntimeError, match="rate limited") as captured:
-        health.probe_embedding_model(config_with_error(unrelated_error))
+        probe_embedding_model(config_with_error(unrelated_error))
     assert captured.value is unrelated_error
 
 
-def test_config_health_runs_every_probe_and_collects_failures(monkeypatch):
-    calls = []
+@pytest.mark.skipif(
+    os.name != "posix", reason="invalid pass_fds is POSIX-specific"
+)
+def test_probe_starts_with_textual_invalid_stderr():
+    script = """
+        import sys
+        from ursa.util.health import run_probe_with_deadline
 
-    def run(probe, *args, timeout):
-        calls.append((probe.__name__, args, timeout))
-        failing = (
-            getattr(args[0], "tag", None) == "bad-provider"
-            or probe is health.probe_chat_config
-            and args[-1] == "tool"
-            or probe is health.probe_embedding_model
-            or probe is health.probe_mcp_server
-            and args[0] == "bad-mcp"
-        )
-        if failing:
-            raise RuntimeError("private service detail")
-        return "ok"
+        class TextualStderr:
+            def write(self, text): return len(text)
+            def flush(self): pass
+            def fileno(self): return -1
 
-    monkeypatch.setattr(health, "run_probe_with_deadline", run)
-    relative_key = SecretReference(keyring=True)
-    model = _ConfigValue(
-        api_key=relative_key,
-        inference_provider="good",
-        model_provider="openai",
-    )
-    config = SimpleNamespace(
-        resolve=lambda: config,
-        inference_providers={
-            "good": _ConfigValue(api_key=relative_key, tag="provider"),
-            "bad": _ConfigValue(api_key=None, tag="bad-provider"),
-        },
-        llm_model=model,
-        emb_model=model,
-        mcp_servers={"good": "server", "bad-mcp": "server"},
+        sys.stderr = TextualStderr()
+        print(run_probe_with_deadline(str, "connected", timeout=5))
+    """
+
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
     )
 
-    failures = health.check_config_health(config, timeout=7)
-
-    assert list(failures) == [
-        ("inference_providers", "bad"),
-        ("llm_model", "tool"),
-        ("emb_model",),
-        ("mcp_servers", "bad-mcp"),
-    ]
-    assert len(calls) == 8
-    assert {call[2] for call in calls} == {7}
-    provider = calls[0][1][0]
-    chat = calls[2][1][0]
-    assert provider.api_key.keyring == "good"
-    assert chat.api_key.keyring == "good"
+    assert result.returncode == 0
+    assert result.stdout.strip() == "connected"
