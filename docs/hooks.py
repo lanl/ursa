@@ -179,16 +179,9 @@ def on_files(files, config):
     """Expose generated example pages and installers in the docs site."""
     from mkdocs.structure.files import File
 
-    for installer in ("install.sh", "install.ps1"):
-        files.append(
-            File.generated(
-                config,
-                installer,
-                content=(REPOSITORY_ROOT / installer).read_text(
-                    encoding="utf-8"
-                ),
-            )
-        )
+    for path in ("install.sh", "install.ps1"):
+        content = (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+        files.append(File.generated(config, path, content=content))
     examples = _examples()
     files.append(
         File.generated(
