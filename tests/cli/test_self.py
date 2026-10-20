@@ -383,7 +383,7 @@ def test_parser_ignores_self_management_environment_flags(monkeypatch):
 
     cfg = build_parser().parse_args(["self", "modify"])
 
-    assert cfg.self.modify.extra is None
+    assert cfg.self.modify.extras is None
     assert cfg.self.modify.version is None
     assert cfg.self.modify.ref is None
     assert cfg.self.modify.with_packages is None

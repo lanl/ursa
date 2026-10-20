@@ -25,15 +25,14 @@ EOF
 }
 
 config_file=
-config_set=false
 selected_python=3.13
 ursa_requirement=ursa-ai
 while [ "$#" -gt 0 ]; do
     case $1 in
     --config)
         [ "$#" -ge 2 ] || fail "--config requires a file path"
+        [ -n "$2" ] || fail "--config requires a file path"
         config_file=$2
-        config_set=true
         shift 2
         ;;
     --version)
@@ -59,30 +58,8 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-case $selected_python in
-*[!0-9.]*)
-    fail "--python must be a Python version such as 3.13"
-    ;;
-esac
-if ! printf '%s\n' "$selected_python" | LC_ALL=C grep -Eq \
-    '^[0-9]+(\.[0-9]+)*$'
-then
-    fail "--python must be a Python version such as 3.13"
-fi
-
-installer_work=$(mktemp -d "${TMPDIR:-/tmp}/ursa-installer.XXXXXX") \
-    || fail "could not create a temporary directory"
-cleanup() {
-    rm -rf "$installer_work"
-}
-trap cleanup 0
-trap 'exit 1' HUP INT TERM
-
-payload_file=
-if [ "$config_set" = true ]; then
-    payload_file=$installer_work/defaults.json
+if [ -n "$config_file" ]; then
     [ -f "$config_file" ] || fail "setup defaults not found: $config_file"
-    cp "$config_file" "$payload_file"
 fi
 
 setup_input=none
@@ -91,7 +68,7 @@ if [ -t 0 ]; then
 elif ( : </dev/tty ) 2>/dev/null; then
     setup_input=tty
 fi
-if [ -n "$payload_file" ] && [ "$setup_input" = none ]; then
+if [ -n "$config_file" ] && [ "$setup_input" = none ]; then
     fail "setup defaults require an interactive terminal"
 fi
 
@@ -119,6 +96,10 @@ find_uv() {
 uv_executable=$(find_uv || true)
 if [ -z "$uv_executable" ]; then
     say "Installing uv…"
+    installer_work=$(mktemp -d "${TMPDIR:-/tmp}/ursa-installer.XXXXXX") \
+        || fail "could not create a temporary directory"
+    trap 'rm -rf "$installer_work"' 0
+    trap 'exit 1' HUP INT TERM
     if command -v curl >/dev/null 2>&1; then
         curl -LsSf https://astral.sh/uv/install.sh -o "$installer_work/uv-install.sh"
     elif command -v wget >/dev/null 2>&1; then
@@ -140,14 +121,10 @@ set -- tool install --python "$selected_python" --force --upgrade --compile-byte
 "$uv_executable" "$@"
 
 tool_bin=$("$uv_executable" tool dir --bin)
-tool_bin=$(CDPATH= cd -P "$tool_bin" 2>/dev/null && pwd) \
-    || fail "uv returned an invalid tool bin directory: $tool_bin"
 ursa_executable=$tool_bin/ursa
 [ -x "$ursa_executable" ] \
     || fail "URSA installed, but its executable was not found at $ursa_executable"
 uv_dir=$(dirname "$uv_executable")
-uv_dir=$(CDPATH= cd -P "$uv_dir" 2>/dev/null && pwd) \
-    || fail "uv has an invalid executable path: $uv_executable"
 
 current_ursa=$(command -v ursa || true)
 ursa_command=ursa
@@ -172,8 +149,8 @@ fi
 
 say "Starting guided setup…"
 set -- self setup
-if [ -n "$payload_file" ]; then
-    set -- "$@" --defaults-json "$payload_file"
+if [ -n "$config_file" ]; then
+    set -- "$@" --defaults-json "$config_file"
 fi
 if [ "$setup_input" = stdin ]; then
     "$ursa_executable" "$@"

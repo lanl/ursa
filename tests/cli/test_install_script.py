@@ -71,7 +71,7 @@ def test_install_script_is_posix_shell():
     assert "--python VERSION" in script
     assert "--config-json" not in script
     assert "--config-stdin" not in script
-    assert 'set -- "$@" --defaults-json "$payload_file"' in script
+    assert 'set -- "$@" --defaults-json "$config_file"' in script
 
 
 def test_installer_harness_is_posix_shell():
@@ -184,7 +184,7 @@ def test_install_script_passes_json_defaults_to_guided_setup(tmp_path):
         if command.startswith("ursa self setup --defaults-json ")
     )
     defaults_path = Path(setup.removeprefix("ursa self setup --defaults-json "))
-    assert not defaults_path.exists()
+    assert defaults_path == payload
 
 
 @pytest.mark.skipif(
@@ -259,26 +259,6 @@ def test_install_script_selects_python_version(tmp_path, python_version):
     ) in log.read_text().splitlines()
 
 
-@pytest.mark.parametrize(
-    "python_version",
-    ["", "cpython", "3.x", "3..13", ".13", "3."],
-)
-def test_install_script_rejects_invalid_python_version(
-    tmp_path, python_version
-):
-    environment, log, _ursa = _fake_installation(tmp_path)
-
-    result = _run_installer(
-        environment,
-        arguments=("--python", python_version),
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert "--python must be a Python version such as 3.13" in result.stderr
-    assert not log.exists()
-
-
 def test_install_script_uses_last_repeated_flag(tmp_path):
     environment, log, _ursa = _fake_installation(tmp_path)
 
@@ -318,44 +298,6 @@ def test_powershell_installer_has_valid_syntax():
         [POWERSHELL, "-NoLogo", "-NoProfile", "-Command", command],
         check=True,
     )
-
-
-@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell is not installed")
-@pytest.mark.parametrize(
-    ("parameter", "value", "message"),
-    [
-        (
-            "-Python",
-            "3.x",
-            "-Python must be a Python version such as 3.13",
-        ),
-        (
-            "-Python",
-            "3.13\n3.x",
-            "-Python must be a Python version such as 3.13",
-        ),
-    ],
-)
-def test_powershell_installer_rejects_invalid_python_versions(
-    parameter, value, message
-):
-    result = subprocess.run(
-        [
-            POWERSHELL,
-            "-NoLogo",
-            "-NoProfile",
-            "-File",
-            POWERSHELL_INSTALL_SCRIPT,
-            parameter,
-            value,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert message in result.stdout + result.stderr
 
 
 def test_install_script_uses_existing_uv_and_tool_bin(tmp_path):

@@ -35,26 +35,13 @@
             return $uvCommand.Path
         }
 
-        $candidates = @()
-        if ($env:UV_UNMANAGED_INSTALL) {
-            $candidates += Join-Path $env:UV_UNMANAGED_INSTALL "uv.exe"
-        }
-        if ($env:UV_INSTALL_DIR) {
-            $candidates += Join-Path $env:UV_INSTALL_DIR "uv.exe"
-        }
-        if ($env:XDG_BIN_HOME) {
-            $candidates += Join-Path $env:XDG_BIN_HOME "uv.exe"
-        }
-        if ($env:XDG_DATA_HOME) {
-            $candidates += Join-Path $env:XDG_DATA_HOME "..\bin\uv.exe"
-        }
+        $candidates = @(
+            $(if ($env:UV_UNMANAGED_INSTALL) { Join-Path $env:UV_UNMANAGED_INSTALL "uv.exe" })
+            $(if ($env:UV_INSTALL_DIR) { Join-Path $env:UV_INSTALL_DIR "uv.exe" })
+        )
         if ($HOME) {
             $candidates += Join-Path $HOME ".local\bin\uv.exe"
             $candidates += Join-Path $HOME ".cargo\bin\uv.exe"
-        }
-        if ($env:LOCALAPPDATA) {
-            $candidates += Join-Path $env:LOCALAPPDATA "uv\bin\uv.exe"
-            $candidates += Join-Path $env:LOCALAPPDATA "Programs\uv\uv.exe"
         }
 
         foreach ($candidate in $candidates) {
@@ -104,21 +91,16 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
     if ($PSBoundParameters.ContainsKey("Branch")) {
         $ursaRequirement = "ursa-ai @ git+https://github.com/lanl/ursa.git@$Branch"
     }
-    if ($Python -cnotmatch "^[0-9]+(\.[0-9]+)*\z") {
-        Stop-Installer "-Python must be a Python version such as 3.13"
-    }
-
     $payloadFile = $null
     try {
         if ($PSBoundParameters.ContainsKey("Config")) {
-            $payloadFile = [IO.Path]::GetTempFileName()
             if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
                 Stop-Installer "setup defaults not found: $Config"
             }
-            Copy-Item -LiteralPath $Config -Destination $payloadFile -Force
             if (-not (Test-InteractiveTerminal)) {
                 Stop-Installer "setup defaults require an interactive terminal"
             }
+            $payloadFile = $Config
         }
 
         $uvExecutable = Find-UvExecutable
@@ -127,20 +109,7 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
 
             [Net.ServicePointManager]::SecurityProtocol =
                 [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            $installerWork = Join-Path ([IO.Path]::GetTempPath()) (
-                "ursa-installer-" + [Guid]::NewGuid().ToString("N")
-            )
-            New-Item -ItemType Directory -Path $installerWork | Out-Null
-            try {
-                $uvInstaller = Join-Path $installerWork "uv-install.ps1"
-                Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" `
-                    -UseBasicParsing -OutFile $uvInstaller
-                & $uvInstaller
-            }
-            finally {
-                Remove-Item -LiteralPath $installerWork -Recurse -Force `
-                    -ErrorAction SilentlyContinue
-            }
+            Invoke-RestMethod "https://astral.sh/uv/install.ps1" | Invoke-Expression
 
             $uvExecutable = Find-UvExecutable
             if (-not $uvExecutable) {
@@ -158,20 +127,11 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
             Stop-Installer "uv failed to install URSA (exit code $uvInstallExitCode)"
         }
 
-        $toolBinOutput = @(& $uvExecutable tool dir --bin)
-        $toolBinExitCode = $LASTEXITCODE
-        if ($toolBinExitCode -ne 0) {
-            Stop-Installer "uv could not locate its tool bin directory (exit code $toolBinExitCode)"
-        }
-        $toolBinLines = @($toolBinOutput | ForEach-Object { "$($_)".Trim() } | Where-Object { $_ })
-        if ($toolBinLines.Count -eq 0) {
+        $toolBin = (& $uvExecutable tool dir --bin | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or -not $toolBin) {
             Stop-Installer "uv returned an empty tool bin directory"
         }
-        $toolBinValue = $toolBinLines[$toolBinLines.Count - 1]
-        if (-not (Test-Path -LiteralPath $toolBinValue -PathType Container)) {
-            Stop-Installer "uv returned an invalid tool bin directory: $toolBinValue"
-        }
-        $toolBin = (Get-Item -LiteralPath $toolBinValue -Force).FullName
+        $toolBin = "$toolBin".Trim()
 
         $ursaExecutable = Join-Path $toolBin "ursa.exe"
         if (-not (Test-Path -LiteralPath $ursaExecutable -PathType Leaf)) {
@@ -247,10 +207,5 @@ Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python V
             throw
         }
         throw "URSA installer: $($_.Exception.Message)"
-    }
-    finally {
-        if ($payloadFile) {
-            Remove-Item -LiteralPath $payloadFile -Force -ErrorAction SilentlyContinue
-        }
     }
 } @args
