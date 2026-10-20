@@ -44,29 +44,34 @@ prompts the user for a new keyring value:
 }
 ```
 
-Download the installer before passing a payload; standard input is already
-occupied when the installer itself is piped into a shell.
+Download the installer before passing a payload. Use `--version`/`-Version` to
+install a particular PyPI release, or `--branch`/`-Branch` to install a branch
+from the LANL URSA repository. The installer passes the supplied version or
+branch directly to uv without validating it. Use `--python`/`-Python` to choose
+the Python version that uv uses; the default is Python 3.13.
 
 === "Linux/MacOS"
 
     ```bash
     curl -LsSf https://lanl.github.io/ursa/latest/install.sh -o install.sh
-    sh install.sh --config defaults.json
+    sh install.sh --config defaults.json --version 1.2.3 --python 3.12
     ```
 
-    Use `--config-json` for an inline object or `--config-stdin` to read the
-    object from standard input.
+    Omit `--version` to install the latest published `ursa-ai`, or replace it
+    with `--branch main` to install GitHub's main branch. Omit `--python` to use
+    Python 3.13.
 
 === "Windows"
 
     ```powershell
     irm https://lanl.github.io/ursa/latest/install.ps1 -OutFile install.ps1
-    .\install.ps1 -Config defaults.json
+    .\install.ps1 -Config defaults.json -Version 1.2.3 -Python 3.12
     ```
 
-    Use `-ConfigJson` for an inline object.
+    Omit `-Version` to install the latest published `ursa-ai`, or replace it
+    with `-Branch main` to install GitHub's main branch. Omit `-Python` to use
+    Python 3.13.
 
-The installer still installs the published `ursa-ai` package; setup defaults
-do not change its Python, dependencies, source, or version. Legacy
+Setup defaults do not change the selected package source or version. Legacy
 `python_version`, `extras`, and `extra_packages` fields are accepted so existing
 payloads keep working, but they no longer alter the installation.

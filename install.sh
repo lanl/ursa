@@ -15,37 +15,41 @@ usage() {
     cat <<'EOF'
 Install URSA with uv and start the guided setup.
 
-Usage: install.sh [--config FILE | --config-json JSON | --config-stdin]
+Usage: install.sh [--config FILE] [--branch BRANCH | --version VERSION] [--python VERSION]
 
-  --config FILE       Read a setup defaults JSON payload from FILE.
-  --config-json JSON  Read the payload directly from the argument.
-  --config-stdin      Read the payload from stdin. Download this script first;
-                      stdin is already occupied when using curl ... | sh.
+  --config FILE              Read setup defaults from a JSON file.
+  --branch BRANCH            Install from a branch in the LANL URSA repository.
+  --version VERSION          Install a PyPI version.
+  --python VERSION           Install with this Python version (default: 3.13).
 EOF
 }
 
-config_source=
-config_value=
+config_file=
+config_set=false
+selected_python=3.13
+ursa_requirement=ursa-ai
 while [ "$#" -gt 0 ]; do
     case $1 in
     --config)
         [ "$#" -ge 2 ] || fail "--config requires a file path"
-        [ -z "$config_source" ] || fail "setup defaults may only be specified once"
-        config_source=file
-        config_value=$2
+        config_file=$2
+        config_set=true
         shift 2
         ;;
-    --config-json)
-        [ "$#" -ge 2 ] || fail "--config-json requires a JSON payload"
-        [ -z "$config_source" ] || fail "setup defaults may only be specified once"
-        config_source=argument
-        config_value=$2
+    --version)
+        [ "$#" -ge 2 ] || fail "--version requires a PyPI version"
+        ursa_requirement="ursa-ai==$2"
         shift 2
         ;;
-    --config-stdin)
-        [ -z "$config_source" ] || fail "setup defaults may only be specified once"
-        config_source=stdin
-        shift
+    --branch)
+        [ "$#" -ge 2 ] || fail "--branch requires a branch name"
+        ursa_requirement="ursa-ai @ git+https://github.com/lanl/ursa.git@$2"
+        shift 2
+        ;;
+    --python)
+        [ "$#" -ge 2 ] || fail "--python requires a Python version"
+        selected_python=$2
+        shift 2
         ;;
     -h|--help)
         usage
@@ -54,6 +58,17 @@ while [ "$#" -gt 0 ]; do
     *) fail "unknown option: $1" ;;
     esac
 done
+
+case $selected_python in
+*[!0-9.]*)
+    fail "--python must be a Python version such as 3.13"
+    ;;
+esac
+if ! printf '%s\n' "$selected_python" | LC_ALL=C grep -Eq \
+    '^[0-9]+(\.[0-9]+)*$'
+then
+    fail "--python must be a Python version such as 3.13"
+fi
 
 installer_work=$(mktemp -d "${TMPDIR:-/tmp}/ursa-installer.XXXXXX") \
     || fail "could not create a temporary directory"
@@ -64,21 +79,10 @@ trap cleanup 0
 trap 'exit 1' HUP INT TERM
 
 payload_file=
-if [ -n "$config_source" ]; then
+if [ "$config_set" = true ]; then
     payload_file=$installer_work/defaults.json
-    case $config_source in
-    file)
-        [ -f "$config_value" ] \
-            || fail "setup defaults not found: $config_value"
-        cp "$config_value" "$payload_file"
-        ;;
-    argument)
-        printf '%s\n' "$config_value" >"$payload_file"
-        ;;
-    stdin)
-        cat >"$payload_file"
-        ;;
-    esac
+    [ -f "$config_file" ] || fail "setup defaults not found: $config_file"
+    cp "$config_file" "$payload_file"
 fi
 
 setup_input=none
@@ -130,9 +134,9 @@ else
     say "Using uv at $uv_executable"
 fi
 
-say "Installing URSA with Python 3.13…"
-set -- tool install --python 3.13 --force --upgrade --compile-bytecode \
-    ursa-ai
+say "Installing URSA with Python $selected_python…"
+set -- tool install --python "$selected_python" --force --upgrade --compile-bytecode \
+    "$ursa_requirement"
 "$uv_executable" "$@"
 
 tool_bin=$("$uv_executable" tool dir --bin)

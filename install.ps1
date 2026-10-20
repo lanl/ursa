@@ -6,7 +6,11 @@
 
         [string]$Config,
 
-        [string]$ConfigJson
+        [string]$Version,
+
+        [string]$Branch,
+
+        [string]$Python = "3.13"
     )
 
     Set-StrictMode -Version Latest
@@ -83,36 +87,35 @@
         @"
 Install URSA with uv and start the guided setup.
 
-Usage: install.ps1 [-Config FILE | -ConfigJson JSON]
+Usage: install.ps1 [-Config FILE] [-Branch BRANCH | -Version VERSION] [-Python VERSION]
 
-  -Config FILE       Read a setup defaults JSON payload from FILE.
-  -ConfigJson JSON   Read the payload directly from the argument.
+  -Config FILE              Read setup defaults from a JSON file.
+  -Branch BRANCH            Install from a branch in the LANL URSA repository.
+  -Version VERSION          Install a PyPI version.
+  -Python VERSION           Install with this Python version (default: 3.13).
 "@ | Write-Output
         return
     }
 
-    $configSourceCount = @(
-        $PSBoundParameters.ContainsKey("Config")
-        $PSBoundParameters.ContainsKey("ConfigJson")
-    ).Where({ $_ }).Count
-    if ($configSourceCount -gt 1) {
-        Stop-Installer "setup defaults may only be specified once"
+    $ursaRequirement = "ursa-ai"
+    if ($PSBoundParameters.ContainsKey("Version")) {
+        $ursaRequirement = "ursa-ai==$Version"
+    }
+    if ($PSBoundParameters.ContainsKey("Branch")) {
+        $ursaRequirement = "ursa-ai @ git+https://github.com/lanl/ursa.git@$Branch"
+    }
+    if ($Python -cnotmatch "^[0-9]+(\.[0-9]+)*\z") {
+        Stop-Installer "-Python must be a Python version such as 3.13"
     }
 
     $payloadFile = $null
     try {
-        if ($configSourceCount -eq 1) {
+        if ($PSBoundParameters.ContainsKey("Config")) {
             $payloadFile = [IO.Path]::GetTempFileName()
-            if ($PSBoundParameters.ContainsKey("Config")) {
-                if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
-                    Stop-Installer "setup defaults not found: $Config"
-                }
-                Copy-Item -LiteralPath $Config -Destination $payloadFile -Force
+            if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
+                Stop-Installer "setup defaults not found: $Config"
             }
-            else {
-                $utf8 = New-Object Text.UTF8Encoding($false)
-                [IO.File]::WriteAllText($payloadFile, $ConfigJson, $utf8)
-            }
+            Copy-Item -LiteralPath $Config -Destination $payloadFile -Force
             if (-not (Test-InteractiveTerminal)) {
                 Stop-Installer "setup defaults require an interactive terminal"
             }
@@ -148,8 +151,8 @@ Usage: install.ps1 [-Config FILE | -ConfigJson JSON]
             Write-InstallerMessage "Using uv at $uvExecutable"
         }
 
-        Write-InstallerMessage "Installing URSA with Python 3.13..."
-        & $uvExecutable tool install --python 3.13 --force --upgrade --compile-bytecode ursa-ai
+        Write-InstallerMessage "Installing URSA with Python $Python..."
+        & $uvExecutable tool install --python $Python --force --upgrade --compile-bytecode $ursaRequirement
         $uvInstallExitCode = $LASTEXITCODE
         if ($uvInstallExitCode -ne 0) {
             Stop-Installer "uv failed to install URSA (exit code $uvInstallExitCode)"
