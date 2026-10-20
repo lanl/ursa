@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from itertools import islice
 from math import ceil
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import SecretStr, ValidationError
@@ -409,11 +410,11 @@ class FuzzySelect(Select):
                 overlay.reset_search()
 
 
-class AdvancedYamlEditor(Collapsible):
-    """Reusable collapsible YAML editor with validation presentation."""
+class CompactCollapsible(Collapsible):
+    """Borderless collapsible used for compact inline configuration."""
 
     DEFAULT_CSS = """
-    AdvancedYamlEditor {
+    CompactCollapsible {
         width: 100%;
         height: auto;
         margin: 0;
@@ -422,13 +423,28 @@ class AdvancedYamlEditor(Collapsible):
         background: transparent;
     }
 
-    AdvancedYamlEditor > CollapsibleTitle {
+    CompactCollapsible > CollapsibleTitle {
         height: 1;
         padding: 0;
         color: $text-muted;
         background: transparent;
     }
+    """
 
+
+class YamlTextArea(TextArea):
+    """Text area configured with YAML highlighting and line numbers."""
+
+    def __init__(self, text: str = "", **kwargs: Any) -> None:
+        kwargs.setdefault("language", "yaml")
+        kwargs.setdefault("show_line_numbers", True)
+        super().__init__(text, **kwargs)
+
+
+class AdvancedYamlEditor(CompactCollapsible):
+    """Reusable collapsible YAML editor with validation presentation."""
+
+    DEFAULT_CSS = """
     AdvancedYamlEditor .advanced-yaml-editor {
         height: 12;
         margin: 0;
@@ -463,10 +479,8 @@ class AdvancedYamlEditor(Collapsible):
         error_classes: str = "",
         markup: bool = True,
     ) -> None:
-        editor = TextArea(
+        editor = YamlTextArea(
             text,
-            language="yaml",
-            show_line_numbers=True,
             tab_behavior="indent",
             id=f"{prefix}-config-yaml",
             classes=f"advanced-yaml-editor {editor_classes}",
@@ -1372,11 +1386,9 @@ class InformationScreen(ModalScreen[None]):
                             "Read only — select text to copy",
                             id="status-config-readonly",
                         )
-                        yield TextArea(
+                        yield YamlTextArea(
                             self.config_yaml,
-                            language="yaml",
                             read_only=True,
-                            show_line_numbers=True,
                             id="status-config-yaml",
                         )
 

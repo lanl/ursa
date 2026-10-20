@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import timedelta
 from typing import Annotated, Any
 
@@ -12,7 +13,7 @@ from mcp.client.session_group import (
     SseServerParameters,
     StreamableHttpParameters,
 )
-from pydantic import BaseModel, BeforeValidator, ValidationError
+from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
 
 from ursa.util.http import build_mcp_httpx_async_client
 from ursa.util.secrets import SecretTemplate
@@ -107,6 +108,12 @@ ServerParameters = Annotated[
     StdioServerParameters | SseServerParameters | StreamableHttpParameters,
     BeforeValidator(validate_server_parameters),
 ]
+_SERVER_PARAMETERS_ADAPTER = TypeAdapter(ServerParameters)
+
+
+def parse_server_parameters(config: Any) -> ServerParameters:
+    """Parse one MCP server with the canonical runtime configuration type."""
+    return _SERVER_PARAMETERS_ADAPTER.validate_python(deepcopy(config))
 
 
 def transport(sp: ServerParameters) -> str:
@@ -126,7 +133,7 @@ def start_mcp_client(
     client_config = {}
     for server, config in server_configs.items():
         if not isinstance(config, BaseModel):
-            config = validate_server_parameters(dict(**config))
+            config = parse_server_parameters(config)
         connection = {
             **config.model_dump(),
             "transport": transport(config),
@@ -159,15 +166,15 @@ def _resolve_header(value, server_name: str):
     return value
 
 
-def _serialize_server_config(
+def serialize_server_parameters(
     config: ServerParameters,
     *,
     exclude_defaults: bool = True,
     exclude_none: bool = True,
     exclude_unset: bool = False,
 ):
-    """Internal: serialize MCP ServerParameters in a yaml/json compatible way"""
-    config = {
+    """Serialize MCP server parameters for a YAML/JSON config boundary."""
+    serialized = {
         "transport": transport(config),
         **config.model_dump(
             exclude_defaults=exclude_defaults,
@@ -175,7 +182,11 @@ def _serialize_server_config(
             exclude_unset=exclude_unset,
         ),
     }
-    for k, v in config.items():
+    for k, v in serialized.items():
         if isinstance(v, timedelta):
-            config[k] = v.total_seconds()
-    return config
+            serialized[k] = v.total_seconds()
+    return serialized
+
+
+# Backwards-compatible private spelling retained for downstream imports.
+_serialize_server_config = serialize_server_parameters

@@ -35,7 +35,11 @@ from ursa.util.http import (
     build_httpx_client,
     httpx_verify_value,
 )
-from ursa.util.mcp import ServerParameters, _serialize_server_config
+from ursa.util.mcp import (
+    ServerParameters,
+    parse_server_parameters,
+    serialize_server_parameters,
+)
 from ursa.util.secrets import SecretReference
 
 logger = logging.getLogger(__name__)
@@ -679,7 +683,7 @@ class UrsaConfig(BaseModel):
             info.context and info.context.get("include_defaults")
         )
         return {
-            server: _serialize_server_config(
+            server: serialize_server_parameters(
                 config,
                 exclude_defaults=False,
                 exclude_none=False,
@@ -687,6 +691,17 @@ class UrsaConfig(BaseModel):
             )
             for server, config in mcp_servers.items()
         }
+
+
+def interpolate_mcp_server(config: ServerParameters) -> ServerParameters:
+    """Apply config-file environment interpolation to a typed MCP server."""
+    values = serialize_server_parameters(
+        config,
+        exclude_defaults=False,
+        exclude_none=False,
+        exclude_unset=False,
+    )
+    return parse_server_parameters(deep_interp_env(values))
 
 
 def load_config_file(path: Path, *, interpolate: bool = True) -> dict[str, Any]:
