@@ -197,15 +197,17 @@ def main(args=None):
         case "self":
             self_config = cfg.self
             command_config = self_config[self_config.subcommand]
+            command_values = command_config.as_dict()
+            action = command_values.pop("action")
             if self_config.subcommand == "doctor":
-                command_config.action(
+                action(
                     command_config,
                     cfg=cfg,
                     env_overrides=env_overrides,
                     cli_overrides=cli_overrides,
                 )
             else:
-                command_config.action(command_config)
+                action(**command_values)
             return
         case "auth":
             auth_config = cfg.auth
