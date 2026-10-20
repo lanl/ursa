@@ -191,9 +191,31 @@ def probe_chat_structured_output(model: Any) -> str:
     return "Model returned a valid typed response"
 
 
+def _is_embedding_capability_error(exc: Exception) -> bool:
+    """Recognize provider responses for a non-embedding model."""
+    detail = str(exc).lower()
+    return (
+        "does not support embedding" in detail
+        or "not an embedding model" in detail
+        or "not supported for this endpoint" in detail
+        or "embedding" in detail
+        and ("not supported" in detail or "operationnotsupported" in detail)
+    )
+
+
 def probe_embedding_model(config: Any) -> str:
     """Raise unless an embedding configuration returns a non-empty vector."""
-    vector = config.init_embedding().embed_query("URSA health check")
+    capability_error = False
+    try:
+        vector = config.init_embedding().embed_query("URSA health check")
+    except Exception as exc:
+        if not _is_embedding_capability_error(exc):
+            raise
+        capability_error = True
+    if capability_error:
+        raise ValueError(
+            "The selected model does not support embeddings."
+        ) from None
     if not isinstance(vector, Sequence) or not vector:
         raise ValueError("embedding invocation returned no vector")
     return f"Embedding invocation returned {len(vector)} dimensions"

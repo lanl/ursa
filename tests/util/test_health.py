@@ -30,6 +30,31 @@ def test_probe_deadline_terminates_blocked_work(probe):
     assert time.monotonic() - started < 3
 
 
+def test_embedding_probe_distinguishes_model_capability_from_authentication():
+    def config_with_error(error):
+        def embed_query(_text):
+            raise error
+
+        return SimpleNamespace(
+            init_embedding=lambda: SimpleNamespace(embed_query=embed_query)
+        )
+
+    mixed_provider_error = RuntimeError(
+        "Error code: 401 - This model does not support embeddings"
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"^The selected model does not support embeddings\.$",
+    ) as capability:
+        health.probe_embedding_model(config_with_error(mixed_provider_error))
+    assert capability.value.__context__ is None
+
+    authentication_error = RuntimeError("401 Unauthorized")
+    with pytest.raises(RuntimeError, match="401 Unauthorized") as captured:
+        health.probe_embedding_model(config_with_error(authentication_error))
+    assert captured.value is authentication_error
+
+
 def test_config_health_runs_every_probe_and_collects_failures(monkeypatch):
     calls = []
 
