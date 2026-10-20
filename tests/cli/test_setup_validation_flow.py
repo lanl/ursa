@@ -3,7 +3,7 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Collapsible, Static
 
 from ursa.cli.config import (
     ChatModelConfig,
@@ -28,69 +28,66 @@ def _model(kind, name: str, provider: str):
     )
 
 
-async def test_provider_validation_only_shows_page_level_progress(
-    monkeypatch, app
-):
-    app.config.inference_providers = {
-        "company": InferenceProviderConfig(base_url="https://models.example/v1")
-    }
-    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", MagicMock())
-
-    async with app.run_test(size=(120, 42)):
-        app._begin_provider("company")
-        editor = app.provider_tabs.active_editor()
-        assert editor is not None
-        page_updates = []
-        editor_updates = []
-        original_page_status = app._status
-        original_editor_status = editor.set_status
-
-        def page_status(selector, message, failed=False):
-            if selector == "#provider-error":
-                page_updates.append(message)
-            original_page_status(selector, message, failed)
-
-        def editor_status(message, failed=False):
-            editor_updates.append(message)
-            original_editor_status(message, failed)
-
-        monkeypatch.setattr(app, "_status", page_status)
-        monkeypatch.setattr(editor, "set_status", editor_status)
-
-        assert await app._validate_provider_page()
-
-        assert page_updates == [
+@pytest.mark.parametrize(
+    ("kind", "selector", "progress", "complete"),
+    [
+        (
+            "provider",
+            "#provider-error",
             "Validating providers...",
             "✓ All providers connected",
-        ]
-        assert editor_updates[-1] == "✓ Connected"
-        assert not any("Validating" in message for message in editor_updates)
-
-
-async def test_mcp_validation_only_shows_page_level_progress(monkeypatch, app):
-    app.config = UrsaConfig.model_validate({
-        "mcp_servers": {
-            "tools": {
-                "transport": "streamable_http",
-                "url": "https://tools.example/mcp",
-            }
+        ),
+        (
+            "mcp",
+            "#mcp-validation-status",
+            "Validating MCP servers...",
+            "✓ All MCP servers connected",
+        ),
+    ],
+)
+async def test_entry_validation_only_shows_page_level_progress(
+    monkeypatch, app, kind, selector, progress, complete
+):
+    if kind == "provider":
+        app.config.inference_providers = {
+            "company": InferenceProviderConfig(
+                base_url="https://models.example/v1"
+            )
         }
-    })
+        begin, validate, tabs_name = (
+            lambda: app._begin_provider("company"),
+            app._validate_provider_page,
+            "provider_tabs",
+        )
+    else:
+        app.config = UrsaConfig.model_validate({
+            "mcp_servers": {
+                "tools": {
+                    "transport": "streamable_http",
+                    "url": "https://tools.example/mcp",
+                }
+            }
+        })
+        begin, validate, tabs_name = (
+            lambda: app._begin_mcp("tools"),
+            app._validate_mcp_page,
+            "mcp_tabs",
+        )
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", MagicMock())
 
     async with app.run_test(size=(120, 42)):
-        app._begin_mcp("tools")
-        editor = app.mcp_tabs.active_editor()
+        begin()
+        editor = getattr(app, tabs_name).active_editor()
         assert editor is not None
         page_updates = []
         editor_updates = []
         original_page_status = app._status
         original_editor_status = editor.set_status
 
-        def page_status(selector, message, failed=False):
-            if selector == "#mcp-validation-status":
+        def page_status(target, message, failed=False):
+            if target == selector:
                 page_updates.append(message)
-            original_page_status(selector, message, failed)
+            original_page_status(target, message, failed)
 
         def editor_status(message, failed=False):
             editor_updates.append(message)
@@ -99,12 +96,8 @@ async def test_mcp_validation_only_shows_page_level_progress(monkeypatch, app):
         monkeypatch.setattr(app, "_status", page_status)
         monkeypatch.setattr(editor, "set_status", editor_status)
 
-        assert await app._validate_mcp_page()
-
-        assert page_updates == [
-            "Validating MCP servers...",
-            "✓ All MCP servers connected",
-        ]
+        assert await validate()
+        assert page_updates == [progress, complete]
         assert editor_updates[-1] == "✓ Connected"
         assert not any("Validating" in message for message in editor_updates)
 
@@ -148,52 +141,64 @@ async def test_model_validation_shows_progress_for_each_probe(monkeypatch, app):
             await validation
 
 
-async def test_clean_doctor_report_advances_to_done(monkeypatch, app):
+@pytest.mark.parametrize(
+    "status",
+    [CheckStatus.OK, CheckStatus.WARN, CheckStatus.ERROR],
+)
+async def test_doctor_result_exposes_review_actions(monkeypatch, app, status):
     report = CheckResult.group(
         "URSA Doctor",
-        [CheckResult("Configuration", CheckStatus.OK)],
+        [CheckResult("Configuration", status, "issue" if status else "")],
     )
     monkeypatch.setattr("ursa.cli.setup._save", lambda *_args: app.path)
     monkeypatch.setattr("ursa.cli.setup._doctor", lambda _path: report)
 
     async with app.run_test(size=(120, 42)):
         app._show("review")
-
         await app._save_config()
 
-        assert app.page == "done"
-        assert str(app.query_one("#done-copy", Static).content) == (
-            f"Saved to {app.path}\nValidation: 0 warning(s), 0 error(s)"
-        )
+        if status is CheckStatus.OK:
+            assert app.page == "done"
+            assert app.saved_path == app.path
+            assert str(app.query_one("#done-copy", Static).content) == (
+                f"Saved to {app.path}\nValidation: 0 warning(s), 0 error(s)"
+            )
+            await app.action_back()
+        assert app.page == "review"
+        for id, label in (
+            ("review-continue", "Continue"),
+            ("review-recheck", "Recheck"),
+        ):
+            button = app.query_one(f"#{id}", Button)
+            assert str(button.label) == label
+            assert not button.has_class("hidden")
 
 
-@pytest.mark.parametrize(
-    ("status", "finish_label", "retry_hidden"),
-    [
-        (CheckStatus.WARN, "Finish", True),
-        (CheckStatus.ERROR, "Finish anyway", False),
-    ],
-)
-async def test_doctor_issues_remain_on_review(
-    monkeypatch, app, status, finish_label, retry_hidden
-):
-    report = CheckResult.group(
-        "URSA Doctor",
-        [CheckResult("Configuration", status, "issue")],
-    )
-    monkeypatch.setattr("ursa.cli.setup._doctor", lambda _path: report)
+async def test_recheck_stays_on_review_then_continue_finishes(monkeypatch, app):
+    reports = iter((
+        CheckResult.group(
+            "URSA Doctor",
+            [CheckResult("Configuration", CheckStatus.WARN, "issue")],
+        ),
+        CheckResult.group(
+            "URSA Doctor",
+            [CheckResult("Configuration", CheckStatus.OK)],
+        ),
+    ))
+    monkeypatch.setattr("ursa.cli.setup._doctor", lambda _path: next(reports))
 
-    async with app.run_test(size=(120, 42)):
+    async with app.run_test(size=(120, 42)) as pilot:
         app.saved_path = app.path
         app._show("review")
-
         await app._run_doctor()
 
+        app.query_one("#review-recheck", Button).press()
+        await pilot.pause()
         assert app.page == "review"
-        assert (
-            str(app.query_one("#review-finish", Button).label) == finish_label
+        assert app.query_one("#review-validation", Collapsible).title == (
+            "URSA Doctor — 0 warning(s), 0 error(s)"
         )
-        assert (
-            app.query_one("#review-retry", Button).has_class("hidden")
-            is retry_hidden
-        )
+
+        app.query_one("#review-continue", Button).press()
+        await pilot.pause()
+        assert app.page == "done"

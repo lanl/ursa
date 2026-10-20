@@ -2,6 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from mcp import StdioServerParameters
+from mcp.client.session_group import StreamableHttpParameters
 from pydantic import SecretStr
 
 from ursa.cli.config import (
@@ -79,8 +81,15 @@ mcp_servers:
     assert set(config.inference_providers) == {"company"}
     assert config.inference_providers["company"].base_url == "${MODEL_URL}"
     assert config.inference_providers["company"].ssl_verify is True
-    assert config.mcp_servers["tools"].env == {"API_KEY": "${MCP_SECRET}"}
+    server = config.mcp_servers["tools"]
+    assert isinstance(server, StdioServerParameters)
+    assert server.env == {"API_KEY": "${MCP_SECRET}"}
     assert llm_configured
+
+    save_setup_config(path, config, {})
+    saved = path.read_text()
+    assert "${MODEL_URL}" in saved
+    assert "${MCP_SECRET}" in saved
 
 
 def test_apply_setup_defaults_uses_canonical_mcp_parser(tmp_path):
@@ -93,10 +102,17 @@ def test_apply_setup_defaults_uses_canonical_mcp_parser(tmp_path):
                 {
                     "name": "company",
                     "base_url": "https://models.example/v1",
+                    "reasoning_effort": "high",
                 }
             ],
             "llm_model": {
                 "model": "gpt-test",
+                "model_provider": "anthropic",
+                "inference_provider": "company",
+            },
+            "emb_model": {
+                "model": "embedding-test",
+                "model_provider": "openai",
                 "inference_provider": "company",
             },
             "mcp_servers": {
@@ -104,6 +120,7 @@ def test_apply_setup_defaults_uses_canonical_mcp_parser(tmp_path):
                     "transport": "streamable_http",
                     "url": "https://tools.example/mcp",
                     "headers": {"Authorization": {"template": "Bearer %s"}},
+                    "timeout": 30,
                 }
             },
         },
@@ -114,9 +131,64 @@ def test_apply_setup_defaults_uses_canonical_mcp_parser(tmp_path):
     assert config.inference_providers["company"].api_key == SecretReference(
         keyring=True
     )
-    assert config.mcp_servers["tools"].headers == {
+    assert config.inference_providers["company"].reasoning_effort == "high"
+    assert config.llm_model.model_provider == "anthropic"
+    assert config.emb_model is not None
+    assert config.emb_model.model == "embedding-test"
+    server = config.mcp_servers["tools"]
+    assert isinstance(server, StreamableHttpParameters)
+    assert server.headers == {
         "Authorization": SecretTemplate(keyring=True, template="Bearer %s")
     }
+    assert server.timeout.total_seconds() == 30
+
+    apply_setup_defaults(
+        config,
+        {
+            "inference_providers": [
+                {"name": "company", "base_url": "https://ignored.test/v1"}
+            ],
+            "mcp_servers": {
+                "tools": {"transport": "stdio", "command": "replacement"}
+            },
+        },
+    )
+    assert config.inference_providers["company"].base_url == (
+        "https://models.example/v1"
+    )
+    assert config.mcp_servers["tools"] is server
+
+
+def test_apply_metadata_only_defaults_does_not_add_empty_sections(tmp_path):
+    config, _ = load_setup_config(tmp_path / "missing.yaml")
+
+    apply_setup_defaults(config, {"python_version": "3.13"})
+
+    assert config.editable_values() == {"inference_providers": {}}
+
+
+def test_apply_setup_defaults_validates_shadowed_provider():
+    config = UrsaConfig.model_validate({
+        "inference_providers": {
+            "company": {"base_url": "https://models.example/v1"}
+        }
+    })
+
+    with pytest.raises(
+        SetupError, match="provider default 'company' is invalid"
+    ):
+        apply_setup_defaults(
+            config,
+            {
+                "inference_providers": [
+                    {
+                        "name": "company",
+                        "base_url": "https://ignored.example/v1",
+                        "ssl_verify": {"invalid": True},
+                    }
+                ]
+            },
+        )
 
 
 def test_save_setup_config_rolls_back_keyring_when_file_save_fails(
@@ -230,6 +302,32 @@ llm_model:
     assert config.llm_model.model == "old-chat"
 
 
+def test_replace_models_revalidates_copies_and_strips_resolved_provider_state():
+    config = UrsaConfig.model_validate({
+        "inference_providers": {
+            "company": {"base_url": "https://models.example/v1"}
+        },
+        "llm_model": {"model": "old-chat", "inference_provider": "company"},
+    })
+    selected = ChatModelConfig(
+        model="new-chat", inference_provider="company"
+    ).resolve_inference_provider(config.inference_providers)
+    assert selected.base_url == "https://models.example/v1"
+
+    updated = replace_models(config, selected, None)
+
+    assert updated.llm_model.base_url is None
+    assert "base_url" not in updated.llm_model.model_fields_set
+    with pytest.raises(ValueError, match="unresolved inference provider"):
+        _ = updated.llm_model.kwargs
+
+    invalid = selected.model_copy(
+        update={"base_url": "https://override.example/v1"}
+    )
+    with pytest.raises(SetupError, match="cannot both be configured"):
+        replace_models(config, invalid, None)
+
+
 def test_parse_setup_model_yaml_replaces_complete_block_and_deletes_fields():
     original = ChatModelConfig(
         model="old-chat",
@@ -297,7 +395,9 @@ llm_model:
     updated = replace_mcp_servers(config, {"tools": server})
 
     assert config.mcp_servers == {}
-    assert updated.mcp_servers["tools"].url == "https://tools.example/mcp"
+    updated_server = updated.mcp_servers["tools"]
+    assert isinstance(updated_server, StreamableHttpParameters)
+    assert updated_server.url == "https://tools.example/mcp"
     assert yaml.safe_load(format_setup_config_yaml(updated)) == (
         updated.editable_values()
     )
@@ -330,7 +430,7 @@ llm_model:
     assert runtime.base_url == "https://models.example/v1"
     assert isinstance(runtime.api_key, SecretStr)
     assert runtime.api_key.get_secret_value() == "pending-secret"
-    assert runtime.model_provider == "anthropic"
+    assert getattr(runtime, "model_provider", None) == "anthropic"
     assert config.inference_providers["company"].api_key == SecretReference(
         keyring=True
     )

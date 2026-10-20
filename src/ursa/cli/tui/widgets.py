@@ -537,32 +537,6 @@ class AdvancedYamlEditor(CompactCollapsible):
         self.cancel_validation()
 
 
-class ThemeScreen(HotlistScreen):
-    """Theme picker that previews highlighted themes over the current app."""
-
-    def __init__(
-        self,
-        candidates: Sequence[str],
-        initial_theme: str,
-    ) -> None:
-        super().__init__("Themes", candidates)
-        self.initial_theme = initial_theme
-
-    @on(OptionList.OptionHighlighted)
-    def preview_theme(self, event: OptionList.OptionHighlighted) -> None:
-        self.app.theme = str(event.option.prompt)
-
-    def action_cancel(self) -> None:
-        self.app.theme = self.initial_theme
-        self.dismiss(None)
-
-
-@dataclass(frozen=True)
-class ModelSelection:
-    chat: ChatModelConfig
-    embedding: EmbModelConfig | None
-
-
 class HelpLabel(Horizontal):
     """Compact field label with an accented tooltip affordance."""
 
@@ -614,18 +588,49 @@ class HelpLabel(Horizontal):
             self.query_one(".help-label-text", Static).update(label)
 
 
-class ModelTabs(TabbedContent):
-    """Shared model tabs with breathing room below the page heading."""
+class ThemeScreen(HotlistScreen):
+    """Theme picker that previews highlighted themes over the current app."""
 
-    DEFAULT_CSS = """
-    ModelTabs {
-        margin-top: 1;
-    }
-    """
+    def __init__(
+        self,
+        candidates: Sequence[str],
+        initial_theme: str,
+    ) -> None:
+        super().__init__("Themes", candidates)
+        self.initial_theme = initial_theme
+
+    @on(OptionList.OptionHighlighted)
+    def preview_theme(self, event: OptionList.OptionHighlighted) -> None:
+        self.app.theme = str(event.option.prompt)
+
+    def action_cancel(self) -> None:
+        self.app.theme = self.initial_theme
+        self.dismiss(None)
 
 
-class ModelEditor(Vertical):
-    """Chat and embedding model editor embeddable in another workflow."""
+@dataclass(frozen=True)
+class ModelSelection:
+    chat: ChatModelConfig
+    embedding: EmbModelConfig | None
+
+
+class ModelFieldLabel(Horizontal):
+    """Compact field label with an accented help affordance."""
+
+    def __init__(self, label: str, help_text: str, *, id: str) -> None:
+        super().__init__(id=id, classes="model-field-label")
+        self.label = label
+        self.tooltip = help_text
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.label, classes="model-field-label-text")
+        yield Static("[", classes="model-field-help-bracket")
+        yield Static("?", classes="model-field-help-mark")
+        yield Static("]", classes="model-field-help-bracket")
+
+
+class ModelScreen(ModalScreen[ModelSelection | None]):
+    """Configure chat and embedding model providers."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -635,13 +640,6 @@ class ModelEditor(Vertical):
     NONE_VALUE = "__ursa_none__"
     YAML_VALIDATION_DELAY = 0.8
     STRUCTURED_FIELDS = ("model", "model_provider", "inference_provider")
-
-    class Submitted(Message):
-        """The model selection submitted by the editor, or ``None``."""
-
-        def __init__(self, selection: ModelSelection | None) -> None:
-            super().__init__()
-            self.selection = selection
 
     @staticmethod
     def _validation_error_text(error: ValidationError) -> str:
@@ -679,13 +677,8 @@ class ModelEditor(Vertical):
         providers: Mapping[str, InferenceProviderConfig],
         chat: ChatModelConfig,
         embedding: EmbModelConfig | None,
-        *,
-        apply_label: str = "Apply",
-        cancel_label: str = "Cancel",
     ) -> None:
         super().__init__()
-        self.apply_label = apply_label
-        self.cancel_label = cancel_label
         self.providers = dict(providers)
         self.chat = chat
         self.embedding_was_configured = embedding is not None
@@ -713,12 +706,12 @@ class ModelEditor(Vertical):
             "embedding": self.embedding,
         }
         self._yaml_values = {
-            prefix: config.editable_values()
+            prefix: self._configured_values(config)
             for prefix, config in self.drafts.items()
         }
         self.model_catalogs: dict[str, dict[str, ProviderModel]] = {}
         self._model_load_generation = {"chat": 0, "embedding": 0}
-        self._tab_statuses: dict[str, str | None] = {}
+        self._yaml_timers: dict[str, Timer] = {}
         self._syncing_controls = False
 
     @classmethod
@@ -811,8 +804,10 @@ class ModelEditor(Vertical):
         )
 
     @classmethod
-    def _field_label(cls, label: str, field: str, prefix: str) -> HelpLabel:
-        return HelpLabel(
+    def _field_label(
+        cls, label: str, field: str, prefix: str
+    ) -> ModelFieldLabel:
+        return ModelFieldLabel(
             label,
             cls.FIELD_HELP[field],
             id=f"{prefix}-{field}-label",
@@ -821,69 +816,62 @@ class ModelEditor(Vertical):
     def compose(self) -> ComposeResult:
         with Vertical(classes="settings-dialog"):
             yield Static("Models", classes="settings-title")
-            with ModelTabs():
-                with TabPane(
-                    self._tab_label("chat", self.chat.model),
-                    id="chat-model-tab",
-                ):
+            with TabbedContent():
+                with TabPane("Chat", id="chat-model-tab"):
                     yield from self._model_fields(
                         "chat",
                         self.chat,
                     )
-                    yield self._advanced_editor("chat", self.chat)
-                with TabPane(
-                    self._tab_label("embedding", self.embedding.model),
-                    id="embedding-model-tab",
-                ):
+                    yield from self._advanced_editor("chat", self.chat)
+                with TabPane("Embedding", id="embedding-model-tab"):
                     yield from self._model_fields(
                         "embedding",
                         self.embedding,
                     )
-                    yield self._advanced_editor("embedding", self.embedding)
+                    yield from self._advanced_editor(
+                        "embedding", self.embedding
+                    )
             with Horizontal(classes="settings-actions"):
-                yield Button(self.cancel_label, id="model-cancel")
-                yield Button(
-                    self.apply_label, id="model-apply", variant="primary"
-                )
-
-    def _tab_label(self, prefix: str, model: str) -> str:
-        kind = "Chat" if prefix == "chat" else "Embedding"
-        status = self._tab_statuses.get(prefix)
-        return f"{f'{status} ' if status else ''}{kind}: {model or 'None'}"
-
-    def _update_tab_label(self, prefix: str, model: str) -> None:
-        tabs = self.query_one_optional(ModelTabs)
-        if tabs is not None:
-            tabs.get_tab(f"{prefix}-model-tab").label = self._tab_label(
-                prefix, model
-            )
-
-    def _mark_tab_unvalidated(self, prefix: str) -> None:
-        if prefix in self._tab_statuses:
-            self._tab_statuses[prefix] = "○"
-
-    def set_tab_status(
-        self, prefix: str, status: str | None, model: str | None = None
-    ) -> None:
-        """Set the validation marker shown in a model tab label."""
-        self._tab_statuses[prefix] = status
-        self._update_tab_label(
-            prefix, self.drafts[prefix].model if model is None else model
-        )
+                yield Button("Cancel", id="model-cancel")
+                yield Button("Apply", id="model-apply", variant="primary")
 
     def _advanced_editor(
         self, prefix: str, config: ModelConfig
-    ) -> AdvancedYamlEditor:
-        return AdvancedYamlEditor(
-            prefix,
-            self._dump_yaml(config),
-            editor_classes="model-yaml-editor",
-            error_classes="model-yaml-error",
+    ) -> ComposeResult:
+        with Collapsible(
+            title="Advanced",
+            collapsed=True,
+            id=f"{prefix}-advanced",
+            classes="model-advanced",
+        ):
+            yield TextArea(
+                self._dump_yaml(config),
+                language="yaml",
+                show_line_numbers=True,
+                tab_behavior="indent",
+                id=f"{prefix}-config-yaml",
+                classes="model-yaml-editor",
+            )
+            yield Static(
+                "",
+                id=f"{prefix}-yaml-error",
+                classes="model-yaml-error hidden",
+            )
+
+    @staticmethod
+    def _configured_values(config: ModelConfig) -> dict:
+        """Return editable values without materializing inherited defaults."""
+        dumped = config.model_dump(
+            mode="json",
+            exclude_unset=True,
+            context={"include_defaults": False},
         )
+        dumped.setdefault("model", config.model)
+        return dumped
 
     @classmethod
     def _dump_yaml(cls, config: ModelConfig) -> str:
-        return cls._dump_yaml_values(config.editable_values())
+        return cls._dump_yaml_values(cls._configured_values(config))
 
     @staticmethod
     def _dump_yaml_values(values: Mapping) -> str:
@@ -898,7 +886,7 @@ class ModelEditor(Vertical):
 
     def _update_yaml_values(self, prefix: str, config: ModelConfig) -> None:
         """Patch structured fields without reordering the YAML mapping."""
-        configured = config.editable_values()
+        configured = self._configured_values(config)
         values = self._yaml_values[prefix]
         if config.inference_provider is not None:
             values.pop("base_url", None)
@@ -922,6 +910,11 @@ class ModelEditor(Vertical):
             group="model-discovery",
             exclusive=True,
         )
+
+    def on_unmount(self) -> None:
+        for timer in self._yaml_timers.values():
+            timer.stop()
+        self._yaml_timers.clear()
 
     def _next_model_load_generation(self, prefix: str) -> int:
         self._model_load_generation[prefix] += 1
@@ -956,12 +949,7 @@ class ModelEditor(Vertical):
         try:
             models = await asyncio.to_thread(list_provider_models, config)
         except Exception as exc:  # noqa: BLE001
-            if (
-                generation != self._model_load_generation[prefix]
-                or not self.is_mounted
-                or self.query_one_optional(f"#{prefix}-model-name", Select)
-                is None
-            ):
+            if generation != self._model_load_generation[prefix]:
                 return
             self.model_catalogs[prefix] = {}
             current = self._choice_value(prefix, "model-name")
@@ -972,11 +960,7 @@ class ModelEditor(Vertical):
                 severity="warning",
             )
             return
-        if (
-            generation != self._model_load_generation[prefix]
-            or not self.is_mounted
-            or self.query_one_optional(f"#{prefix}-model-name", Select) is None
-        ):
+        if generation != self._model_load_generation[prefix]:
             return
         models = sort_provider_models(
             models, "embedding" if prefix == "embedding" else "chat"
@@ -1069,8 +1053,6 @@ class ModelEditor(Vertical):
         except ValueError:
             return
         self.drafts[prefix] = updated
-        self._mark_tab_unvalidated(prefix)
-        self._update_tab_label(prefix, updated.model)
         self._update_yaml_values(prefix, updated)
         editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
         text = self._yaml_text(prefix)
@@ -1092,9 +1074,10 @@ class ModelEditor(Vertical):
             self._set_yaml_state(prefix, "valid")
             return
         self._set_yaml_state(prefix, "neutral")
-        self.query_one(
-            f"#{prefix}-advanced", AdvancedYamlEditor
-        ).schedule_validation(
+        timer = self._yaml_timers.pop(prefix, None)
+        if timer is not None:
+            timer.stop()
+        self._yaml_timers[prefix] = self.set_timer(
             self.YAML_VALIDATION_DELAY,
             lambda: self._validate_yaml(prefix, update_controls=True),
         )
@@ -1134,8 +1117,6 @@ class ModelEditor(Vertical):
             self._set_yaml_state(prefix, "invalid", error)
             return None
         self.drafts[prefix] = config
-        self._mark_tab_unvalidated(prefix)
-        self._update_tab_label(prefix, config.model)
         self._yaml_values[prefix] = deepcopy(values)
         self._set_yaml_state(prefix, "valid")
         if update_controls:
@@ -1143,9 +1124,13 @@ class ModelEditor(Vertical):
         return config
 
     def _set_yaml_state(self, prefix: str, state: str, error: str = "") -> None:
-        self.query_one(
-            f"#{prefix}-advanced", AdvancedYamlEditor
-        ).set_validation(state, error)
+        editor = self.query_one(f"#{prefix}-config-yaml", TextArea)
+        editor.remove_class("yaml-valid", "yaml-invalid")
+        if state != "neutral":
+            editor.add_class(f"yaml-{state}")
+        message = self.query_one(f"#{prefix}-yaml-error", Static)
+        message.update(Text(error))
+        message.set_class(not error, "hidden")
 
     def _update_controls_from_config(
         self, prefix: str, config: ModelConfig
@@ -1294,7 +1279,7 @@ class ModelEditor(Vertical):
         if not embedding.model:
             embedding = None
         assert embedding is None or isinstance(embedding, EmbModelConfig)
-        self._submit(ModelSelection(chat, embedding))
+        self.dismiss(ModelSelection(chat, embedding))
 
     @on(Button.Pressed, "#model-cancel")
     def cancel_button(self) -> None:
@@ -1306,7 +1291,7 @@ class ModelEditor(Vertical):
             for select in expanded:
                 select.expanded = False
             return
-        self._submit(None)
+        self.dismiss(None)
 
     def on_click(self, event: events.Click) -> None:
         if event.widget is None:
@@ -1315,32 +1300,6 @@ class ModelEditor(Vertical):
         for select in self.query("FuzzySelect.-expanded"):
             if select not in ancestors:
                 select.expanded = False
-
-    def _submit(self, selection: ModelSelection | None) -> None:
-        self.post_message(self.Submitted(selection))
-
-
-class ModelScreen(ModalScreen[ModelSelection | None]):
-    """Modal model editor used by the running TUI."""
-
-    def __init__(
-        self,
-        providers: Mapping[str, InferenceProviderConfig],
-        chat: ChatModelConfig,
-        embedding: EmbModelConfig | None,
-    ) -> None:
-        super().__init__()
-        self.providers = providers
-        self.chat = chat
-        self.embedding = embedding
-
-    def compose(self) -> ComposeResult:
-        yield ModelEditor(self.providers, self.chat, self.embedding)
-
-    @on(ModelEditor.Submitted)
-    def editor_submitted(self, event: ModelEditor.Submitted) -> None:
-        event.stop()
-        self.dismiss(event.selection)
 
 
 class InformationScreen(ModalScreen[None]):
@@ -1386,9 +1345,11 @@ class InformationScreen(ModalScreen[None]):
                             "Read only — select text to copy",
                             id="status-config-readonly",
                         )
-                        yield YamlTextArea(
+                        yield TextArea(
                             self.config_yaml,
+                            language="yaml",
                             read_only=True,
+                            show_line_numbers=True,
                             id="status-config-yaml",
                         )
 

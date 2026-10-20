@@ -27,36 +27,34 @@ from ursa.cli.config import (
 from ursa.cli.doctor import (
     CheckResult,
     CheckStatus,
-    build_report_from_path,
     render_report,
     report_counts,
 )
+from ursa.cli.doctor import (
+    build_report_from_path as _doctor,
+)
 from ursa.cli.setup_config import (
-    SetupError,
+    SetupError as SetupError,
+)
+from ursa.cli.setup_config import (
     apply_setup_defaults,
     format_setup_config_yaml,
-    load_setup_config,
     load_setup_defaults,
     prepare_provider_probe,
     replace_inference_providers,
     replace_mcp_servers,
     replace_models,
-    save_setup_config,
+)
+from ursa.cli.setup_config import (
+    load_setup_config as _load_config,
+)
+from ursa.cli.setup_config import (
+    save_setup_config as _save,
 )
 from ursa.cli.setup_entries import (
-    API_KEY_ENV,
-    CUSTOM_PROVIDER_URL,
-    MCP_TOKEN_NONE,
-    PROVIDER_DEFAULT_URL,
-    PROVIDER_DEFAULT_URLS,
-    SPINNER,
-    ApiKeyEntry,
-    CredentialValue,
     DynamicEntryTabs,
     McpCandidate,
-    McpDraftEditor,
     ProviderCandidate,
-    ProviderDraftEditor,
 )
 from ursa.cli.setup_models import SetupModelEditor, SetupModelSelection
 from ursa.cli.tui.widgets import CompactCollapsible, YamlTextArea
@@ -73,28 +71,6 @@ from ursa.util.secrets import (
     SecretReference,
     keyring_usernames,
 )
-
-__all__ = [
-    "API_KEY_ENV",
-    "CUSTOM_PROVIDER_URL",
-    "MCP_TOKEN_NONE",
-    "PROVIDER_DEFAULT_URL",
-    "PROVIDER_DEFAULT_URLS",
-    "SPINNER",
-    "ApiKeyEntry",
-    "CredentialValue",
-    "DynamicEntryTabs",
-    "McpCandidate",
-    "McpDraftEditor",
-    "ProviderCandidate",
-    "ProviderDraftEditor",
-    "SetupAction",
-    "SetupApp",
-    "SetupError",
-    "apply_setup_defaults",
-    "load_setup_defaults",
-    "run_setup",
-]
 
 
 def _friendly(exc: Exception, mcp: bool = False) -> str:
@@ -120,13 +96,12 @@ def _friendly(exc: Exception, mcp: bool = False) -> str:
     return messages[0] if messages else type(exc).__name__
 
 
-_load_config = load_setup_config
-_save = save_setup_config
-
-
-def _doctor(path: Path) -> CheckResult:
-    """Validate the exact configuration artifact written by setup."""
-    return build_report_from_path(path)
+async def _capture_probe(call, *args, **kwargs) -> Exception | None:
+    try:
+        await asyncio.to_thread(call, *args, **kwargs)
+    except Exception as exc:
+        return exc
+    return None
 
 
 SetupAction = Enum(
@@ -171,8 +146,13 @@ class SetupApp(App[SetupAction]):
     def _buttons(*specs: tuple) -> Horizontal:
         return Horizontal(
             *(
-                Button(label, id=id, variant=variant, disabled=disabled)
-                for label, id, variant, disabled in specs
+                Button(
+                    label,
+                    id=id,
+                    variant=variant,
+                    disabled=id == "review-save",
+                )
+                for label, id, variant in specs
             ),
             classes="setup-actions",
         )
@@ -195,6 +175,26 @@ class SetupApp(App[SetupAction]):
             *children, id=f"{name}-page", classes="setup-page"
         )
 
+    def _step_page(
+        self,
+        name: str,
+        title: str,
+        content: Any,
+        status_id: str,
+        copy: str,
+    ) -> VerticalScroll:
+        return self._page(
+            name,
+            title,
+            content,
+            Static("", id=status_id, classes="form-message"),
+            copy=copy,
+            actions=(
+                ("Back", f"{name}-back", "default"),
+                ("Validate and continue", f"{name}-save", "primary"),
+            ),
+        )
+
     def compose(self) -> ComposeResult:
         self.provider_tabs = DynamicEntryTabs(
             "provider", self.config.inference_providers, self._keys()
@@ -212,57 +212,28 @@ class SetupApp(App[SetupAction]):
                     if self.path.is_file()
                     else "This guide will connect URSA to a model provider, choose your models, and optionally add MCP tools. Nothing is written until the final Save button."
                 ),
-                actions=(("Begin setup", "welcome-next", "primary", False),),
+                actions=(("Begin setup", "welcome-next", "primary"),),
             ),
-            self._page(
+            self._step_page(
                 "provider",
                 "Connect an inference provider",
                 self.provider_tabs,
-                Static("", id="provider-error", classes="form-message"),
-                copy="URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
-                actions=(
-                    ("Back", "provider-back", "default", False),
-                    (
-                        "Validate and continue",
-                        "provider-save",
-                        "primary",
-                        False,
-                    ),
-                ),
+                "provider-error",
+                "URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
             ),
-            self._page(
+            self._step_page(
                 "models",
                 "Choose default models",
                 Vertical(id="setup-model-host"),
-                Static(
-                    "", id="model-validation-status", classes="form-message"
-                ),
-                copy="Choose the language model URSA will use. Embeddings are optional and may use a different inference provider.",
-                actions=(
-                    ("Back", "models-back", "default", False),
-                    (
-                        "Validate and continue",
-                        "models-save",
-                        "primary",
-                        False,
-                    ),
-                ),
+                "model-validation-status",
+                "Choose the language model URSA will use. Embeddings are optional and may use a different inference provider.",
             ),
-            self._page(
+            self._step_page(
                 "mcp",
                 "Configure an MCP server",
                 self.mcp_tabs,
-                Static("", id="mcp-validation-status", classes="form-message"),
-                copy="MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
-                actions=(
-                    ("Back", "mcp-back", "default", False),
-                    (
-                        "Validate and continue",
-                        "mcp-save",
-                        "primary",
-                        False,
-                    ),
-                ),
+                "mcp-validation-status",
+                "MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
             ),
             self._page(
                 "review",
@@ -282,25 +253,15 @@ class SetupApp(App[SetupAction]):
                         id="review-validation-results",
                         markup=False,
                     ),
-                    title="Validation — not run",
+                    title="URSA Doctor — not run",
                     id="review-validation",
                 ),
                 Static("", id="review-error", classes="form-message"),
                 actions=(
-                    ("Back", "review-back", "default", False),
-                    (
-                        "Write and validate",
-                        "review-save",
-                        "success",
-                        True,
-                    ),
-                    (
-                        "Retry validation",
-                        "review-retry",
-                        "primary",
-                        False,
-                    ),
-                    ("Finish", "review-finish", "success", False),
+                    ("Back", "review-back", "default"),
+                    ("Write and validate", "review-save", "success"),
+                    ("Recheck", "review-recheck", "primary"),
+                    ("Continue", "review-continue", "success"),
                 ),
                 copy="API keys and tokens will go to your URSA keyring. The YAML file stores only keyring references.",
             ),
@@ -308,21 +269,18 @@ class SetupApp(App[SetupAction]):
                 "done",
                 "URSA is ready",
                 Static("", id="done-copy"),
-                actions=tuple(
-                    (label, id, variant, False)
-                    for id, label, variant in (
-                        (
-                            "setup-launch-terminal",
-                            "Launch URSA - Terminal",
-                            "success",
-                        ),
-                        (
-                            "setup-launch-dashboard",
-                            "Launch URSA - Dashboard",
-                            "success",
-                        ),
-                        ("setup-exit", "Exit", "default"),
-                    )
+                actions=(
+                    (
+                        "Launch URSA - Terminal",
+                        "setup-launch-terminal",
+                        "success",
+                    ),
+                    (
+                        "Launch URSA - Dashboard",
+                        "setup-launch-dashboard",
+                        "success",
+                    ),
+                    ("Exit", "setup-exit", "default"),
                 ),
             ),
         )
@@ -365,8 +323,7 @@ class SetupApp(App[SetupAction]):
         return keyring_usernames(config)
 
     def _discard_unused_pending(self, usernames) -> None:
-        active = set(self._keys())
-        for username in set(usernames) - active:
+        for username in set(usernames) - set(self._keys()):
             self.pending.pop(username, None)
 
     def _provider(self, name: str) -> InferenceProviderConfig:
@@ -378,98 +335,22 @@ class SetupApp(App[SetupAction]):
             staged_secret = SecretStr(secret) if secret else None
         return prepare_provider_probe(self.config, name, staged_secret)
 
+    def _providers(self) -> dict[str, InferenceProviderConfig]:
+        return {
+            name: self._provider(name)
+            for name in self.config.inference_providers
+        }
+
     def _begin_provider(self, name: str | None = None) -> None:
         self._show("provider")
         self.provider_tabs.select_name(name)
         self._status("#provider-error", "")
 
     async def _validate_provider_page(self) -> bool:
-        """Validate every draft, probe all candidates, then commit once."""
-        candidates = self.provider_tabs.candidates(self.mcp_tabs.raw_names())
-        if candidates is None or not candidates:
-            if candidates == []:
-                self._status(
-                    "#provider-error",
-                    "At least one inference provider is required.",
-                    True,
-                )
-            return False
-        typed = [
-            candidate
-            for candidate in candidates
-            if isinstance(candidate, ProviderCandidate)
-        ]
-        self._status("#provider-error", "Validating providers...")
-
-        async def probe(candidate: ProviderCandidate) -> Exception | None:
-            try:
-                await asyncio.to_thread(
-                    run_probe_with_deadline,
-                    probe_inference_provider,
-                    candidate.runtime,
-                    True,
-                )
-            except Exception as exc:
-                return exc
-            return None
-
-        results = await asyncio.gather(*(probe(item) for item in typed))
-        failures = [
-            (candidate, result)
-            for candidate, result in zip(typed, results, strict=True)
-            if result is not None
-        ]
-        for candidate, result in zip(typed, results, strict=True):
-            if result is None:
-                self.provider_tabs.set_draft_status(
-                    candidate.draft_id,
-                    "✓ Connected",
-                    marker="✓ ",
-                )
-            else:
-                self.provider_tabs.set_draft_status(
-                    candidate.draft_id,
-                    _friendly(result),
-                    marker="✗ ",
-                    failed=True,
-                )
-        if failures:
-            first, _ = failures[0]
-            self.provider_tabs.focus_error(first.draft_id)
-            names = ", ".join(candidate.name for candidate, _ in failures)
-            self._status(
-                "#provider-error", f"Provider validation failed: {names}", True
-            )
-            return False
-
-        old_users = set(
-            keyring_usernames({
-                "inference_providers": self.config.inference_providers
-            })
-        )
-        providers = {item.name: item.stored for item in typed}
-        renamed = {
-            item.original_name: item.name
-            for item in typed
-            if item.original_name is not None
-        }
-        self.config = replace_inference_providers(
-            self.config,
-            providers,
-            renamed=renamed,
-        )
-        self._discard_unused_pending(old_users)
-        for item in typed:
-            if item.credential.pending and item.credential.username:
-                self.pending[item.credential.username] = item.credential.pending
-        self._status("#provider-error", "✓ All providers connected")
-        return True
+        return await self._validate_entry_page("provider")
 
     async def _prepare_models(self) -> None:
-        providers = {
-            name: self._provider(name)
-            for name in self.config.inference_providers
-        }
+        providers = self._providers()
         chat = (
             self.config.llm_model
             if self.llm_configured
@@ -501,14 +382,8 @@ class SetupApp(App[SetupAction]):
         )
 
     async def _validate_models(self) -> None:
-        providers = {
-            name: self._provider(name)
-            for name in self.config.inference_providers
-        }
-        labels = {
-            "llm": "language model",
-            "embedding": "embedding model",
-        }
+        providers = self._providers()
+        labels = {"llm": "language model", "embedding": "embedding model"}
         statuses: dict[str, str] = {}
 
         def show_statuses() -> None:
@@ -560,82 +435,113 @@ class SetupApp(App[SetupAction]):
         self._status("#mcp-validation-status", "")
 
     async def _validate_mcp_page(self) -> bool:
-        """Validate every draft, probe all candidates, then commit once."""
-        candidates = self.mcp_tabs.candidates(self.provider_tabs.raw_names())
+        return await self._validate_entry_page("mcp")
+
+    async def _validate_entry_page(self, kind: str) -> bool:
+        """Validate every draft on an entry page, then commit them at once."""
+        provider = kind == "provider"
+        tabs = self.provider_tabs if provider else self.mcp_tabs
+        other_tabs = self.mcp_tabs if provider else self.provider_tabs
+        selector = "#provider-error" if provider else "#mcp-validation-status"
+        candidates = tabs.candidates(other_tabs.raw_names())
         if candidates is None:
             return False
-        typed = [
-            candidate
-            for candidate in candidates
-            if isinstance(candidate, McpCandidate)
-        ]
+        typed: list[ProviderCandidate | McpCandidate] = candidates
         if not typed:
+            if provider:
+                self._status(
+                    selector,
+                    "At least one inference provider is required.",
+                    True,
+                )
+                return False
             old_users = set(
                 keyring_usernames({"mcp_servers": self.config.mcp_servers})
             )
             self.config = replace_mcp_servers(self.config, {})
             self._discard_unused_pending(old_users)
-            self._status(
-                "#mcp-validation-status", "✓ No MCP servers configured"
-            )
+            self._status(selector, "✓ No MCP servers configured")
             return True
 
-        self._status("#mcp-validation-status", "Validating MCP servers...")
+        label = "providers" if provider else "MCP servers"
+        self._status(selector, f"Validating {label}...")
 
-        async def probe(candidate: McpCandidate) -> Exception | None:
-            try:
-                await asyncio.to_thread(
+        if provider:
+            probes = (
+                _capture_probe(
+                    run_probe_with_deadline,
+                    probe_inference_provider,
+                    candidate.runtime,
+                    True,
+                )
+                for candidate in typed
+            )
+        else:
+            probes = (
+                _capture_probe(
                     run_probe_with_deadline,
                     probe_mcp_server,
                     candidate.name,
                     candidate.runtime,
                     timeout=15,
                 )
-            except Exception as exc:
-                return exc
-            return None
-
-        results = await asyncio.gather(*(probe(item) for item in typed))
+                for candidate in typed
+            )
+        results = await asyncio.gather(*probes)
         failures = [
             (candidate, result)
             for candidate, result in zip(typed, results, strict=True)
             if result is not None
         ]
         for candidate, result in zip(typed, results, strict=True):
-            if result is None:
-                self.mcp_tabs.set_draft_status(
-                    candidate.draft_id,
-                    "✓ Connected",
-                    marker="✓ ",
-                )
-            else:
-                self.mcp_tabs.set_draft_status(
-                    candidate.draft_id,
-                    _friendly(result, True),
-                    marker="✗ ",
-                    failed=True,
-                )
+            tabs.set_draft_status(
+                candidate.draft_id,
+                "✓ Connected"
+                if result is None
+                else _friendly(result, not provider),
+                marker="✓ " if result is None else "✗ ",
+                failed=result is not None,
+            )
         if failures:
             first, _ = failures[0]
-            self.mcp_tabs.focus_error(first.draft_id)
+            tabs.focus_error(first.draft_id)
             names = ", ".join(candidate.name for candidate, _ in failures)
             self._status(
-                "#mcp-validation-status",
-                f"MCP validation failed: {names}",
+                selector,
+                f"{'Provider' if provider else 'MCP'} validation failed: {names}",
                 True,
             )
             return False
 
-        old_users = set(
-            keyring_usernames({"mcp_servers": self.config.mcp_servers})
-        )
-        servers = {item.name: item.stored for item in typed}
-        self.config = replace_mcp_servers(self.config, servers)
+        field = "inference_providers" if provider else "mcp_servers"
+        old_users = set(keyring_usernames({field: getattr(self.config, field)}))
+        if provider:
+            providers = {
+                item.name: item.stored
+                for item in typed
+                if isinstance(item, ProviderCandidate)
+            }
+            renamed = {
+                item.original_name: item.name
+                for item in typed
+                if isinstance(item, ProviderCandidate)
+                and item.original_name is not None
+            }
+            self.config = replace_inference_providers(
+                self.config, providers, renamed=renamed
+            )
+        else:
+            servers = {
+                item.name: item.stored
+                for item in typed
+                if isinstance(item, McpCandidate)
+            }
+            self.config = replace_mcp_servers(self.config, servers)
         self._discard_unused_pending(old_users)
         for item in typed:
             if item.credential.pending and item.credential.username:
                 self.pending[item.credential.username] = item.credential.pending
-        self._status("#mcp-validation-status", "✓ All MCP servers connected")
+        self._status(selector, f"✓ All {label} connected")
         return True
 
     def _review(self) -> None:
@@ -650,10 +556,7 @@ class SetupApp(App[SetupAction]):
         self.query_one(
             "#review-full-config", YamlTextArea
         ).text = format_setup_config_yaml(self.config)
-        valid = (
-            bool(self.config.inference_providers)
-            and self.model_ok["llm"] is True
-        )
+        valid = bool(self.config.inference_providers and self.model_ok["llm"])
         if self.saved_path is None:
             self._review_actions("ready", valid)
 
@@ -671,14 +574,14 @@ class SetupApp(App[SetupAction]):
         self.saved_path = path
         self.pending.clear()
         self._status("#review-error", f"Saved to {path}")
-        await self._run_doctor()
+        await self._run_doctor(auto_advance=True)
 
     def _review_actions(self, state: str, valid: bool = True) -> None:
         visible = {
             "review-back": state == "ready",
             "review-save": state == "ready",
-            "review-retry": state == "failed",
-            "review-finish": state in {"validated", "failed"},
+            "review-recheck": state == "checked",
+            "review-continue": state == "checked",
         }
         for id, show in visible.items():
             button = self.query_one(f"#{id}", Button)
@@ -686,15 +589,13 @@ class SetupApp(App[SetupAction]):
             button.disabled = (
                 state == "running" or id == "review-save" and not valid
             )
-        finish = self.query_one("#review-finish", Button)
-        finish.label = "Finish anyway" if state == "failed" else "Finish"
 
-    async def _run_doctor(self) -> None:
+    async def _run_doctor(self, *, auto_advance: bool = False) -> None:
         if self.saved_path is None:
             return
         self._review_actions("running")
         validation = self.query_one("#review-validation", Collapsible)
-        validation.title = "Validation — running…"
+        validation.title = "URSA Doctor — running…"
         validation.collapsed = False
         self.query_one("#review-validation-results", Static).update(
             "Running ursa self doctor…"
@@ -705,17 +606,16 @@ class SetupApp(App[SetupAction]):
         warnings = counts[CheckStatus.WARN]
         errors = counts[CheckStatus.ERROR]
         validation.title = (
-            f"Validation — {warnings} warning(s), {errors} error(s)"
+            f"URSA Doctor — {warnings} warning(s), {errors} error(s)"
         )
         validation.set_class(bool(errors), "doctor-error")
         validation.set_class(bool(warnings) and not errors, "doctor-warning")
         self.query_one("#review-validation-results", Static).update(
             render_report(report)
         )
-        if not warnings and not errors:
+        self._review_actions("checked")
+        if auto_advance and not warnings and not errors:
             self._finish_setup()
-        else:
-            self._review_actions("failed" if errors else "validated")
 
     def _finish_setup(self) -> None:
         if self.saved_path is None:
@@ -723,10 +623,7 @@ class SetupApp(App[SetupAction]):
         summary = f"Saved to {self.saved_path}"
         if self.doctor_report is not None:
             counts = report_counts(self.doctor_report)
-            summary += (
-                f"\nValidation: {counts[CheckStatus.WARN]} warning(s), "
-                f"{counts[CheckStatus.ERROR]} error(s)"
-            )
+            summary += f"\nValidation: {counts[CheckStatus.WARN]} warning(s), {counts[CheckStatus.ERROR]} error(s)"
         self.query_one("#done-copy", Static).update(summary)
         self._show("done")
 
@@ -751,9 +648,9 @@ class SetupApp(App[SetupAction]):
                 self._show("review")
         elif id == "review-save":
             await self._save_config()
-        elif id == "review-retry":
+        elif id == "review-recheck":
             await self._run_doctor()
-        elif id == "review-finish":
+        elif id == "review-continue":
             self._finish_setup()
 
 

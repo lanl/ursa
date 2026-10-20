@@ -57,7 +57,6 @@ async def test_setup_models_use_fuzzy_catalog_for_selected_provider(
         model_select = app.editor.query_one(
             "#setup-chat-model-select", FuzzySelect
         )
-        assert isinstance(model_select, FuzzySelect)
         assert "first-model" in {value for _, value in model_select._options}
         assert providers["first"] in discovered
 

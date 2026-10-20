@@ -20,10 +20,9 @@ from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual import on
-from textual.app import App, ComposeResult, SystemCommand
+from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 
@@ -153,12 +152,6 @@ class UrsaTextualApp(App[None]):
         )
         yield PromptArea()
         yield Static(id="status")
-
-    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
-        """Return palette commands without Textual's Maximize action."""
-        for command in super().get_system_commands(screen):
-            if command.title != "Maximize":
-                yield command
 
     def on_mount(self) -> None:
         self._ui_thread_id = threading.get_ident()
