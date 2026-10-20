@@ -3,8 +3,8 @@
 import json
 import os
 import stat
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from collections.abc import Generator, Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext, suppress
 from functools import cache
 from os import environ
 from pathlib import Path
@@ -46,28 +46,16 @@ class FileKeyring(KeyringBackend):
     def __init__(self, path: Path | None = None) -> None:
         super().__init__()
         self.path = path or default_user_config_path().with_name("keyring.json")
+        self.selection_path = Path(f"{self.path}.selected")
 
-    def _write_lock(self) -> FileLock:
+    def _lock(self, selection: bool = False) -> FileLock:
         self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        return FileLock(f"{self.path}.lock", mode=_ALLOWED_MODE)
-
-    @property
-    def selection_path(self) -> Path:
-        return self.path.with_suffix(f"{self.path.suffix}.selected")
-
-    def _selection_lock(self) -> FileLock:
-        self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        return FileLock(f"{self.selection_path}.lock", mode=_ALLOWED_MODE)
+        path = self.selection_path if selection else self.path
+        return FileLock(f"{path}.lock", mode=_ALLOWED_MODE)
 
     def mark_selected(self) -> None:
-        """Persist that URSA selected the file backend."""
-        self.path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        descriptor = os.open(
-            self.selection_path,
-            os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-            _ALLOWED_MODE,
-        )
-        os.close(descriptor)
+        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        os.close(os.open(self.selection_path, flags, _ALLOWED_MODE))
 
     def _error(self, message: str) -> KeyringError:
         return KeyringError(f"Keyring file {self.path} {message}")
@@ -84,24 +72,17 @@ class FileKeyring(KeyringBackend):
             result = os.fstat(descriptor)
             mode = stat.S_IMODE(result.st_mode)
             if not stat.S_ISREG(result.st_mode):
-                raise self._error("is not a regular file")
-            if hasattr(os, "getuid"):
-                current_uid = os.getuid()
-                if result.st_uid != current_uid:
-                    raise self._error(
-                        "is owned by uid "
-                        f"{result.st_uid}; current uid is {current_uid}"
-                    )
-            if os.name == "posix" and mode & ~_ALLOWED_MODE:
-                raise self._error(
-                    "has permissions "
-                    f"{mode:03o}; permissions must be 600 or more restrictive"
-                )
-            stream = os.fdopen(descriptor, "r", encoding="utf-8")
+                problem = "is not a regular file"
+            elif hasattr(os, "getuid") and result.st_uid != os.getuid():
+                problem = f"is owned by uid {result.st_uid}; current uid is {os.getuid()}"
+            elif os.name == "posix" and mode & ~_ALLOWED_MODE:
+                problem = f"has permissions {mode:03o}; permissions must be 600 or more restrictive"
+            else:
+                return os.fdopen(descriptor, "r", encoding="utf-8")
+            raise self._error(problem)
         except BaseException:
             os.close(descriptor)
             raise
-        return stream
 
     def _read(self) -> dict[str, dict[str, str]]:
         try:
@@ -112,14 +93,11 @@ class FileKeyring(KeyringBackend):
         except json.JSONDecodeError as e:
             raise self._error("is not valid JSON") from e
 
-        valid = isinstance(data, dict) and all(
-            isinstance(passwords, dict)
-            and all(
-                isinstance(password, str) for password in passwords.values()
-            )
+        if not isinstance(data, dict) or any(
+            not isinstance(passwords, dict)
+            or any(not isinstance(value, str) for value in passwords.values())
             for passwords in data.values()
-        )
-        if not valid:
+        ):
             raise self._error("has an invalid entry")
         return data
 
@@ -133,24 +111,20 @@ class FileKeyring(KeyringBackend):
         atomic_write_text(self.path, text, mode)
 
     @contextmanager
-    def _edit(self) -> Iterator[dict[str, dict[str, str]]]:
-        with self._write_lock():
+    def _edit(self) -> Generator[dict[str, dict[str, str]], None, None]:
+        with self._lock():
             data = self._read()
             yield data
             self._write(data)
 
     def get_password(self, service: str, username: str) -> str | None:
-        """Return an entry from the keyring, if present."""
-        data = self._read()
-        return data.get(service, {}).get(username)
+        return self._read().get(service, {}).get(username)
 
     def set_password(self, service: str, username: str, password: str) -> None:
-        """Set an entry in the keyring file."""
         with self._edit() as data:
             data.setdefault(service, {})[username] = password
 
     def delete_password(self, service: str, username: str) -> None:
-        """Delete an entry from the keyring file."""
         with self._edit() as data:
             passwords = data.get(service)
             if passwords is None or username not in passwords:
@@ -173,44 +147,35 @@ class FallbackKeyring(KeyringBackend):
         super().__init__()
         self.system = system
         self.fallback = FileKeyring() if fallback is None else fallback
+        self._file = (
+            self.fallback if isinstance(self.fallback, FileKeyring) else None
+        )
+        selected = self._file is not None and self._file.selection_path.exists()
         self._backend = (
             self.fallback
-            if isinstance(system, NullKeyring)
-            or isinstance(self.fallback, FileKeyring)
-            and self.fallback.selection_path.exists()
-            else self.system
+            if isinstance(system, NullKeyring) or selected
+            else system
         )
         self._lock = Lock()
 
-    @contextmanager
-    def _operation_lock(self) -> Iterator[None]:
-        with self._lock:
-            if isinstance(self.fallback, FileKeyring):
-                with self.fallback._selection_lock():
-                    yield
-            else:
-                yield
-
     def _call(self, method: str, *args: str) -> Any:
-        with self._operation_lock():
-            if (
-                isinstance(self.fallback, FileKeyring)
-                and self.fallback.selection_path.exists()
-            ):
+        selection_lock = (
+            self._file._lock(selection=True) if self._file else nullcontext()
+        )
+        with self._lock, selection_lock:
+            if self._file and self._file.selection_path.exists():
                 self._backend = self.fallback
             backend = self._backend
-            if backend is self.fallback and isinstance(
-                self.fallback, FileKeyring
-            ):
-                self.fallback.mark_selected()
+            if backend is self.fallback and self._file:
+                self._file.mark_selected()
             try:
                 return getattr(backend, method)(*args)
             except (InitError, NoKeyringError):
                 if backend is self.fallback:
                     raise
                 self._backend = self.fallback
-                if isinstance(self.fallback, FileKeyring):
-                    self.fallback.mark_selected()
+                if self._file:
+                    self._file.mark_selected()
                 return getattr(self.fallback, method)(*args)
 
     def get_password(self, service: str, username: str) -> str | None:
@@ -283,11 +248,9 @@ class SecretReference(BaseModel):
         self, default_username: str | None = None
     ) -> str | None:
         """Return the effective keyring username, if this source uses one."""
-        if self.keyring in (None, False):
-            return None
         if isinstance(self.keyring, str):
             return self.keyring
-        return default_username
+        return default_username if self.keyring else None
 
     def get_secret_value(
         self, default_keyring_username: str | None = None
@@ -327,11 +290,7 @@ def iter_secret_references(
     if isinstance(value, SecretReference):
         yield path, value, default_username
     elif isinstance(value, BaseModel):
-        fields = {
-            name: getattr(value, name) for name in type(value).model_fields
-        }
-        fields.update(value.model_extra or {})
-        yield from iter_secret_references(fields, path, default_username)
+        yield from iter_secret_references(dict(value), path, default_username)
     elif isinstance(value, Mapping):
         if isinstance(value.get("inference_provider"), str):
             default_username = value["inference_provider"]
@@ -342,9 +301,10 @@ def iter_secret_references(
                 reference = SecretReference(env=item)
                 yield (*path, "api_key"), reference, default_username
                 continue
-            child_default = default_username
-            if path in _SECRET_NAME_SECTIONS or child_default is None:
-                child_default = str(name)
+            child_default = (
+                str(name) if path in _SECRET_NAME_SECTIONS else default_username
+            )
+            child_default = child_default or str(name)
             yield from iter_secret_references(
                 item, (*path, str(name)), child_default
             )
