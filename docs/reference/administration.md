@@ -5,12 +5,7 @@ Organizations can preload non-secret provider, model, and MCP choices into guide
 !!! warning "Never include secrets"
     Do not put API keys, tokens, or passwords in this payload. Environment and named keyring references are safe because they only identify where setup should find a secret; a template without a source prompts for a new keyring value.
 
-| Field | Value |
-| --- | --- |
-| `inference_providers` | Provider configuration objects with an additional `name` field. |
-| `llm_model` | A default chat model configuration. |
-| `emb_model` | A default embedding model configuration. |
-| `mcp_servers` | MCP configurations keyed by server name. |
+The payload accepts `inference_providers` (provider objects with an additional `name`), `llm_model`, `emb_model`, and `mcp_servers` (configurations keyed by server name).
 
 ```json
 {"inference_providers":[{"name":"company","base_url":"https://models.example.com/v1"}],"llm_model":{"model":"gpt-5.4","model_provider":"openai","inference_provider":"company"},"mcp_servers":{"company_tools":{"transport":"streamable_http","url":"https://tools.example.com/mcp","headers":{"Authorization":{"template":"Bearer %s"}}}}}

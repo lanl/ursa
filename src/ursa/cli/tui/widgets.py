@@ -154,7 +154,8 @@ class PromptArea(TextArea):
     def on_mount(self) -> None:
         key = (
             "Shift+Enter"
-            if self.app.preferred_newline_key == "shift+enter"
+            if getattr(self.app, "preferred_newline_key", "ctrl+j")
+            == "shift+enter"
             else "Ctrl+J"
         )
         self.placeholder = f"Ask URSA…  (@ files, # agents, {key} newline)"
@@ -416,6 +417,43 @@ MODEL_CUSTOM = "__ursa_custom__"
 MODEL_NONE = "__ursa_none__"
 
 
+class ModelSelect(FuzzySelect):
+    """Model picker behavior shared by setup and the runtime model dialog."""
+
+    @staticmethod
+    def options(
+        values: Sequence[str], current: str = ""
+    ) -> list[tuple[str, str]]:
+        options = [
+            ("None", MODEL_NONE),
+            *zip(values, values),
+            ("Other…", MODEL_CUSTOM),
+        ]
+        if current and current not in values:
+            options.insert(-1, (f"Not found: {current}", current))
+        return options
+
+    def model_value(self, custom: Input) -> str:
+        if self.value == MODEL_NONE:
+            return ""
+        return (
+            custom.value.strip()
+            if self.value == MODEL_CUSTOM
+            else str(self.value)
+        )
+
+    def set_models(
+        self,
+        custom: Input,
+        catalog: Mapping[str, ProviderModel],
+        current: str,
+    ) -> None:
+        with self.prevent(Select.Changed):
+            self.set_options(self.options(tuple(catalog), current))
+            self.value = current or MODEL_NONE
+        custom.set_class(self.value != MODEL_CUSTOM, "hidden")
+
+
 def model_kind(prefix: str) -> Literal["chat", "embedding"]:
     return "embedding" if prefix == "embedding" else "chat"
 
@@ -439,40 +477,6 @@ def model_provider_options(
     return options, selected
 
 
-def model_choice_options(
-    values: Sequence[str], current: str = ""
-) -> list[tuple[str, str]]:
-    options = [
-        ("None", MODEL_NONE),
-        *zip(values, values),
-        ("Other…", MODEL_CUSTOM),
-    ]
-    if current and current not in values:
-        options.insert(-1, (f"Not found: {current}", current))
-    return options
-
-
-def model_choice_value(select: Select, custom: Input) -> str:
-    if select.value == MODEL_NONE:
-        return ""
-    return (
-        custom.value.strip()
-        if select.value == MODEL_CUSTOM
-        else str(select.value)
-    )
-
-
-def update_model_choices(
-    select: Select,
-    custom: Input,
-    catalog: Mapping[str, ProviderModel],
-    current: str,
-) -> None:
-    select.set_options(model_choice_options(tuple(catalog), current))
-    select.value = current or MODEL_NONE
-    custom.set_class(select.value != MODEL_CUSTOM, "hidden")
-
-
 def model_values_from_controls(
     values: Mapping,
     model: str,
@@ -489,8 +493,7 @@ def model_values_from_controls(
     if not model_provider and (advertised := catalog.get(model)) is not None:
         model_provider = advertised.model_provider
     inference_provider = selected(inference_provider)
-    configured = deepcopy(dict(values))
-    configured.update(
+    configured = deepcopy(dict(values)) | dict(
         model=model,
         model_provider=model_provider,
         inference_provider=inference_provider,
@@ -516,38 +519,16 @@ async def discover_model_catalog(
         )
     except Exception as exc:  # noqa: BLE001
         return {}, f"Unable to list models: {exc}"
-    ordered = sort_provider_models(models, model_type)
-    return {model.name: model for model in ordered}, None
+    return {
+        model.name: model for model in sort_provider_models(models, model_type)
+    }, None
 
 
 class AdvancedYamlEditor(Collapsible):
-    """Reusable collapsible YAML editor with validation presentation."""
-
-    DEFAULT_CSS = """
-    AdvancedYamlEditor .advanced-yaml-editor {
-        height: 12;
-        margin: 0;
-        border: round $border;
-    }
-
-    AdvancedYamlEditor .advanced-yaml-editor.yaml-valid {
-        border: round $success;
-    }
-
-    AdvancedYamlEditor .advanced-yaml-editor.yaml-invalid {
-        border: round $error;
-    }
-
-    AdvancedYamlEditor .advanced-yaml-error {
-        width: 1fr;
-        height: auto;
-        max-height: 6;
-        color: $error;
-        text-wrap: wrap;
-        overflow-x: hidden;
-        overflow-y: auto;
-    }
-    """
+    DEFAULT_CSS = """AdvancedYamlEditor .advanced-yaml-editor { height: 12; margin: 0; border: round $border; }
+    AdvancedYamlEditor .advanced-yaml-editor.yaml-valid { border: round $success; }
+    AdvancedYamlEditor .advanced-yaml-editor.yaml-invalid { border: round $error; }
+    AdvancedYamlEditor .advanced-yaml-error { width: 1fr; height: auto; max-height: 6; color: $error; text-wrap: wrap; overflow-x: hidden; overflow-y: auto; }"""
 
     def __init__(
         self,
@@ -560,7 +541,7 @@ class AdvancedYamlEditor(Collapsible):
         editor_class = (
             "model-yaml-editor"
             if model_style
-            else f"advanced-yaml-editor {editor_classes}"
+            else (f"advanced-yaml-editor {editor_classes}")
         )
         self._editor = TextArea(
             text,
@@ -572,11 +553,7 @@ class AdvancedYamlEditor(Collapsible):
         )
         self._error = Static(
             id=f"{prefix}-yaml-error",
-            classes=(
-                "model-yaml-error hidden"
-                if model_style
-                else "advanced-yaml-error hidden"
-            ),
+            classes=f"{'model-yaml' if model_style else 'advanced-yaml'}-error hidden",
             markup=model_style,
         )
         super().__init__(
@@ -588,13 +565,11 @@ class AdvancedYamlEditor(Collapsible):
         )
 
     def set_text(self, text: str) -> None:
-        """Replace editor text without emitting a change event."""
         if self._editor.text != text:
             with self.prevent(TextArea.Changed):
                 self._editor.text = text
 
     def set_validation(self, state: str, error: str = "") -> None:
-        """Display neutral, valid, or invalid validation state."""
         self._editor.set_class(state == "valid", "yaml-valid")
         self._editor.set_class(state == "invalid", "yaml-invalid")
         self._error.update(Text(error))
@@ -602,28 +577,10 @@ class AdvancedYamlEditor(Collapsible):
 
 
 class HelpLabel(Horizontal):
-    """Compact field label with an accented tooltip affordance."""
-
-    DEFAULT_CSS = """
-    HelpLabel {
-        width: 100%;
-        height: 2;
-        padding-top: 1;
-    }
-
-    HelpLabel > Static {
-        width: auto;
-        height: 1;
-    }
-
-    HelpLabel > .help-label-text {
-        margin-right: 1;
-    }
-
-    HelpLabel > .help-label-mark {
-        color: $accent;
-    }
-    """
+    DEFAULT_CSS = """HelpLabel { width: 100%; height: 2; padding-top: 1; }
+    HelpLabel > Static { width: auto; height: 1; }
+    HelpLabel > .help-label-text { margin-right: 1; }
+    HelpLabel > .help-label-mark { color: $accent; }"""
 
     def __init__(
         self,
@@ -644,18 +601,13 @@ class HelpLabel(Horizontal):
         yield Static("]", classes="help-label-bracket")
 
     def set_label(self, label: str) -> None:
-        """Update the visible label while retaining its help tooltip."""
         self._label.update(label)
 
 
 class ThemeScreen(HotlistScreen):
     """Theme picker that previews highlighted themes over the current app."""
 
-    def __init__(
-        self,
-        candidates: Sequence[str],
-        initial_theme: str,
-    ) -> None:
+    def __init__(self, candidates: Sequence[str], initial_theme: str) -> None:
         super().__init__("Themes", candidates)
         self.initial_theme = initial_theme
 
@@ -675,8 +627,6 @@ class ModelSelection:
 
 
 class ModelFieldLabel(Horizontal):
-    """Compact field label with an accented help affordance."""
-
     def __init__(self, label: str, help_text: str, *, id: str) -> None:
         super().__init__(id=id, classes="model-field-label")
         self.label = label
@@ -705,9 +655,9 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
     def _validation_error_text(error: ValidationError) -> str:
         """Render every Pydantic error compactly in the bounded error panel."""
         details = error.errors(include_url=False, include_context=False)
+        count = len(details)
         lines = [
-            f"{len(details)} validation "
-            f"{'error' if len(details) == 1 else 'errors'} for {error.title}"
+            f"{count} validation {'error' if count == 1 else 'errors'} for {error.title}"
         ]
         for detail in details:
             location = detail.get("loc", ())
@@ -716,20 +666,9 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         return "\n".join(lines)
 
     FIELD_HELP = {
-        "model": (
-            "The model identifier exposed by the provider, such as gpt-5.4 "
-            "or text-embedding-3-large. Not all models listed are valid chat "
-            "or embedding models."
-        ),
-        "model-provider": (
-            "The LangChain model integration used to create the client, such "
-            "as openai, anthropic, google_genai, or ollama."
-        ),
-        "inference-provider": (
-            "A named URSA inference provider supplying the endpoint, API key, "
-            "and TLS settings for this model. Update your config files to add "
-            "additional providers."
-        ),
+        "model": "The model identifier exposed by the provider, such as gpt-5.4 or text-embedding-3-large. Not all models listed are valid chat or embedding models.",
+        "model-provider": "The LangChain model integration used to create the client, such as openai, anthropic, google_genai, or ollama.",
+        "inference-provider": "A named URSA inference provider supplying the endpoint, API key, and TLS settings for this model. Update your config files to add additional providers.",
     }
 
     def __init__(
@@ -781,14 +720,16 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         field: str,
         values: Sequence[str],
         current: str,
-    ) -> tuple[Select, Input]:
+    ) -> tuple[ModelSelect, Input]:
         choices = tuple(dict.fromkeys(value for value in values if value))
         listed = current in choices
-        selected = current if listed else cls.NONE_VALUE
-        if current and not listed:
-            selected = cls.CUSTOM_VALUE
-        select = FuzzySelect(
-            model_choice_options(choices),
+        selected = (
+            current
+            if listed
+            else (cls.CUSTOM_VALUE if current else cls.NONE_VALUE)
+        )
+        select = ModelSelect(
+            ModelSelect.options(choices),
             value=selected,
             allow_blank=False,
             id=f"{prefix}-{field}",
@@ -797,15 +738,11 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         custom = Input(
             value="" if listed else current,
             id=f"{prefix}-{field}-custom",
-            classes="model-custom-choice" + (" hidden" if listed else ""),
+            classes=f"model-custom-choice{' hidden' if listed else ''}",
         )
         return select, custom
 
-    def _model_fields(
-        self,
-        prefix: str,
-        config: ModelConfig,
-    ) -> ComposeResult:
+    def _model_fields(self, prefix: str, config: ModelConfig) -> ComposeResult:
         options = [
             ("None (direct model config)", self.NONE_VALUE),
             *(
@@ -856,33 +793,22 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         cls, label: str, field: str, prefix: str
     ) -> ModelFieldLabel:
         return ModelFieldLabel(
-            label,
-            cls.FIELD_HELP[field],
-            id=f"{prefix}-{field}-label",
+            label, cls.FIELD_HELP[field], id=f"{prefix}-{field}-label"
         )
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="settings-dialog"):
             yield Static("Models", classes="settings-title")
             with TabbedContent():
-                with TabPane("Chat", id="chat-model-tab"):
-                    yield from self._model_fields(
-                        "chat",
-                        self.chat,
-                    )
-                    yield AdvancedYamlEditor(
-                        "chat", self._dump_yaml(self.chat), model_style=True
-                    )
-                with TabPane("Embedding", id="embedding-model-tab"):
-                    yield from self._model_fields(
-                        "embedding",
-                        self.embedding,
-                    )
-                    yield AdvancedYamlEditor(
-                        "embedding",
-                        self._dump_yaml(self.embedding),
-                        model_style=True,
-                    )
+                for title, prefix, config in (
+                    ("Chat", "chat", self.chat),
+                    ("Embedding", "embedding", self.embedding),
+                ):
+                    with TabPane(title, id=f"{prefix}-model-tab"):
+                        yield from self._model_fields(prefix, config)
+                        yield AdvancedYamlEditor(
+                            prefix, self._dump_yaml(config), model_style=True
+                        )
             with Horizontal(classes="settings-actions"):
                 yield Button("Cancel", id="model-cancel")
                 yield Button("Apply", id="model-apply", variant="primary")
@@ -895,11 +821,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
 
     @staticmethod
     def _dump_yaml_values(values: Mapping) -> str:
-        return yaml.safe_dump(
-            dict(values),
-            sort_keys=False,
-            allow_unicode=True,
-        )
+        return yaml.safe_dump(dict(values), sort_keys=False, allow_unicode=True)
 
     def _yaml_text(self, prefix: str) -> str:
         return self._dump_yaml_values(self._yaml_values[prefix])
@@ -923,10 +845,13 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         if not selects:
             return
         selects.first(Select).focus()
-        chat_generation = self._next_model_load_generation("chat")
-        embedding_generation = self._next_model_load_generation("embedding")
         self.run_worker(
-            self._load_initial_models(chat_generation, embedding_generation),
+            self._load_initial_models(
+                *(
+                    self._next_model_load_generation(prefix)
+                    for prefix in ("chat", "embedding")
+                )
+            ),
             group="model-discovery",
             exclusive=True,
         )
@@ -984,20 +909,19 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         current: str,
     ) -> None:
         """Render a catalog while retaining an unavailable current model."""
-        select = self.query_one(f"#{prefix}-model-name", Select)
+        select = self.query_one(f"#{prefix}-model-name", ModelSelect)
         custom = self.query_one(f"#{prefix}-model-name-custom", Input)
         was_syncing = self._syncing_controls
         self._syncing_controls = True
         try:
-            with self.prevent(Select.Changed):
-                update_model_choices(select, custom, catalog, current)
+            select.set_models(custom, catalog, current)
         finally:
             self._syncing_controls = was_syncing
 
     def _choice_value(self, prefix: str, field: str) -> str:
-        select = self.query_one(f"#{prefix}-{field}", Select)
+        select = self.query_one(f"#{prefix}-{field}", ModelSelect)
         custom = self.query_one(f"#{prefix}-{field}-custom", Input)
-        return model_choice_value(select, custom)
+        return select.model_value(custom)
 
     @on(Select.Changed, ".model-editable-choice")
     def show_custom_choice(self, event: Select.Changed) -> None:
@@ -1027,16 +951,14 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
     @on(Select.Changed, "#chat-model-provider, #embedding-model-provider")
     def model_provider_changed(self, event: Select.Changed) -> None:
         if event.select.id is not None:
-            self._structured_controls_changed(
-                event.select.id.removesuffix("-model-provider")
-            )
+            prefix = event.select.id.removesuffix("-model-provider")
+            self._structured_controls_changed(prefix)
 
     @on(Input.Changed, ".model-custom-choice")
     def custom_model_changed(self, event: Input.Changed) -> None:
         if event.input.id is not None:
-            self._structured_controls_changed(
-                event.input.id.removesuffix("-model-name-custom")
-            )
+            prefix = event.input.id.removesuffix("-model-name-custom")
+            self._structured_controls_changed(prefix)
 
     def _structured_controls_changed(self, prefix: str) -> None:
         if self._syncing_controls or not self.is_mounted:
@@ -1196,49 +1118,46 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
                     self._update_yaml_values(prefix, configured)
                     editor.text = self._yaml_text(prefix)
         except ValueError as exc:
-            self.notify(
-                str(exc),
-                title="Model not changed",
-                severity="error",
-                timeout=10,
-                markup=False,
-            )
-            return
-
-        chat = self._validate_yaml("chat", update_controls=False)
-        embedding = self._validate_yaml("embedding", update_controls=False)
-        if chat is None or embedding is None:
+            error = str(exc)
+        else:
+            chat = self._validate_yaml("chat", update_controls=False)
+            embedding = self._validate_yaml("embedding", update_controls=False)
+            if chat is not None and embedding is not None:
+                if not chat.model:
+                    self.notify("Chat model is required", severity="error")
+                    return
+                assert isinstance(chat, ChatModelConfig)
+                if not embedding.model:
+                    embedding = None
+                assert embedding is None or isinstance(
+                    embedding, EmbModelConfig
+                )
+                self.dismiss(ModelSelection(chat, embedding))
+                return
             error = next(
                 (
                     str(message.content)
-                    for message in self.query(".model-yaml-error")
+                    for message in self.query(Static).filter(
+                        ".model-yaml-error"
+                    )
                     if str(message.content)
                 ),
                 "Invalid YAML configuration",
             )
-            self.notify(
-                error,
-                title="Model not changed",
-                severity="error",
-                timeout=10,
-                markup=False,
-            )
-            return
-        if not chat.model:
-            self.notify("Chat model is required", severity="error")
-            return
-        assert isinstance(chat, ChatModelConfig)
-        if not embedding.model:
-            embedding = None
-        assert embedding is None or isinstance(embedding, EmbModelConfig)
-        self.dismiss(ModelSelection(chat, embedding))
+        self.notify(
+            error,
+            title="Model not changed",
+            severity="error",
+            timeout=10,
+            markup=False,
+        )
 
     @on(Button.Pressed, "#model-cancel")
     def cancel_button(self) -> None:
         self.action_cancel()
 
     def action_cancel(self) -> None:
-        expanded = list(self.query("FuzzySelect.-expanded"))
+        expanded = list(self.query(FuzzySelect).filter(".-expanded"))
         if expanded:
             for select in expanded:
                 select.expanded = False
@@ -1249,7 +1168,7 @@ class ModelScreen(ModalScreen[ModelSelection | None]):
         if event.widget is None:
             return
         ancestors = set(event.widget.ancestors_with_self)
-        for select in self.query("FuzzySelect.-expanded"):
+        for select in self.query(FuzzySelect).filter(".-expanded"):
             if select not in ancestors:
                 select.expanded = False
 
@@ -1756,7 +1675,7 @@ class MessageCard(Static):
     def compose(self) -> ComposeResult:
         if self.role == "assistant":
             yield Static("URSA", classes="message-role")
-        yield Markdown(self.content, classes="message-body")
+        yield Markdown(str(self.content), classes="message-body")
 
     @on(Markdown.TableOfContentsUpdated)
     def remove_trailing_markdown_margin(
