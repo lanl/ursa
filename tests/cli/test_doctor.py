@@ -14,6 +14,7 @@ from ursa.cli.doctor import (
     CheckStatus,
     DoctorContext,
     build_report,
+    build_report_from_path,
     check_embedding_models,
     check_inference_providers,
     check_llm_models,
@@ -58,6 +59,50 @@ def test_build_report_contains_runner_failure(monkeypatch):
     assert report.checks == (
         CheckResult("Doctor runtime", CheckStatus.ERROR, "runner exited"),
     )
+
+
+def test_build_report_from_path_loads_resolves_and_delegates(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "config.yaml"
+    loaded = MagicMock()
+    resolved = UrsaConfig()
+    loader = MagicMock()
+    loader.from_file.return_value = loaded
+    loaded.resolve.return_value = resolved
+    report = CheckResult.group("URSA Doctor", [])
+    build = MagicMock(return_value=report)
+    monkeypatch.setattr(doctor_mod, "UrsaConfig", loader)
+    monkeypatch.setattr(doctor_mod, "build_report", build)
+
+    assert build_report_from_path(path) is report
+    loader.from_file.assert_called_once_with(path)
+    loaded.resolve.assert_called_once_with()
+    build.assert_called_once_with(resolved)
+
+
+@pytest.mark.parametrize("failure_stage", ["load", "resolve"])
+def test_build_report_from_path_contains_config_errors(
+    monkeypatch,
+    tmp_path,
+    failure_stage,
+):
+    path = tmp_path / "config.yaml"
+    error = ValueError("invalid config")
+    loaded = MagicMock()
+    loader = MagicMock()
+    if failure_stage == "load":
+        loader.from_file.side_effect = error
+    else:
+        loader.from_file.return_value = loaded
+        loaded.resolve.side_effect = error
+    report = CheckResult.group("URSA Doctor", [])
+    build = MagicMock(return_value=report)
+    monkeypatch.setattr(doctor_mod, "UrsaConfig", loader)
+    monkeypatch.setattr(doctor_mod, "build_report", build)
+
+    assert build_report_from_path(path) is report
+    build.assert_called_once_with(config_error=error)
 
 
 def test_report_counts_and_rendering_use_leaf_results():

@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import InitVar, dataclass, field
 from enum import IntEnum
 from json import JSONDecodeError
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, SecretStr, ValidationError
@@ -420,6 +421,15 @@ def build_report(
             "URSA Doctor",
             [CheckResult("Doctor runtime", CheckStatus.ERROR, exc)],
         )
+
+
+def build_report_from_path(path: Path) -> CheckResult:
+    """Load and resolve a config file before building its doctor report."""
+    try:
+        config = UrsaConfig.from_file(path).resolve()
+    except _FAILURES as exc:
+        return build_report(config_error=exc)
+    return build_report(config)
 
 
 def report_counts(report: CheckResult) -> Counter[CheckStatus]:
