@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import multiprocessing
+import multiprocessing as mp
 import os
 import signal
 import subprocess
@@ -29,12 +29,10 @@ class _HealthResponse(BaseModel):
 
 
 PROBE_TIMEOUT_SECONDS = 30.0
-_PROBE_FAILURES = (Exception, SystemExit, asyncio.CancelledError)
 _PROBE_START_LOCK = Lock()
 
 
 def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
-    """Run one probe in an isolated process and return a small outcome."""
     if os.name == "posix":
         with suppress(OSError):
             os.setsid()
@@ -53,18 +51,13 @@ def _probe_worker(connection: Any, probe: Any, args: tuple[Any, ...]) -> None:
         connection.close()
 
 
-def _terminate_probe(process: multiprocessing.Process) -> None:
-    """Terminate a timed-out probe and any MCP subprocess it launched."""
-    if not process.is_alive():
-        process.join()
-        return
+def _kill_probe(process: Any, *, force: bool = False) -> None:
     if os.name == "posix":
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
         except ProcessLookupError:
-            # The deadline can expire before the worker reaches setsid().
-            process.terminate()
-    elif os.name == "nt":
+            (process.kill if force else process.terminate)()
+    elif os.name == "nt" and not force:
         with suppress(OSError, subprocess.SubprocessError):
             subprocess.run(
                 ["taskkill", "/PID", str(process.pid), "/T", "/F"],
@@ -73,21 +66,21 @@ def _terminate_probe(process: multiprocessing.Process) -> None:
                 timeout=2,
             )
     else:
-        process.terminate()
+        (process.kill if force else process.terminate)()
+
+
+def _terminate_probe(process: Any) -> None:
+    if not process.is_alive():
+        process.join()
+        return
+    _kill_probe(process)
     process.join(timeout=1)
     if process.is_alive():
-        if os.name == "posix":
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                process.kill()
-        else:
-            process.kill()
+        _kill_probe(process, force=True)
         process.join(timeout=1)
 
 
-def _start_probe(process: multiprocessing.Process) -> None:
-    """Start a probe even when a TUI exposes an invalid stderr descriptor."""
+def _start_probe(process: Any) -> None:
     with _PROBE_START_LOCK:
         try:
             stderr_fd = sys.stderr.fileno()
@@ -96,11 +89,11 @@ def _start_probe(process: multiprocessing.Process) -> None:
         if isinstance(stderr_fd, int) and stderr_fd >= 0:
             process.start()
             return
-        # POSIX's multiprocessing resource tracker otherwise passes Textual's
-        # sentinel descriptor (-1) to fork_exec as an fd to preserve.
-        with open(os.devnull, "w", encoding="utf-8") as stderr:
-            with redirect_stderr(stderr):
-                process.start()
+        with (
+            open(os.devnull, "w", encoding="utf-8") as stderr,
+            redirect_stderr(stderr),
+        ):
+            process.start()
 
 
 def run_probe_with_deadline(
@@ -111,9 +104,7 @@ def run_probe_with_deadline(
     """Run a health probe behind a hard, process-terminating deadline."""
     if timeout <= 0:
         raise ValueError("probe timeout must be greater than zero")
-    # Setup runs final checks from a worker thread. ``spawn`` avoids the
-    # deadlocks possible when forking a multithreaded Textual process.
-    context = multiprocessing.get_context("spawn")
+    context = mp.get_context("spawn")
     receive, send = context.Pipe(duplex=False)
     process = context.Process(target=_probe_worker, args=(send, probe, args))
     process.daemon = True
@@ -209,40 +200,35 @@ def probe_chat_structured_output(model: Any) -> str:
     return "Model returned a valid typed response"
 
 
-def _is_embedding_capability_error(exc: Exception) -> bool:
-    """Recognize provider responses for a non-embedding model."""
+def _embedding_error(exc: Exception) -> str | None:
     detail = str(exc).lower()
-    return (
+    if (
         "does not support embedding" in detail
         or "not an embedding model" in detail
         or "not supported for this endpoint" in detail
         or "embedding" in detail
         and ("not supported" in detail or "operationnotsupported" in detail)
-    )
-
-
-def _is_embedding_auth_error(exc: Exception) -> bool:
-    detail = str(exc).lower()
-    return any(marker in detail for marker in ("401", "403", "unauthorized"))
+    ):
+        return "The selected model does not support embeddings."
+    if any(marker in detail for marker in ("401", "403", "unauthorized")):
+        return (
+            "The selected model may not support embeddings, or the API key may "
+            "not have access to it."
+        )
+    return None
 
 
 def probe_embedding_model(config: Any) -> str:
     """Raise unless an embedding configuration returns a non-empty vector."""
-    normalized_error = None
+    message = None
     try:
         vector = config.init_embedding().embed_query("URSA health check")
     except Exception as exc:
-        if _is_embedding_capability_error(exc):
-            normalized_error = "The selected model does not support embeddings."
-        elif _is_embedding_auth_error(exc):
-            normalized_error = (
-                "The selected model may not support embeddings, or the API "
-                "key may not have access to it."
-            )
-        else:
+        message = _embedding_error(exc)
+        if message is None:
             raise
-    if normalized_error is not None:
-        raise ValueError(normalized_error) from None
+    if message is not None:
+        raise ValueError(message) from None
     if not isinstance(vector, Sequence) or not vector:
         raise ValueError("embedding invocation returned no vector")
     return f"Embedding invocation returned {len(vector)} dimensions"
