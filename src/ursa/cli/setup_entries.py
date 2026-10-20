@@ -148,9 +148,8 @@ class ApiKeyEntry(Vertical):
         self.generation = 0
 
     def _options(self, name: str) -> list[tuple[str, str]]:
-        values = dict.fromkeys((*self.known, name))
         return [("None", MCP_TOKEN_NONE), ("ENV", API_KEY_ENV)] + [
-            (item, item) for item in values if item
+            (item, item) for item in dict.fromkeys((*self.known, name)) if item
         ]
 
     def compose(self) -> ComposeResult:
@@ -195,20 +194,17 @@ class ApiKeyEntry(Vertical):
         no_key: bool = False,
     ) -> None:
         self.entry_name, self.known = name, known
-        keyring_name = reference.keyring if reference else None
-        if reference and reference.env:
-            source = API_KEY_ENV
-        elif no_key and not reference:
-            source = MCP_TOKEN_NONE
-        else:
-            source = name if keyring_name in (None, True) else keyring_name
+        source: object = MCP_TOKEN_NONE
+        if reference:
+            source = reference.env and API_KEY_ENV or reference.keyring
+            source = name if source in (None, True) else source
+        elif not no_key:
+            source = name
         select = self.query_one(".credential-source", Select)
         with self.prevent(Select.Changed):
             select.set_options(self._options(name))
             select.value = source
-        initial = (
-            reference.env or "" if reference and source == API_KEY_ENV else ""
-        )
+        initial = reference.env or "" if reference and reference.env else ""
         self._source(source, initial)
 
     def _source(self, source: object, initial: str = "") -> None:
@@ -225,11 +221,8 @@ class ApiKeyEntry(Vertical):
         label.set_label(
             "Environmental Variable with API Key" if env else "API Key"
         )
-        key.placeholder = (
-            "Environment variable name"
-            if env
-            else f"Enter the API Key for the {self.subject}"
-        )
+        prompt = f"Enter the API Key for the {self.subject}"
+        key.placeholder = "Environment variable name" if env else prompt
         if not none and not env:
             key.placeholder = "|"
             self.run_worker(
@@ -275,11 +268,11 @@ class ApiKeyEntry(Vertical):
                 raise SetupError("Enter a valid environment variable name.")
             return CredentialValue(SecretReference(env=value))
         username = str(source)
-        reference = SecretReference(
-            keyring=username if username != self.entry_name else True
-        )
+        keyring = username if username != self.entry_name else True
         pending = value if value and value != self.loaded else None
-        return CredentialValue(reference, pending, username)
+        return CredentialValue(
+            SecretReference(keyring=keyring), pending, username
+        )
 
     @on(Select.Changed)
     def source_changed(self, event: Select.Changed) -> None:
@@ -291,20 +284,13 @@ class ApiKeyEntry(Vertical):
 
 
 class EntryCandidate(NamedTuple):
+    kind: str
     draft_id: str
     original_name: str | None
     name: str
     stored: InferenceProviderConfig | ServerParameters
     runtime: InferenceProviderConfig | ServerParameters
     credential: CredentialValue
-
-
-class ProviderCandidate(EntryCandidate):
-    pass
-
-
-class McpCandidate(EntryCandidate):
-    pass
 
 
 class EntryDraftEditor(Vertical):
@@ -605,7 +591,7 @@ class EntryDraftEditor(Vertical):
         self.query_one(".mcp-local-fields").set_class(not local, "hidden")
         self.query_one(".mcp-remote-fields").set_class(local, "hidden")
 
-    def candidate(self) -> ProviderCandidate | McpCandidate:
+    def candidate(self) -> EntryCandidate:
         name = validate_setup_name(self.raw_name(), _NAME_LABEL[self.kind])
         _, credential, stored = self._form_values()
         identity = (self.draft_id, self.original_name, name)
@@ -616,14 +602,16 @@ class EntryDraftEditor(Vertical):
             elif isinstance(key, SecretReference):
                 key = _quiet(key.resolve, name)
             runtime = stored.model_copy(update={"api_key": key}).resolve(name)
-            return ProviderCandidate(*identity, stored, runtime, credential)
+            return EntryCandidate(
+                self.kind, *identity, stored, runtime, credential
+            )
         runtime = interpolate_mcp_server(stored)
         headers = dict(getattr(runtime, "headers", None) or {})
         if credential.pending:
             headers[self.header] = self.template % credential.pending
         if headers:
             runtime = runtime.model_copy(update={"headers": headers})
-        return McpCandidate(*identity, stored, runtime, credential)
+        return EntryCandidate(self.kind, *identity, stored, runtime, credential)
 
     @on(Input.Changed)
     @on(Select.Changed)
@@ -804,8 +792,8 @@ class DynamicEntryTabs(Vertical):
 
     def candidates(
         self, reserved_names: set[str]
-    ) -> list[ProviderCandidate | McpCandidate] | None:
-        results: list[ProviderCandidate | McpCandidate] = []
+    ) -> list[EntryCandidate] | None:
+        results: list[EntryCandidate] = []
         failures: list[str] = []
         names: set[str] = set()
         for editor in self.editors():

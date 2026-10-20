@@ -1,11 +1,9 @@
 # Managed setup defaults
 
-Organizations can preload non-secret provider, model, and MCP choices into the
-guided setup. Existing entries in the user's URSA configuration take
-precedence, and the user still reviews and validates every connection before
-saving.
+Organizations can preload non-secret provider, model, and MCP choices into guided setup. Existing user configuration takes precedence, and users review and validate every connection before saving.
 
-The JSON object accepts these setup fields:
+!!! warning "Never include secrets"
+    Do not put API keys, tokens, or passwords in this payload. Environment and named keyring references are safe because they only identify where setup should find a secret; a template without a source prompts for a new keyring value.
 
 | Field | Value |
 | --- | --- |
@@ -14,64 +12,10 @@ The JSON object accepts these setup fields:
 | `emb_model` | A default embedding model configuration. |
 | `mcp_servers` | MCP configurations keyed by server name. |
 
-Do not put API keys, tokens, or passwords in the payload. Named keyring and
-environment references are safe because they identify where setup should find
-a secret without containing the secret itself. A template without a source
-prompts the user for a new keyring value:
-
 ```json
-{
-  "inference_providers": [
-    {
-      "name": "company",
-      "base_url": "https://models.example.com/v1"
-    }
-  ],
-  "llm_model": {
-    "model": "gpt-5.4",
-    "model_provider": "openai",
-    "inference_provider": "company"
-  },
-  "mcp_servers": {
-    "company_tools": {
-      "transport": "streamable_http",
-      "url": "https://tools.example.com/mcp",
-      "headers": {
-        "Authorization": {"template": "Bearer %s"}
-      }
-    }
-  }
-}
+{"inference_providers":[{"name":"company","base_url":"https://models.example.com/v1"}],"llm_model":{"model":"gpt-5.4","model_provider":"openai","inference_provider":"company"},"mcp_servers":{"company_tools":{"transport":"streamable_http","url":"https://tools.example.com/mcp","headers":{"Authorization":{"template":"Bearer %s"}}}}}
 ```
 
-Download the installer before passing a payload. Use `--version`/`-Version` to
-install a particular PyPI release, or `--branch`/`-Branch` to install a branch
-from the LANL URSA repository. The installer passes the supplied version or
-branch directly to uv without validating it. Use `--python`/`-Python` to choose
-the Python version that uv uses; the default is Python 3.13.
+Download before passing `--config`/`-Config`: Linux/macOS: `curl -LsSf https://lanl.github.io/ursa/latest/install.sh -o install.sh && sh install.sh --config defaults.json --version 1.2.3 --python 3.12`; Windows: `irm https://lanl.github.io/ursa/latest/install.ps1 -OutFile install.ps1; .\install.ps1 -Config defaults.json -Version 1.2.3 -Python 3.12`.
 
-=== "Linux/MacOS"
-
-    ```bash
-    curl -LsSf https://lanl.github.io/ursa/latest/install.sh -o install.sh
-    sh install.sh --config defaults.json --version 1.2.3 --python 3.12
-    ```
-
-    Omit `--version` to install the latest published `ursa-ai`, or replace it
-    with `--branch main` to install GitHub's main branch. Omit `--python` to use
-    Python 3.13.
-
-=== "Windows"
-
-    ```powershell
-    irm https://lanl.github.io/ursa/latest/install.ps1 -OutFile install.ps1
-    .\install.ps1 -Config defaults.json -Version 1.2.3 -Python 3.12
-    ```
-
-    Omit `-Version` to install the latest published `ursa-ai`, or replace it
-    with `-Branch main` to install GitHub's main branch. Omit `-Python` to use
-    Python 3.13.
-
-Setup defaults do not change the selected package source or version. Legacy
-`python_version`, `extras`, and `extra_packages` fields are accepted so existing
-payloads keep working, but they no longer alter the installation.
+Omit version to install the latest `ursa-ai`; use `--version`/`-Version` for a PyPI release or `--branch`/`-Branch` for a LANL URSA branch. Targets are passed to uv without validation. `--python`/`-Python` defaults to 3.13. Setup defaults never select a package source or version; legacy `python_version`, `extras`, and `extra_packages` fields remain accepted but do not affect installation.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from pydantic import SecretStr
 from textual import on
@@ -23,7 +23,6 @@ from textual.widgets import (
 
 from ursa.cli.config import ChatModelConfig, InferenceProviderConfig
 from ursa.cli.doctor import (
-    CheckResult,
     CheckStatus,
     build_report_from_path,
     render_report,
@@ -41,11 +40,7 @@ from ursa.cli.setup_config import (
     replace_models,
     save_setup_config,
 )
-from ursa.cli.setup_entries import (
-    DynamicEntryTabs,
-    McpCandidate,
-    ProviderCandidate,
-)
+from ursa.cli.setup_entries import DynamicEntryTabs, EntryCandidate
 from ursa.cli.setup_models import SetupModelEditor, SetupModelSelection
 from ursa.util.crossplatform import default_user_config_path
 from ursa.util.health import (
@@ -56,24 +51,21 @@ from ursa.util.health import (
     run_probe_with_deadline,
 )
 from ursa.util.http import inject_truststore_into_ssl
-from ursa.util.mcp import ServerParameters
 from ursa.util.secrets import SecretReference, keyring_usernames
 
 __all__ = ["SetupError"]
-_doctor, _load_config, _save = (
-    build_report_from_path,
-    load_setup_config,
-    save_setup_config,
-)
+_Path = Path | None
+_doctor = build_report_from_path
+_load_config = load_setup_config
+_save = save_setup_config
 
 
 def _friendly(exc: Exception, mcp: bool = False) -> str:
     messages, current = [], exc
     while current:
-        text = str(current).strip()
-        if text and text not in messages:
-            messages.append(text)
+        messages.append(str(current).strip())
         current = current.__cause__ or current.__context__
+    messages = list(dict.fromkeys(filter(None, messages)))
     joined = " ".join(messages).lower()
     if any(word in joined for word in ("401", "403", "unauthorized")):
         return (
@@ -90,17 +82,15 @@ def _friendly(exc: Exception, mcp: bool = False) -> str:
     return messages[0] if messages else type(exc).__name__
 
 
-async def _probe_entry(
-    candidate: ProviderCandidate | McpCandidate,
-) -> Exception | None:
-    if isinstance(candidate, ProviderCandidate):
+def _probe_entry(candidate: EntryCandidate) -> Exception | None:
+    if candidate.kind == "provider":
         args = (probe_inference_provider, candidate.runtime, True)
         kwargs = {}
     else:
         args = (probe_mcp_server, candidate.name, candidate.runtime)
         kwargs = {"timeout": 15}
     try:
-        await asyncio.to_thread(run_probe_with_deadline, *args, **kwargs)
+        run_probe_with_deadline(*args, **kwargs)
     except Exception as exc:
         return exc
     return None
@@ -115,6 +105,12 @@ _DONE_ACTIONS = (
     ("Launch URSA - Dashboard", SetupAction.DASHBOARD.value, "success"),
     ("Exit", SetupAction.EXIT.value, "default"),
 )
+_ENTRY_PAGE = {
+    "provider": ("#provider-error", "providers", "Provider"),
+    "mcp": ("#mcp-validation-status", "MCP servers", "MCP"),
+}
+_REVIEW_ACTIONS = ("back", "save", "recheck", "continue")
+_PAGE_ORDER = ("welcome", "provider", "models", "mcp", "review", "done")
 
 
 class SetupApp(App[SetupAction]):
@@ -125,11 +121,7 @@ class SetupApp(App[SetupAction]):
     ]
     DONE = {action.value: action for action in SetupAction}
 
-    def __init__(
-        self,
-        path: Path | None = None,
-        defaults_json: Path | None = None,
-    ) -> None:
+    def __init__(self, path: _Path = None, defaults_json: _Path = None):
         super().__init__()
         self.path = (path or default_user_config_path()).expanduser()
         self.config, self.llm_configured = _load_config(self.path)
@@ -139,19 +131,10 @@ class SetupApp(App[SetupAction]):
                 load_setup_defaults(defaults_json),
                 llm_configured=self.llm_configured,
             )
-        self.page, self.history = "welcome", []
-        self.model_ok = {"llm": None, "embedding": None}
+        self.page = "welcome"
+        self.models_valid = False
         self.pending: dict[str, str] = {}
-        self.saved_path: Path | None = None
-        self.doctor_report: CheckResult | None = None
-
-    @staticmethod
-    def _buttons(*specs: tuple) -> Horizontal:
-        buttons = (
-            Button(label, id=id, variant=variant, disabled=id == "review-save")
-            for label, id, variant in specs
-        )
-        return Horizontal(*buttons, classes="setup-actions")
+        self.doctor_summary = ""
 
     def _page(
         self,
@@ -160,35 +143,25 @@ class SetupApp(App[SetupAction]):
         *content: Any,
         copy: str = "",
         actions: tuple = (),
+        status: str | None = None,
     ) -> VerticalScroll:
-        children = [Static(title, classes="page-title")]
+        children = [Static(title, classes="page-title"), *content]
         if copy:
-            children.append(Static(copy, classes="page-copy"))
-        children.extend(content)
-        if actions:
-            children.append(self._buttons(*actions))
-        return VerticalScroll(
-            *children, id=f"{name}-page", classes="setup-page"
-        )
-
-    def _step_page(
-        self,
-        name: str,
-        title: str,
-        content: Any,
-        status_id: str,
-        copy: str,
-    ) -> VerticalScroll:
-        return self._page(
-            name,
-            title,
-            content,
-            Static("", id=status_id, classes="form-message"),
-            copy=copy,
-            actions=(
+            children.insert(1, Static(copy, classes="page-copy"))
+        if status:
+            children.append(Static("", id=status, classes="form-message"))
+            actions = (
                 ("Back", f"{name}-back", "default"),
                 ("Validate and continue", f"{name}-save", "primary"),
-            ),
+            )
+        if actions:
+            buttons = (
+                Button(label, id=id, variant=variant)
+                for label, id, variant in actions
+            )
+            children.append(Horizontal(*buttons, classes="setup-actions"))
+        return VerticalScroll(
+            *children, id=f"{name}-page", classes="setup-page"
         )
 
     def compose(self) -> ComposeResult:
@@ -210,26 +183,26 @@ class SetupApp(App[SetupAction]):
                 ),
                 actions=(("Begin setup", "welcome-next", "primary"),),
             ),
-            self._step_page(
+            self._page(
                 "provider",
                 "Connect an inference provider",
                 self.provider_tabs,
-                "provider-error",
-                "URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
+                status="provider-error",
+                copy="URSA verifies the API key by asking the provider for its model list. The key is hidden and is not written to YAML.",
             ),
-            self._step_page(
+            self._page(
                 "models",
                 "Choose default models",
                 Vertical(id="setup-model-host"),
-                "model-validation-status",
-                "Choose the language model URSA will use. Embeddings are optional and may use a different inference provider.",
+                status="model-validation-status",
+                copy="Choose the language model URSA will use. Embeddings are optional and may use a different inference provider.",
             ),
-            self._step_page(
+            self._page(
                 "mcp",
                 "Configure an MCP server",
                 self.mcp_tabs,
-                "mcp-validation-status",
-                "MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
+                status="mcp-validation-status",
+                copy="MCP servers add tools and data sources to URSA. Choose a remote server URL or a local command.",
             ),
             self._page(
                 "review",
@@ -278,10 +251,8 @@ class SetupApp(App[SetupAction]):
         )
         yield Footer()
 
-    def _show(self, page: str, remember: bool = True) -> None:
+    def _show(self, page: str) -> None:
         previous = self.page
-        if remember and page != self.page:
-            self.history.append(self.page)
         self.page = page
         self.query_one("#setup-pages", ContentSwitcher).current = f"{page}-page"
         if page == "models" and page != previous:
@@ -292,8 +263,8 @@ class SetupApp(App[SetupAction]):
             self._review()
 
     async def action_back(self) -> None:
-        if self.history:
-            self._show(self.history.pop(), False)
+        if index := _PAGE_ORDER.index(self.page):
+            self._show(_PAGE_ORDER[index - 1])
 
     def action_cancel(self) -> None:
         self.exit(SetupAction.EXIT)
@@ -327,13 +298,13 @@ class SetupApp(App[SetupAction]):
             )
         return providers
 
+    def _entry_tabs(self, kind: str) -> DynamicEntryTabs:
+        return self.provider_tabs if kind == "provider" else self.mcp_tabs
+
     def _begin_entry(self, kind: str, name: str | None = None) -> None:
         self._show(kind)
-        provider = kind == "provider"
-        tabs = self.provider_tabs if provider else self.mcp_tabs
-        tabs.select_name(name)
-        selector = "#provider-error" if provider else "#mcp-validation-status"
-        self._status(selector, "")
+        self._entry_tabs(kind).select_name(name)
+        self._status(_ENTRY_PAGE[kind][0], "")
 
     async def _prepare_models(self) -> None:
         providers = self._providers()
@@ -360,6 +331,7 @@ class SetupApp(App[SetupAction]):
         self.config = replace_models(
             self.config, selection.chat, selection.embedding
         )
+        self.doctor_summary = ""
         self.llm_configured = True
         self.run_worker(
             self._validate_models(), group="model-check", exclusive=True
@@ -373,15 +345,12 @@ class SetupApp(App[SetupAction]):
             statuses[prefix] = status
             self._status(
                 "#model-validation-status",
-                "\n".join(
-                    filter(None, map(statuses.get, ("llm", "embedding")))
-                ),
+                "\n".join(statuses.values()),
                 any(value.startswith("✗") for value in statuses.values()),
             )
 
         async def check(prefix: str, label: str, model: Any) -> bool:
             if model is None:
-                self.model_ok[prefix] = True
                 return True
             show_status(prefix, f"Validating {label}...")
             try:
@@ -393,16 +362,15 @@ class SetupApp(App[SetupAction]):
                 self.notify(message, severity="error", markup=False)
             else:
                 valid, status = True, f"✓ {label.capitalize()} connected"
-            self.model_ok[prefix] = valid
             show_status(prefix, status)
             return valid
 
-        valid = all(
-            await asyncio.gather(
-                check("llm", "language model", self.config.llm_model),
-                check("embedding", "embedding model", self.config.emb_model),
-            )
+        checks = (
+            ("llm", "language model", self.config.llm_model),
+            ("embedding", "embedding model", self.config.emb_model),
         )
+        valid = all(await asyncio.gather(*(check(*item) for item in checks)))
+        self.models_valid = valid
         if valid:
             self._begin_entry("mcp", next(iter(self.config.mcp_servers), None))
         else:
@@ -411,29 +379,32 @@ class SetupApp(App[SetupAction]):
     async def _validate_entry_page(self, kind: str) -> bool:
         """Validate every draft on an entry page, then commit them at once."""
         provider = kind == "provider"
-        tabs = self.provider_tabs if provider else self.mcp_tabs
-        other_tabs = self.mcp_tabs if provider else self.provider_tabs
-        selector = "#provider-error" if provider else "#mcp-validation-status"
-        candidates = tabs.candidates(other_tabs.raw_names())
+        tabs = self._entry_tabs(kind)
+        selector, label, subject = _ENTRY_PAGE[kind]
+        other = self._entry_tabs("mcp" if provider else "provider")
+        candidates = tabs.candidates(other.raw_names())
         if candidates is None:
             return False
         old_users = set(self._keys())
-        if not candidates and provider:
-            self._status(
-                selector, "At least one inference provider is required.", True
-            )
-            return False
         if not candidates:
+            if provider:
+                self._status(
+                    selector,
+                    "At least one inference provider is required.",
+                    True,
+                )
+                return False
             self.config = replace_mcp_servers(self.config, {})
+            self.doctor_summary = ""
             self._discard_unused_pending(old_users)
             self._status(selector, "✓ No MCP servers configured")
             return True
 
-        label = "providers" if provider else "MCP servers"
         self._status(selector, f"Validating {label}...")
-
-        results = await asyncio.gather(*map(_probe_entry, candidates))
-        failures: list[ProviderCandidate | McpCandidate] = []
+        results = await asyncio.gather(
+            *(asyncio.to_thread(_probe_entry, item) for item in candidates)
+        )
+        failures: list[EntryCandidate] = []
         for candidate, result in zip(candidates, results, strict=True):
             failed = result is not None
             tabs.set_draft_status(
@@ -448,28 +419,23 @@ class SetupApp(App[SetupAction]):
             tabs.focus_error(failures[0].draft_id)
             names = ", ".join(candidate.name for candidate in failures)
             self._status(
-                selector,
-                f"{'Provider' if provider else 'MCP'} validation failed: {names}",
-                True,
+                selector, f"{subject} validation failed: {names}", True
             )
             return False
 
         stored = {item.name: item.stored for item in candidates}
-        if provider:
-            renamed = {
-                item.original_name: item.name
-                for item in candidates
-                if item.original_name is not None
-            }
-            self.config = replace_inference_providers(
-                self.config,
-                cast(dict[str, InferenceProviderConfig], stored),
-                renamed=renamed,
-            )
-        else:
-            self.config = replace_mcp_servers(
-                self.config, cast(dict[str, ServerParameters], stored)
-            )
+        renamed = {
+            item.original_name: item.name
+            for item in candidates
+            if item.original_name is not None
+        }
+        replace: Any = (
+            replace_inference_providers if provider else replace_mcp_servers
+        )
+        self.config = replace(
+            self.config, stored, **({"renamed": renamed} if provider else {})
+        )
+        self.doctor_summary = ""
         self._discard_unused_pending(old_users)
         for item in candidates:
             if item.credential.pending and item.credential.username:
@@ -486,10 +452,18 @@ class SetupApp(App[SetupAction]):
             f"Embedding model: {emb.model if emb else 'none'}\n"
             f"MCP servers: {', '.join(self.config.mcp_servers) or 'none'}"
         )
-        editor = self.query_one("#review-full-config", TextArea)
-        editor.text = format_setup_config_yaml(self.config)
-        valid = bool(self.config.inference_providers and self.model_ok["llm"])
-        if self.saved_path is None:
+        self.query_one(
+            "#review-full-config", TextArea
+        ).text = format_setup_config_yaml(self.config)
+        valid = bool(self.config.inference_providers and self.models_valid)
+        if not self.doctor_summary:
+            self._status("#review-error", "")
+            validation = self.query_one("#review-validation", Collapsible)
+            validation.title = "URSA Doctor — not run"
+            validation.remove_class("doctor-error", "doctor-warning")
+            self.query_one("#review-validation-results", Static).update(
+                "Validation has not run."
+            )
             self._review_actions("ready", valid)
 
     async def _save_config(self) -> None:
@@ -503,7 +477,7 @@ class SetupApp(App[SetupAction]):
             self._review()
             self._status("#review-error", f"Could not save: {exc}", True)
             return
-        self.saved_path = path
+        self.path = path
         self.pending.clear()
         self._status("#review-error", f"Saved to {path}")
         await self._run_doctor(auto_advance=True)
@@ -513,7 +487,7 @@ class SetupApp(App[SetupAction]):
             "ready": {"back", "save"},
             "checked": {"recheck", "continue"},
         }.get(state, set())
-        for action in ("back", "save", "recheck", "continue"):
+        for action in _REVIEW_ACTIONS:
             button = self.query_one(f"#review-{action}", Button)
             button.set_class(action not in visible, "hidden")
             button.disabled = (
@@ -521,19 +495,19 @@ class SetupApp(App[SetupAction]):
             )
 
     async def _run_doctor(self, *, auto_advance: bool = False) -> None:
-        if self.saved_path is None:
-            return
         self._review_actions("running")
         validation = self.query_one("#review-validation", Collapsible)
         results = self.query_one("#review-validation-results", Static)
         validation.title = "URSA Doctor — running…"
         validation.collapsed = False
         results.update("Running ursa self doctor…")
-        report = await asyncio.to_thread(_doctor, self.saved_path)
-        self.doctor_report = report
+        report = await asyncio.to_thread(_doctor, self.path)
         counts = report_counts(report)
         warnings = counts[CheckStatus.WARN]
         errors = counts[CheckStatus.ERROR]
+        self.doctor_summary = (
+            f"Validation: {warnings} warning(s), {errors} error(s)"
+        )
         validation.title = (
             f"URSA Doctor — {warnings} warning(s), {errors} error(s)"
         )
@@ -545,12 +519,9 @@ class SetupApp(App[SetupAction]):
             self._finish_setup()
 
     def _finish_setup(self) -> None:
-        if self.saved_path is None:
+        if not self.doctor_summary:
             return
-        summary = f"Saved to {self.saved_path}"
-        if self.doctor_report is not None:
-            counts = report_counts(self.doctor_report)
-            summary += f"\nValidation: {counts[CheckStatus.WARN]} warning(s), {counts[CheckStatus.ERROR]} error(s)"
+        summary = f"Saved to {self.path}\n{self.doctor_summary}"
         self.query_one("#done-copy", Static).update(summary)
         self._show("done")
 
@@ -587,10 +558,6 @@ def _probe_model(config, providers: dict[str, InferenceProviderConfig]) -> None:
         run_probe_with_deadline(probe_embedding_model, resolved)
 
 
-def run_setup(
-    path: Path | None = None,
-    defaults_json: Path | None = None,
-) -> SetupAction:
+def run_setup(path: _Path = None, defaults_json: _Path = None) -> SetupAction:
     inject_truststore_into_ssl()
-    app = SetupApp(path, defaults_json)
-    return app.run() or SetupAction.EXIT
+    return SetupApp(path, defaults_json).run() or SetupAction.EXIT

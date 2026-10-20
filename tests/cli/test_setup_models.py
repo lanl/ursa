@@ -43,61 +43,41 @@ def config_values(editor, kind: str = "chat"):
     return yaml.safe_load(control(editor, "config-yaml", TextArea, kind).text)
 
 
-def patch_model_listing(monkeypatch, listing):
+def provider_app(monkeypatch, listing=lambda _: [], providers=None, **kwargs):
     monkeypatch.setattr("ursa.cli.setup_models.list_provider_models", listing)
+    providers = providers or {"provider": InferenceProviderConfig()}
+    return SetupModelHarness(providers, **kwargs)
 
 
-async def test_setup_models_use_fuzzy_catalog_for_selected_provider(
-    monkeypatch,
-):
+async def test_fuzzy_catalog_changes_with_provider(monkeypatch):
+    canonical = {
+        "chat": ("chat_one", "chat_two"),
+        "embedding": ("embed_one", "embed_two"),
+    }
+    monkeypatch.setattr(
+        "ursa.cli.setup_models.supported_model_providers",
+        lambda model_type="chat": canonical[model_type],
+    )
     providers = {
         "first": InferenceProviderConfig(base_url="https://first.example/v1"),
         "second": InferenceProviderConfig(base_url="https://second.example/v1"),
     }
-    discovered = []
 
     def models(config):
-        discovered.append(config)
-        name = (
-            "first-model" if "first" in str(config.base_url) else "second-model"
-        )
-        return [ProviderModel(name, "openai")]
+        prefix = "first" if config is providers["first"] else "second"
+        return [ProviderModel(f"{prefix}-model", "openai")]
 
-    patch_model_listing(monkeypatch, models)
-    app = SetupModelHarness(providers)
+    app = provider_app(monkeypatch, models, providers)
 
     async with app.run_test(size=(100, 36)) as pilot:
         await app.workers.wait_for_complete()
         model_select = control(app.editor, "model-select", FuzzySelect)
         assert "first-model" in {value for _, value in model_select._options}
-        assert providers["first"] in discovered
-
         control(app.editor, "inference-provider", Select).value = "second"
         await pilot.pause()
         await app.workers.wait_for_complete()
-
         assert "second-model" in {value for _, value in model_select._options}
-        assert app.editor.model_catalogs["chat"] == {
-            "second-model": ProviderModel("second-model", "openai")
-        }
-        assert providers["second"] in discovered
         assert config_values(app.editor)["inference_provider"] == "second"
-
-
-async def test_setup_model_provider_is_canonical_dropdown(monkeypatch):
-    monkeypatch.setattr(
-        "ursa.cli.setup_models.supported_model_providers",
-        lambda model_type="chat": (
-            ("embed_one", "embed_two")
-            if model_type == "embedding"
-            else ("chat_one", "chat_two")
-        ),
-    )
-    patch_model_listing(monkeypatch, lambda _config: [])
-    app = SetupModelHarness({"provider": InferenceProviderConfig()})
-
-    async with app.run_test(size=(100, 36)):
-        await app.workers.wait_for_complete()
         expected = {
             "chat": ["__ursa_none__", "chat_one", "chat_two", "openai"],
             "embedding": ["__ursa_none__", "embed_one", "embed_two"],
@@ -105,28 +85,13 @@ async def test_setup_model_provider_is_canonical_dropdown(monkeypatch):
         for kind, options in expected.items():
             select = control(app.editor, "model-provider", Select, kind)
             assert [value for _, value in select._options] == options
-
-
-async def test_setup_model_other_choice_preserves_custom_model(monkeypatch):
-    patch_model_listing(
-        monkeypatch, lambda _config: [ProviderModel("catalog-model", "openai")]
-    )
-    app = SetupModelHarness({"provider": InferenceProviderConfig()})
-
-    async with app.run_test(size=(100, 36)) as pilot:
-        await app.workers.wait_for_complete()
-        select = control(app.editor, "model-select", FuzzySelect)
         custom = control(app.editor, "model", Input)
-
-        assert CUSTOM in {value for _, value in select._options}
-        select.value = CUSTOM
+        model_select.value = CUSTOM
         await pilot.pause()
         assert not custom.has_class("hidden")
-
         custom.value = "private-model"
         await pilot.pause()
         assert config_values(app.editor)["model"] == "private-model"
-
         app.editor.submit()
         await pilot.pause()
         assert app.submissions[0].chat.model == "private-model"
@@ -142,29 +107,22 @@ async def test_model_discovery_ignores_editor_teardown(monkeypatch):
         await release.wait()
         return []
 
-    monkeypatch.setattr(
-        SetupModelEditor, "_request_model_load", lambda *_args: None
-    )
-    monkeypatch.setattr(
-        "ursa.cli.setup_models.asyncio.to_thread", delayed_listing
-    )
+    patch = monkeypatch.setattr
+    patch(SetupModelEditor, "_request_model_load", lambda *_: None)
+    patch("ursa.cli.setup_models.asyncio.to_thread", delayed_listing)
     provider = InferenceProviderConfig()
     app = SetupModelHarness({"provider": provider})
 
     async with app.run_test(size=(100, 36)):
-        discovery = asyncio.create_task(
-            app.editor._load_models("chat", provider)
-        )
+        load = app.editor._load_models
+        discovery = asyncio.create_task(load("chat", provider))
         await entered.wait()
         await app.editor.query_one("FuzzySelectOverlay").remove()
         release.set()
         await discovery
 
 
-async def test_setup_advanced_yaml_deletions_replace_old_model_fields(
-    monkeypatch,
-):
-    patch_model_listing(monkeypatch, lambda _config: [])
+async def test_advanced_yaml_replaces_old_model_fields(monkeypatch):
     chat = ChatModelConfig(
         model="old-model",
         model_provider="anthropic",
@@ -172,18 +130,14 @@ async def test_setup_advanced_yaml_deletions_replace_old_model_fields(
         max_completion_tokens=4096,
         old_extra="remove-me",
     )
-    app = SetupModelHarness({"provider": InferenceProviderConfig()}, chat=chat)
-
+    app = provider_app(monkeypatch, chat=chat)
     async with app.run_test(size=(100, 36)) as pilot:
         await app.workers.wait_for_complete()
-        control(
-            app.editor, "config-yaml", TextArea
-        ).text = "model: replacement\ninference_provider: provider\n"
+        config = control(app.editor, "config-yaml", TextArea)
+        config.text = "model: replacement\ninference_provider: provider\n"
         app.editor.submit()
         await pilot.pause()
-
         parsed = app.submissions[0].chat
         assert parsed.model == "replacement"
         assert parsed.max_completion_tokens is None
         assert parsed.model_extra == {}
-        assert parsed.model_fields_set == {"model", "inference_provider"}

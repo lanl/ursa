@@ -7,9 +7,7 @@ different endpoint.
 
 ## Install URSA
 
-URSA requires Python 3.11 or newer. The guided installer installs `uv` if
-needed, installs `ursa-ai` with Python 3.13, then walks through provider, model,
-and optional MCP configuration:
+URSA requires Python 3.11 or newer. The guided installer installs `uv` and `ursa-ai` with Python 3.13:
 
 === "Linux/MacOS"
 
@@ -23,8 +21,7 @@ and optional MCP configuration:
     powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
     ```
 
-Administrators can [preload non-secret setup defaults][managed-setup-defaults]
-for providers, models, and MCP servers.
+It then opens provider, model, and optional MCP setup. Run `ursa self setup` to reopen it; administrators can [preload non-secret defaults][managed-setup-defaults].
 
 For manual installation, the `uv` tool installation is recommended:
 

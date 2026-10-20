@@ -100,12 +100,11 @@ def load_setup_config(path: Path) -> tuple[UrsaConfig, bool]:
             load_config_file(path, interpolate=False) if path.is_file() else {}
         )
         providers = raw.get("inference_providers", {})
-        if not isinstance(providers, dict):
-            raise ValueError("Existing inference_providers must be a mapping.")
-        for value in providers.values():
-            if isinstance(value, dict):
-                # Setup always enables TLS verification.
-                value.pop("ssl_verify", None)
+        if isinstance(providers, Mapping):
+            for value in providers.values():
+                if isinstance(value, dict):
+                    # Setup always enables TLS verification.
+                    value.pop("ssl_verify", None)
         config = UrsaConfig.model_validate(raw)
     return _setup_view(config, providers), "llm_model" in raw
 
@@ -128,6 +127,7 @@ def load_setup_defaults(path: Path) -> dict[str, Any]:
 def reject_literal_secrets(
     value: Any,
     *,
+    default_templates: bool = False,
     error_message: str = (
         "Literal secrets cannot be saved; use an environment or keyring "
         "secret reference."
@@ -137,6 +137,14 @@ def reject_literal_secrets(
     stack = [("", value)]
     while stack:
         name, item = stack.pop()
+        if (
+            default_templates
+            and isinstance(item, dict)
+            and "template" in item
+            and item.get("env") is None
+            and item.get("keyring") in (None, False)
+        ):
+            item["keyring"] = True
         if name and _SENSITIVE_NAME.search(name):
             if not (
                 isinstance(SecretTemplate.maybe_validate(item), SecretReference)
@@ -178,27 +186,20 @@ def apply_setup_defaults(
     servers = defaults.get("mcp_servers", {})
     if not isinstance(servers, dict):
         raise SetupError("mcp_servers must be a JSON object.")
+    secret_error = "Installer defaults must not contain API keys."
     for server in servers.values():
         headers = server.get("headers") if isinstance(server, dict) else None
         if isinstance(headers, dict):
-            for value in headers.values():
-                if (
-                    isinstance(value, dict)
-                    and "template" in value
-                    and value.get("env") is None
-                    and value.get("keyring") in (None, False)
-                ):
-                    value["keyring"] = True
-    reject_literal_secrets(
-        defaults,
-        error_message="Installer defaults must not contain API keys.",
-    )
-    providers = defaults.get("inference_providers", [])
-    if not isinstance(providers, list):
+            reject_literal_secrets(
+                headers, default_templates=True, error_message=secret_error
+            )
+    reject_literal_secrets(defaults, error_message=secret_error)
+    raw_providers = defaults.get("inference_providers", [])
+    if not isinstance(raw_providers, list):
         raise SetupError("inference_providers must be a JSON array.")
     provider_values = dict(config.inference_providers)
-    seen_providers: set[str] = set()
-    for item in providers:
+    seen: set[str] = set()
+    for item in raw_providers:
         if not isinstance(item, dict):
             raise SetupError("Provider defaults must be JSON objects.")
         value = dict(item)
@@ -208,9 +209,9 @@ def apply_setup_defaults(
         value["base_url"] = validate_setup_url(
             value.get("base_url"), "Inference provider base URL"
         )
-        if name in seen_providers:
+        if name in seen:
             raise SetupError(f"Provider default '{name}' is duplicated.")
-        seen_providers.add(name)
+        seen.add(name)
         with _setup_errors(f"Inference provider default '{name}' is invalid"):
             provider = InferenceProviderConfig.model_validate(value)
         if name in config.inference_providers:
@@ -247,26 +248,20 @@ def apply_setup_defaults(
         if field == "llm_model":
             llm_configured = True
 
-    server_values = dict(config.mcp_servers)
-    for raw_name, raw_server in servers.items():
-        name = validate_setup_name(str(raw_name), "MCP server")
-        if name in config.mcp_servers:
-            continue
-        if not isinstance(raw_server, dict):
-            raise SetupError(f"MCP server '{name}' must be a JSON object.")
-        server_values[name] = raw_server
+    new_servers = {
+        validate_setup_name(str(name), "MCP server"): server
+        for name, server in servers.items()
+        if name not in config.mcp_servers
+    }
 
-    if set(server_values) - set(config.mcp_servers):
-        updates["mcp_servers"] = server_values
+    if new_servers:
+        updates["mcp_servers"] = config.mcp_servers | new_servers
     if not updates:
         return llm_configured
     candidate = _replace_config(config, **updates)
-    for field in updates:
-        value = getattr(candidate, field)
-        if field in {"inference_providers", "mcp_servers"}:
-            getattr(config, field).update(value)
-        else:
-            setattr(config, field, value)
+    config.__dict__.update(
+        (field, getattr(candidate, field)) for field in updates
+    )
     config.__pydantic_fields_set__.update(updates)
     return llm_configured
 
@@ -291,13 +286,14 @@ def replace_inference_providers(
         raise SetupError("API keys must use an ENV or keyring reference.")
 
     rename_map = dict(renamed or {})
-    for old_name, new_name in rename_map.items():
-        if old_name not in config.inference_providers:
-            raise SetupError(f"Cannot rename unknown provider '{old_name}'.")
-        if new_name not in replacements:
-            raise SetupError(
-                f"Renamed provider '{new_name}' is not in the replacement set."
-            )
+    if unknown := rename_map.keys() - config.inference_providers.keys():
+        raise SetupError(
+            f"Cannot rename unknown provider '{next(iter(unknown))}'."
+        )
+    if missing := set(rename_map.values()) - replacements.keys():
+        raise SetupError(
+            f"Renamed provider '{next(iter(missing))}' is not in the replacement set."
+        )
 
     fallback = next(iter(replacements))
 
@@ -305,13 +301,10 @@ def replace_inference_providers(
         if model is None:
             return None
         current = model.inference_provider
-        if current is None:
-            return model.model_copy(deep=True)
-        target = rename_map.get(current, current)
-        if target not in replacements:
-            target = fallback
+        target = rename_map.get(current, current) if current else None
+        target = target if target in replacements else fallback
         return model.model_copy(
-            update={"inference_provider": target}, deep=True
+            update={"inference_provider": target} if current else {}, deep=True
         )
 
     return _replace_config(
@@ -417,10 +410,13 @@ def prepare_provider_probe(
         with suppress(Exception):
             resolved = resolved.resolve(name)
 
-    models = (config.llm_model, config.emb_model)
-    matching = (m for m in models if m and m.inference_provider == name)
-    model_provider = getattr(runtime, "model_provider", None) or getattr(
-        next(matching, None), "model_provider", None
+    model_provider = getattr(runtime, "model_provider", None) or next(
+        (
+            model.model_provider
+            for model in (config.llm_model, config.emb_model)
+            if model and model.inference_provider == name
+        ),
+        None,
     )
     return runtime.model_copy(
         update={"api_key": resolved, "model_provider": model_provider}
@@ -446,20 +442,17 @@ def save_setup_config(
         raise SetupError("A provider and language model are required.")
     UrsaConfig.model_validate(config.editable_values())
     credential_store = get_keyring()
-    previous = {
-        username: credential_store.get_password(KEYRING_SERVICE, username)
-        for username in pending
-    }
-    written: list[str] = []
+    previous: dict[str, str | None] = {}
     try:
         for username, secret in pending.items():
+            previous[username] = credential_store.get_password(
+                KEYRING_SERVICE, username
+            )
             credential_store.set_password(KEYRING_SERVICE, username, secret)
-            written.append(username)
         return save_config_file(path, config)
     except BaseException as exc:
-        for username in reversed(written):
+        for username, previous_password in reversed(previous.items()):
             try:
-                previous_password = previous[username]
                 if previous_password is None:
                     credential_store.delete_password(KEYRING_SERVICE, username)
                 else:
