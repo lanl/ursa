@@ -446,6 +446,32 @@ async def test_no_network_policy_is_enforced_by_the_runtime(
         thread.join(timeout=5)
 
 
+async def test_host_ca_certificates_are_exposed_to_tls_clients(
+    tmp_path: Path,
+    ubuntu_sif: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "ursa.integrations.harbor_singularity._host_ca_certificates_pem",
+        lambda: "test host CA bundle\n",
+    )
+    environment = await _start_environment(tmp_path, ubuntu_sif)
+
+    try:
+        mounted = await environment.exec(
+            'printf \'%s\\n\' "$SSL_CERT_FILE" "$REQUESTS_CA_BUNDLE" '
+            '"$CURL_CA_BUNDLE"; cat "$SSL_CERT_FILE"'
+        )
+        modified = await environment.exec('printf tampered >> "$SSL_CERT_FILE"')
+
+        assert mounted.stdout == (
+            "/staging/host-ca-certificates.crt\n" * 3 + "test host CA bundle\n"
+        )
+        assert modified.return_code != 0
+    finally:
+        await _cleanup_environment(environment)
+
+
 async def test_fakeroot_overlay_provides_a_writable_container_root(
     tmp_path: Path,
     ubuntu_sif: Path,
