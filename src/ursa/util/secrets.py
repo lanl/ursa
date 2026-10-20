@@ -3,7 +3,6 @@
 import json
 import os
 import stat
-import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from functools import cache
@@ -32,6 +31,7 @@ from pydantic import (
 )
 
 from ursa.util.crossplatform import default_user_config_path
+from ursa.util.fileio import atomic_write_text
 
 _ALLOWED_MODE = 0o600
 _SECRET_NAME_SECTIONS = {("inference_providers",), ("mcp_servers",)}
@@ -129,26 +129,8 @@ class FileKeyring(KeyringBackend):
             with self._open() as current:
                 mode = stat.S_IMODE(os.fstat(current.fileno()).st_mode)
 
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=self.path.parent, prefix=f".{self.path.name}."
-        )
-        temporary = Path(temporary_name)
-        try:
-            try:
-                stream = os.fdopen(descriptor, "w", encoding="utf-8")
-            except BaseException:
-                os.close(descriptor)
-                raise
-            with stream:
-                if hasattr(os, "fchmod"):
-                    os.fchmod(stream.fileno(), mode)
-                json.dump(data, stream, indent=2, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        text = f"{json.dumps(data, indent=2, sort_keys=True)}\n"
+        atomic_write_text(self.path, text, mode)
 
     @contextmanager
     def _edit(self) -> Iterator[dict[str, dict[str, str]]]:
