@@ -34,10 +34,6 @@ TEMPLATES = Environment(
     keep_trailing_newline=True,
 )
 MARKDOWN_LINK = re.compile(r"(!?)\[([^]]+)]\(([^)]+)\)")
-INSTALL_DASHBOARD_REQUIREMENT = (
-    "URSA_DASHBOARD_REQUIREMENT="
-    "'ursa-ai[dashboard] @ git+https://github.com/lanl/ursa.git@main'"
-)
 
 
 def _examples() -> list[tuple[Path, dict]]:
@@ -185,25 +181,6 @@ def _examples_index(examples: list[tuple[Path, dict]]) -> str:
     return readme.replace(marker, catalog) + "\n"
 
 
-def _installer_script() -> str:
-    """Pin release docs while letting the main docs install GitHub main."""
-    script = (REPOSITORY_ROOT / "install.sh").read_text(encoding="utf-8")
-    version = os.environ.get("MIKE_DOCS_VERSION", "main")
-    if version == "main":
-        return script
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version) is None:
-        raise ValueError(f"Unsafe MIKE_DOCS_VERSION: {version!r}")
-    dashboard = (
-        f"URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard]=={version}'\n"
-        "URSA_COMMIT=''"
-    )
-    if INSTALL_DASHBOARD_REQUIREMENT not in script:
-        raise ValueError(
-            "install.sh is missing its documentation requirement marker"
-        )
-    return script.replace(INSTALL_DASHBOARD_REQUIREMENT, dashboard)
-
-
 def on_files(files: Files, config) -> Files:
     """Expose generated example pages and the installer in the docs site."""
     from mkdocs.structure.files import File
@@ -212,7 +189,9 @@ def on_files(files: Files, config) -> Files:
         File.generated(
             config,
             "install.sh",
-            content=_installer_script(),
+            content=(REPOSITORY_ROOT / "install.sh").read_text(
+                encoding="utf-8"
+            ),
         )
     )
     examples = _examples()

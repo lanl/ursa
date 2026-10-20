@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from docs import hooks
-
 INSTALL_SCRIPT = Path(__file__).parents[2] / "install.sh"
 SITE_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "site.yml"
 
@@ -57,22 +55,16 @@ def test_install_script_is_posix_shell():
     subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
 
 
-@pytest.mark.parametrize("commit", [None, "0123456789abcdef"])
-def test_install_script_uses_existing_uv_and_tool_bin(tmp_path, commit):
+def test_install_script_uses_existing_uv_and_tool_bin(tmp_path):
     environment, log, _ursa = _fake_installation(tmp_path)
-    if commit is not None:
-        environment["URSA_COMMIT"] = commit
 
     result = _run_installer(environment)
 
-    commands = log.read_text()
-    revision = commit or "main"
+    commands = log.read_text().splitlines()
     assert (
         "uv tool install --python 3.13 --force --upgrade "
-        "--compile-bytecode ursa-ai[dashboard] @ "
-        f"git+https://github.com/lanl/ursa.git@{revision}" in commands
+        "--compile-bytecode ursa-ai" in commands
     )
-    assert "ursa self modify" not in commands
     assert "uv tool dir --bin" in commands
     assert "URSA is installed" in result.stdout
 
@@ -110,16 +102,26 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
     assert "URSA is installed" in result.stdout
 
 
-def test_install_script_explains_release_mismatch(tmp_path):
+def test_install_script_reports_version_when_setup_is_unavailable(tmp_path):
     environment, _log, ursa = _fake_installation(tmp_path)
-    ursa.write_text("#!/bin/sh\nexit 1\n")
+    ursa.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        '    printf "ursa 2.4.1\\n"\n'
+        "    exit 0\n"
+        "fi\n"
+        "exit 1\n"
+    )
     ursa.chmod(0o755)
 
     result = _run_installer(environment, check=False)
 
     assert result.returncode != 0
-    assert "may target an unreleased URSA version" in result.stderr
-    assert "https://lanl.github.io/ursa/latest/install.sh" in result.stderr
+    assert (
+        "installed URSA (ursa 2.4.1) does not support guided setup"
+        in result.stderr
+    )
+    assert "https://lanl.github.io/ursa/latest/getting-started" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -163,34 +165,6 @@ def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
         result.stdout
     )
     assert f"Run '{ursa}'" in result.stdout
-
-
-def test_docs_builds_main_installer(monkeypatch):
-    monkeypatch.setenv("MIKE_DOCS_VERSION", "main")
-    assert (
-        "git+https://github.com/lanl/ursa.git@main" in hooks._installer_script()
-    )
-
-
-def test_release_installer_ignores_commit_override_and_streams(
-    monkeypatch, tmp_path
-):
-    environment, log, _ursa = _fake_installation(tmp_path)
-    environment["URSA_COMMIT"] = "0123456789abcdef"
-    monkeypatch.setenv("MIKE_DOCS_VERSION", "2.4.1")
-
-    _run_installer(environment, script=hooks._installer_script())
-
-    commands = log.read_text()
-    assert "ursa-ai[dashboard]==2.4.1" in commands
-    assert "0123456789abcdef" not in commands
-
-
-def test_docs_rejects_unsafe_installer_version(monkeypatch):
-    monkeypatch.setenv("MIKE_DOCS_VERSION", "1.0'; touch /tmp/owned; '")
-
-    with pytest.raises(ValueError, match="Unsafe MIKE_DOCS_VERSION"):
-        hooks._installer_script()
 
 
 def test_docs_workflow_publishes_versioned_installers():

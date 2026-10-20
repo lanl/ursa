@@ -33,16 +33,6 @@ cleanup() {
 trap cleanup 0
 trap 'exit 1' HUP INT TERM
 
-# The documentation build pins this requirement for a release.
-URSA_DASHBOARD_REQUIREMENT='ursa-ai[dashboard] @ git+https://github.com/lanl/ursa.git@main'
-case ${URSA_COMMIT:-} in
-    '') ;;
-    *[!0123456789abcdefABCDEF]*) fail "URSA_COMMIT must be a Git commit hash" ;;
-    *)
-        URSA_DASHBOARD_REQUIREMENT="ursa-ai[dashboard] @ git+https://github.com/lanl/ursa.git@$URSA_COMMIT"
-        ;;
-esac
-
 find_uv() {
     if command -v uv >/dev/null 2>&1; then
         command -v uv
@@ -84,7 +74,7 @@ fi
 
 say "Installing URSA with Python 3.13…"
 set -- tool install --python 3.13 --force --upgrade --compile-bytecode \
-    "$URSA_DASHBOARD_REQUIREMENT"
+    ursa-ai
 "$uv_executable" "$@"
 
 tool_bin=$("$uv_executable" tool dir --bin)
@@ -112,8 +102,11 @@ fi
 PATH="$tool_bin:$uv_dir${PATH:+:$PATH}"
 export PATH
 
-"$ursa_executable" self setup --help >/dev/null 2>&1 \
-    || fail "installed URSA does not support guided setup. This installer may target an unreleased URSA version; use https://lanl.github.io/ursa/latest/install.sh or install the matching release."
+if ! "$ursa_executable" self setup --help >/dev/null 2>&1; then
+    ursa_version=$("$ursa_executable" --version 2>/dev/null || true)
+    [ -n "$ursa_version" ] || ursa_version="version unavailable"
+    fail "installed URSA ($ursa_version) does not support guided setup. See https://lanl.github.io/ursa/latest/getting-started."
+fi
 
 say "Starting guided setup…"
 if [ -t 0 ]; then
