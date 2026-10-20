@@ -201,7 +201,7 @@ def test_save_writes_file_fallback_then_atomic_private_config(
     assert fallback.get_password("ursa", "tools") == "mcp-secret"
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert path.with_suffix(".yaml.lock").exists()
+        assert path.with_suffix(".yaml.lock").exists()
 
 
 def test_save_does_not_write_config_when_keyring_fails(setup_keyring, tmp_path):
