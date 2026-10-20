@@ -75,6 +75,11 @@ async def show_model_editor(app) -> SetupModelEditor:
     return app.query_one(SetupModelEditor)
 
 
+async def click_and_wait(pilot, selector, condition):
+    pilot.app.query_one(selector, Button).press()
+    await eventually(pilot, condition, description=f"{selector} action")
+
+
 def test_run_setup_uses_highest_precedence_user_path(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
@@ -220,8 +225,13 @@ async def test_provider_tabs_add_empty_persistent_draft(app):
             "Validate and continue"
         )
 
-        await pilot.click("#provider-add")
-        await pilot.pause()
+        await click_and_wait(
+            pilot,
+            "#provider-add",
+            lambda: len(app.provider_tabs.editors()) == 3
+            and app.provider_tabs.active_editor()
+            is app.provider_tabs.editors()[-1],
+        )
         added = app.provider_tabs.active_editor()
         assert added is not None
         assert added.raw_name() == ""
@@ -253,8 +263,13 @@ async def test_provider_yaml_validation_debounces_and_stops_on_remove(
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
-        await pilot.click("#provider-add")
-        await pilot.pause()
+        await click_and_wait(
+            pilot,
+            "#provider-add",
+            lambda: len(app.provider_tabs.editors()) == 2
+            and app.provider_tabs.active_editor()
+            is app.provider_tabs.editors()[-1],
+        )
         editor = app.provider_tabs.active_editor()
         assert editor is not None
         validate = MagicMock()
@@ -282,7 +297,12 @@ async def test_provider_yaml_validation_debounces_and_stops_on_remove(
         yaml_editor.text = "base_url: https://third.example/v1\n"
         await pilot.pause()
         pending = scheduled[-1]
-        await pilot.click("#provider-remove")
+        await click_and_wait(
+            pilot,
+            "#provider-remove",
+            lambda: pending.stopped
+            and editor not in app.provider_tabs.editors(),
+        )
         assert pending.stopped
 
 
@@ -301,8 +321,12 @@ async def test_provider_validation_failure_does_not_continue(monkeypatch, app):
             ".provider-url-custom", Input
         ).value = "https://models.example/v1"
 
-        await pilot.click("#provider-save")
-        await app.workers.wait_for_complete()
+        await click_and_wait(
+            pilot,
+            "#provider-save",
+            lambda: "could not connect"
+            in str(editor.query_one(".draft-message", Static).content).lower(),
+        )
 
         assert app.page == "provider"
         assert not app.config.inference_providers
@@ -372,19 +396,18 @@ async def test_entry_continue_checks_all_and_is_transactional(
             broken = tabs.editors()[1]
             broken.query_one(".entry-name", Input).value = "renamed"
 
-        await pilot.click(f"#{kind}-save")
         expected_page = {"provider": "models", "mcp": "review"}[kind]
         if failing:
-            await eventually(
+            await click_and_wait(
                 pilot,
+                f"#{kind}-save",
                 lambda: tabs.active_editor() is broken,
-                description=f"failed {kind} draft to become active",
             )
         else:
-            await eventually(
+            await click_and_wait(
                 pilot,
+                f"#{kind}-save",
                 lambda: app.page == expected_page,
-                description=f"{kind} validation to continue",
             )
 
         expected = (
@@ -424,14 +447,13 @@ async def test_provider_remove_retargets_models_only_after_commit(
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
-        await pilot.click("#provider-remove")
-        await eventually(
+        await click_and_wait(
             pilot,
+            "#provider-remove",
             lambda: len(app.provider_tabs.editors()) == 1
             and app.provider_tabs.active_editor()
             is app.provider_tabs.editors()[0]
             and app.query_one("#provider-remove", Button).disabled,
-            description="provider removal",
         )
 
         assert app.config.llm_model.inference_provider == "old"
@@ -515,9 +537,11 @@ async def test_setup_model_editor_submits_absent_embedding_as_none(
         await pilot.pause()
         editor.query_one("#setup-chat-model", Input).value = "chat-model"
         await pilot.pause()
-        await pilot.click("#models-save")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await click_and_wait(
+            pilot,
+            "#models-save",
+            lambda: app.page == "mcp",
+        )
 
         assert checked == ["chat-model"]
         assert app.config.emb_model is None
@@ -547,9 +571,11 @@ async def test_setup_model_named_provider_inherits_credentials(
         await pilot.pause()
         editor.query_one("#setup-chat-model", Input).value = "claude-test"
         await pilot.pause()
-        await pilot.click("#models-save")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
+        await click_and_wait(
+            pilot,
+            "#models-save",
+            lambda: app.page == "mcp",
+        )
 
         probe.assert_called_once()
         resolved, kind = probe.call_args.args
@@ -605,22 +631,20 @@ async def test_mcp_tabs_add_empty_draft_and_advanced_is_complete(app):
         assert values["headers"]["Authorization"]["keyring"] is True
         assert "timeout" in values
 
-        await pilot.click("#mcp-add")
-        await eventually(
+        await click_and_wait(
             pilot,
+            "#mcp-add",
             lambda: len(app.mcp_tabs.editors()) == 2
             and app.mcp_tabs.active_editor() is app.mcp_tabs.editors()[-1],
-            description="MCP draft addition",
         )
         added = app.mcp_tabs.active_editor()
         assert added is not None
         assert added.raw_name() == ""
         assert yaml.safe_load(added.query_one(TextArea).text) == {}
-        await pilot.click("#mcp-remove")
-        await eventually(
+        await click_and_wait(
             pilot,
+            "#mcp-remove",
             lambda: app.mcp_tabs.active_editor() is existing,
-            description="MCP draft removal",
         )
         assert app.mcp_tabs.active_editor() is existing
 
@@ -634,8 +658,12 @@ async def test_mcp_local_schema_validation_precedes_every_probe(
     async with app.run_test(size=(120, 42)) as pilot:
         app._begin_entry("mcp")
         await pilot.pause()
-        await pilot.click("#mcp-add")
-        await pilot.pause()
+        await click_and_wait(
+            pilot,
+            "#mcp-add",
+            lambda: len(app.mcp_tabs.editors()) == 1
+            and app.mcp_tabs.active_editor() is app.mcp_tabs.editors()[0],
+        )
         editor = app.mcp_tabs.active_editor()
         assert editor is not None
         editor.query_one(".entry-name", Input).value = "broken"
@@ -710,8 +738,11 @@ async def test_mcp_continue_allows_no_servers(monkeypatch, app):
         app._begin_entry("mcp")
         await pilot.pause()
         assert not app.mcp_tabs.editors()
-        await pilot.click("#mcp-save")
-        await pilot.pause()
+        await click_and_wait(
+            pilot,
+            "#mcp-save",
+            lambda: app.page == "review",
+        )
 
         probe.assert_not_called()
         assert app.page == "review"
