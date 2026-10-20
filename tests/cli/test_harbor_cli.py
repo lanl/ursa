@@ -7,11 +7,15 @@ from typer.testing import CliRunner
 
 harbor = pytest.importorskip("harbor")
 
+from harbor.models.task.config import NetworkMode  # noqa: E402
+from harbor.models.task.task import Task  # noqa: E402
+
 from ursa.integrations import harbor as harbor_integration  # noqa: E402
 from ursa.integrations.harbor_singularity import (  # noqa: E402
     DockerfileSingularityEnvironment,
 )
 from ursa.integrations.harbor_validation import (  # noqa: E402
+    _task_environments,
     discover_harbor_tasks,
     prebuild_harbor_task,
 )
@@ -72,6 +76,40 @@ def test_validate_harbor_paths_reports_failures(tmp_path):
 
     assert result.exit_code == 1
     assert f"FAIL {task}" in result.stderr
+
+
+def test_harbor_network_phases_keep_environment_as_setup_baseline(tmp_path):
+    task_dir = _task(tmp_path)
+    (task_dir / "tests" / "test.sh").write_text("#!/bin/sh\n")
+    (task_dir / "task.toml").write_text(
+        """schema_version = "1.4"
+
+[task]
+name = "example/task"
+version = "1.0.0"
+description = "Example task"
+
+[environment]
+network_mode = "public"
+
+[agent]
+network_mode = "no-network"
+
+[verifier]
+environment_mode = "shared"
+network_mode = "no-network"
+"""
+    )
+
+    environments = _task_environments(Task(task_dir), purpose="validate")
+
+    assert len(environments) == 1
+    environment = environments[0]
+    assert environment.network_policy.network_mode == NetworkMode.PUBLIC
+    assert [
+        policy.network_mode for policy in environment._phase_network_policies
+    ] == [NetworkMode.NO_NETWORK, NetworkMode.NO_NETWORK]
+    assert environment.capabilities.dynamic_network_policy
 
 
 async def test_prebuild_harbor_task_builds_agent_and_verifier_sifs(
