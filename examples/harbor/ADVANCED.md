@@ -106,25 +106,43 @@ project directory. An Apptainer installation therefore does not need a
 system-wide `singularity` alias. The `ursa-ai[harbor]` extra installs
 `singularity-compose`; the host runtime must provide fakeroot CNI networking.
 
-The adapter supports Harbor's static `public` and `no-network` modes on
-SingularityCE 3.6.2. Set the baseline policy in `task.toml`:
+The adapter supports Harbor's `public` and `no-network` modes on
+SingularityCE 3.6.2. The `[environment]` policy is the baseline used when the
+container starts and while Harbor sets up the task and installs the agent:
 
 ```toml
 [environment]
+network_mode = "public"
+
+[agent]
+network_mode = "no-network"
+
+[verifier]
 network_mode = "no-network"
 ```
 
+Immediately before `agent.run()`, Harbor switches to the `[agent]` policy. It
+restores the `[environment]` baseline afterward, then applies `[verifier]`
+while the verifier runs. An omitted phase policy inherits the baseline. The
+adapter restarts the same SIF with the requested network namespace and reuses
+its writable overlay and Harbor bind mounts, so files installed or changed
+during setup remain available in later phases.
+
 The effective Harbor policy is also projected into URSA's `use_web` setting
-for each agent phase: `public` and `allowlist` enable web tools, while
-`no-network` disables them. Harbor still enforces the actual network boundary.
+for each agent phase: `public` enables web tools, while `no-network` disables
+them. Harbor still enforces the actual network boundary. Keep the writable
+overlay enabled (the default); setting the `singularity_overlay` environment
+kwarg to `false` disables runtime policy changes.
 
 `no-network` starts the task as a named Singularity instance with an isolated
-`none` network. It is not available to multi-container tasks because
+`none` network. Phase switching is supported for single-container tasks and
+Compose projects containing only the `main` service. A `no-network` baseline
+or phase is not available to projects with sidecars because
 `singularity-compose` cannot preserve communication between sidecars while
-isolating the project from external networks. Network allowlists and `[agent]`
-or `[verifier]` policies that differ from the environment baseline are rejected
-because SingularityCE 3.6.2 cannot enforce them securely. See Harbor's
-[network-policy reference](https://docs.harborframework.com/core-concepts/tasks/network-policies#network-modes)
+isolating the project from external networks. Network allowlists remain
+unsupported because SingularityCE 3.6.2 cannot enforce them securely. See
+Harbor's
+[network-policy reference](https://docs.harborframework.com/tasks/network-policies#phases)
 and Singularity's
 [networking guide](https://docs.sylabs.io/guides/3.6/user-guide/networking.html).
 
