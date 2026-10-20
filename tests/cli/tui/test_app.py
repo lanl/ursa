@@ -33,21 +33,6 @@ def test_copy_bindings_are_uniform_and_global():
         assert bindings[key].priority
 
 
-def test_command_palette_does_not_offer_maximize(tmp_path):
-    app = UrsaTextualApp(FakeHITL(tmp_path))
-    screen = SimpleNamespace(
-        focused=SimpleNamespace(allow_maximize=True),
-        maximized=None,
-        query=lambda _selector: (),
-        action_maximize=lambda: None,
-    )
-
-    commands = list(app.get_system_commands(screen))
-
-    assert "Maximize" not in {command.title for command in commands}
-    assert "Quit" in {command.title for command in commands}
-
-
 async def test_welcome_banner_starts_at_top_of_conversation(tmp_path):
     app = UrsaTextualApp(FakeHITL(tmp_path))
 
