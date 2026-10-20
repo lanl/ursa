@@ -1,3 +1,4 @@
+import os
 import stat
 from unittest.mock import AsyncMock, MagicMock
 
@@ -198,7 +199,8 @@ def test_save_writes_file_fallback_then_atomic_private_config(
 
     assert fallback.get_password("ursa", "company") == "provider-secret"
     assert fallback.get_password("ursa", "tools") == "mcp-secret"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert path.with_suffix(".yaml.lock").exists()
 
 
