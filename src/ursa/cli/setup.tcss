@@ -19,13 +19,18 @@ Screen {
 }
 
 #setup-model-host,
-SetupModelEditor {
+SetupModelEditor,
+.dynamic-entry-tabs,
+.entry-drafts,
+.entry-draft-editor {
     width: 100%;
     height: auto;
 }
 
 #setup-model-tabs,
-SetupModelEditor TabPane {
+SetupModelEditor TabPane,
+.mcp-remote-fields,
+.mcp-local-fields {
     height: auto;
 }
 
@@ -105,22 +110,12 @@ SelectCurrent {
     height: 4;
     align-horizontal: right;
     padding-top: 1;
-}
-
-.setup-actions {
     margin-top: 1;
 }
 
 .setup-actions Button {
     min-width: 14;
     margin-left: 1;
-}
-
-.dynamic-entry-tabs,
-.entry-drafts,
-.entry-draft-editor {
-    width: 100%;
-    height: auto;
 }
 
 .entry-tab-row {
@@ -162,11 +157,6 @@ SelectCurrent {
     color: $text-muted;
 }
 
-.mcp-remote-fields,
-.mcp-local-fields {
-    height: auto;
-}
-
 .api-key-entry {
     width: 100%;
     height: 5;
@@ -177,22 +167,21 @@ SelectCurrent {
     height: 2;
 }
 
-.credential-row {
+.credential-row,
+.provider-url-row {
     width: 100%;
     height: 3;
 }
 
-.credential-source-label {
-    width: 22;
-}
-
-.credential-value-label {
-    width: 1fr;
-    margin-left: 1;
-}
-
+.credential-source-label,
 .credential-source {
     width: 22;
+}
+
+.credential-value-label,
+.provider-url-row .provider-url-custom {
+    width: 1fr;
+    margin-left: 1;
 }
 
 .credential-value {
@@ -210,18 +199,8 @@ SelectCurrent {
     margin: 0 0 0 1;
 }
 
-.provider-url-row {
-    width: 100%;
-    height: 3;
-}
-
 .provider-url-row.custom-url .provider-url {
     width: 40;
-}
-
-.provider-url-row .provider-url-custom {
-    width: 1fr;
-    margin-left: 1;
 }
 
 .form-message {

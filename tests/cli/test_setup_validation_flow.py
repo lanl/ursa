@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from textual.widgets import Button, Collapsible, Static
 
+from tests.cli.test_setup import model_config
 from tests.tui.utils import eventually
 from ursa.cli.config import (
     ChatModelConfig,
@@ -21,11 +22,10 @@ def app(tmp_path):
     return SetupApp(tmp_path / "config.yaml")
 
 
-def _model(kind, name: str, provider: str):
-    return kind(
-        model=name,
-        model_provider="openai",
-        inference_provider=provider,
+def _report(status):
+    return CheckResult.group(
+        "URSA Doctor",
+        [CheckResult("Configuration", status, "issue" if status else "")],
     )
 
 
@@ -55,11 +55,7 @@ async def test_entry_validation_only_shows_page_level_progress(
                 base_url="https://models.example/v1"
             )
         }
-        begin, validate, tabs_name = (
-            lambda: app._begin_entry("provider", "company"),
-            lambda: app._validate_entry_page("provider"),
-            "provider_tabs",
-        )
+        name = "company"
     else:
         app.config = UrsaConfig.model_validate({
             "mcp_servers": {
@@ -69,16 +65,12 @@ async def test_entry_validation_only_shows_page_level_progress(
                 }
             }
         })
-        begin, validate, tabs_name = (
-            lambda: app._begin_entry("mcp", "tools"),
-            lambda: app._validate_entry_page("mcp"),
-            "mcp_tabs",
-        )
+        name = "tools"
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", MagicMock())
 
     async with app.run_test(size=(120, 42)):
-        begin()
-        editor = getattr(app, tabs_name).active_editor()
+        app._begin_entry(kind, name)
+        editor = getattr(app, f"{kind}_tabs").active_editor()
         assert editor is not None
         page_updates = []
         editor_updates = []
@@ -97,7 +89,7 @@ async def test_entry_validation_only_shows_page_level_progress(
         monkeypatch.setattr(app, "_status", page_status)
         monkeypatch.setattr(editor, "set_status", editor_status)
 
-        assert await validate()
+        assert await app._validate_entry_page(kind)
         assert page_updates == [progress, complete]
         assert editor_updates[-1] == "✓ Connected"
         assert not any("Validating" in message for message in editor_updates)
@@ -107,8 +99,8 @@ async def test_model_validation_shows_progress_for_each_probe(monkeypatch, app):
     app.config.inference_providers = {
         "company": InferenceProviderConfig(base_url="https://models.example/v1")
     }
-    app.config.llm_model = _model(ChatModelConfig, "chat", "company")
-    app.config.emb_model = _model(EmbModelConfig, "embedding", "company")
+    app.config.llm_model = model_config(ChatModelConfig, "chat", "company")
+    app.config.emb_model = model_config(EmbModelConfig, "embedding", "company")
     loop = asyncio.get_running_loop()
     started = {
         "chat": asyncio.Event(),
@@ -147,12 +139,8 @@ async def test_model_validation_shows_progress_for_each_probe(monkeypatch, app):
     [CheckStatus.OK, CheckStatus.WARN, CheckStatus.ERROR],
 )
 async def test_doctor_result_exposes_review_actions(monkeypatch, app, status):
-    report = CheckResult.group(
-        "URSA Doctor",
-        [CheckResult("Configuration", status, "issue" if status else "")],
-    )
     monkeypatch.setattr("ursa.cli.setup._save", lambda *_args: app.path)
-    monkeypatch.setattr("ursa.cli.setup._doctor", lambda _path: report)
+    monkeypatch.setattr("ursa.cli.setup._doctor", lambda _path: _report(status))
 
     async with app.run_test(size=(120, 42)):
         app._show("review")
@@ -166,26 +154,17 @@ async def test_doctor_result_exposes_review_actions(monkeypatch, app, status):
             )
             await app.action_back()
         assert app.page == "review"
-        for id, label in (
-            ("review-continue", "Continue"),
-            ("review-recheck", "Recheck"),
-        ):
+        for id, label in {
+            "review-continue": "Continue",
+            "review-recheck": "Recheck",
+        }.items():
             button = app.query_one(f"#{id}", Button)
             assert str(button.label) == label
             assert not button.has_class("hidden")
 
 
 async def test_recheck_stays_on_review_then_continue_finishes(monkeypatch, app):
-    reports = iter((
-        CheckResult.group(
-            "URSA Doctor",
-            [CheckResult("Configuration", CheckStatus.WARN, "issue")],
-        ),
-        CheckResult.group(
-            "URSA Doctor",
-            [CheckResult("Configuration", CheckStatus.OK)],
-        ),
-    ))
+    reports = iter(map(_report, (CheckStatus.WARN, CheckStatus.OK)))
     monkeypatch.setattr("ursa.cli.setup._doctor", lambda _path: next(reports))
 
     async with app.run_test(size=(120, 42)) as pilot:

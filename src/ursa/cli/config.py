@@ -49,6 +49,7 @@ LoggingLevel = Literal[
 ]
 
 _CONFIG_VALUE_ADAPTER = TypeAdapter(Any)
+_YAML_SUFFIXES = {".yaml", ".yml"}
 
 
 def _config_fallback(value: Any) -> Any:
@@ -79,6 +80,13 @@ def _strip_blank_optional_strings(value: Any) -> str | Any | None:
 
 
 APIKey = SecretReference | SecretStr
+
+
+def _editable_values(model: BaseModel, *required: str) -> dict[str, Any]:
+    values = model.model_dump(mode="json", exclude_unset=True)
+    for name in required:
+        values.setdefault(name, getattr(model, name))
+    return values
 
 
 def _migrate_api_key_env(data: Any) -> Any:
@@ -430,14 +438,7 @@ class ModelConfig(BaseModel):
         return f"{self.inference_provider} - {self.base_url}"
 
     def editable_values(self) -> dict[str, Any]:
-        """Return explicit settings suitable for an editable YAML form."""
-        values = self.model_dump(
-            mode="json",
-            exclude_unset=True,
-            context={"include_defaults": False},
-        )
-        values.setdefault("model", self.model)
-        return values
+        return _editable_values(self, "model")
 
 
 class ChatModelConfig(ModelConfig):
@@ -627,13 +628,8 @@ class UrsaConfig(BaseModel):
         return resolve_ursa_config(self)
 
     def editable_values(self) -> dict[str, Any]:
-        """Return explicitly configured values suitable for a config file."""
         _reject_literal_secrets(self)
-        return self.model_dump(
-            mode="json",
-            exclude_unset=True,
-            context={"include_defaults": False},
-        )
+        return _editable_values(self)
 
     def model_merge(self, *others: dict[str, Any]) -> Self:
         """Merge higher-priority config layers and validate the result once."""
@@ -706,13 +702,9 @@ def interpolate_mcp_server(config: ServerParameters) -> ServerParameters:
 
 def load_config_file(path: Path, *, interpolate: bool = True) -> dict[str, Any]:
     """Load config-file data, optionally expanding environment placeholders."""
-    loader = (
-        yaml.safe_load
-        if path.suffix.lower() in {".yaml", ".yml"}
-        else json.load
-    )
-    with open(path, "r") as fid:
-        data = loader(fid)
+    is_yaml = path.suffix.lower() in _YAML_SUFFIXES
+    loader = yaml.safe_load if is_yaml else json.loads
+    data = loader(path.read_text())
 
     if data is None:
         data = {}
@@ -730,27 +722,22 @@ def _reject_literal_secrets(value: Any) -> None:
             "secret reference"
         )
     if isinstance(value, BaseModel):
-        for name in type(value).model_fields:
-            _reject_literal_secrets(getattr(value, name))
-        _reject_literal_secrets(value.model_extra)
-    elif isinstance(value, dict):
-        for item in value.values():
-            _reject_literal_secrets(item)
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            _reject_literal_secrets(item)
+        value = (*vars(value).values(), value.model_extra)
+    elif not isinstance(value, (dict, list, tuple)):
+        return
+    for item in value.values() if isinstance(value, dict) else value:
+        _reject_literal_secrets(item)
 
 
 def save_config_file(path: Path, config: UrsaConfig) -> Path:
     """Atomically write an editable configuration with private permissions."""
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(f"{path.suffix}.lock")
-    with FileLock(lock_path, mode=0o600):
+    with FileLock(path.with_suffix(f"{path.suffix}.lock"), mode=0o600):
         values = config.editable_values()
         text = (
             yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
-            if path.suffix.lower() in {".yaml", ".yml"}
+            if path.suffix.lower() in _YAML_SUFFIXES
             else f"{json.dumps(values, indent=2)}\n"
         )
         atomic_write_text(path, text)

@@ -75,9 +75,38 @@ async def show_model_editor(app) -> SetupModelEditor:
     return app.query_one(SetupModelEditor)
 
 
+async def set_custom_chat(editor, pilot, model):
+    editor.query_one("#setup-chat-model-select", FuzzySelect).value = CUSTOM
+    await pilot.pause()
+    editor.query_one("#setup-chat-model", Input).value = model
+    await pilot.pause()
+
+
 async def click_and_wait(pilot, selector, condition):
     pilot.app.query_one(selector, Button).press()
     await eventually(pilot, condition, description=f"{selector} action")
+
+
+async def click_page(pilot, selector, page):
+    await click_and_wait(pilot, selector, lambda: pilot.app.page == page)
+
+
+async def add_entry(app, pilot, kind, total):
+    tabs = getattr(app, f"{kind}_tabs")
+    await click_and_wait(
+        pilot,
+        f"#{kind}-add",
+        lambda: len(tabs.editors()) == total
+        and tabs.active_editor() is tabs.editors()[-1],
+    )
+    editor = tabs.active_editor()
+    assert editor is not None and editor.raw_name() == ""
+    assert yaml.safe_load(editor.query_one(TextArea).text) == {}
+    return editor
+
+
+def entry_message(editor):
+    return str(editor.query_one(".draft-message", Static).content).lower()
 
 
 def test_run_setup_uses_highest_precedence_user_path(monkeypatch, tmp_path):
@@ -117,29 +146,11 @@ mcp_servers:
     [
         {
             "inference_providers": [
-                {
-                    "name": "company",
-                    "base_url": "https://models.example/v1",
-                    "access_token": "secret",
-                }
+                {"name": "company", "access_token": "secret"}
             ]
         },
-        {
-            "llm_model": {
-                "model": "test",
-                "inference_provider": "company",
-                "password": "secret",
-            }
-        },
-        {
-            "mcp_servers": {
-                "tools": {
-                    "transport": "stdio",
-                    "command": "tool",
-                    "env": {"API_KEY": "secret"},
-                }
-            }
-        },
+        {"llm_model": {"model": "test", "password": "secret"}},
+        {"mcp_servers": {"tools": {"env": {"API_KEY": "secret"}}}},
     ],
 )
 def test_setup_defaults_reject_literal_secrets(defaults):
@@ -225,18 +236,8 @@ async def test_provider_tabs_add_empty_persistent_draft(app):
             "Validate and continue"
         )
 
-        await click_and_wait(
-            pilot,
-            "#provider-add",
-            lambda: len(app.provider_tabs.editors()) == 3
-            and app.provider_tabs.active_editor()
-            is app.provider_tabs.editors()[-1],
-        )
-        added = app.provider_tabs.active_editor()
-        assert added is not None
-        assert added.raw_name() == ""
+        added = await add_entry(app, pilot, "provider", 3)
         assert added.query_one(".provider-url-custom", Input).value == ""
-        assert yaml.safe_load(added.query_one(TextArea).text) == {}
         added.query_one(".entry-name", Input).value = "draft"
         app.provider_tabs.select(public.draft_id)
         app.provider_tabs.select(added.draft_id)
@@ -263,15 +264,7 @@ async def test_provider_yaml_validation_debounces_and_stops_on_remove(
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
-        await click_and_wait(
-            pilot,
-            "#provider-add",
-            lambda: len(app.provider_tabs.editors()) == 2
-            and app.provider_tabs.active_editor()
-            is app.provider_tabs.editors()[-1],
-        )
-        editor = app.provider_tabs.active_editor()
-        assert editor is not None
+        editor = await add_entry(app, pilot, "provider", 2)
         validate = MagicMock()
         monkeypatch.setattr(editor, "_validate_yaml", validate)
         scheduled = []
@@ -324,16 +317,12 @@ async def test_provider_validation_failure_does_not_continue(monkeypatch, app):
         await click_and_wait(
             pilot,
             "#provider-save",
-            lambda: "could not connect"
-            in str(editor.query_one(".draft-message", Static).content).lower(),
+            lambda: "could not connect" in entry_message(editor),
         )
 
         assert app.page == "provider"
         assert not app.config.inference_providers
-        assert (
-            "could not connect"
-            in str(editor.query_one(".draft-message", Static).content).lower()
-        )
+        assert "could not connect" in entry_message(editor)
         assert app.provider_tabs.active_editor() is editor
 
 
@@ -344,41 +333,42 @@ async def test_entry_continue_checks_all_and_is_transactional(
 ):
     names = ("first", "broken", "last") if failing else ("first", "second")
     checked = []
+    section = f"{kind}_servers" if kind == "mcp" else "inference_providers"
     if kind == "provider":
         for name in names:
             monkeypatch.setenv(f"{name.upper()}_KEY", "test-key")
-        app.config.inference_providers.update({
+        values = {
             name: InferenceProviderConfig(
                 base_url=f"https://{name}.example/v1",
                 api_key=SecretReference(env=f"{name.upper()}_KEY"),
             )
             for name in names
-        })
-
-        def probe(_probe, config, *_args, **_kwargs):
-            name = str(config.base_url).split("//", 1)[1].split(".", 1)[0]
-            checked.append(name)
-            if failing and name == "broken":
-                raise RuntimeError("connection refused")
-
+        }
         monkeypatch.setattr(
             "ursa.cli.setup_models.list_provider_models", lambda _config: []
         )
     else:
-        app.config = UrsaConfig.model_validate({
-            "mcp_servers": {
-                name: {
-                    "transport": "streamable_http",
-                    "url": f"https://{name}.example/mcp",
-                }
-                for name in names
+        values = {
+            name: {
+                "transport": "streamable_http",
+                "url": f"https://{name}.example/mcp",
             }
-        })
+            for name in names
+        }
+    if kind == "provider":
+        app.config.inference_providers.update(values)
+    else:
+        app.config = UrsaConfig.model_validate({section: values})
 
-        def probe(_probe, name, _config, **_kwargs):
-            checked.append(name)
-            if failing and name == "renamed":
-                raise RuntimeError("connection refused")
+    def probe(_probe, entry, *_args, **_kwargs):
+        name = (
+            entry
+            if kind == "mcp"
+            else str(entry.base_url).split("//", 1)[1].split(".", 1)[0]
+        )
+        checked.append(name)
+        if failing and name == {"provider": "broken", "mcp": "renamed"}[kind]:
+            raise RuntimeError("connection refused")
 
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
 
@@ -386,7 +376,7 @@ async def test_entry_continue_checks_all_and_is_transactional(
         if kind == "provider":
             await pilot.click("#welcome-next")
         else:
-            app._begin_entry("mcp", names[0])
+            app._begin_entry(kind, names[0])
             await pilot.pause()
         tabs = getattr(app, f"{kind}_tabs")
         assert str(app.query_one(f"#{kind}-save", Button).label) == (
@@ -404,11 +394,7 @@ async def test_entry_continue_checks_all_and_is_transactional(
                 lambda: tabs.active_editor() is broken,
             )
         else:
-            await click_and_wait(
-                pilot,
-                f"#{kind}-save",
-                lambda: app.page == expected_page,
-            )
+            await click_page(pilot, f"#{kind}-save", expected_page)
 
         expected = (
             {"first", "renamed", "last"}
@@ -418,19 +404,10 @@ async def test_entry_continue_checks_all_and_is_transactional(
         assert set(checked) == expected
         assert app.page == (kind if failing else expected_page)
         if failing:
-            entries = (
-                app.config.inference_providers
-                if kind == "provider"
-                else app.config.mcp_servers
-            )
+            entries = getattr(app.config, section)
             assert set(entries) == set(names)
             assert tabs.active_editor() is broken
-            assert (
-                "could not connect"
-                in str(
-                    broken.query_one(".draft-message", Static).content
-                ).lower()
-            )
+            assert "could not connect" in entry_message(broken)
 
 
 async def test_provider_remove_retargets_models_only_after_commit(
@@ -532,20 +509,11 @@ async def test_setup_model_editor_submits_absent_embedding_as_none(
 
     async with app.run_test(size=(120, 42)) as pilot:
         editor = await show_model_editor(app)
-
-        editor.query_one("#setup-chat-model-select", FuzzySelect).value = CUSTOM
-        await pilot.pause()
-        editor.query_one("#setup-chat-model", Input).value = "chat-model"
-        await pilot.pause()
-        await click_and_wait(
-            pilot,
-            "#models-save",
-            lambda: app.page == "mcp",
-        )
+        await set_custom_chat(editor, pilot, "chat-model")
+        await click_page(pilot, "#models-save", "mcp")
 
         assert checked == ["chat-model"]
         assert app.config.emb_model is None
-        assert app.page == "mcp"
 
 
 async def test_setup_model_named_provider_inherits_credentials(
@@ -567,15 +535,8 @@ async def test_setup_model_named_provider_inherits_credentials(
 
     async with app.run_test(size=(120, 42)) as pilot:
         editor = await show_model_editor(app)
-        editor.query_one("#setup-chat-model-select", FuzzySelect).value = CUSTOM
-        await pilot.pause()
-        editor.query_one("#setup-chat-model", Input).value = "claude-test"
-        await pilot.pause()
-        await click_and_wait(
-            pilot,
-            "#models-save",
-            lambda: app.page == "mcp",
-        )
+        await set_custom_chat(editor, pilot, "claude-test")
+        await click_page(pilot, "#models-save", "mcp")
 
         probe.assert_called_once()
         resolved, kind = probe.call_args.args
@@ -631,16 +592,7 @@ async def test_mcp_tabs_add_empty_draft_and_advanced_is_complete(app):
         assert values["headers"]["Authorization"]["keyring"] is True
         assert "timeout" in values
 
-        await click_and_wait(
-            pilot,
-            "#mcp-add",
-            lambda: len(app.mcp_tabs.editors()) == 2
-            and app.mcp_tabs.active_editor() is app.mcp_tabs.editors()[-1],
-        )
-        added = app.mcp_tabs.active_editor()
-        assert added is not None
-        assert added.raw_name() == ""
-        assert yaml.safe_load(added.query_one(TextArea).text) == {}
+        await add_entry(app, pilot, "mcp", 2)
         await click_and_wait(
             pilot,
             "#mcp-remove",
@@ -658,14 +610,7 @@ async def test_mcp_local_schema_validation_precedes_every_probe(
     async with app.run_test(size=(120, 42)) as pilot:
         app._begin_entry("mcp")
         await pilot.pause()
-        await click_and_wait(
-            pilot,
-            "#mcp-add",
-            lambda: len(app.mcp_tabs.editors()) == 1
-            and app.mcp_tabs.active_editor() is app.mcp_tabs.editors()[0],
-        )
-        editor = app.mcp_tabs.active_editor()
-        assert editor is not None
+        editor = await add_entry(app, pilot, "mcp", 1)
         editor.query_one(".entry-name", Input).value = "broken"
 
         assert not await app._validate_entry_page("mcp")
@@ -738,11 +683,7 @@ async def test_mcp_continue_allows_no_servers(monkeypatch, app):
         app._begin_entry("mcp")
         await pilot.pause()
         assert not app.mcp_tabs.editors()
-        await click_and_wait(
-            pilot,
-            "#mcp-save",
-            lambda: app.page == "review",
-        )
+        await click_page(pilot, "#mcp-save", "review")
 
         probe.assert_not_called()
         assert app.page == "review"

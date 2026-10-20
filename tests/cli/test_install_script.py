@@ -6,17 +6,21 @@ from pathlib import Path
 
 import pytest
 
-INSTALL_SCRIPT = Path(__file__).parents[2] / "install.sh"
-POWERSHELL_INSTALL_SCRIPT = Path(__file__).parents[2] / "install.ps1"
-RUN_INSTALLER_SCRIPT = (
-    Path(__file__).parents[2] / "scripts" / "run_installer.sh"
-)
-SITE_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "site.yml"
-DOCS_HOOKS = Path(__file__).parents[2] / "docs" / "hooks.py"
-GETTING_STARTED = (
-    Path(__file__).parents[2] / "docs" / "getting-started" / "index.md"
-)
+ROOT = Path(__file__).parents[2]
+INSTALL_SCRIPT = ROOT / "install.sh"
+POWERSHELL_INSTALL_SCRIPT = ROOT / "install.ps1"
+RUN_INSTALLER_SCRIPT = ROOT / "scripts" / "run_installer.sh"
+SITE_WORKFLOW = ROOT / ".github" / "workflows" / "site.yml"
+DOCS_HOOKS = ROOT / "docs" / "hooks.py"
+GETTING_STARTED = ROOT / "docs" / "getting-started" / "index.md"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+GIT_REQUIREMENT = "ursa-ai @ git+https://github.com/lanl/ursa.git@"
+
+
+def _write_executable(path: Path, contents: str) -> Path:
+    path.write_text(contents)
+    path.chmod(0o755)
+    return path
 
 
 def _fake_installation(
@@ -27,20 +31,20 @@ def _fake_installation(
     bin_dir.mkdir()
     tool_bin.mkdir()
     log = tmp_path / "commands.log"
-    uv = bin_dir / "uv"
-    uv.write_text(
+    _write_executable(
+        bin_dir / "uv",
         "#!/bin/sh\n"
         'printf "uv %s\\n" "$*" >> "$INSTALL_LOG"\n'
         'case "$1 $2 $3" in\n'
         '  "tool dir --bin") printf "%s\\n" "$TOOL_BIN" ;;\n'
         '  "tool update-shell ") printf "source %s/env\\n" "$HOME/.local/bin"; '
         'exit "${UPDATE_SHELL_STATUS:-0}" ;;\n'
-        "esac\n"
+        "esac\n",
     )
-    uv.chmod(0o755)
-    ursa = tool_bin / "ursa"
-    ursa.write_text('#!/bin/sh\nprintf "ursa %s\\n" "$*" >> "$INSTALL_LOG"\n')
-    ursa.chmod(0o755)
+    ursa = _write_executable(
+        tool_bin / "ursa",
+        '#!/bin/sh\nprintf "ursa %s\\n" "$*" >> "$INSTALL_LOG"\n',
+    )
     environment = {
         "HOME": str(tmp_path),
         "INSTALL_LOG": str(log),
@@ -66,9 +70,12 @@ def test_install_script_is_posix_shell():
     subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
 
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
-    assert "--config FILE" in script
-    assert "--branch BRANCH | --version VERSION" in script
-    assert "--python VERSION" in script
+    for option in (
+        "--config FILE",
+        "--branch BRANCH | --version VERSION",
+        "--python VERSION",
+    ):
+        assert option in script
     assert "--config-json" not in script
     assert "--config-stdin" not in script
     assert 'set -- "$@" --defaults-json "$config_file"' in script
@@ -94,9 +101,10 @@ def test_installer_harness_forwards_options_to_default_installer(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker_log = tmp_path / "docker.log"
-    docker = bin_dir / "docker"
-    docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n')
-    docker.chmod(0o755)
+    _write_executable(
+        bin_dir / "docker",
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n',
+    )
     environment = {
         **os.environ,
         "DOCKER_LOG": str(docker_log),
@@ -125,28 +133,25 @@ def test_installer_harness_forwards_options_to_default_installer(tmp_path):
 def test_powershell_installer_limits_package_sources():
     script = POWERSHELL_INSTALL_SCRIPT.read_text(encoding="utf-8")
 
-    assert (
+    expected = (
         "& $uvExecutable tool install --python $Python --force --upgrade "
-        "--compile-bytecode $ursaRequirement" in script
-    )
-    assert '$ursaRequirement = "ursa-ai"' in script
-    assert '$ursaRequirement = "ursa-ai==$Version"' in script
-    assert (
+        "--compile-bytecode $ursaRequirement",
+        '$ursaRequirement = "ursa-ai"',
+        '$ursaRequirement = "ursa-ai==$Version"',
         '$ursaRequirement = "ursa-ai @ '
-        'git+https://github.com/lanl/ursa.git@$Branch"' in script
+        'git+https://github.com/lanl/ursa.git@$Branch"',
+        "installed URSA ($ursaVersion) does not support guided setup. See "
+        "https://lanl.github.io/ursa/latest/getting-started.",
+        "[string]$Config",
+        "[string]$Version",
+        "[string]$Branch",
+        '[string]$Python = "3.13"',
+        '$setupArguments += @("--defaults-json", $Config)',
     )
+    assert all(item in script for item in expected)
     assert script.count("git+") == 1
     assert "--from" not in script
-    assert (
-        "installed URSA ($ursaVersion) does not support guided setup. See "
-        "https://lanl.github.io/ursa/latest/getting-started." in script
-    )
-    assert "[string]$Config" in script
-    assert "[string]$Version" in script
-    assert "[string]$Branch" in script
-    assert '[string]$Python = "3.13"' in script
     assert "ConfigJson" not in script
-    assert '$setupArguments += @("--defaults-json", $payloadFile)' in script
 
 
 @pytest.mark.skipif(
@@ -212,75 +217,39 @@ def test_install_script_does_not_silently_drop_defaults_without_tty(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("arguments", "requirement"),
+    ("arguments", "python_version", "requirement"),
     [
-        (("--version", "2.4.1"), "ursa-ai==2.4.1"),
-        (("--version", "main"), "ursa-ai==main"),
+        (("--version", "2.4.1"), "3.13", "ursa-ai==2.4.1"),
+        (("--version", "main"), "3.13", "ursa-ai==main"),
         (
             ("--branch", "feature/setup"),
-            "ursa-ai @ git+https://github.com/lanl/ursa.git@feature/setup",
+            "3.13",
+            GIT_REQUIREMENT + "feature/setup",
         ),
+        (("--branch", "main"), "3.13", GIT_REQUIREMENT + "main"),
+        *[
+            (("--version", "2.4.1", "--python", value), value, "ursa-ai==2.4.1")
+            for value in ("3", "3.11", "3.13.1")
+        ],
         (
-            ("--branch", "main"),
-            "ursa-ai @ git+https://github.com/lanl/ursa.git@main",
+            "--version 1.0 --branch main --python 3.12 --python 3.13".split(),
+            "3.13",
+            GIT_REQUIREMENT + "main",
         ),
     ],
 )
-def test_install_script_selects_pypi_version_or_branch(
-    tmp_path, arguments, requirement
+def test_install_script_selects_target_and_python(
+    tmp_path, arguments, python_version, requirement
 ):
     environment, log, _ursa = _fake_installation(tmp_path)
-
     _run_installer(environment, arguments=arguments)
 
     assert (
-        "uv tool install --python 3.13 --force --upgrade "
-        f"--compile-bytecode {requirement}"
-    ) in log.read_text().splitlines()
-
-
-@pytest.mark.parametrize("python_version", ["3", "3.11", "3.13.1"])
-def test_install_script_selects_python_version(tmp_path, python_version):
-    environment, log, _ursa = _fake_installation(tmp_path)
-
-    _run_installer(
-        environment,
-        arguments=(
-            "--version",
-            "2.4.1",
-            "--python",
-            python_version,
-        ),
+        "uv tool install --python {} --force --upgrade --compile-bytecode {}".format(
+            python_version, requirement
+        )
+        in log.read_text().splitlines()
     )
-
-    assert (
-        f"uv tool install --python {python_version} --force --upgrade "
-        "--compile-bytecode ursa-ai==2.4.1"
-    ) in log.read_text().splitlines()
-
-
-def test_install_script_uses_last_repeated_flag(tmp_path):
-    environment, log, _ursa = _fake_installation(tmp_path)
-
-    _run_installer(
-        environment,
-        arguments=(
-            "--version",
-            "1.0",
-            "--branch",
-            "main",
-            "--python",
-            "3.12",
-            "--python",
-            "3.13",
-        ),
-    )
-
-    assert (
-        "uv tool install --python 3.13 --force --upgrade "
-        "--compile-bytecode ursa-ai @ "
-        "git+https://github.com/lanl/ursa.git@main"
-    ) in log.read_text().splitlines()
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell is not installed")
@@ -333,9 +302,9 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
         'cp "$UV_PAYLOAD" "$HOME/.local/bin/uv"\n'
         'chmod +x "$HOME/.local/bin/uv"\n'
     )
-    curl = tmp_path / "bin" / "curl"
-    curl.write_text('#!/bin/sh\ncp "$UV_INSTALLER" "$4"\n')
-    curl.chmod(0o755)
+    _write_executable(
+        tmp_path / "bin" / "curl", '#!/bin/sh\ncat "$UV_INSTALLER"\n'
+    )
     environment["UV_INSTALLER"] = str(uv_installer)
     environment["UV_PAYLOAD"] = str(uv_payload)
 
@@ -349,15 +318,15 @@ def test_install_script_bootstraps_uv_when_missing(tmp_path):
 
 def test_install_script_reports_version_when_setup_is_unavailable(tmp_path):
     environment, _log, ursa = _fake_installation(tmp_path)
-    ursa.write_text(
+    _write_executable(
+        ursa,
         "#!/bin/sh\n"
         'if [ "$1" = "--version" ]; then\n'
         '    printf "ursa 2.4.1\\n"\n'
         "    exit 0\n"
         "fi\n"
-        "exit 1\n"
+        "exit 1\n",
     )
-    ursa.chmod(0o755)
 
     result = _run_installer(environment, check=False)
 
@@ -401,8 +370,7 @@ def test_install_script_repairs_uv_tool_bin_missing_from_path(
 def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
     environment, _log, ursa = _fake_installation(tmp_path)
     old_ursa = Path(environment["PATH"].split(":", 1)[0]) / "ursa"
-    old_ursa.write_text("#!/bin/sh\nexit 0\n")
-    old_ursa.chmod(0o755)
+    _write_executable(old_ursa, "#!/bin/sh\nexit 0\n")
 
     result = _run_installer(environment)
 

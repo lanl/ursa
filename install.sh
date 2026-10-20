@@ -11,8 +11,25 @@ fail() {
     exit 1
 }
 
-usage() {
-    cat <<'EOF'
+config_file=
+selected_python=3.13
+ursa_requirement=ursa-ai
+while [ "$#" -gt 0 ]; do
+    case $1 in
+    --config|--version|--branch|--python)
+        option=$1
+        shift
+        [ "$#" -gt 0 ] && [ -n "$1" ] || fail "$option requires a value"
+        case $option in
+        --config) config_file=$1 ;;
+        --version) ursa_requirement="ursa-ai==$1" ;;
+        --branch) ursa_requirement="ursa-ai @ git+https://github.com/lanl/ursa.git@$1" ;;
+        --python) selected_python=$1 ;;
+        esac
+        shift
+        ;;
+    -h|--help)
+        cat <<'EOF'
 Install URSA with uv and start the guided setup.
 
 Usage: install.sh [--config FILE] [--branch BRANCH | --version VERSION] [--python VERSION]
@@ -22,61 +39,24 @@ Usage: install.sh [--config FILE] [--branch BRANCH | --version VERSION] [--pytho
   --version VERSION          Install a PyPI version.
   --python VERSION           Install with this Python version (default: 3.13).
 EOF
-}
-
-config_file=
-selected_python=3.13
-ursa_requirement=ursa-ai
-while [ "$#" -gt 0 ]; do
-    case $1 in
-    --config)
-        [ "$#" -ge 2 ] || fail "--config requires a file path"
-        [ -n "$2" ] || fail "--config requires a file path"
-        config_file=$2
-        shift 2
-        ;;
-    --version)
-        [ "$#" -ge 2 ] || fail "--version requires a PyPI version"
-        ursa_requirement="ursa-ai==$2"
-        shift 2
-        ;;
-    --branch)
-        [ "$#" -ge 2 ] || fail "--branch requires a branch name"
-        ursa_requirement="ursa-ai @ git+https://github.com/lanl/ursa.git@$2"
-        shift 2
-        ;;
-    --python)
-        [ "$#" -ge 2 ] || fail "--python requires a Python version"
-        selected_python=$2
-        shift 2
-        ;;
-    -h|--help)
-        usage
         exit 0
         ;;
     *) fail "unknown option: $1" ;;
     esac
 done
 
-if [ -n "$config_file" ]; then
-    [ -f "$config_file" ] || fail "setup defaults not found: $config_file"
-fi
+[ -z "$config_file" ] || [ -f "$config_file" ] \
+    || fail "setup defaults not found: $config_file"
 
 setup_input=none
-if [ -t 0 ]; then
-    setup_input=stdin
-elif ( : </dev/tty ) 2>/dev/null; then
-    setup_input=tty
-fi
-if [ -n "$config_file" ] && [ "$setup_input" = none ]; then
-    fail "setup defaults require an interactive terminal"
-fi
+[ -t 0 ] && setup_input=stdin
+[ "$setup_input" != none ] || ! ( : </dev/tty ) 2>/dev/null \
+    || setup_input=tty
+[ -z "$config_file" ] || [ "$setup_input" != none ] \
+    || fail "setup defaults require an interactive terminal"
 
 find_uv() {
-    if command -v uv >/dev/null 2>&1; then
-        command -v uv
-        return
-    fi
+    command -v uv 2>/dev/null && return
     for uv_candidate in \
         "${UV_UNMANAGED_INSTALL:+$UV_UNMANAGED_INSTALL/uv}" \
         "${UV_INSTALL_DIR:+$UV_INSTALL_DIR/uv}" \
@@ -85,10 +65,9 @@ find_uv() {
         "${HOME:+$HOME/.local/bin/uv}" \
         "${HOME:+$HOME/.cargo/bin/uv}"
     do
-        if [ -n "$uv_candidate" ] && [ -x "$uv_candidate" ]; then
-            printf '%s\n' "$uv_candidate"
-            return
-        fi
+        [ -n "$uv_candidate" ] && [ -x "$uv_candidate" ] || continue
+        printf '%s\n' "$uv_candidate"
+        return
     done
     return 1
 }
@@ -96,18 +75,13 @@ find_uv() {
 uv_executable=$(find_uv || true)
 if [ -z "$uv_executable" ]; then
     say "Installing uv…"
-    installer_work=$(mktemp -d "${TMPDIR:-/tmp}/ursa-installer.XXXXXX") \
-        || fail "could not create a temporary directory"
-    trap 'rm -rf "$installer_work"' 0
-    trap 'exit 1' HUP INT TERM
-    if command -v curl >/dev/null 2>&1; then
-        curl -LsSf https://astral.sh/uv/install.sh -o "$installer_work/uv-install.sh"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q https://astral.sh/uv/install.sh -O "$installer_work/uv-install.sh"
+    if command -v curl >/dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget >/dev/null; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
     else
         fail "curl or wget is required to download uv"
     fi
-    sh "$installer_work/uv-install.sh"
     uv_executable=$(find_uv || true)
     [ -n "$uv_executable" ] \
         || fail "uv installed, but its executable could not be found"
@@ -116,22 +90,21 @@ else
 fi
 
 say "Installing URSA with Python $selected_python…"
-set -- tool install --python "$selected_python" --force --upgrade --compile-bytecode \
+"$uv_executable" tool install --python "$selected_python" --force --upgrade --compile-bytecode \
     "$ursa_requirement"
-"$uv_executable" "$@"
 
 tool_bin=$("$uv_executable" tool dir --bin)
 ursa_executable=$tool_bin/ursa
-[ -x "$ursa_executable" ] \
-    || fail "URSA installed, but its executable was not found at $ursa_executable"
+[ -x "$ursa_executable" ] || fail \
+    "URSA installed, but its executable was not found at $ursa_executable"
 uv_dir=$(dirname "$uv_executable")
 
 current_ursa=$(command -v ursa || true)
 ursa_command=ursa
-if [ -n "$current_ursa" ] && [ "$current_ursa" != "$ursa_executable" ]; then
+[ -z "$current_ursa" ] || [ "$current_ursa" = "$ursa_executable" ] || {
     say "Warning: $current_ursa currently takes precedence over $ursa_executable."
     ursa_command=$ursa_executable
-fi
+}
 if [ "$current_ursa" != "$ursa_executable" ]; then
     say "Adding uv's tool directory to PATH…"
     "$uv_executable" tool update-shell \
@@ -149,9 +122,7 @@ fi
 
 say "Starting guided setup…"
 set -- self setup
-if [ -n "$config_file" ]; then
-    set -- "$@" --defaults-json "$config_file"
-fi
+[ -z "$config_file" ] || set -- "$@" --defaults-json "$config_file"
 if [ "$setup_input" = stdin ]; then
     "$ursa_executable" "$@"
 elif [ "$setup_input" = tty ]; then

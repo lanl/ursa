@@ -93,15 +93,13 @@ def validate_server_parameters(config: dict):
                 return candidate(**payload)
             except ValidationError:
                 continue
-        else:
-            raise ValueError(
-                f"Unable to determine transport for MCP server '{config}'. "
-                "Provide 'transport' with one of: stdio, sse, streamable_http."
-            )
-    else:
         raise ValueError(
-            f"Unsupported MCP transport '{transport_hint}' for server '{config}'."
+            f"Unable to determine transport for MCP server '{config}'. "
+            "Provide 'transport' with one of: stdio, sse, streamable_http."
         )
+    raise ValueError(
+        f"Unsupported MCP transport '{transport_hint}' for server '{config}'."
+    )
 
 
 ServerParameters = Annotated[
@@ -123,8 +121,7 @@ def transport(sp: ServerParameters) -> str:
         return "streamable_http"
     elif isinstance(sp, SseServerParameters):
         return "sse"
-    else:
-        raise RuntimeError("Transport for {sp} is unknown")
+    raise RuntimeError("Transport for {sp} is unknown")
 
 
 def start_mcp_client(
@@ -151,13 +148,10 @@ def start_mcp_client(
 
 def _resolve_header(value, server_name: str):
     """Resolve a typed secret template in an MCP HTTP header."""
-    reference = (
-        SecretTemplate.model_validate(value)
-        if isinstance(value, dict)
-        else value
-    )
-    if isinstance(reference, SecretTemplate):
-        rendered = reference.get_secret_value(server_name)
+    if isinstance(value, dict):
+        value = SecretTemplate.model_validate(value)
+    if isinstance(value, SecretTemplate):
+        rendered = value.get_secret_value(server_name)
         if rendered is None:
             raise ValueError(
                 f"Secret for MCP server '{server_name}' is not set"

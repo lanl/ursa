@@ -10,15 +10,9 @@ def test_editable_values_preserve_explicit_nulls_and_reject_secrets():
     config = config_mod.UrsaConfig.model_validate({"emb_model": None})
 
     assert config.editable_values() == {"emb_model": None}
+    model = config_mod.ChatModelConfig.model_construct()
+    assert model.editable_values() == {"model": "gpt-5.4"}
 
-    literal = config_mod.UrsaConfig.model_validate({
-        "llm_model": {"model": "openai:gpt-test", "api_key": "secret"}
-    })
-    with pytest.raises(ValueError, match="Literal secrets cannot be saved"):
-        literal.editable_values()
-
-
-def test_editable_values_preserve_explicit_mcp_nulls():
     config = config_mod.UrsaConfig.model_validate({
         "mcp_servers": {
             "tools": {
@@ -30,6 +24,11 @@ def test_editable_values_preserve_explicit_mcp_nulls():
     })
 
     assert config.editable_values()["mcp_servers"]["tools"]["headers"] is None
+
+    with pytest.raises(ValueError, match="Literal secrets cannot be saved"):
+        config_mod.UrsaConfig.model_validate({
+            "llm_model": {"model": "openai:gpt-test", "api_key": "secret"}
+        }).editable_values()
 
 
 def test_save_config_file_uses_the_path_format(tmp_path):

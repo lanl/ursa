@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Collection, Mapping
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -44,6 +44,14 @@ _SETUP_DEFAULT_FIELDS = frozenset(
 
 class SetupError(ValueError):
     """A configuration error that setup can present without a traceback."""
+
+
+@contextmanager
+def _setup_errors(message: str, errors=(TypeError, ValueError)):
+    try:
+        yield
+    except errors as exc:
+        raise SetupError(f"{message}: {exc}") from None
 
 
 def validate_setup_name(value: Any, noun: str) -> str:
@@ -85,7 +93,9 @@ def _setup_view(
 
 def load_setup_config(path: Path) -> tuple[UrsaConfig, bool]:
     """Load editable config and report whether its LLM was explicit."""
-    try:
+    with _setup_errors(
+        "Could not load configuration", (OSError, ValueError, yaml.YAMLError)
+    ):
         raw = (
             load_config_file(path, interpolate=False) if path.is_file() else {}
         )
@@ -97,9 +107,6 @@ def load_setup_config(path: Path) -> tuple[UrsaConfig, bool]:
                 # Setup always enables TLS verification.
                 value.pop("ssl_verify", None)
         config = UrsaConfig.model_validate(raw)
-    except (OSError, ValueError, yaml.YAMLError) as exc:
-        raise SetupError(f"Could not load configuration: {exc}") from None
-
     return _setup_view(config, providers), "llm_model" in raw
 
 
@@ -145,7 +152,7 @@ def reject_literal_secrets(
 
 
 def _replace_config(config: UrsaConfig, **updates: Any) -> UrsaConfig:
-    try:
+    with _setup_errors("Setup configuration is invalid"):
         candidate = UrsaConfig.model_validate(
             config.model_dump(
                 mode="python",
@@ -157,8 +164,6 @@ def _replace_config(config: UrsaConfig, **updates: Any) -> UrsaConfig:
         provider_names = updates.get(
             "inference_providers", config.inference_providers
         )
-    except (TypeError, ValueError) as exc:
-        raise SetupError(f"Setup configuration is invalid: {exc}") from None
     return _setup_view(candidate, provider_names)
 
 
@@ -206,12 +211,8 @@ def apply_setup_defaults(
         if name in seen_providers:
             raise SetupError(f"Provider default '{name}' is duplicated.")
         seen_providers.add(name)
-        try:
+        with _setup_errors(f"Inference provider default '{name}' is invalid"):
             provider = InferenceProviderConfig.model_validate(value)
-        except ValueError as exc:
-            raise SetupError(
-                f"Inference provider default '{name}' is invalid: {exc}"
-            ) from None
         if name in config.inference_providers:
             continue
         if (
@@ -231,9 +232,7 @@ def apply_setup_defaults(
         ("llm_model", llm_configured),
         ("emb_model", config.emb_model is not None),
     ):
-        if configured:
-            continue
-        value = defaults.get(field)
+        value = None if configured else defaults.get(field)
         if value is None:
             continue
         if not isinstance(value, Mapping):
@@ -344,10 +343,8 @@ def parse_setup_model_yaml(
     known_inference_providers: Collection[str],
 ) -> ChatModelConfig | EmbModelConfig | None:
     """Parse a complete model block, omitting unchanged display defaults."""
-    try:
+    with _setup_errors("Invalid model YAML", (yaml.YAMLError,)):
         values = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise SetupError(f"Invalid model YAML: {exc}") from None
 
     if values is None and model_type is EmbModelConfig:
         return None
@@ -363,26 +360,21 @@ def parse_setup_model_yaml(
         or value != displayed_values.get(field, missing)
     }
 
-    # SecretStr renders as a mask.  Preserve the actual value only while that
-    # unchanged mask remains in the replacement document; deleting api_key
-    # still removes it like any other field.
+    # Preserve a SecretStr while its unchanged display mask remains.
     if isinstance(original.api_key, SecretStr) and replacement.get(
         "api_key", missing
     ) == str(original.api_key):
         replacement["api_key"] = deepcopy(original.api_key)
 
-    # A named provider owns its endpoint.  An explicit null produced when the
-    # structured control switches endpoint styles must not mask that provider.
+    # A named provider owns its endpoint, so discard the editor's null URL.
     if (
         replacement.get("inference_provider") is not None
         and replacement.get("base_url") is None
     ):
         replacement.pop("base_url", None)
 
-    try:
+    with _setup_errors("Model configuration is invalid"):
         config = model_type.model_validate(replacement)
-    except (TypeError, ValueError) as exc:
-        raise SetupError(f"Model configuration is invalid: {exc}") from None
     if not config.model.strip():
         raise SetupError(
             f"{'Language' if model_type is ChatModelConfig else 'Embedding'} "
@@ -395,8 +387,7 @@ def parse_setup_model_yaml(
 
 
 def replace_mcp_servers(
-    config: UrsaConfig,
-    servers: Mapping[str, ServerParameters],
+    config: UrsaConfig, servers: Mapping[str, ServerParameters]
 ) -> UrsaConfig:
     """Atomically replace MCP servers using the canonical MCP parser."""
     replacements = {
@@ -407,9 +398,7 @@ def replace_mcp_servers(
 
 
 def prepare_provider_probe(
-    config: UrsaConfig,
-    name: str,
-    staged_secret: SecretStr | None = None,
+    config: UrsaConfig, name: str, staged_secret: SecretStr | None = None
 ) -> InferenceProviderConfig:
     """Resolve one provider and staged secret for a connectivity probe."""
     if name not in config.inference_providers:
@@ -418,23 +407,15 @@ def prepare_provider_probe(
         raise SetupError("A staged provider secret must be a SecretStr.")
 
     values = config.inference_providers[name].model_dump(mode="python")
-    try:
+    with _setup_errors(f"Invalid inference provider '{name}'"):
         runtime = InferenceProviderConfig.model_validate(
             deep_interp_env(values)
         ).resolve(name)
-    except (TypeError, ValueError) as exc:
-        raise SetupError(
-            f"Invalid inference provider '{name}': {exc}"
-        ) from None
 
-    resolved = staged_secret
-    if resolved is None:
-        reference = runtime.api_key
-        if isinstance(reference, SecretReference):
-            with suppress(Exception):
-                resolved = reference.resolve(name)
-        else:
-            resolved = reference
+    resolved = runtime.api_key if staged_secret is None else staged_secret
+    if isinstance(resolved, SecretReference):
+        with suppress(Exception):
+            resolved = resolved.resolve(name)
 
     models = (config.llm_model, config.emb_model)
     matching = (m for m in models if m and m.inference_provider == name)
@@ -448,18 +429,17 @@ def prepare_provider_probe(
 
 def format_setup_config_yaml(config: UrsaConfig) -> str:
     """Format the exact editable configuration shown on setup's review page."""
-    try:
+    with _setup_errors(
+        "Could not format configuration",
+        (TypeError, ValueError, yaml.YAMLError),
+    ):
         values = config.editable_values()
         UrsaConfig.model_validate(values)
         return yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
-    except (TypeError, ValueError, yaml.YAMLError) as exc:
-        raise SetupError(f"Could not format configuration: {exc}") from None
 
 
 def save_setup_config(
-    path: Path,
-    config: UrsaConfig,
-    pending: Mapping[str, str],
+    path: Path, config: UrsaConfig, pending: Mapping[str, str]
 ) -> Path:
     """Persist pending credentials and config as one rollback-safe operation."""
     if not config.inference_providers or not config.llm_model.model:
