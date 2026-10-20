@@ -171,20 +171,19 @@ def apply_setup_defaults(
     """Add site defaults without replacing entries in the user's config."""
     defaults = deepcopy(defaults)
     servers = defaults.get("mcp_servers", {})
-    if isinstance(servers, dict):
-        for server in servers.values():
-            headers = (
-                server.get("headers") if isinstance(server, dict) else None
-            )
-            if isinstance(headers, dict):
-                for value in headers.values():
-                    if (
-                        isinstance(value, dict)
-                        and "template" in value
-                        and value.get("env") is None
-                        and value.get("keyring") in (None, False)
-                    ):
-                        value["keyring"] = True
+    if not isinstance(servers, dict):
+        raise SetupError("mcp_servers must be a JSON object.")
+    for server in servers.values():
+        headers = server.get("headers") if isinstance(server, dict) else None
+        if isinstance(headers, dict):
+            for value in headers.values():
+                if (
+                    isinstance(value, dict)
+                    and "template" in value
+                    and value.get("env") is None
+                    and value.get("keyring") in (None, False)
+                ):
+                    value["keyring"] = True
     reject_literal_secrets(
         defaults,
         error_message="Installer defaults must not contain API keys.",
@@ -215,8 +214,6 @@ def apply_setup_defaults(
             ) from None
         if name in config.inference_providers:
             continue
-        if name in config.mcp_servers:
-            raise SetupError(f"'{name}' is used by both provider and MCP.")
         if (
             provider.api_key is None
             and urlparse(provider.base_url).hostname not in _LOCAL_HOSTS
@@ -251,15 +248,11 @@ def apply_setup_defaults(
         if field == "llm_model":
             llm_configured = True
 
-    if not isinstance(servers, dict):
-        raise SetupError("mcp_servers must be a JSON object.")
     server_values = dict(config.mcp_servers)
     for raw_name, raw_server in servers.items():
         name = validate_setup_name(str(raw_name), "MCP server")
         if name in config.mcp_servers:
             continue
-        if name in config.inference_providers:
-            raise SetupError(f"'{name}' is used by both provider and MCP.")
         if not isinstance(raw_server, dict):
             raise SetupError(f"MCP server '{name}' must be a JSON object.")
         server_values[name] = raw_server
