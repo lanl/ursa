@@ -25,20 +25,16 @@ from ursa.util.health import (
     probe_chat_config,
     probe_embedding_model,
     probe_inference_provider,
+    probe_mcp_server,
     run_probe_with_deadline,
 )
-from ursa.util.health import probe_mcp_server as _probe_mcp_server
 from ursa.util.secrets import SecretReference, SecretTemplate
 
 _FAILURES = (Exception, SystemExit, asyncio.CancelledError)
 
 
 class CheckStatus(IntEnum):
-    """Health-check outcomes, ordered from best to worst."""
-
-    OK = 0
-    WARN = 1
-    ERROR = 2
+    OK, WARN, ERROR = range(3)
 
     @property
     def label(self) -> str:
@@ -53,34 +49,35 @@ class CheckStatus(IntEnum):
         return ("green", "yellow", "red")[self]
 
 
+def _exception_message(exc: BaseException) -> str:
+    if isinstance(exc, ValidationError):
+        locations = {
+            ".".join(map(str, error["loc"])) or "configuration"
+            for error in exc.errors(include_input=False)
+        }
+        return "Configuration validation failed at " + ", ".join(
+            sorted(locations)
+        )
+    try:
+        return str(exc).strip() or type(exc).__name__
+    except BaseException:
+        return type(exc).__name__
+
+
 @dataclass(frozen=True)
 class CheckResult:
-    """A check and its optional child checks."""
-
     name: str
     status: CheckStatus
     message: str | BaseException | None = None
-    checks: tuple[CheckResult, ...] = field(default_factory=tuple)
+    checks: tuple[CheckResult, ...] = ()
     secrets: InitVar[Sequence[str]] = ()
 
     def __post_init__(self, secrets: Sequence[str]) -> None:
-        if isinstance(self.message, BaseException):
-            if isinstance(self.message, ValidationError):
-                locations = {
-                    ".".join(map(str, error["loc"])) or "configuration"
-                    for error in self.message.errors(include_input=False)
-                }
-                message = "Configuration validation failed at " + ", ".join(
-                    sorted(locations)
-                )
-            else:
-                try:
-                    message = str(self.message).strip()
-                except BaseException:
-                    message = ""
-                message = message or type(self.message).__name__
-        else:
-            message = self.message
+        message = (
+            _exception_message(self.message)
+            if isinstance(self.message, BaseException)
+            else self.message
+        )
         if isinstance(message, str):
             for secret in sorted(set(secrets), key=len, reverse=True):
                 if secret:
@@ -95,34 +92,31 @@ class CheckResult:
         message: str | None = None,
     ) -> CheckResult:
         children = tuple(checks)
-        status = max(
-            (child.status for child in children), default=CheckStatus.OK
+        return cls(
+            name,
+            max((child.status for child in children), default=CheckStatus.OK),
+            message,
+            children,
         )
-        return cls(name, status, message, children)
 
     def as_dict(self) -> dict[str, Any]:
-        value: dict[str, Any] = {
-            "name": self.name,
-            "status": self.status.label,
-        }
+        value: dict[str, Any] = {"name": self.name, "status": self.status.label}
         if self.message is not None:
             value["message"] = self.message
         if self.checks:
-            value["checks"] = [child.as_dict() for child in self.checks]
+            value["checks"] = [check.as_dict() for check in self.checks]
         return value
 
     def leaves(self) -> list[CheckResult]:
         return (
             [self]
             if not self.checks
-            else [leaf for child in self.checks for leaf in child.leaves()]
+            else sum((check.leaves() for check in self.checks), [])
         )
 
 
 @dataclass(frozen=True)
 class DoctorContext:
-    """Inputs that cannot be recovered by an individual health check."""
-
     config: UrsaConfig | None
     config_error: BaseException | None = None
     credentials: dict[tuple[str, str], str | BaseException] = field(
@@ -132,15 +126,13 @@ class DoctorContext:
 
 def _unavailable(name: str) -> CheckResult:
     return CheckResult(
-        name,
-        CheckStatus.WARN,
-        "Skipped: URSA configuration is unavailable",
+        name, CheckStatus.WARN, "Skipped: URSA configuration is unavailable"
     )
 
 
 def _attempt(
     name: str,
-    probe: Callable[..., str],
+    probe: Callable[..., Any],
     *args: Any,
     secrets: Sequence[str] = (),
 ) -> CheckResult:
@@ -165,7 +157,6 @@ def _resolve_secret(
         if username is None:
             raise ValueError("keyring=true requires a default username")
         source = ("keyring", username)
-
     cached = context.credentials.get(source)
     if isinstance(cached, BaseException):
         raise cached
@@ -185,17 +176,17 @@ def _resolve_secret(
 
 
 def _resolve_api_key(
-    context: DoctorContext,
-    config: Any,
-    default_username: str | None,
+    context: DoctorContext, config: Any, username: str | None
 ) -> tuple[Any, tuple[str, ...]]:
-    api_key = getattr(config, "api_key", None)
-    if isinstance(api_key, SecretReference):
-        value = _resolve_secret(context, api_key, default_username)
+    key = getattr(config, "api_key", None)
+    if isinstance(key, SecretReference):
+        value = _resolve_secret(context, key, username)
         return config.model_copy(update={"api_key": SecretStr(value)}), (value,)
-    if isinstance(api_key, SecretStr):
-        return config, (api_key.get_secret_value(),)
-    return config, ()
+    return (
+        (config, (key.get_secret_value(),))
+        if isinstance(key, SecretStr)
+        else (config, ())
+    )
 
 
 def _resolve_mcp_server(
@@ -203,7 +194,6 @@ def _resolve_mcp_server(
 ) -> tuple[Any, tuple[str, ...]]:
     if not isinstance(server, BaseModel):
         return server, ()
-
     environment = getattr(server, "env", None)
     secrets = (
         [value for value in environment.values() if isinstance(value, str)]
@@ -216,69 +206,73 @@ def _resolve_mcp_server(
     resolved = dict(headers)
     for header, value in headers.items():
         reference = SecretTemplate.maybe_validate(value)
-        if not isinstance(reference, SecretTemplate):
-            if isinstance(value, str):
-                secrets.append(value)
-            continue
-        secret = _resolve_secret(context, reference, name)
-        rendered = reference.template % secret
-        resolved[header] = rendered
-        secrets.extend((secret, rendered))
+        if isinstance(reference, SecretTemplate):
+            secret = _resolve_secret(context, reference, name)
+            resolved[header] = rendered = reference.template % secret
+            secrets.extend((secret, rendered))
+        elif isinstance(value, str):
+            secrets.append(value)
     return server.model_copy(update={"headers": resolved}), tuple(secrets)
 
 
 def check_configuration(context: DoctorContext) -> CheckResult:
-    """Report whether the normal configuration pipeline resolved."""
-    if context.config is None:
-        error = context.config_error or "Configuration is unavailable"
-        if isinstance(error, (JSONDecodeError, YAMLError)):
-            error = f"Configuration file could not be parsed ({type(error).__name__})"
+    if context.config is not None:
         return CheckResult(
-            "Configuration",
-            CheckStatus.ERROR,
-            error,
+            "Configuration", CheckStatus.OK, "Merged and resolved successfully"
         )
-    return CheckResult(
-        "Configuration", CheckStatus.OK, "Merged and resolved successfully"
-    )
+    error = context.config_error or "Configuration is unavailable"
+    if isinstance(error, (JSONDecodeError, YAMLError)):
+        error = (
+            f"Configuration file could not be parsed ({type(error).__name__})"
+        )
+    return CheckResult("Configuration", CheckStatus.ERROR, error)
+
+
+def _check_entries(
+    context: DoctorContext,
+    title: str,
+    entries: Mapping[str, Any],
+    resolve: Callable[[DoctorContext, str, Any], tuple[Any, tuple[str, ...]]],
+    probe: Callable[..., Any],
+    empty: tuple[CheckStatus, str],
+    *,
+    named: bool = False,
+) -> CheckResult:
+    if not entries:
+        return CheckResult(title, *empty)
+    checks = []
+    for name, value in entries.items():
+        try:
+            value, secrets = resolve(context, name, value)
+            args = (name, value) if named else (value,)
+            result = _attempt(name, probe, *args, secrets=secrets)
+        except _FAILURES as exc:
+            result = CheckResult(name, CheckStatus.ERROR, exc)
+        checks.append(result)
+    return CheckResult.group(title, checks)
 
 
 def check_inference_providers(context: DoctorContext) -> CheckResult:
-    """Authenticate to every configured inference provider."""
     if context.config is None:
         return _unavailable("Inference providers")
-
     referenced = {
         model.inference_provider
         for field_name in ("llm_model", "emb_model")
         if (model := getattr(context.config, field_name, None)) is not None
         and model.inference_provider is not None
     }
-    checks = []
-    for name, provider in context.config.inference_providers.items():
-        if name == "openai" and name not in referenced:
-            continue
-        try:
-            provider, secrets = _resolve_api_key(context, provider, name)
-        except _FAILURES as exc:
-            checks.append(CheckResult(name, CheckStatus.ERROR, exc))
-            continue
-        checks.append(
-            _attempt(
-                name,
-                probe_inference_provider,
-                provider,
-                secrets=secrets,
-            )
-        )
-    return (
-        CheckResult.group("Inference providers", checks)
-        if checks
-        else CheckResult(
-            "Inference providers",
-            CheckStatus.WARN,
-            "No inference providers are configured",
-        )
+    providers = {
+        name: provider
+        for name, provider in context.config.inference_providers.items()
+        if name != "openai" or name in referenced
+    }
+    return _check_entries(
+        context,
+        "Inference providers",
+        providers,
+        lambda ctx, name, value: _resolve_api_key(ctx, value, name),
+        probe_inference_provider,
+        (CheckStatus.WARN, "No inference providers are configured"),
     )
 
 
@@ -288,51 +282,47 @@ def _check_model(
     config: Any,
     probes: Sequence[tuple[str | None, Callable[..., str], tuple[Any, ...]]],
 ) -> CheckResult:
-    """Resolve one model config and run its configured capability probes."""
     label = config.pretty_repr(short=True)
     try:
         config, secrets = _resolve_api_key(
-            context,
-            config,
-            config.inference_provider or config.model_provider,
+            context, config, config.inference_provider or config.model_provider
         )
-    except _FAILURES as exc:
-        model = CheckResult(label, CheckStatus.ERROR, exc)
-    else:
         checks = [
             _attempt(name or label, probe, config, *args, secrets=secrets)
             for name, probe, args in probes
         ]
-        model = (
+        result = (
             CheckResult.group(label, checks)
             if any(name is not None for name, _, _ in probes)
             else checks[0]
         )
-    return CheckResult.group(section, [model])
+    except _FAILURES as exc:
+        result = CheckResult(label, CheckStatus.ERROR, exc)
+    return CheckResult.group(section, [result])
 
 
 def check_llm_models(context: DoctorContext) -> CheckResult:
-    """Exercise chat, tool calling, and structured output."""
     if context.config is None:
         return _unavailable("LLM model")
     return _check_model(
         context,
         "LLM model",
         context.config.llm_model,
-        (
-            ("Chat invocation", probe_chat_config, ("chat",)),
-            ("Forced tool use", probe_chat_config, ("tool",)),
-            ("Structured output", probe_chat_config, ("structured",)),
+        tuple(
+            (name, probe_chat_config, (capability,))
+            for name, capability in (
+                ("Chat invocation", "chat"),
+                ("Forced tool use", "tool"),
+                ("Structured output", "structured"),
+            )
         ),
     )
 
 
 def check_embedding_models(context: DoctorContext) -> CheckResult:
-    """Call the configured embedding model."""
     if context.config is None:
         return _unavailable("Embedding model")
-    config = context.config.emb_model
-    if config is None:
+    if context.config.emb_model is None:
         return CheckResult(
             "Embedding model",
             CheckStatus.OK,
@@ -341,47 +331,29 @@ def check_embedding_models(context: DoctorContext) -> CheckResult:
     return _check_model(
         context,
         "Embedding model",
-        config,
+        context.config.emb_model,
         ((None, probe_embedding_model, ()),),
     )
 
 
 def check_mcp_servers(context: DoctorContext) -> CheckResult:
-    """Connect to every configured MCP server and enumerate its tools."""
     if context.config is None:
         return _unavailable("MCP servers")
-    servers = context.config.mcp_servers
-    if not servers:
-        return CheckResult(
-            "MCP servers",
-            CheckStatus.OK,
-            "No MCP servers are configured",
-        )
-
-    checks = []
-    for name, server in servers.items():
-        try:
-            server, secrets = _resolve_mcp_server(context, name, server)
-        except _FAILURES as exc:
-            checks.append(CheckResult(name, CheckStatus.ERROR, exc))
-            continue
-        checks.append(
-            _attempt(
-                name,
-                _probe_mcp_server,
-                name,
-                server,
-                secrets=secrets,
-            )
-        )
-    return CheckResult.group("MCP servers", checks)
+    return _check_entries(
+        context,
+        "MCP servers",
+        context.config.mcp_servers,
+        _resolve_mcp_server,
+        probe_mcp_server,
+        (CheckStatus.OK, "No MCP servers are configured"),
+        named=True,
+    )
 
 
 def build_report(
     config: UrsaConfig | None = None,
     config_error: BaseException | None = None,
 ) -> CheckResult:
-    """Build a contained doctor report suitable for any presentation layer."""
     context = DoctorContext(config, config_error)
     results = []
     for check in (
@@ -400,7 +372,6 @@ def build_report(
 
 
 def build_report_from_path(path: Path) -> CheckResult:
-    """Load and resolve a config file before building its doctor report."""
     try:
         config = UrsaConfig.from_file(path).resolve()
     except _FAILURES as exc:
@@ -409,15 +380,13 @@ def build_report_from_path(path: Path) -> CheckResult:
 
 
 def report_counts(report: CheckResult) -> Counter[CheckStatus]:
-    """Count final health outcomes without counting their parent groups."""
-    return Counter(leaf.status for leaf in report.leaves())
+    return Counter(result.status for result in report.leaves())
 
 
 def render_report(report: CheckResult) -> Text:
-    """Render a doctor report for Rich consoles or Textual widgets."""
     rendered = Text()
 
-    def append_result(result: CheckResult, depth: int = 0) -> None:
+    def append(result: CheckResult, depth: int = 0) -> None:
         if rendered:
             rendered.append("\n")
         rendered.append("  " * depth)
@@ -428,15 +397,20 @@ def render_report(report: CheckResult) -> Text:
         if result.message:
             rendered.append(f"  {result.message}", "dim")
         for child in result.checks:
-            append_result(child, depth + 1)
+            append(child, depth + 1)
 
-    append_result(report)
+    append(report)
     counts = report_counts(report)
     rendered.append("\n")
     rendered.append(
-        f"{counts[CheckStatus.OK]} ok  |  "
-        f"{counts[CheckStatus.WARN]} warn  |  "
-        f"{counts[CheckStatus.ERROR]} error(s)",
+        "  |  ".join(
+            f"{counts[status]} {label}"
+            for status, label in (
+                (CheckStatus.OK, "ok"),
+                (CheckStatus.WARN, "warn"),
+                (CheckStatus.ERROR, "error(s)"),
+            )
+        ),
         f"bold {report.status.style}",
     )
     return rendered
@@ -448,9 +422,7 @@ def run_doctor(
     config: UrsaConfig | None = None,
     config_error: BaseException | None = None,
 ) -> int:
-    """Run health checks, print the selected format, and return a status."""
     report = build_report(config, config_error)
-
     if bool(getattr(args, "json", False)):
         print(json.dumps(report.as_dict(), indent=2, default=str))  # noqa: T201
     else:
