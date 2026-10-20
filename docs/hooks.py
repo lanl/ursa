@@ -1,21 +1,15 @@
 """MkDocs startup hooks and metadata-driven example pages."""
 
-from __future__ import annotations
-
 import os
 import posixpath
 import re
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit
 
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ursa.util.http import inject_truststore_into_ssl
-
-if TYPE_CHECKING:
-    from mkdocs.structure.files import Files
 
 # Inventory downloads happen while MkDocs plugins process their configuration,
 # before any URSA command-line entry point can initialize TLS.
@@ -181,19 +175,20 @@ def _examples_index(examples: list[tuple[Path, dict]]) -> str:
     return readme.replace(marker, catalog) + "\n"
 
 
-def on_files(files: Files, config) -> Files:
-    """Expose generated example pages and the installer in the docs site."""
+def on_files(files, config):
+    """Expose generated example pages and installers in the docs site."""
     from mkdocs.structure.files import File
 
-    files.append(
-        File.generated(
-            config,
-            "install.sh",
-            content=(REPOSITORY_ROOT / "install.sh").read_text(
-                encoding="utf-8"
-            ),
+    for installer in ("install.sh", "install.ps1"):
+        files.append(
+            File.generated(
+                config,
+                installer,
+                content=(REPOSITORY_ROOT / installer).read_text(
+                    encoding="utf-8"
+                ),
+            )
         )
-    )
     examples = _examples()
     files.append(
         File.generated(

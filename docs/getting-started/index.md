@@ -7,18 +7,21 @@ different endpoint.
 
 ## Install URSA
 
-URSA requires Python 3.11 or newer. On macOS and Linux, the guided installer
-installs `uv` if needed, installs `ursa-ai` with Python 3.13, then
-walks through provider, model, and optional MCP configuration:
+URSA requires Python 3.11 or newer. The guided installer installs `uv` if
+needed, installs `ursa-ai` with Python 3.13, then walks through provider, model,
+and optional MCP configuration:
 
-```bash
-curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
-```
+=== "Linux/MacOS"
 
-Credentials are validated before setup continues and are stored in the
-native keyring, or its private file-backed fallback when none is available.
-The resulting configuration is written to
-`~/.config/ursa/config.yaml`. Re-run the wizard with `ursa self setup`.
+    ```bash
+    curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
+    ```
+
+=== "Windows"
+
+    ```powershell
+    powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
+    ```
 
 For manual installation, the `uv` tool installation is recommended:
 

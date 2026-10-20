@@ -30,6 +30,12 @@ On macOS or Linux, run the guided installer:
 curl -LsSf https://lanl.github.io/ursa/latest/install.sh | sh
 ```
 
+On Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://lanl.github.io/ursa/latest/install.ps1 | iex"
+```
+
 See [Getting started](https://lanl.github.io/ursa/latest/getting-started/)
 for guided setup and manual `uv` or `pip` installation.
 

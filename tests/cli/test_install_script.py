@@ -1,11 +1,18 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 INSTALL_SCRIPT = Path(__file__).parents[2] / "install.sh"
+POWERSHELL_INSTALL_SCRIPT = Path(__file__).parents[2] / "install.ps1"
 SITE_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "site.yml"
+DOCS_HOOKS = Path(__file__).parents[2] / "docs" / "hooks.py"
+GETTING_STARTED = (
+    Path(__file__).parents[2] / "docs" / "getting-started" / "index.md"
+)
+POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 
 def _fake_installation(
@@ -53,6 +60,40 @@ def _run_installer(environment, *, script=None, check=True):
 
 def test_install_script_is_posix_shell():
     subprocess.run(["sh", "-n", INSTALL_SCRIPT], check=True)
+
+
+def test_powershell_installer_installs_only_published_ursa_package():
+    script = POWERSHELL_INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        "& $uvExecutable tool install --python 3.13 --force --upgrade "
+        "--compile-bytecode ursa-ai" in script
+    )
+    assert script.count("ursa-ai") == 1
+    assert "git+" not in script
+    assert "@main" not in script
+    assert "--from" not in script
+    assert (
+        "installed URSA ($ursaVersion) does not support guided setup. See "
+        "https://lanl.github.io/ursa/latest/getting-started." in script
+    )
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell is not installed")
+def test_powershell_installer_has_valid_syntax():
+    command = (
+        "$tokens = $null; $parseErrors = $null; "
+        "[System.Management.Automation.Language.Parser]::ParseFile("
+        f"'{str(POWERSHELL_INSTALL_SCRIPT).replace(chr(39), chr(39) * 2)}', "
+        "[ref]$tokens, [ref]$parseErrors) | Out-Null; "
+        "if ($parseErrors.Count) { "
+        "$parseErrors | ForEach-Object { Write-Error $_ }; exit 1 }"
+    )
+
+    subprocess.run(
+        [POWERSHELL, "-NoLogo", "-NoProfile", "-Command", command],
+        check=True,
+    )
 
 
 def test_install_script_uses_existing_uv_and_tool_bin(tmp_path):
@@ -169,8 +210,20 @@ def test_install_warns_when_another_ursa_shadows_the_install(tmp_path):
 
 def test_docs_workflow_publishes_versioned_installers():
     workflow = SITE_WORKFLOW.read_text()
+    hooks = DOCS_HOOKS.read_text()
+    getting_started = GETTING_STARTED.read_text()
 
     assert "mike deploy" in workflow
     assert '"$version" latest' in workflow
     assert 'mike deploy "${push_args[@]}" main' in workflow
-    assert 'cp "$GITHUB_WORKSPACE/install.sh"' not in workflow
+    assert 'for installer in ("install.sh", "install.ps1")' in hooks
+    assert "_installer_script" not in hooks
+    assert '=== "Linux/MacOS"' in getting_started
+    assert '=== "Windows"' in getting_started
+    assert (
+        'powershell -ExecutionPolicy Bypass -c "irm '
+        'https://lanl.github.io/ursa/latest/install.ps1 | iex"'
+        in getting_started
+    )
+    for installer in ("install.sh", "install.ps1"):
+        assert f'cp "$GITHUB_WORKSPACE/{installer}"' not in workflow
