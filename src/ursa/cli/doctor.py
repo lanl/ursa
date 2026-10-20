@@ -282,16 +282,6 @@ def check_inference_providers(context: DoctorContext) -> CheckResult:
     )
 
 
-def _model_label(config: Any) -> str:
-    endpoint = (
-        getattr(config, "inference_provider", None)
-        or getattr(config, "model_provider", None)
-        or getattr(config, "base_url", None)
-        or "direct configuration"
-    )
-    return f"{config.model} ({endpoint})"
-
-
 def _check_model(
     context: DoctorContext,
     section: str,
@@ -299,7 +289,7 @@ def _check_model(
     probes: Sequence[tuple[str | None, Callable[..., str], tuple[Any, ...]]],
 ) -> CheckResult:
     """Resolve one model config and run its configured capability probes."""
-    label = _model_label(config)
+    label = config.pretty_repr(short=True)
     try:
         config, secrets = _resolve_api_key(
             context,
@@ -387,8 +377,12 @@ def check_mcp_servers(context: DoctorContext) -> CheckResult:
     return CheckResult.group("MCP servers", checks)
 
 
-def run_checks(context: DoctorContext) -> CheckResult:
-    """Run checks in display order, containing failures per section."""
+def build_report(
+    config: UrsaConfig | None = None,
+    config_error: BaseException | None = None,
+) -> CheckResult:
+    """Build a contained doctor report suitable for any presentation layer."""
+    context = DoctorContext(config, config_error)
     results = []
     for check in (
         check_configuration,
@@ -400,27 +394,9 @@ def run_checks(context: DoctorContext) -> CheckResult:
         try:
             result = check(context)
         except _FAILURES as exc:
-            result = CheckResult(
-                getattr(check, "__name__", type(check).__name__),
-                CheckStatus.ERROR,
-                exc,
-            )
+            result = CheckResult(check.__name__, CheckStatus.ERROR, exc)
         results.append(result)
     return CheckResult.group("URSA Doctor", results)
-
-
-def build_report(
-    config: UrsaConfig | None = None,
-    config_error: BaseException | None = None,
-) -> CheckResult:
-    """Build a contained doctor report suitable for any presentation layer."""
-    try:
-        return run_checks(DoctorContext(config, config_error))
-    except _FAILURES as exc:
-        return CheckResult.group(
-            "URSA Doctor",
-            [CheckResult("Doctor runtime", CheckStatus.ERROR, exc)],
-        )
 
 
 def build_report_from_path(path: Path) -> CheckResult:
@@ -466,10 +442,6 @@ def render_report(report: CheckResult) -> Text:
     return rendered
 
 
-def _print_report(console: Console, report: CheckResult) -> None:
-    console.print(render_report(report))
-
-
 def run_doctor(
     args=None,
     *,
@@ -483,7 +455,7 @@ def run_doctor(
         print(json.dumps(report.as_dict(), indent=2, default=str))  # noqa: T201
     else:
         try:
-            _print_report(Console(), report)
+            Console().print(render_report(report))
         except Exception:
             print(json.dumps(report.as_dict(), indent=2))  # noqa: T201
     return int(report.status is CheckStatus.ERROR)
