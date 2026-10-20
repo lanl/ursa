@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any, NamedTuple
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -29,6 +29,8 @@ from ursa.cli.tui.widgets import (
     AdvancedYamlEditor,
     FuzzySelect,
     HelpLabel,
+    ModelScreen,
+    ModelSelection,
     discover_model_catalog,
     model_choice_options,
     model_choice_value,
@@ -46,16 +48,7 @@ from ursa.util.inference_providers import (
 
 NONE = MODEL_NONE
 CUSTOM = MODEL_CUSTOM
-_HELP = {
-    "model": "The model identifier exposed by the provider.",
-    "model-provider": "The LangChain integration used by the model.",
-    "inference-provider": "The named inference provider supplying endpoint and auth.",
-}
-
-
-class SetupModelSelection(NamedTuple):
-    chat: ChatModelConfig
-    embedding: EmbModelConfig | None
+SetupModelSelection = ModelSelection
 
 
 class SetupModelEditor(Vertical):
@@ -112,7 +105,9 @@ class SetupModelEditor(Vertical):
     @staticmethod
     def _help(label: str, field: str, prefix: str) -> HelpLabel:
         return HelpLabel(
-            label, _HELP[field], id=f"setup-{prefix}-{field}-label"
+            label,
+            ModelScreen.FIELD_HELP[field],
+            id=f"setup-{prefix}-{field}-label",
         )
 
     def _fields(self, prefix: str) -> ComposeResult:

@@ -120,16 +120,14 @@ def _setup(
     except SetupError as exc:
         raise SystemExit(f"Could not start guided setup: {exc}") from None
 
-    executable = {
+    if executable := {
         SetupAction.TERMINAL: "ursa",
         SetupAction.DASHBOARD: "ursa-dashboard",
-    }.get(action)
-    if executable is None:
-        return
-    try:
-        os.execvp(executable, [executable])
-    except OSError as exc:
-        raise SystemExit(f"Could not launch {executable}: {exc}") from None
+    }.get(action):
+        try:
+            os.execvp(executable, [executable])
+        except OSError as exc:
+            raise SystemExit(f"Could not launch {executable}: {exc}") from None
 
 
 def _read_receipt(receipt: Path) -> tuple[dict, list[dict]]:
@@ -199,11 +197,7 @@ def _source(requirement: dict) -> str:
         # while a direct requirement spells the same source as ``@REV``.
         repository, _, receipt_ref = git.partition("?rev=")
         ref = receipt_ref or next(
-            (
-                requirement.get(key)
-                for key in ("branch", "tag", "rev")
-                if requirement.get(key)
-            ),
+            filter(None, map(requirement.get, ("branch", "tag", "rev"))),
             None,
         )
         return f" @ git+{repository}{f'@{ref}' if ref else ''}"

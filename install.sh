@@ -1,19 +1,12 @@
 #!/bin/sh
-
 set -eu
-
-say() {
-    printf '%s\n' "$*"
-}
-
-fail() {
-    printf 'URSA installer: %s\n' "$*" >&2
-    exit 1
-}
+say() { printf '%s\n' "$*"; }
+fail() { printf 'URSA installer: %s\n' "$*" >&2; exit 1; }
 
 config_file=
 selected_python=3.13
 ursa_requirement=ursa-ai
+source_option=
 while [ "$#" -gt 0 ]; do
     case $1 in
     --config|--version|--branch|--python)
@@ -22,8 +15,13 @@ while [ "$#" -gt 0 ]; do
         [ "$#" -gt 0 ] && [ -n "$1" ] || fail "$option requires a value"
         case $option in
         --config) config_file=$1 ;;
-        --version) ursa_requirement="ursa-ai==$1" ;;
-        --branch) ursa_requirement="ursa-ai @ git+https://github.com/lanl/ursa.git@$1" ;;
+        --version|--branch)
+            [ -z "$source_option" ] || [ "$source_option" = "$option" ] \
+                || fail "--branch and --version cannot be used together"
+            source_option=$option
+            [ "$option" = --version ] && ursa_requirement="ursa-ai==$1" \
+                || ursa_requirement="ursa-ai @ git+https://github.com/lanl/ursa.git@$1"
+            ;;
         --python) selected_python=$1 ;;
         esac
         shift
@@ -44,20 +42,21 @@ EOF
     *) fail "unknown option: $1" ;;
     esac
 done
-
 [ -z "$config_file" ] || [ -f "$config_file" ] \
     || fail "setup defaults not found: $config_file"
 
-setup_input=none
-[ -t 0 ] && setup_input=stdin
-[ "$setup_input" != none ] || ! ( : </dev/tty ) 2>/dev/null \
-    || setup_input=tty
-[ -z "$config_file" ] || [ "$setup_input" != none ] \
+setup_input=
+if [ -t 0 ]; then
+    setup_input=stdin
+elif ( : </dev/tty ) 2>/dev/null; then
+    setup_input=tty
+fi
+[ -z "$config_file" ] || [ -n "$setup_input" ] \
     || fail "setup defaults require an interactive terminal"
 
 find_uv() {
     command -v uv 2>/dev/null && return
-    for uv_candidate in \
+    for candidate in \
         "${UV_UNMANAGED_INSTALL:+$UV_UNMANAGED_INSTALL/uv}" \
         "${UV_INSTALL_DIR:+$UV_INSTALL_DIR/uv}" \
         "${XDG_BIN_HOME:+$XDG_BIN_HOME/uv}" \
@@ -65,9 +64,9 @@ find_uv() {
         "${HOME:+$HOME/.local/bin/uv}" \
         "${HOME:+$HOME/.cargo/bin/uv}"
     do
-        [ -n "$uv_candidate" ] && [ -x "$uv_candidate" ] || continue
-        printf '%s\n' "$uv_candidate"
-        return
+        [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+        printf '%s\n' "$candidate"
+        return 0
     done
     return 1
 }
@@ -92,13 +91,10 @@ fi
 say "Installing URSA with Python $selected_python…"
 "$uv_executable" tool install --python "$selected_python" --force --upgrade --compile-bytecode \
     "$ursa_requirement"
-
 tool_bin=$("$uv_executable" tool dir --bin)
-ursa_executable=$tool_bin/ursa
+ursa_executable="$tool_bin/ursa"
 [ -x "$ursa_executable" ] || fail \
     "URSA installed, but its executable was not found at $ursa_executable"
-uv_dir=$(dirname "$uv_executable")
-
 current_ursa=$(command -v ursa || true)
 ursa_command=ursa
 [ -z "$current_ursa" ] || [ "$current_ursa" = "$ursa_executable" ] || {
@@ -111,7 +107,7 @@ if [ "$current_ursa" != "$ursa_executable" ]; then
         || say "Could not update this shell automatically; add $tool_bin to PATH."
     say "Follow uv's instructions above to update this shell. Or restart your shell."
 fi
-PATH="$tool_bin:$uv_dir${PATH:+:$PATH}"
+PATH="$tool_bin:$(dirname "$uv_executable")${PATH:+:$PATH}"
 export PATH
 
 if ! "$ursa_executable" self setup --help >/dev/null 2>&1; then

@@ -44,12 +44,6 @@ Use `ursa --help` to confirm the exact set in your installed version.
 
 ## Self management
 
-Create or update a user configuration with the guided terminal setup:
-
-```bash
-ursa self setup
-```
-
 Installation status is available for every installation method:
 
 ```bash
