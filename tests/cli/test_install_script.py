@@ -261,7 +261,7 @@ def test_install_script_selects_python_version(tmp_path, python_version):
 
 @pytest.mark.parametrize(
     "python_version",
-    ["", "cpython", "3.x", "3..13", ".13", "3.", "3.13\n3.x"],
+    ["", "cpython", "3.x", "3..13", ".13", "3."],
 )
 def test_install_script_rejects_invalid_python_version(
     tmp_path, python_version

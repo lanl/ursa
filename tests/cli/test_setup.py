@@ -1,11 +1,14 @@
+import asyncio
 import os
 import stat
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
+import yaml
 from keyring.backends.fail import Keyring as FailingSystemKeyring
 from keyring.errors import KeyringError
-from textual.widgets import Button, Input, Select, Static, TextArea
+from pydantic import SecretStr
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ursa.cli.config import (
     ChatModelConfig,
@@ -13,11 +16,8 @@ from ursa.cli.config import (
     InferenceProviderConfig,
     UrsaConfig,
 )
+from ursa.cli.doctor import CheckResult, CheckStatus
 from ursa.cli.setup import (
-    API_KEY_ENV,
-    MCP_TOKEN_NONE,
-    ApiKeyEntry,
-    CredentialValue,
     SetupApp,
     SetupError,
     _load_config,
@@ -25,8 +25,7 @@ from ursa.cli.setup import (
     apply_setup_defaults,
     load_setup_defaults,
 )
-from ursa.cli.tui.widgets import ModelEditor, ModelSelection
-from ursa.util.inference_providers import ProviderModel
+from ursa.cli.setup_models import SetupModelEditor, SetupModelSelection
 from ursa.util.secrets import (
     FallbackKeyring,
     FileKeyring,
@@ -39,9 +38,8 @@ from ursa.util.secrets import (
 def setup_keyring(monkeypatch):
     store = MagicMock()
     store.get_password.return_value = None
-    store.health = MagicMock(return_value=())
-    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
-    monkeypatch.setattr("ursa.cli.setup.check_config_health", store.health)
+    monkeypatch.setattr("ursa.cli.setup_config.get_keyring", lambda: store)
+    monkeypatch.setattr("ursa.cli.setup_entries.get_keyring", lambda: store)
     return store
 
 
@@ -54,15 +52,10 @@ def app(tmp_path):
 def saved_keyring(monkeypatch, tmp_path):
     store = FileKeyring(tmp_path / "keyring.json")
     store.set_password("ursa", "company", "old-secret")
-    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
+    monkeypatch.setattr("ursa.cli.setup_config.get_keyring", lambda: store)
+    monkeypatch.setattr("ursa.cli.setup_entries.get_keyring", lambda: store)
     monkeypatch.setattr("ursa.util.secrets.get_keyring", lambda: store)
     return store
-
-
-def begin_mcp(app, name: str, **fields: str) -> None:
-    app._begin_mcp()
-    for field, value in {"name": name, **fields}.items():
-        app.query_one(f"#mcp-{field}").value = value
 
 
 def model_config(kind, name: str, provider: str):
@@ -293,9 +286,7 @@ def test_setup_defaults_require_a_json_object(tmp_path, contents):
         load_setup_defaults(path)
 
 
-def test_load_preserves_mcp_environment_placeholders(
-    monkeypatch, setup_keyring, tmp_path
-):
+def test_load_preserves_mcp_environment_placeholders(monkeypatch, tmp_path):
     monkeypatch.setenv("MCP_SECRET", "resolved-secret")
     monkeypatch.setenv("MODEL_URL", "https://models.example/v1")
     path = tmp_path / "config.yaml"
@@ -320,13 +311,6 @@ mcp_servers:
     assert config.mcp_servers["tools"].env == {"API_KEY": "${MCP_SECRET}"}
     _save(path, config, {})
 
-    runtime = setup_keyring.health.call_args.args[0]
-    assert set(runtime.inference_providers) == {"company"}
-    assert (
-        runtime.inference_providers["company"].base_url
-        == "https://models.example/v1"
-    )
-    assert runtime.mcp_servers["tools"].env == {"API_KEY": "resolved-secret"}
     saved = path.read_text()
     assert "${MODEL_URL}" in saved
     assert "${MCP_SECRET}" in saved
@@ -340,7 +324,7 @@ def test_save_writes_file_fallback_then_atomic_private_config(
     pending = {"company": "provider-secret", "tools": "mcp-secret"}
     fallback = FileKeyring(tmp_path / "keyring.json")
     store = FallbackKeyring(FailingSystemKeyring(), fallback)
-    monkeypatch.setattr("ursa.cli.setup.get_keyring", lambda: store)
+    monkeypatch.setattr("ursa.cli.setup_config.get_keyring", lambda: store)
 
     assert _save(path, config, pending) == path
 
@@ -361,40 +345,21 @@ def test_save_does_not_write_config_when_keyring_fails(setup_keyring, tmp_path):
     assert not path.exists()
 
 
-@pytest.mark.parametrize("failure", ["config-write", "health-check"])
-def test_save_restores_staged_keys(
-    monkeypatch, saved_keyring, tmp_path, failure
-):
+def test_save_restores_staged_keys(monkeypatch, saved_keyring, tmp_path):
     path = tmp_path / "config.yaml"
-    if failure == "config-write":
-        error, message = OSError, "disk full"
-        monkeypatch.setattr(
-            "ursa.cli.setup.save_config_file",
-            MagicMock(side_effect=OSError(message)),
-        )
-    else:
-        error = SetupError
-        message = "Configuration checks failed: mcp_servers.tools"
-        path.write_text("existing: config\n")
+    message = "disk full"
+    monkeypatch.setattr(
+        "ursa.cli.setup_config.save_config_file",
+        MagicMock(side_effect=OSError(message)),
+    )
 
-        def fail(candidate):
-            resolved = candidate.resolve()
-            api_key = resolved.inference_providers["company"].api_key
-            assert api_key.get_secret_value() == "new-secret"
-            return (("mcp_servers", "tools"),)
-
-        monkeypatch.setattr("ursa.cli.setup.check_config_health", fail)
-
-    with pytest.raises(error, match=message) as raised:
+    with pytest.raises(OSError, match=message):
         _save(
             path,
             configured_config(),
             {"company": "new-secret", "tools": "mcp-secret"},
         )
 
-    if failure == "health-check":
-        assert str(raised.value) == message
-        assert path.read_text() == "existing: config\n"
     assert saved_keyring.get_password("ursa", "company") == "old-secret"
     assert saved_keyring.get_password("ursa", "tools") is None
 
@@ -416,77 +381,195 @@ def test_pending_shared_secret_is_kept_until_last_reference_is_removed(app):
     assert app.pending == {}
 
 
-async def test_write_page_saves_and_shows_ready(monkeypatch, app):
+async def test_write_page_saves_validates_then_finishes(monkeypatch, app):
     path = app.path
+    report = CheckResult.group(
+        "URSA Doctor",
+        [CheckResult("Configuration", CheckStatus.OK)],
+    )
 
     async def inline(callback, *args, **kwargs):
         return callback(*args, **kwargs)
 
     monkeypatch.setattr("ursa.cli.setup._save", lambda *_args: path)
+    monkeypatch.setattr("ursa.cli.setup._doctor", lambda *_args: report)
     monkeypatch.setattr("ursa.cli.setup.asyncio.to_thread", inline)
 
     async with app.run_test(size=(120, 42)):
         app._show("review")
         await app._save_config()
         assert app.page == "done"
+        assert app.saved_path == path
+        assert app.query_one("#review-validation", Collapsible).title == (
+            "Validation — 0 warning(s), 0 error(s)"
+        )
+
         assert (
             str(app.query_one("#done-copy", Static).content)
-            == f"Saved to {path}"
+            == f"Saved to {path}\nValidation: 0 warning(s), 0 error(s)"
         )
 
 
-async def test_provider_is_checked_before_becoming_configured(monkeypatch, app):
-    list_models = MagicMock(return_value=[ProviderModel("gpt-test", "openai")])
+async def test_provider_tabs_add_empty_persistent_draft(app):
+    app.config.inference_providers.clear()
+    app.config.inference_providers.update({
+        "public": InferenceProviderConfig(),
+        "company": InferenceProviderConfig(
+            base_url="https://models.example/v1",
+            api_key=SecretReference(env="COMPANY_API_KEY"),
+        ),
+    })
 
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        public, company = app.provider_tabs.editors()
+        assert public.raw_name() == "public"
+        assert company.raw_name() == "company"
+        assert str(app.query_one("#provider-add", Button).label) == "+"
+        assert str(app.query_one("#provider-remove", Button).label) == "Remove"
+        assert str(app.query_one("#provider-save", Button).label) == (
+            "Validate and continue"
+        )
+
+        await pilot.click("#provider-add")
+        await pilot.pause()
+        added = app.provider_tabs.active_editor()
+        assert added is not None
+        assert added.raw_name() == ""
+        assert added.query_one(".provider-url-custom", Input).value == ""
+        assert yaml.safe_load(added.query_one(TextArea).text) == {}
+        added.query_one(".entry-name", Input).value = "draft"
+        app.provider_tabs.select(public.draft_id)
+        app.provider_tabs.select(added.draft_id)
+        assert added.raw_name() == "draft"
+        assert company.query_one(".provider-url-custom", Input).value == (
+            "https://models.example/v1"
+        )
+
+
+async def test_provider_validation_failure_does_not_continue(monkeypatch, app):
     monkeypatch.setattr(
-        "ursa.util.inference_providers.list_provider_models", list_models
+        "ursa.cli.setup.run_probe_with_deadline",
+        MagicMock(side_effect=RuntimeError("connection refused")),
     )
 
-    def run_probe(probe, *args, **_kwargs):
-        return probe(*args)
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        editor = app.provider_tabs.active_editor()
+        assert editor is not None
+        editor.query_one(".entry-name", Input).value = "company"
+        editor.query_one(
+            ".provider-url-custom", Input
+        ).value = "https://models.example/v1"
+
+        await pilot.click("#provider-save")
+        await app.workers.wait_for_complete()
+
+        assert app.page == "provider"
+        assert not app.config.inference_providers
+        assert (
+            "could not connect"
+            in str(editor.query_one(".draft-message", Static).content).lower()
+        )
+        assert app.provider_tabs.active_editor() is editor
+
+
+async def test_provider_continue_validates_every_provider(monkeypatch, app):
+    app.config.inference_providers.update({
+        "first": InferenceProviderConfig(base_url="https://first.example/v1"),
+        "second": InferenceProviderConfig(base_url="https://second.example/v1"),
+    })
+    checked = []
+
+    def run_probe(_probe, config, *_args, **_kwargs):
+        checked.append(str(config.base_url))
+        return "Connected"
 
     monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", run_probe)
 
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.click("#welcome-next")
-        await app.workers.wait_for_complete()
-        assert app.query_one("#provider-next", Button).disabled
-
-        entry = app.query_one("#provider-key-api-key", ApiKeyEntry)
-        source = entry.query_one("#provider-key-source", Select)
-        key = entry.query_one("#provider-key-key", Input)
-        entry.loaded = key.value = "secret"
-        entry.rename("renamed")
-        assert entry.values().pending == "secret"
-        source.value = API_KEY_ENV
-        key.value = "COMPANY_API_KEY"
-        assert entry.values() == CredentialValue(
-            SecretReference(env="COMPANY_API_KEY")
-        )
-        source.value = MCP_TOKEN_NONE
-        assert entry.values() == CredentialValue()
-        entry.configure("openai", None, [])
-
-        async def run_inline(callback, *args, **kwargs):
-            if callback is run_probe:
-                assert (
-                    str(app.query_one("#provider-error", Static).content)
-                    == "? Validating openai"
-                )
-            return callback(*args, **kwargs)
-
-        monkeypatch.setattr("ursa.cli.setup.asyncio.to_thread", run_inline)
-        app.query_one("#provider-key-key", Input).value = "secret"
         await pilot.click("#provider-save")
         await app.workers.wait_for_complete()
 
-        assert app.query_one("#provider-configured", Select).value == "openai"
-        assert not app.query_one("#provider-next", Button).disabled
+        assert set(checked) == {
+            "https://first.example/v1",
+            "https://second.example/v1",
+        }
+        assert app.page == "models"
 
 
-async def test_models_use_existing_editor_and_validate_both_providers(
+async def test_provider_failure_probes_all_and_is_transactional(
     monkeypatch, app
 ):
+    app.config.inference_providers.update({
+        "first": InferenceProviderConfig(base_url="https://first.example/v1"),
+        "broken": InferenceProviderConfig(base_url="https://broken.example/v1"),
+        "last": InferenceProviderConfig(base_url="https://last.example/v1"),
+    })
+    checked = []
+
+    def run_probe(_probe, config, *_args, **_kwargs):
+        url = str(config.base_url)
+        checked.append(url)
+        if url == "https://broken.example/v1":
+            raise RuntimeError("connection refused")
+        return "Connected"
+
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", run_probe)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        broken = app.provider_tabs.editors()[1]
+        broken.query_one(".entry-name", Input).value = "renamed"
+        await pilot.click("#provider-save")
+        await app.workers.wait_for_complete()
+
+        assert app.page == "provider"
+        assert set(checked) == {
+            "https://first.example/v1",
+            "https://broken.example/v1",
+            "https://last.example/v1",
+        }
+        assert set(app.config.inference_providers) == {
+            "first",
+            "broken",
+            "last",
+        }
+        assert app.provider_tabs.active_editor() is broken
+        assert (
+            "could not connect"
+            in str(broken.query_one(".draft-message", Static).content).lower()
+        )
+
+
+async def test_provider_remove_retargets_models_only_after_commit(
+    monkeypatch, app
+):
+    app.config.inference_providers.clear()
+    app.config.inference_providers.update({
+        "old": InferenceProviderConfig(),
+        "remaining": InferenceProviderConfig(),
+    })
+    app.config.llm_model = model_config(ChatModelConfig, "chat", "old")
+    app.config.emb_model = model_config(EmbModelConfig, "embedding", "old")
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", MagicMock())
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.click("#welcome-next")
+        await pilot.click("#provider-remove")
+        await pilot.pause()
+
+        assert app.config.llm_model.inference_provider == "old"
+        assert app.config.emb_model.inference_provider == "old"
+        assert await app._validate_provider_page()
+        assert app.config.llm_model.inference_provider == "remaining"
+        assert app.config.emb_model.inference_provider == "remaining"
+        assert app.query_one("#provider-remove", Button).disabled
+        assert not app.query_one("#provider-add", Button).disabled
+
+
+async def test_setup_model_editor_validates_both_models(monkeypatch, app):
     app.config.inference_providers.update({
         "chat": InferenceProviderConfig(base_url="https://chat.example/v1"),
         "vectors": InferenceProviderConfig(
@@ -505,12 +588,13 @@ async def test_models_use_existing_editor_and_validate_both_providers(
     async with app.run_test(size=(120, 42)) as pilot:
         app._show("models")
         await app.workers.wait_for_complete()
-        editor = app.query_one(ModelEditor)
-        selection = ModelSelection(
+        editor = app.query_one(SetupModelEditor)
+        assert editor.parent.id == "setup-model-host"
+        selection = SetupModelSelection(
             model_config(ChatModelConfig, "chat-model", "chat"),
             model_config(EmbModelConfig, "embedding-model", "vectors"),
         )
-        editor._submit(selection)
+        editor.post_message(editor.Submitted(selection))
         await pilot.pause()
         await app.workers.wait_for_complete()
 
@@ -518,6 +602,102 @@ async def test_models_use_existing_editor_and_validate_both_providers(
             ("chat-model", "chat"),
             ("embedding-model", "vectors"),
         ]
+        assert app.page == "mcp"
+
+
+async def test_setup_model_editor_shows_full_config_and_null_embedding(app):
+    async with app.run_test(size=(120, 42)):
+        app._show("models")
+        await app.workers.wait_for_complete()
+
+        editor = app.query_one(SetupModelEditor)
+        chat = yaml.safe_load(
+            editor.query_one("#setup-chat-config-yaml", TextArea).text
+        )
+        embedding = yaml.safe_load(
+            editor.query_one("#setup-embedding-config-yaml", TextArea).text
+        )
+
+        assert set(chat) == {
+            "model",
+            "model_provider",
+            "base_url",
+            "api_key",
+            "inference_provider",
+            "ssl_verify",
+            "max_completion_tokens",
+        }
+        assert embedding is None
+
+
+async def test_setup_model_editor_submits_absent_embedding_as_none(
+    monkeypatch, app
+):
+    checked = []
+    monkeypatch.setattr(
+        "ursa.cli.setup._probe_model",
+        lambda model, _: checked.append(model.model),
+    )
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._show("models")
+        await app.workers.wait_for_complete()
+        editor = app.query_one(SetupModelEditor)
+
+        editor.query_one("#setup-chat-model", Input).value = "chat-model"
+        await pilot.pause()
+        await pilot.click("#models-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        assert checked == ["chat-model"]
+        assert app.config.emb_model is None
+        assert app.page == "mcp"
+
+
+async def test_setup_model_named_provider_inherits_credentials(
+    monkeypatch, app
+):
+    app.config.inference_providers.clear()
+    app.config.inference_providers["company"] = InferenceProviderConfig(
+        base_url="https://models.example/v1",
+        api_key=SecretStr("provider-secret"),
+        model_provider="anthropic",
+    )
+    app.llm_configured = False
+    probed = []
+
+    def run_inline(callback, *args, **_kwargs):
+        return callback(*args)
+
+    def probe(config, kind):
+        probed.append((config, kind))
+
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", run_inline)
+    monkeypatch.setattr("ursa.cli.setup.probe_chat_config", probe)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._show("models")
+        await app.workers.wait_for_complete()
+        editor = app.query_one(SetupModelEditor)
+        editor.query_one("#setup-chat-model", Input).value = "claude-test"
+        await pilot.pause()
+        await pilot.click("#models-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+
+        assert len(probed) == 1
+        resolved, kind = probed[0]
+        assert kind == "chat"
+        assert resolved.base_url == "https://models.example/v1"
+        assert resolved.model_provider == "anthropic"
+        assert isinstance(resolved.api_key, SecretStr)
+        assert resolved.api_key.get_secret_value() == "provider-secret"
+        assert {
+            "api_key",
+            "base_url",
+            "model_provider",
+        }.isdisjoint(app.config.llm_model.model_fields_set)
         assert app.page == "mcp"
 
 
@@ -546,80 +726,187 @@ async def test_model_failure_stays_on_models_and_raises_error_toast(
         assert notices[-1][1]["severity"] == "error"
 
 
-async def test_mcp_advanced_and_failure_paths(monkeypatch, app):
-    monkeypatch.setattr(app, "_probe_mcp", AsyncMock())
+async def test_mcp_tabs_add_empty_draft_and_advanced_is_complete(app):
+    app.config = configured_config()
 
-    async with app.run_test(size=(120, 42)):
-        begin_mcp(
-            app,
-            "local_tools",
-            transport="stdio",
-            command="uv",
-            args="run tool.py",
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp("tools")
+        await pilot.pause()
+        existing = app.mcp_tabs.active_editor()
+        assert existing is not None
+        values = yaml.safe_load(existing.query_one(TextArea).text)
+        assert values["transport"] == "streamable_http"
+        assert values["url"] == "https://tools.example/mcp"
+        assert values["headers"]["Authorization"]["keyring"] is True
+        assert "timeout" in values
+
+        await pilot.click("#mcp-add")
+        await pilot.pause()
+        added = app.mcp_tabs.active_editor()
+        assert added is not None
+        assert added.raw_name() == ""
+        assert yaml.safe_load(added.query_one(TextArea).text) == {}
+        await pilot.click("#mcp-remove")
+        assert app.mcp_tabs.active_editor() is existing
+
+
+async def test_mcp_local_schema_validation_precedes_every_probe(
+    monkeypatch, app
+):
+    probe = MagicMock()
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp()
+        await pilot.pause()
+        await pilot.click("#mcp-add")
+        await pilot.pause()
+        editor = app.mcp_tabs.active_editor()
+        assert editor is not None
+        editor.query_one(".entry-name", Input).value = "broken"
+
+        assert not await app._validate_mcp_page()
+        probe.assert_not_called()
+        assert not app.config.mcp_servers
+        assert app.mcp_tabs.active_editor() is editor
+
+
+async def test_mcp_continue_validates_every_server_and_opens_review(
+    monkeypatch, app
+):
+    app.config = configured_config()
+    app.config.mcp_servers["search"] = type(
+        app.config.mcp_servers["tools"]
+    ).model_validate({
+        "transport": "streamable_http",
+        "url": "https://search.example/mcp",
+    })
+    checked = []
+
+    def probe(_probe, name, _config, **_kwargs):
+        checked.append(name)
+
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp("tools")
+        await pilot.pause()
+        assert str(app.query_one("#mcp-save", Button).label) == (
+            "Validate and continue"
         )
-        app.query_one("#mcp-config-yaml", TextArea).text = """\
-env:
-  TOOL_MODE: guided
-cwd: /srv/tools
-"""
 
-        await app._save_mcp()
+        await pilot.click("#mcp-save")
+        await pilot.pause()
 
-        saved = app.config.mcp_servers["local_tools"]
-        assert saved.command == "uv"
-        assert saved.args == ["run", "tool.py"]
-        assert saved.env == {"TOOL_MODE": "guided"}
-        assert str(saved.cwd) == "/srv/tools"
+        assert set(checked) == {"tools", "search"}
+        assert app.page == "review"
 
-        begin_mcp(app, "remote_tools", url="https://tools.example/mcp")
-        app.query_one("#mcp-config-yaml", TextArea).text = """\
-headers:
-  X-Tenant: guided
-timeout: 12
-sse_read_timeout: 45
-terminate_on_close: false
-"""
-        token = app.query_one("#mcp-token-source", Select)
-        token.set_options([
-            ("None", MCP_TOKEN_NONE),
-            ("remote_tools", "remote_tools"),
-        ])
-        token.value = "remote_tools"
-        app.query_one("#mcp-token-key", Input).value = "secret"
 
-        await app._save_mcp()
+async def test_mcp_validation_uses_canonical_full_server_config(
+    monkeypatch, app
+):
+    monkeypatch.setenv("MCP_TOKEN", "runtime-secret")
+    app.config = configured_config()
+    app.config.mcp_servers = {
+        "tools": {
+            "transport": "streamable_http",
+            "url": "https://tools.example/mcp",
+            "headers": {
+                "Authorization": {
+                    "env": "MCP_TOKEN",
+                    "template": "Token <%s>",
+                },
+                "X-Mode": "advanced",
+            },
+            "timeout": 17,
+            "sse_read_timeout": 91,
+            "terminate_on_close": False,
+        }
+    }
+    captured = {}
 
-        saved = app.config.mcp_servers["remote_tools"]
-        assert saved.headers["X-Tenant"] == "guided"
-        auth = saved.headers["Authorization"]
-        assert isinstance(auth, SecretTemplate)
-        assert auth.keyring_username("remote_tools") == "remote_tools"
-        assert auth.template == "Bearer %s"
-        assert saved.timeout.total_seconds() == 12
-        assert saved.sse_read_timeout.total_seconds() == 45
-        assert saved.terminate_on_close is False
-        assert app.pending == {"remote_tools": "secret"}
-        assert app.query_one("#mcp-configured", Select).value == "remote_tools"
+    class DummyClient:
+        def __init__(self, connections):
+            captured.update(connections)
 
-        probe = AsyncMock()
-        monkeypatch.setattr(app, "_probe_mcp", probe)
-        begin_mcp(app, "broken")
-        editor = app.query_one("#mcp-config-yaml", TextArea)
-        editor.text = "url: https://wrong.example/mcp\n"
-        await app._save_mcp()
-        assert editor.has_class("yaml-invalid")
-        assert "broken" not in app.config.mcp_servers
-        probe.assert_not_awaited()
+        async def get_tools(self, *, server_name):
+            assert server_name == "tools"
+            return [object()]
 
-        monkeypatch.setattr(
-            app,
-            "_probe_mcp",
-            AsyncMock(side_effect=RuntimeError("401 Unauthorized")),
-        )
-        begin_mcp(app, "tools", url="https://tools.example/mcp")
-        await app._save_mcp()
+    def run_inline(callback, *args, **_kwargs):
+        return asyncio.run(callback(*args))
+
+    monkeypatch.setattr("ursa.util.mcp.UrsaMCPClient", DummyClient)
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", run_inline)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp("tools")
+        await pilot.pause()
+
+        assert await app._validate_mcp_page()
+
+    connection = captured["tools"]
+    assert connection["headers"] == {
+        "Authorization": "Token <runtime-secret>",
+        "X-Mode": "advanced",
+    }
+    assert connection["timeout"].total_seconds() == 17
+    assert connection["sse_read_timeout"].total_seconds() == 91
+    assert connection["terminate_on_close"] is False
+    assert app.config.mcp_servers["tools"].headers["Authorization"] == (
+        SecretTemplate(env="MCP_TOKEN", template="Token <%s>")
+    )
+
+
+async def test_mcp_continue_checks_all_servers_before_staying_on_failure(
+    monkeypatch, app
+):
+    app.config = UrsaConfig.model_validate({
+        "mcp_servers": {
+            name: {
+                "transport": "streamable_http",
+                "url": f"https://{name}.example/mcp",
+            }
+            for name in ("first", "broken", "last")
+        }
+    })
+    checked = []
+
+    def probe(_probe, name, _config, **_kwargs):
+        checked.append(name)
+        if name == "renamed":
+            raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp("first")
+        await pilot.pause()
+        broken = app.mcp_tabs.editors()[1]
+        broken.query_one(".entry-name", Input).value = "renamed"
+        await pilot.click("#mcp-save")
+        await pilot.pause()
+
+        assert set(checked) == {"first", "renamed", "last"}
         assert app.page == "mcp"
-        assert "tools" not in app.config.mcp_servers
-        assert "✗" in str(
-            app.query_one("#mcp-validation-status", Static).content
+        assert set(app.config.mcp_servers) == {"first", "broken", "last"}
+        assert app.mcp_tabs.active_editor() is broken
+        assert (
+            "could not connect"
+            in str(broken.query_one(".draft-message", Static).content).lower()
         )
+
+
+async def test_mcp_continue_allows_no_servers(monkeypatch, app):
+    probe = MagicMock()
+    monkeypatch.setattr("ursa.cli.setup.run_probe_with_deadline", probe)
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        app._begin_mcp()
+        await pilot.pause()
+        assert not app.mcp_tabs.editors()
+        await pilot.click("#mcp-save")
+        await pilot.pause()
+
+        probe.assert_not_called()
+        assert app.page == "review"
