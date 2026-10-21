@@ -368,6 +368,7 @@ def main() -> int:
                     )
                 )
 
+        skill_request = params.pop("_ursa_skill_request", None)
         inputs_obj = entry.build_inputs(params)
 
         from ursa_dashboard.adapters import RunContext
@@ -376,6 +377,7 @@ def main() -> int:
             run_id=args.run_id,
             agent_id=args.agent_id,
             workspace_dir=Path(args.workspace_dir),
+            skill_request=skill_request,
         )
 
         # Adapter expects an EventSink, but for subprocess isolation we do not

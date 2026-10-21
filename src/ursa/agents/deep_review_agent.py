@@ -287,7 +287,7 @@ class DeepReviewAgent(AgentWithTools, BaseAgent[DeepReviewState]):
 
         try:
             response = self.tool_llm.invoke(
-                request_messages,
+                self.skill_messages(request_messages),
                 self.build_config(tags=["deep_review", phase]),
             )
         except Exception as exc:
@@ -386,7 +386,9 @@ class DeepReviewAgent(AgentWithTools, BaseAgent[DeepReviewState]):
             prompt += f"Competitor perspective: {perspective_text}\n"
 
         prompt += "\nBased on this iterative process, provide the overall, refined solution."
-        solution = self.strllm.invoke(prompt)
+        solution = self.strllm.invoke(
+            self.skill_messages([HumanMessage(content=prompt)])
+        )
         events.emit(
             "Final hypothesis ready",
             stage="finalize_result",
@@ -566,7 +568,9 @@ This report summarizes the deep-review process for the following question:
         """
 
         websites_latex = self._format_websites_latex(state.get("visited_sites"))
-        latex_response = self.strllm.invoke(prompt)
+        latex_response = self.strllm.invoke(
+            self.skill_messages([HumanMessage(content=prompt)])
+        )
         latex_doc = self._ensure_complete_latex_document(latex_response, state)
         final_latex = self._inject_before_end_document(
             latex_doc, websites_latex

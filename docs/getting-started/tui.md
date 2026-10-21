@@ -114,3 +114,9 @@ to make network requests through its web-search tools.
 - [Learn about persistence](../persistence/index.md)
 - [Use URSA from Python scripts][getting-started-python-scripts]
 - [Run URSA as an MCP server][getting-started-mcp-server]
+
+## Skills
+
+See [Skills](../skills.md) for reusable task instructions, workspace discovery,
+explicit `$skill-name` references, and automatic contextual activation.
+Use `/skills` to list the skills available in the current session.

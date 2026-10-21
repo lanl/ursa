@@ -116,3 +116,9 @@ and never stored in YAML or run metadata.
 - [Configuration](../configuration/index.md)
 - [Persistence](../persistence/index.md)
 - [Sandboxing and information control][sandboxing-and-information-control]
+
+## Skills
+
+See [Skills](../skills.md) for reusable task instructions, workspace discovery,
+explicit `$skill-name` references, and automatic contextual activation.
+Use `/skills` to list the skills available in the current session.

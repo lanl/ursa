@@ -376,7 +376,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 4) Invoke the LLM with the prepared message sequence.
         try:
             response = self.tool_llm.invoke(
-                messages, self.build_config(tags=["agent"])
+                self.skill_messages(messages), self.build_config(tags=["agent"])
             )
             new_state["messages"].append(response)
         except Exception as e:  # noqa: BLE001
@@ -448,7 +448,7 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         review = invoke_structured(
             self.llm,
             ReviewAssessment,
-            review_messages,
+            self.skill_messages(review_messages),
             config=self.build_config(tags=["review"]),
             context="execution review assessment",
             fallback=ReviewAssessment(
@@ -533,14 +533,14 @@ class ExecutionAgent(AgentWithTools, BaseAgent[ExecutionState]):
         # 2) Invoke the LLM to generate a recap; capture content even on failure.
         try:
             response = self.llm.invoke(
-                input=new_state["messages"],
+                input=self.skill_messages(new_state["messages"]),
                 config=self.build_config(tags=["recap"]),
             )
             response_content = response.text
         except Exception:
             try:
                 response = self.tool_llm.invoke(
-                    input=new_state["messages"],
+                    input=self.skill_messages(new_state["messages"]),
                     config=self.build_config(tags=["recap"]),
                 )
                 response_content = response.text

@@ -817,6 +817,7 @@ def resolve_ursa_config(config: UrsaConfig) -> UrsaConfig:
             for name in type(config).model_fields
         }
     )
+    resolved.__pydantic_fields_set__ = set(config.model_fields_set)
     resolved._temp_workspace = config._temp_workspace
 
     resolved.inference_providers = {

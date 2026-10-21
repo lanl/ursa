@@ -109,3 +109,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 [pypi-version]: https://img.shields.io/pypi/v/ursa-ai?style=flat-square&label=PyPI
 [monthly-downloads]: https://img.shields.io/pypi/dm/ursa-ai?style=flat-square&label=Downloads&color=blue
+
+Reusable [skills](docs/skills.md) are available in the TUI, dashboard, and Python
+API. List them with `/skills` in the interactive interfaces, invoke one with
+`$skill-name`, or let an agent select a relevant skill from context.

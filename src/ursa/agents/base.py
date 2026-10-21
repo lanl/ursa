@@ -80,6 +80,8 @@ from ursa.security import (
     group_root_dir,
     validate_group_name,
 )
+from ursa.skills import SkillCatalog, SkillScope
+from ursa.skills.runtime import augment_messages, skill_run, skill_stream
 from ursa.util import Checkpointer
 from ursa.util.checkpoint_retention import (
     aprune_sqlite_checkpoints,
@@ -278,6 +280,7 @@ class BaseAgent(Generic[TState], ABC):
         rag_tool_group: str | None = None,
         rag_tool_embedding: Embeddings | None = None,
         rag_tool_return_k: int = 10,
+        skill_scope: SkillScope | None = None,
     ):
         """Initializes the base agent with a language model and optional configurations.
 
@@ -308,6 +311,7 @@ class BaseAgent(Generic[TState], ABC):
             )
         self.llm: BaseChatModel = llm
         self.workspace = Path(workspace or ".")
+        self.skill_scope = skill_scope or SkillScope(workspace=workspace)
         self.agent_name = agent_name
         self.group = validate_group_name(group)
         self.tokens_before_summarize = tokens_before_summarize
@@ -366,6 +370,16 @@ class BaseAgent(Generic[TState], ABC):
 
         self.workspace.mkdir(exist_ok=True, parents=True)
         self.den.mkdir(exist_ok=True, parents=True)
+
+    def list_skills(self) -> SkillCatalog:
+        return self.skill_scope.discover()
+
+    def skill_messages(self, messages: list) -> list:
+        return augment_messages(self, messages)
+
+    def _skill_run(self, inputs, config):
+        scope = self.skill_scope if isinstance(self, AgentWithTools) else None
+        return skill_run(self, scope, inputs, config)
 
     @property
     def name(self) -> str:
@@ -569,7 +583,8 @@ class BaseAgent(Generic[TState], ABC):
 
             # Delegate to the subclass implementation with the normalized inputs
             # and any control parameters
-            return invoke_method(normalized, **invoke_config, **kwargs)
+            with self._skill_run(normalized, invoke_config):
+                return invoke_method(normalized, **invoke_config, **kwargs)
 
         finally:
             # Clean up the invocation depth tracking
@@ -633,7 +648,10 @@ class BaseAgent(Generic[TState], ABC):
                         )
 
             normalized = self._normalize_inputs(inputs)
-            return await invoke_method(normalized, **invoke_config, **kwargs)
+            with self._skill_run(normalized, invoke_config):
+                return await invoke_method(
+                    normalized, **invoke_config, **kwargs
+                )
 
         finally:
             BaseAgent._invoke_depth -= 1
@@ -1572,7 +1590,13 @@ class BaseAgent(Generic[TState], ABC):
             # Normalize inputs and delegate to the actual streaming implementation
             normalized = self._normalize_inputs(inputs)
             stream_config = dict(config or {})
-            yield from self._stream(normalized, **stream_config, **kwargs)
+            yield from skill_stream(
+                self,
+                self.skill_scope if isinstance(self, AgentWithTools) else None,
+                normalized,
+                stream_config,
+                lambda: self._stream(normalized, **stream_config, **kwargs),
+            )
 
         finally:
             # Decrement invocation depth when exiting
@@ -1763,6 +1787,13 @@ class AgentWithTools:
         self._apply_tools(tools, rebuild_graph=False)
         super().__init__(*args, **kwargs)
         self.tool_llm = self.llm.model_copy()
+
+        from ursa.skills.tools import build_skill_tools
+
+        self._apply_tools(
+            [*self._tools.values(), *build_skill_tools(self)],
+            rebuild_graph=False,
+        )
 
         if getattr(self, "rag_tools", ()):
             from ursa.rag.tools import build_rag_tools

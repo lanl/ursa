@@ -262,7 +262,7 @@ class DSIAgent(AgentWithTools, BaseAgent[DSIState]):
         messages = new_state["messages"]
 
         conversation = [SystemMessage(content=self.prompt)] + messages
-        response = self.llm.invoke(conversation)
+        response = self.llm.invoke(self.skill_messages(conversation))
 
         return self.messages_update(
             new_state,

@@ -41,7 +41,7 @@ class BasicChatAgent(BaseAgent[ChatState]):
         self, state: ChatState, runtime: Runtime[AgentContext]
     ) -> ChatState:
         new_state, full_overwrite = self.prepare_messages_context(state)
-        res = self.llm.invoke(new_state["messages"])
+        res = self.llm.invoke(self.skill_messages(new_state["messages"]))
         return self.messages_update(
             new_state, [res], full_overwrite=full_overwrite
         )

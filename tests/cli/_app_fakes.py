@@ -8,6 +8,7 @@ from ursa.cli.config import (
     EmbModelConfig,
     InferenceProviderConfig,
 )
+from ursa.skills import SkillScope
 from ursa.util.events import DEFAULT_EVENT_NAME
 
 
@@ -25,6 +26,7 @@ class FakeHITL:
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
+        self.skill_scope = SkillScope(workspace=workspace)
         inference_providers = {
             "openai": InferenceProviderConfig(
                 base_url="https://api.openai.com/v1",

@@ -53,7 +53,7 @@ from ursa.cli.config import UrsaConfig
 
 config = UrsaConfig().resolve()
 llm = config.llm_model.init_chat_model()
-agent = ExecutionAgent(llm=llm)
+agent = ExecutionAgent(llm=llm, workspace="./ursa-script-workspace")
 
 result = agent.invoke({
     "messages": [
@@ -61,7 +61,6 @@ result = agent.invoke({
             content="Write and run a Python script that prints the first 10 prime numbers."
         )
     ],
-    "workspace": "./ursa-script-workspace",
 })
 
 print(result["messages"][-1].content)
@@ -166,3 +165,9 @@ Many of the examples in the repository show checkpointing and multi-step workflo
 - [Agents overview][agents]
 - [Configuration](../configuration/index.md)
 - [Sandboxing and information control][sandboxing-and-information-control]
+
+## Skills
+
+See [Skills](../skills.md) for reusable task instructions, workspace discovery,
+explicit `$skill-name` references, and automatic contextual activation.
+Use `discover_skills()` or `agent.list_skills()` to inspect available skills.

@@ -757,6 +757,20 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown session_id")
         return session_read_messages(rm.dashboard_root, session_id, limit=limit)
 
+    @app.get(
+        "/sessions/{session_id}/skills", dependencies=[Depends(require_auth)]
+    )
+    async def list_session_skills(session_id: str) -> dict:
+        from ursa.skills import discover_skills
+
+        try:
+            session = session_read_session(rm.dashboard_root, session_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Unknown session_id")
+        workspace = _require_session_workspace_dir(session_id, session)
+        catalog = await asyncio.to_thread(discover_skills, workspace=workspace)
+        return {**catalog.as_dict(), "text": catalog.markdown()}
+
     @app.post(
         "/sessions/{session_id}/message",
         response_model=SessionMessageResponse,
@@ -824,6 +838,7 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
 
         params = dict(req.params or {})
         params.setdefault("prompt", prompt)
+        params["_ursa_skill_request"] = req.text
 
         agent_init = _agent_init_with_dashboard_defaults(
             agent_id, req.agent_init
@@ -4080,6 +4095,25 @@ def create_app(*, credential_store: CredentialStore | None = None) -> FastAPI:
     const text = (ta && ta.value || '').trim();
     if (!text) return;
     if (!(await ensureSessionWorkspaceConfigured())) return;
+    if (text === '/skills') {
+      try {
+        const catalog = await api('GET', `/sessions/${encodeURIComponent(state.activeSessionId)}/skills`);
+        const messages = $('#sessionMessages');
+        if (messages) {
+          messages.querySelectorAll('.skillCatalog').forEach(el => el.remove());
+          const panel = document.createElement('pre');
+          panel.className = 'skillCatalog';
+          panel.style.whiteSpace = 'pre-wrap';
+          panel.textContent = catalog.text;
+          messages.appendChild(panel);
+          messages.scrollTop = messages.scrollHeight;
+        }
+        if (ta) ta.value = '';
+      } catch (e) {
+        showSendError(e && e.message ? e.message : String(e));
+      }
+      return;
+    }
 
     const sendBtn = $('#sendMsgBtn');
     if (sendBtn) sendBtn.disabled = true;

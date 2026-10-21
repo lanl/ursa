@@ -1234,7 +1234,10 @@ async def test_agent_hitl_passes_extra_callbacks_only():
     assert captured["prompt"] == "hello"
     assert captured["state"] is None
     assert captured["query"] == {"messages": ["hello"]}
-    assert captured["config"] == {"callbacks": [custom_callback]}
+    assert captured["config"] == {
+        "callbacks": [custom_callback],
+        "configurable": {"ursa_skill_request": "hello"},
+    }
 
 
 def test_hitl_log_event_handler_renders_events(tmp_path):

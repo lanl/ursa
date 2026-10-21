@@ -302,6 +302,9 @@ class UrsaTextualApp(App[None]):
     async def submit_prompt(self, event: PromptArea.Submitted) -> None:
         prompt_widget = self.query_one(PromptArea)
         prompt_widget.load_text("")
+        if event.text.strip() == "/skills":
+            await self._show_command("skills")
+            return
         turn = Turn(event.text, self.hitl.workspace)
         conversation = self.query_one("#conversation", VerticalScroll)
         self._reset_conversation_auto_follow(conversation)
@@ -531,6 +534,13 @@ class UrsaTextualApp(App[None]):
         return sorted(candidates)
 
     async def _show_command(self, command: str) -> None:
+        if command == "skills":
+            catalog = await asyncio.to_thread(self.hitl.skill_scope.discover)
+            self.push_screen(
+                InformationScreen("Skills", catalog.markdown()),
+                callback=lambda _: self.query_one(PromptArea).focus(),
+            )
+            return
         if command == "exit":
             self.action_quit()
             return

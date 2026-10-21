@@ -27,6 +27,7 @@ class RunContext:
     run_id: str
     agent_id: str
     workspace_dir: Path
+    skill_request: str | None = None
 
 
 class AgentAdapter(Protocol):
@@ -105,6 +106,7 @@ class BaseAgentInProcessAdapter:
                 agent,
                 inputs,
                 workspace_dir=ctx.workspace_dir,
+                skill_request=ctx.skill_request,
             )
 
             # Prefer BaseAgent.format_result if available; else just string-ify.
@@ -166,6 +168,7 @@ class DirectInvokeAdapter:
                 agent,
                 inputs,
                 workspace_dir=ctx.workspace_dir,
+                skill_request=ctx.skill_request,
             )
             return _format_agent_result(agent, result)
         finally:
@@ -321,6 +324,7 @@ def _invoke_sync_target_with_setup(
         agent,
         inputs,
         workspace_dir=workspace_dir,
+        skill_request=ctx.skill_request,
     )
     return _format_agent_result(agent, result)
 
@@ -330,6 +334,7 @@ def _invoke_with_cli_handler(
     inputs: Any,
     *,
     workspace_dir: Path,
+    skill_request: str | None = None,
 ) -> Any:
     """Invoke a dashboard target, attaching the shared CLI callback when supported."""
     if not _supports_invoke_config(agent):
@@ -338,7 +343,10 @@ def _invoke_with_cli_handler(
         console=_dashboard_console(),
         workspace=workspace_dir,
     )
-    return agent.invoke(inputs, config={"callbacks": [handler]})
+    config = {"callbacks": [handler]}
+    if skill_request is not None:
+        config["configurable"] = {"ursa_skill_request": skill_request}
+    return agent.invoke(inputs, config=config)
 
 
 async def _ainvoke_with_cli_handler(
@@ -346,6 +354,7 @@ async def _ainvoke_with_cli_handler(
     inputs: Any,
     *,
     workspace_dir: Path,
+    skill_request: str | None = None,
 ) -> Any:
     """Async invoke a dashboard target with the shared CLI callback when supported."""
     if not _supports_ainvoke_config(agent):
@@ -354,6 +363,7 @@ async def _ainvoke_with_cli_handler(
         console=_dashboard_console(),
         workspace=workspace_dir,
     )
-    return await _maybe_await(
-        agent.ainvoke(inputs, config={"callbacks": [handler]})
-    )
+    config = {"callbacks": [handler]}
+    if skill_request is not None:
+        config["configurable"] = {"ursa_skill_request": skill_request}
+    return await _maybe_await(agent.ainvoke(inputs, config=config))

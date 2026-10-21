@@ -80,6 +80,7 @@ nav:
       - Secrets: configuration/secrets.md
       - Files, CLI flags, and environment variables: configuration/files-and-env.md
       - MCP server configuration: configuration/mcp.md
+  - Skills: skills.md
   - Persistence:
       - Overview: persistence/index.md
       - Named agents: persistence/named-agents.md

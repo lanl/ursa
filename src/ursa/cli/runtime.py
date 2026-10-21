@@ -27,6 +27,7 @@ from ursa.cli.config import (
 from ursa.security import (
     enforce_model_group_policy,
 )
+from ursa.skills import SkillScope
 from ursa.util.has_optional_dep_group import has_optional_dep_group
 from ursa.util.inference_providers import validate_model_provider
 from ursa.util.mcp import start_mcp_client
@@ -142,6 +143,8 @@ class AgentHITL:
         assert self._agent is not None, "Agent not yet instantiated"
         agent = self._agent
 
+        current_request = prompt
+
         # Inject the previous agent's response into the query
         if (last_agent_result is not None) and (last_agent != agent):
             prompt = "\n".join([
@@ -153,9 +156,11 @@ class AgentHITL:
         # then invoke the agent and extract a final message from it's new state
         query = agent.format_query(prompt, state=self.state)
 
-        invoke_config = None
+        invoke_config = {
+            "configurable": {"ursa_skill_request": current_request}
+        }
         if callbacks:
-            invoke_config = {"callbacks": list(callbacks)}
+            invoke_config["callbacks"] = list(callbacks)
 
         new_state = await agent.ainvoke(query, config=invoke_config)
         msg = agent.format_result(new_state)
@@ -185,6 +190,11 @@ class HITL:
         self.thread_id = self.config.thread_id or "ursa"
         # expose workspace and init common attributes
         self.workspace = self.config.workspace
+        self.skill_scope = SkillScope(
+            workspace=self.workspace
+            if "workspace" in config.model_fields_set
+            else None
+        )
         self.config.workspace.mkdir(parents=True, exist_ok=True)
 
         self.agent_name = self.config.agent_name
@@ -344,6 +354,7 @@ class HITL:
         await agent.instantiate(
             llm=self.model,
             workspace=self.workspace,
+            skill_scope=self.skill_scope,
             agent_name=self.agent_name,
             group=self.group,
             mcp_client=self.mcp_client,

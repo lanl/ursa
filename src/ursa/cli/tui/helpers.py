@@ -43,6 +43,7 @@ COMMAND_CHOICES = {
     "keymap": "Complete keyboard map",
     "models": "Switch chat or embedding inference providers",
     "theme": "Choose the application color theme",
+    "skills": "Available skills, descriptions, and source paths",
 }
 
 
